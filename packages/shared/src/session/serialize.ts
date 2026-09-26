@@ -4,7 +4,8 @@ import type { WorldState } from '../world/state.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { FloorInit, WorldSnapshot, PeerInfo } from './netTypes.js';
 import type { PlayerEntity } from '../world/state.js';
-import { weapon3dKeyFromEquipment } from './weapon3d.js';
+import type { ConfigRegistry } from '../config/registry.js';
+import { weapon3dKeyFromEquipment, weaponLookOf } from './weapon3d.js';
 import { posQ, posU, angQ, angU } from './wire.js';
 
 /**
@@ -83,16 +84,22 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
  * СТАТИКА игрока для кадра `peerInfo` (Ф1.1). Считается редко — на входе, экипировке, уровне
  * и смене области, — поэтому здесь не жалко линейного поиска по базам предметов, который
  * раньше делался на каждого игрока каждый тик.
+ *
+ * Нужен весь реестр, а не только базы: вид оружия из деталей (`weaponLook`, D22) читает детали и
+ * анатомию. Без реестра статика собирается как раньше — без брони по базам и без вида оружия.
  */
-export function peerInfoOf(p: PlayerEntity, itemsBase?: ItemBaseLite[]): PeerInfo {
+export function peerInfoOf(p: PlayerEntity, cfg?: ConfigRegistry): PeerInfo {
+  const eq = p.save.equipment;
+  const look = cfg ? weaponLookOf(cfg, eq.weapon, eq.offhand) : undefined;
   return {
     id: p.id,
     classId: p.save.classId,
     name: p.save.name,
     maxHp: p.maxHp,
     r: p.radius,
-    weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
-    armorModels: armorModelsOf(p.save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined>, p.save.classId, itemsBase),
+    weaponKey: weapon3dKeyFromEquipment(eq.weapon, eq.offhand) ?? undefined,
+    armorModels: armorModelsOf(eq as Record<string, { modelId?: string; baseId?: string } | undefined>, p.save.classId, cfg?.get('items.base')),
+    ...(look ? { weaponLook: look } : {}),
   };
 }
 
@@ -110,7 +117,11 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
     runNodeType: w.runNodeType,
     floorModifiers: w.floorModifiers,
     decor,
-    doors: w.doors.map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),
+    // Открытую дверь (её рычаг дёрнут) клиенту не шлём: он нарисовал бы запертую поверх прохода — вошедшему посреди
+    // этажа и на продолжении узла (R4-01), где двери открыты с первого кадра.
+    doors: w.doors
+      .filter((d) => !w.levers.some((l) => l.used && l.doorId === d.id))
+      .map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),
     levers: w.levers.filter((l) => !l.used).map((l) => ({ id: l.id, x: l.pos.x, y: l.pos.y, doorId: l.doorId })),
     chests: w.chests.filter((c) => !c.opened).map((c) => ({ id: c.id, x: c.pos.x, y: c.pos.y, tier: c.tier })),
   };

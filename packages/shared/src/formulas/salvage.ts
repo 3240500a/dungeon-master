@@ -78,6 +78,9 @@ export function salvageFromMonster(
       const n = rng.int(Math.max(0, y.min), Math.max(0, y.max));
       if (n <= 0) continue;
       const id = shiftTier(y.materialId, tier - 1, opts.knownMaterial);
+      // ⚠ R6-22: выключенное не падает и с тел — как у разбора и переплавки (`knownOnly`). `shiftTier` отдаёт исходный id без
+      // проверки (сдвиг 0 у обычной вещи, откат, когда ступени выше нет), и выключенная семья сыпалась с каждого монстра.
+      if (opts.knownMaterial && !opts.knownMaterial(id)) continue;
       out[id] = (out[id] ?? 0) + n;
     }
   }
@@ -149,6 +152,11 @@ export interface SalvageableItem {
   armorClass?: string;
   rarity: string;
   itemLevel: number;
+  /**
+   * Детали СКОВАННОЙ вещи. Есть — путь «по редкости» закрыт: скованное переплавляют (`meltReturn`),
+   * иначе ковка стала бы прачечной — скуй дешёвую обычную, зачаруй, разбери как редкую за калёное.
+   */
+  parts?: unknown;
 }
 
 /** Числа разбора из `balance.salvage`. */
@@ -204,6 +212,7 @@ export function canSalvage(
   inField: boolean,
 ): { ok: boolean; reason?: string } {
   if (tierOfRarity(item.rarity, t.rarityTier) <= 0) return { ok: false, reason: 'Уникальные вещи не разбираются' };
+  if (item.parts) return { ok: false, reason: 'Скованную вещь переплавляют, а не разбирают' };
   const rule = salvageRuleFor(item, weaponClass, rules);
   if (!rule?.yields?.length) return { ok: false, reason: 'Эту вещь не из чего разбирать' };
   if (salvageMult(item, t, inField) <= 0) return { ok: false, reason: 'Разбор ничего не даст' };
@@ -227,7 +236,7 @@ export function salvageFromItem(
   const rule = salvageRuleFor(item, weaponClass, rules);
   const mult = salvageMult(item, t, !!opts.inField);
   const tier = tierOfRarity(item.rarity, t.rarityTier);
-  if (!rule?.yields?.length || mult <= 0 || tier <= 0) return out;
+  if (!rule?.yields?.length || mult <= 0 || tier <= 0 || item.parts) return out;
   const shift = tier - 1;
   for (const y of rule.yields) {
     const raw = rng.int(Math.max(0, y.min), Math.max(0, y.max)) * mult;

@@ -30,6 +30,11 @@ export interface PlaySessionRow {
   actions: number;
   action_mean_ms: number;
   action_sd_ms: number;
+  /** Кузница (K7): скованно, переплавлено, разобрано, зачаровано за сессию. */
+  crafted: number;
+  melted: number;
+  salvaged: number;
+  enchanted: number;
 }
 
 /**
@@ -48,20 +53,24 @@ export async function upsertPlaySession(
       const r = await q1<{ id: string }>(
         `INSERT INTO play_sessions
            (user_id, char_id, ip, started_at, updated_at, ended_at, minutes,
-            kills, gold, xp, items, deaths, floors, actions, action_mean_ms, action_sd_ms)
-         VALUES ($1,$2,$3, to_timestamp($4/1000.0), now(), $5, $6, $7,$8,$9,$10,$11,$12,$13,$14,$15)
+            kills, gold, xp, items, deaths, floors, actions, action_mean_ms, action_sd_ms,
+            crafted, melted, salvaged, enchanted)
+         VALUES ($1,$2,$3, to_timestamp($4/1000.0), now(), $5, $6, $7,$8,$9,$10,$11,$12,$13,$14,$15, $16,$17,$18,$19)
          RETURNING id`,
         [userId, charId, ip, t.startedAt, ended ? new Date() : null, t.minutes(),
-          t.kills, t.gold, t.xp, t.items, t.deaths, t.floors, t.actions, iv.meanMs, iv.sdMs]);
+          t.kills, t.gold, t.xp, t.items, t.deaths, t.floors, t.actions, iv.meanMs, iv.sdMs,
+          t.crafted, t.melted, t.salvaged, t.enchanted]);
       return r?.id ?? null;
     }
     await q(
       `UPDATE play_sessions SET updated_at = now(), ended_at = $2, minutes = $3,
          kills = $4, gold = $5, xp = $6, items = $7, deaths = $8, floors = $9,
-         actions = $10, action_mean_ms = $11, action_sd_ms = $12
+         actions = $10, action_mean_ms = $11, action_sd_ms = $12,
+         crafted = $13, melted = $14, salvaged = $15, enchanted = $16
        WHERE id = $1`,
       [id, ended ? new Date() : null, t.minutes(),
-        t.kills, t.gold, t.xp, t.items, t.deaths, t.floors, t.actions, iv.meanMs, iv.sdMs]);
+        t.kills, t.gold, t.xp, t.items, t.deaths, t.floors, t.actions, iv.meanMs, iv.sdMs,
+        t.crafted, t.melted, t.salvaged, t.enchanted]);
     return id;
   } catch (e) {
     // Наблюдения не стоят того, чтобы из-за них падала игра.
@@ -74,7 +83,8 @@ export async function upsertPlaySession(
 export async function recentSessions(hours = 24): Promise<PlaySessionRow[]> {
   return q<PlaySessionRow>(
     `SELECT id, user_id, char_id, ip, started_at, ended_at, minutes, kills, gold, xp,
-            items, deaths, floors, actions, action_mean_ms, action_sd_ms
+            items, deaths, floors, actions, action_mean_ms, action_sd_ms,
+            crafted, melted, salvaged, enchanted
      FROM play_sessions
      WHERE updated_at > now() - ($1 || ' hours')::interval
      ORDER BY started_at`, [String(hours)]);

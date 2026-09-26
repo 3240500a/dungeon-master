@@ -18,6 +18,15 @@ interface OpenWindow {
 }
 
 /**
+ * ⭐ R4-36: ПОЛОСА `z-index` ОКОН — [Z_BASE, Z_MAX]. Выше неё живут голосование (88), экраны входа — плашка, лобби,
+ * «Продолжить» (90) — и окно смерти (96). Раньше каждый клик в окне поднимал его на единицу без потолка: три десятка
+ * кликов по инвентарю — и окно поверх лобби, с живыми кнопками в сессию, которой нет. Кончилась полоса — открытые окна
+ * нумеруются заново снизу, порядок тот же.
+ */
+const Z_BASE = 60;
+const Z_MAX = 80;
+
+/**
  * Менеджер НЕСКОЛЬКИХ плавающих окон поверх canvas (не модальных): инвентарь,
  * скиллы, магазин и т.п. можно держать открытыми одновременно, перетаскивать за
  * заголовок, закрывать независимо. Игра под окнами не блокируется. Открытые окна
@@ -28,14 +37,17 @@ export class DomUi {
   private root: HTMLElement;
   private factories = new Map<string, PanelFactory>();
   private open = new Map<string, OpenWindow>();
-  private zTop = 60;
+  private zTop = Z_BASE;
   private cascade = 0;
 
   constructor(app: App, root: HTMLElement) {
     this.app = app;
     this.root = root;
     this.bindKeys();
-    app.bus.on('ui:open', (p) => this.toggle(p.panel));
+    // ⭐ R6-25: вне мира (экраны входа, вход в аккаунт, выбор героя) окно не открывается — [E] у NPC под лобби открывал
+    // кузницу под экраном входа с кнопками в сессию, которой нет.
+    app.bus.on('ui:open', (p) => { if (app.inWorld) this.toggle(p.panel); });
+    app.bus.on('ui:closeAll', () => this.closeAll());   // R4-36: связь потеряна — окна прошлой сессии прочь
     app.bus.on('state:changed', () => this.refresh());
     app.bus.on('gold:changed', () => this.refresh());
   }
@@ -179,6 +191,14 @@ export class DomUi {
   }
 
   private bringToFront(win: HTMLElement): void {
+    if (win.style.zIndex === String(this.zTop)) return;   // уже сверху — клик внутри окна полосу не тратит
+    if (this.zTop >= Z_MAX) {
+      // R4-36: полоса кончилась — прочие открытые окна снизу по порядку, нажатое — над ними.
+      const rest = [...this.open.values()].map((e) => e.win).filter((w) => w !== win)
+        .sort((a, b) => Number(a.style.zIndex) - Number(b.style.zIndex));
+      this.zTop = Z_BASE;
+      for (const w of rest) w.style.zIndex = String(++this.zTop);
+    }
     win.style.zIndex = String(++this.zTop);
   }
 
@@ -198,7 +218,8 @@ export class DomUi {
         return;
       }
       const panel = map[e.code];
-      if (panel && this.factories.has(panel)) {
+      // R6-25: хоткеи окон — только в мире (Esc выше закрывает и вне его).
+      if (panel && this.factories.has(panel) && this.app.inWorld) {
         // Не перехватываем, если фокус в поле ввода (редактор и т.п.).
         const t = e.target as HTMLElement;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;

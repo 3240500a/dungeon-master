@@ -2,30 +2,30 @@ import express, { type Request, type Response, type RequestHandler } from 'expre
 import { configEtagOf } from './configEtag.js';
 import cors from 'cors';
 import { createServer } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
-import { ConfigRegistry, configSchemas, newCharacterSave } from '@dm/shared';
+import { ConfigRegistry, configSchemas } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
 import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
-import { hashPassword, verifyPassword } from './auth/password.js';
 import {
-  createUser, getUserByName, createSession, deleteSession, getSession, countRecentRegistrations,
-  listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
+  getSession, listAllCharacters, getCharacter,
   getUserById,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
   getUserRole,
-  deleteSessionsOfUser,
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
 import { startUwsServer } from './net/uwsServer.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { limits, clientIp } from './net/rateLimit.js';
 import { renderMetrics } from './net/metrics.js';
 import { originAllowed, parseOrigins, keyMatches } from './net/adminAccess.js';
+import { installInternalRoutes, internalReader, drainProcess, installCrashDrain } from './net/internalRoutes.js';
+import { installAccountRoutes, bearer, isSessionToken, isCharId } from './net/accountRoutes.js';
+import { ah, httpErrors } from './net/asyncRoute.js';
+import { cachedJson } from './net/cachedJson.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -71,12 +71,19 @@ async function boot(): Promise<void> {
   await initSchema();
   await rebuildConfig();   // дефолты + сохранённые правки редактора + готовое тело ответа
 
-  // Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех
-  // персонажей. Иначе спуск из города РЕЗЮМИТ старый забег (старый биом/сид) и игнорит алтарь.
+  // Рестарт сервера = чистый лист забегов: сбрасываем НЕЗАВЕРШЁННЫЕ забеги (save.run). Иначе спуск из города
+  // РЕЗЮМИТ старый забег (старый биом/сид) и игнорит алтарь.
   watchConfigFiles();   // правки data/*.json должны быть видны в редакторе и в игре без рестарта
 
-  const wiped = await clearAllRuns();
-  if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`);
+  // ⭐ R2-11: только игровой процесс и только ничьи забеги. Гейтвей комнат не держит — ему сбрасывать нечего, а
+  // нода не трогает героев, живых на ДРУГИХ нодах: поочерёдный перезапуск стирал им забег посреди игры и сбивал
+  // версию сейва — все их сессии снимались следующим же автосейвом.
+  if (ROLE !== 'gateway') {
+    const { initClusterSchema } = await import('./cluster/registry.js');
+    await initClusterSchema();
+    const wiped = await clearAllRuns(process.env.DM_NODE_ID ?? 'node-0');
+    if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`);
+  }
 
   // Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы
   // анимации были из коробки. Источник — pose-seed.json в git.
@@ -96,33 +103,8 @@ async function boot(): Promise<void> {
   }
 }
 
-const MAX_CHARS = 5;
-/**
- * Ф3.5: сколько аккаунтов можно завести с одного адреса за сутки. Пять — с запасом на семью
- * и общий интернет: люди заводят аккаунт один раз, а ферма ботов упирается в потолок.
- */
-const MAX_ACCOUNTS_PER_IP = Number(process.env.DM_MAX_ACCOUNTS_PER_IP ?? 5);
-/**
- * Стенд заводит сотню аккаунтов с одного адреса и упирался в этот потолок (в первом прогоне
- * дошли 5 ботов из 60). Потолок — тот же лимит частоты по смыслу, поэтому и выключается тем
- * же переключателем `DM_RATELIMIT=off`, который ставит только `loadtest/probe.ts`. Боевая
- * конфигурация проверяется отдельно — `npm run poc:flood`.
- */
-const ACCOUNT_CAP_ON = process.env.DM_RATELIMIT !== 'off';
-
-/**
- * Express 4 не ловит отказ промиса из обработчика: необработанный `reject` уронил бы процесс.
- * Все обработчики, ходящие в базу (Ф2 — доступ асинхронный), оборачиваются этим.
- */
-type RouteParams = Record<string, string>;
-const ah = <P extends RouteParams = RouteParams>(
-  fn: (req: Request<P>, res: Response) => Promise<unknown>,
-): RequestHandler<P> => (req, res) => {
-  void fn(req as Request<P>, res).catch((e: unknown) => {
-    console.error('[dm-server] отказ в обработчике:', e);
-    if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
-  });
-};
+// Потолки аккаунтов и героев (MAX_CHARS, регистрации с адреса) и обёртка асинхронных ручек `ah` — в
+// `net/accountRoutes.ts` и `net/asyncRoute.ts`.
 
 const app = express();
 /**
@@ -143,26 +125,25 @@ app.use(cors((req, cb) => {
   const h = req.headers as { origin?: string; host?: string };
   cb(null, { origin: originAllowed(h.origin, h.host, ORIGINS) });
 }));
-app.use(express.json({ limit: '2mb' }));
+// ⭐ R6-04: ОБЩЕГО РАЗБОРА ТЕЛА НЕТ. Здесь стоял `express.json` на 2 МБ для ЛЮБОГО запроса — до ручек и их лимитов: анонимный
+// POST с 2 МБ вложенного JSON (на любой путь) стоил ~115 мс главного потока, и десяток таких в секунду держал тики всех
+// комнат. Тело разбирают только ручки, которым оно нужно: аккаунты — маленьким разбором (`accountRoutes.ts`, 8 КБ),
+// инструменты `/api/dev/*` — большим, но после проверки доступа (`devGate` → `devJson`, как R4-11 для ассетов).
 
 /**
- * Ф1.7: метрики для мониторинга. Отдаём ТОЛЬКО локально — состав комнат, число игроков и
- * счётчики нарушений это внутренняя информация, наружу её выставлять незачем. Prometheus
- * ходит с той же машины или через прокси, который сам решает, кого пускать.
+ * Ф1.7 `/metrics` и Ф4.5 `/internal/drain` — только прямому вызову с самой машины (R3-03, `net/internalRoutes.ts`).
+ * Здесь, до раздачи статики: её SPA-фолбэк на любой GET иначе отдал бы на `/metrics` страницу игры.
  */
-app.get('/metrics', (req, res) => {
-  const ip = req.socket.remoteAddress ?? '';
-  if (!LOCAL_HOSTS.has(ip)) return res.status(403).end();
+installInternalRoutes(app, {
+  nodeId: process.env.DM_NODE_ID ?? 'node-0',
   // Ф4: на гейтвее метрики — это СУММА по кластеру. Иначе мониторинг показывал бы работу
   // процесса, который игру не ведёт, а стенд мерил бы одну ноду из десяти.
-  if (process.env.DM_ROLE === 'gateway') {
-    void (async () => {
-      const { clusterMetrics } = await import('./cluster/gateway.js');
-      res.type('text/plain; version=0.0.4').send(await clusterMetrics());
-    })().catch(() => res.status(500).end());
-    return;
-  }
-  res.type('text/plain; version=0.0.4').send(renderMetrics());
+  metrics: async () => {
+    if (process.env.DM_ROLE !== 'gateway') return renderMetrics();
+    const { clusterMetrics } = await import('./cluster/gateway.js');
+    return clusterMetrics();
+  },
+  drain: drainProcess,   // R4-27: обработчики SIGTERM, а не сигнал — на Windows `process.kill(self)` убивает без них
 });
 
 app.get('/api/health', (_req, res) => {
@@ -210,14 +191,14 @@ const DEV_CONFIG_APPLY = process.env.NODE_ENV !== 'production';
  *
  * Отзыв доступа: `logout-all` гасит все сессии человека, смена `DM_ADMIN_KEY` — ключ процессов.
  */
-const LOCAL_HOSTS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
 const ADMIN_KEY = process.env.DM_ADMIN_KEY ?? '';
 async function devGuard(req: Request, res: Response): Promise<boolean> {
   if (!DEV_CONFIG_APPLY) { res.status(403).json({ error: 'Отключено в продакшене' }); return false; }
   const token = bearer(req);
   if (!token) { res.status(401).json({ error: 'Требуется вход' }); return false; }
   if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return true;
-  const userId = await getSession(token);
+  // Не ключ процессов и не токен сессии по виду — в базу незачем (R4-02).
+  const userId = isSessionToken(token) ? await getSession(token) : null;
   if (!userId) { res.status(401).json({ error: 'Требуется вход' }); return false; }
   if (await getUserRole(userId) !== 'admin') {
     console.warn(`[dm-server] отказ dev-роута ${req.path}: у ${userId} нет прав администратора`);
@@ -226,8 +207,20 @@ async function devGuard(req: Request, res: Response): Promise<boolean> {
   }
   return true;
 }
-app.post('/api/dev/config', ah(async (req, res) => {
-  if (!await devGuard(req, res)) return;
+/**
+ * ⭐ R4-11: доступ — ДО ТЕЛА. `express.raw` на 64 МБ стоял перед `devGuard`: анонимный запрос заставлял ноду собрать 64 МБ
+ * (и в продакшене, где ручка всё равно отвечает 403). Теперь тело читает только тот, кому ручка открыта.
+ * ⭐ R6-04: так же и JSON-ручки инструментов (`devJson`): общего разбора тела больше нет.
+ */
+const devGate: RequestHandler = (req, res, next) => {
+  void devGuard(req, res).then((ok) => { if (ok) next(); }).catch((e: unknown) => {
+    console.error('[dm-server] отказ в обработчике:', e);
+    if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
+  });
+};
+/** Тело JSON инструментов (конфиг, контент поз-редактора — сотни КБ) — ставится ПОСЛЕ `devGate`. */
+const devJson = express.json({ limit: '2mb' });
+app.post('/api/dev/config', devGate, devJson, ah(async (req, res) => {
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в БД (на временном реестре)
@@ -247,8 +240,7 @@ app.post('/api/dev/config', ah(async (req, res) => {
 // импортированный в память при старте — файл перечитается лишь при рестарте процесса). DEV-only.
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
-app.post('/api/dev/config-file', ah(async (req, res) => {
-  if (!await devGuard(req, res)) return;
+app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в файл
@@ -344,8 +336,15 @@ app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
 // ── Контент 3D поз-редактора (единая истина: сервер) ─────────────────────────────
 // GET — весь авторский контент (pe_gait/clips/sway/phys/ragdoll/chars); грузят и редактор, и игра
 // (кэшируют в localStorage). POST — правки редактора, DEV-only (в проде клиент не переписывает контент).
-app.get('/api/pose', ah(async (_req, res) => {
-  res.json(await getPoseStore());
+// ⭐ R6-20: тело — из кэша (`cachedJson`), с ETag. Раньше каждый анонимный GET читал из базы весь `pose_store` (сотни КБ) и
+// сериализовал его заново. Сброс — при записи этим процессом (`/api/dev/pose`), срок — для записей соседних процессов.
+const POSE_CACHE_MS = 5_000;
+const poseBody = cachedJson(() => getPoseStore(), POSE_CACHE_MS);
+app.get('/api/pose', ah(async (req, res) => {
+  const { body, etag } = await poseBody.get();
+  res.setHeader('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.type('application/json').send(body);
 }));
 // Ревизии без тел: редактор зовёт их на каждой загрузке, чтобы понять, ушёл ли сервер вперёд.
 app.get('/api/pose/rev', ah(async (_req, res) => {
@@ -359,8 +358,7 @@ app.get('/api/pose/rev', ah(async (_req, res) => {
  * старым снимком, одним сохранением затирала всё, что появилось позже, — так пропал клип `hit_axe`.
  * Без `__baseRev` (старые клиенты, ручной curl) поведение прежнее: пишем как есть.
  */
-app.post('/api/dev/pose', ah(async (req, res) => {
-  if (!await devGuard(req, res)) return;
+app.post('/api/dev/pose', devGate, devJson, ah(async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const baseRev = body.__baseRev as Record<string, number> | undefined;
   const keys = Object.keys(body).filter((k) => k !== '__baseRev');
@@ -373,12 +371,14 @@ app.post('/api/dev/pose', ah(async (req, res) => {
     }
   }
   const rev: Record<string, number> = {};
-  for (const k of keys) rev[k] = await setPoseStore(k, body[k]);
+  try {
+    for (const k of keys) rev[k] = await setPoseStore(k, body[k]);
+  } finally { poseBody.invalidate(); }   // R6-20: и упавшая на середине запись могла лечь частью
   res.json({ ok: true, saved: keys, rev });
 }));
 app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
   if (!await devGuard(req, res)) return;
-  await deletePoseStore(req.params.key);
+  try { await deletePoseStore(req.params.key); } finally { poseBody.invalidate(); }
   res.json({ ok: true, deleted: req.params.key });
 }));
 
@@ -435,9 +435,9 @@ app.get('/api/assets/stats', (_req, res) => { res.json(assetStats()); });
 
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+// R4-11: доступ — ДО ТЕЛА (`devGate`, см. выше у `devGuard`).
 // Обработчик стал асинхронным вместе с `devGuard` (проверка роли ходит в базу) — отсюда `ah`.
-app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), ah<{ id: string }>(async (req, res) => {
-  if (!await devGuard(req, res)) return;
+app.post('/api/dev/assets/:id', devGate, express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), ah<{ id: string }>(async (req, res) => {
   const id = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, '');   // sanitize → без path-traversal
   if (!id) return res.status(400).json({ error: 'bad id' });
   let buf = req.body as Buffer;
@@ -472,91 +472,15 @@ app.get('/api/dev/characters', ah(async (req, res) => {
 }));
 app.get('/api/dev/characters/:charId', ah<{ charId: string }>(async (req, res) => {
   if (!await devGuard(req, res)) return;
+  if (!isCharId(req.params.charId)) return res.status(400).json({ error: 'Неверный id персонажа' });   // R4-02: до базы
   const ch = await getCharacter(req.params.charId);
   if (!ch) return res.status(404).json({ error: 'Персонаж не найден' });
   res.json({ save: ch.data });
 }));
 
-// ── Хелперы ────────────────────────────────────────────────────────────────────
-function bearer(req: Request): string | null {
-  const m = /^Bearer\s+(.+)$/i.exec(req.header('authorization') ?? '');
-  return m ? m[1]! : null;
-}
-/** userId по токену из заголовка; иначе шлёт 401 и возвращает null. */
-async function requireAuth(req: Request, res: Response): Promise<string | null> {
-  const token = bearer(req);
-  const userId = token ? await getSession(token) : null;
-  if (!userId) { res.status(401).json({ error: 'Требуется вход' }); return null; }
-  return userId;
-}
-function validCreds(body: unknown): { username: string; password: string } | null {
-  const b = body as { username?: unknown; password?: unknown };
-  const username = typeof b?.username === 'string' ? b.username.trim() : '';
-  const password = typeof b?.password === 'string' ? b.password : '';
-  if (username.length < 3 || username.length > 20) return null;
-  if (password.length < 6 || password.length > 200) return null;
-  return { username, password };
-}
-
-// ── Аутентификация ───────────────────────────────────────────────────────────
-app.post('/api/register', ah(async (req, res) => {
-  // Ф0.5: без лимита один скрипт кладёт сервер регистрациями — каждая это scrypt (~100 мс CPU
-  // и десятки мегабайт). Ключ — IP; заголовок прокси учитывается, если он есть.
-  const ip = clientIp(req.headers, req.socket.remoteAddress);
-  if (!limits.register.take(ip)) {
-    res.setHeader('Retry-After', String(limits.register.retryAfterSec(ip)));
-    return res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
-  }
-  const creds = validCreds(req.body);
-  if (!creds) return res.status(422).json({ error: 'Ник 3–20 символов, пароль от 6' });
-  // Ф3.5: суточный потолок аккаунтов с одного адреса. Лимит частоты выше защищает от шквала
-  // за минуту, но завести двадцать аккаунтов не спеша он не мешает — а ферму ботов разводят
-  // именно так. Честный игрок заводит аккаунт один раз и потолка не замечает.
-  if (ACCOUNT_CAP_ON && await countRecentRegistrations(ip) >= MAX_ACCOUNTS_PER_IP) {
-    console.warn(`[dm-server] потолок регистраций с адреса ${ip}`);
-    return res.status(429).json({ error: 'С этого адреса сегодня создано слишком много аккаунтов' });
-  }
-  if (await getUserByName(creds.username)) return res.status(409).json({ error: 'Ник уже занят' });
-  const { hash, salt } = hashPassword(creds.password);
-  const userId = await createUser(creds.username, hash, salt, ip);
-  res.json({ token: await createSession(userId), userId, username: creds.username });
-}));
-
-app.post('/api/login', ah(async (req, res) => {
-  // Ф0.5: тот же scrypt плюс защита от перебора пароля. Успешный вход обнуляет счётчик —
-  // человек, промахнувшийся пару раз, не должен потом ждать.
-  const ip = clientIp(req.headers, req.socket.remoteAddress);
-  if (!limits.login.take(ip)) {
-    res.setHeader('Retry-After', String(limits.login.retryAfterSec(ip)));
-    return res.status(429).json({ error: 'Слишком много попыток входа. Попробуйте позже' });
-  }
-  const creds = validCreds(req.body);
-  if (!creds) return res.status(422).json({ error: 'Неверные данные' });
-  const user = await getUserByName(creds.username);
-  if (!user || !verifyPassword(creds.password, user.passHash, user.passSalt)) {
-    return res.status(401).json({ error: 'Неверный логин или пароль' });
-  }
-  limits.login.reset(ip);
-  res.json({ token: await createSession(user.id), userId: user.id, username: user.username });
-}));
-
-/**
- * Ф3.4: выйти на ВСЕХ устройствах. Единственный способ обезвредить уведённый токен, не дожидаясь
- * его срока. Сюда же должна звать смена пароля, когда она появится: пароль сменили, а старые
- * сессии продолжают играть — это не защита.
- */
-app.post('/api/logout-all', ah(async (req, res) => {
-  const userId = await requireAuth(req, res); if (!userId) return;
-  const n = await deleteSessionsOfUser(userId);
-  console.log(`[dm-server] отозваны все сессии пользователя ${userId}: ${n}`);
-  res.json({ ok: true, revoked: n });
-}));
-
-app.post('/api/logout', ah(async (req, res) => {
-  const token = bearer(req);
-  if (token) await deleteSession(token);
-  res.json({ ok: true });
-}));
+// ── Аккаунты и ростер героев: `/api/register|login|logout|logout-all`, `/api/characters` — `net/accountRoutes.ts`
+// (R4-02: строки запроса проверяются правилом провода ДО базы). Регистрируются ЗДЕСЬ — до раздачи статики ниже.
+installAccountRoutes(app, { config });
 
 /**
  * КТО Я И ЧТО МНЕ МОЖНО. Нужен редакторам на ВХОДЕ: они спрашивают вход до того, как
@@ -571,39 +495,11 @@ app.get('/api/me', ah(async (req, res) => {
   if (!token) return res.status(401).json({ error: 'Требуется вход' });
   // Ключ процессов — не человек: имени у него нет, права админские.
   if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return res.json({ role: 'admin', via: 'key' });
-  const userId = await getSession(token);
+  const userId = isSessionToken(token) ? await getSession(token) : null;   // R4-02: кривой токен — без базы
   if (!userId) return res.status(401).json({ error: 'Требуется вход' });
   const user = await getUserById(userId);
   if (!user) return res.status(401).json({ error: 'Требуется вход' });
   res.json({ userId, username: user.username, role: user.role, via: 'session' });
-}));
-
-// ── Персонажи (принадлежат пользователю) ───────────────────────────────────────
-app.get('/api/characters', ah(async (req, res) => {
-  const userId = await requireAuth(req, res); if (!userId) return;
-  res.json({ characters: await listCharacters(userId) });
-}));
-
-app.post('/api/characters', ah(async (req, res) => {
-  const userId = await requireAuth(req, res); if (!userId) return;
-  const b = req.body as { classId?: unknown; name?: unknown };
-  const classId = typeof b?.classId === 'string' ? b.classId : '';
-  const name = (typeof b?.name === 'string' ? b.name : '').trim();
-  if (!name || name.length > 16) return res.status(422).json({ error: 'Имя 1–16 символов' });
-  if (!config.get('classes').some((c) => c.id === classId && c.enabled !== false)) return res.status(422).json({ error: 'Неизвестный или отключённый класс' });
-  if (await countCharacters(userId) >= MAX_CHARS) return res.status(409).json({ error: `Лимит ${MAX_CHARS} персонажей` });
-  const charId = randomUUID();
-  const save = newCharacterSave(config, classId, name, charId); // авторитетный стартовый сейв
-  await createCharacter(charId, userId, save);
-  res.json({ character: { charId, name: save.name, classId: save.classId, level: save.level } });
-}));
-
-app.delete('/api/characters/:charId', ah<{ charId: string }>(async (req, res) => {
-  const userId = await requireAuth(req, res); if (!userId) return;
-  const ch = await getCharacter(req.params.charId);
-  if (!ch || ch.userId !== userId) return res.status(404).json({ error: 'Персонаж не найден' });
-  await deleteCharacter(req.params.charId, userId);
-  res.json({ ok: true });
 }));
 
 // ── Статика клиента (прод: ОДИН сервер отдаёт игру + /api + /ws на одном домене) ──────────
@@ -646,6 +542,7 @@ const clusterLoop = monitorEventLoopDelay({ resolution: 5 });
 clusterLoop.enable();
 if (ROLE === 'supervisor') {
   const { runSupervisor } = await import('./cluster/supervisor.js');
+  installCrashDrain();   // R5-01: необработанное исключение — остановка детей их сливом, а не обрыв
   runSupervisor();
   // Супервизор не слушает портов и не ходит в базу — дальше по файлу ему делать нечего.
   await new Promise(() => { /* живёт, пока живы дети */ });
@@ -663,6 +560,9 @@ const PORT = Number(process.env.PORT ?? 3001);
  */
 // Хранилище готово, конфиг собран — только теперь можно принимать запросы (Ф2).
 await boot();
+// ⭐ R5-01: с этого момента процесс держит игроков — необработанное исключение начинает обычный слив (запись сейвов, снятие
+// ноды), а не обрывает процесс со всеми комнатами. До загрузки падение остаётся падением: дописывать ещё нечего.
+installCrashDrain();
 
 // Гейтвею игровой транспорт не нужен: он раздаёт адреса нод, а не возит кадры.
 const wantUws = ROLE !== 'gateway' && (process.env.DM_WS ?? 'uws') === 'uws';
@@ -679,24 +579,14 @@ if (ROLE === 'gateway' || ROLE === 'single') {
   const { installGatewayRoutes } = await import('./cluster/gateway.js');
   const { initClusterSchema } = await import('./cluster/registry.js');
   await initClusterSchema();
-  installGatewayRoutes(app);
+  // R6-20: состояние кластера читается по правилу `/metrics` — с самой машины или ключом чтения метрик.
+  installGatewayRoutes(app, { canRead: internalReader({ nodeId: process.env.DM_NODE_ID ?? 'node-0' }) });
 }
 
-/**
- * Ф4.5: СЛИВ УЗЛА ПО КОМАНДЕ — только с самой машины (как и метрики).
- *
- * Зачем ручка, если есть SIGTERM: во-первых, на Windows сигналов нет вовсе и проверить слив
- * иначе нельзя; во-вторых, в бою это штатный инструмент выкатки — «слить узел 3, дождаться
- * пустоты, перезапустить», и так по одному, без простоя для остальных.
- */
-app.post('/internal/drain', (req, res) => {
-  const ip = req.socket.remoteAddress ?? '';
-  if (!LOCAL_HOSTS.has(ip)) return res.status(403).end();
-  console.log(`[${process.env.DM_NODE_ID ?? 'node-0'}] слив по команде`);
-  res.json({ ok: true, node: process.env.DM_NODE_ID ?? 'node-0' });
-  // Ответ уходит ДО начала слива: вызывающий должен получить подтверждение, а не таймаут.
-  setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50);
-});
+// ⭐ R6-21: ошибки express (кривой JSON, тело больше потолка) — ответом JSON без стека в логе; ставится после всех ручек.
+app.use(httpErrors);
+
+// Ф4.5: слив узла по команде (`POST /internal/drain`) — в `installInternalRoutes` выше, рядом с метриками.
 
 // Ф4.3: нода объявляет себя кластеру и уходит с деплоя по-человечески (Ф4.5).
 if (ROLE === 'node' || ROLE === 'single') {
@@ -704,7 +594,8 @@ if (ROLE === 'node' || ROLE === 'single') {
   const { clusterHooks } = await import('./net/roomManager.js');
   const nodeId = process.env.DM_NODE_ID ?? 'node-0';
   const url = process.env.DM_NODE_URL ?? `ws://127.0.0.1:${PORT}/ws`;
-  await joinCluster(nodeId, url, () => clusterHooks.liveCharIds(), clusterLoop);
+  await joinCluster(nodeId, url, () => clusterHooks.liveCharIds(), clusterLoop,
+    (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone));
   installNodeShutdown(nodeId, () => clusterHooks.flushAll());
   console.log(`[${nodeId}] в кластере: ${url}`);
 }

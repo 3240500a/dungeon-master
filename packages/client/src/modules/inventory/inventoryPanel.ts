@@ -7,9 +7,10 @@ import { itemsOverlapping, type Dims } from './grid.js';
 import { itemTooltipHtml } from './itemView.js';
 import { rarityHex } from '../loot/rarity.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
-import { GLYPH, getHeld, beginHold, clearHeld, resolveHeldOnClose, setLastPointer } from './heldItem.js';
+import { GLYPH, getHeld, beginHold, clearHeld, dropCell, resolveHeldOnClose, setLastPointer } from './heldItem.js';
 import { renderGrid, showContextMenu } from './gridView.js';
 import { canSalvageItem } from '@dm/shared';
+import { salvageInField } from './disposeConfirm.js';
 
 /**
  * Инвентарь + пупсик экипировки. Раскладка (item.pos) АВТОРИТЕТНА НА СЕРВЕРЕ: клиент только
@@ -155,7 +156,10 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
   if (app.state!.area !== 'town') {
     const can = canSalvageItem(app.config, item, true);
     const pct = Math.round(app.config.get('balance').salvage.fieldYield * 100);
-    if (can.ok) actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => app.sendCmd({ cmd: 'salvage', uid: item.uid }) });
+    // Перед разбором — вопросы (`disposeConfirm`): скованное спрашивает дважды, найденное с деталью,
+    // которой нет в журнале кузнеца, — предупреждает, что поле её не откроет (§12.2). ⚠ Вопрос — В ИГРЕ, а не
+    // `window.confirm`: рядом монстры, и замороженная страница оставила бы героя под ударами (R1-14).
+    if (can.ok) actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); } });
   }
   showContextMenu(x, y, actions);
 }
@@ -175,11 +179,11 @@ function placeAt(app: App, dims: Dims, col: number, row: number): void {
   const held = getHeld();
   if (!held) return;
   const { item, grabOx, grabOy, from } = held;
-  const tx = col - grabOx;
-  const ty = row - grabOy;
+  const at = dropCell(item, grabOx, grabOy, col, row, dims);
   clearHeld();
-  if (tx < 0 || ty < 0 || tx + item.gridW > dims.cols || ty + item.gridH > dims.rows) { app.bus.emit('state:changed', {}); return; }
-  if (from === 'inv') app.sendCmd({ cmd: 'moveItem', uid: item.uid, x: tx, y: ty });
-  else app.sendCmd({ cmd: 'stashMove', uid: item.uid, dst: 'inv', x: tx, y: ty });
+  // Не ляжет целиком — не шлём (R2-35): рука пустеет, вещь остаётся на месте.
+  if (!at) { app.bus.emit('state:changed', {}); return; }
+  if (from === 'inv') app.sendCmd({ cmd: 'moveItem', uid: item.uid, x: at.x, y: at.y });
+  else app.sendCmd({ cmd: 'stashMove', uid: item.uid, dst: 'inv', x: at.x, y: at.y });
   app.bus.emit('state:changed', {});
 }

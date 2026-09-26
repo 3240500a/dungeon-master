@@ -21,9 +21,28 @@ reg.loadAll();
 const classId = str('class', reg.get('classes')[0]!.id);
 
 // Настоящий сим на GameSession (бот играет как игрок). `--scenario=run`.
+// Ковка (K7): `--craft=on|off` — открыта ли кузница (по умолчанию как в игре, `balance.craft.live`);
+// `--craft=both` — два прогона на ОДНОМ сиде и таблица «без ковки / с ковкой»; `--fulljournal` — журнал открыт.
 if (str('scenario', 'progression') === 'run') {
-  const t = Date.now();
-  const rep = runSessionSim(reg, {
+  const craftArg = str('craft', '');
+  const runOnce = (craft: boolean | undefined): { rep: RunReport; ms: number } => {
+    const t = Date.now();
+    const rep = runSession(craft);
+    return { rep, ms: Date.now() - t };
+  };
+  if (craftArg === 'both') {
+    const off = runOnce(false);
+    const on = runOnce(true);
+    printCraftCompare(off.rep, on.rep, off.ms + on.ms);
+    process.exit(0);
+  }
+  const { rep, ms } = runOnce(craftArg === 'on' ? true : craftArg === 'off' ? false : undefined);
+  printRunReport(rep, ms);
+  process.exit(0);
+}
+
+function runSession(craft: boolean | undefined): RunReport {
+  return runSessionSim(reg, {
     classId,
     difficultyId: str('diff', 'normal'),
     seed: num('seed', 12345),
@@ -40,9 +59,9 @@ if (str('scenario', 'progression') === 'run') {
       offenseBias: num('bias', DEFAULT_BUILD.offenseBias),
       useSkills: bool('skills', DEFAULT_BUILD.useSkills),
     },
+    craft,
+    fullJournal: bool('fulljournal', false),
   });
-  printRunReport(rep, Date.now() - t);
-  process.exit(0);
 }
 
 // Свип уровень×монстр → удары-до-смерти (CSV). `--scenario=sweep --lmin=5 --lmax=85 --lstep=10 --mon=zombie,...`.
@@ -95,6 +114,8 @@ function printRunReport(r: RunReport, ms: number): void {
   console.log(`Итог: ур.${b.level} (мощь ${b.power}) за ${r.totalHours} ч игрового времени · глубже всего ${r.deepestFloor} · этажей зачищено ${r.floorsCompleted}`);
   console.log(`Убито ${r.kills} · смертей ${r.deaths} · золото ${r.goldEarned} · предметов найдено ${r.itemsFound}`);
   console.log(`Темп: ${r.killsPerHour} убийств/ч · ${r.xpPerHour} XP/ч · ${r.lootPerHour} предм/ч`);
+  console.log(`Кузница/ч: скованно ${r.craftedPerHour} · переплавлено ${r.meltedPerHour} · разобрано ${r.salvagedPerHour} · зачаровано ${r.enchantedPerHour}`);
+  printCraft(r);
   console.log(`\n— Финальный билд —`);
   console.log(`  Атрибуты: ${JSON.stringify(b.attributes)}  (эфф. ${JSON.stringify(b.effectiveAttributes)})`);
   const d = b.derived;
@@ -107,6 +128,55 @@ function printRunReport(r: RunReport, ms: number): void {
   }
   console.log(`\n— Кривая (часы→уровень→этаж→мощь) —`);
   for (const c of r.levelCurve) console.log(`  ${(c.timeSec / 3600).toFixed(2).padStart(5)}ч  ур.${String(c.level).padStart(2)}  этаж ${String(c.floor).padStart(2)}  мощь ${c.power}`);
+  console.log('');
+}
+
+/** Ковка за прогон: сырьё (пришло/ушло/запас), золото, сила оружия по источникам, журнал (§22). */
+function printCraft(r: RunReport): void {
+  const c = r.craft;
+  const m = c.materials;
+  console.log(`\n— Кузница (${c.enabled ? 'ковка открыта' : 'ковка закрыта'}) —`);
+  console.log(`  Скованно ${c.crafted} · зачаровано ${c.enchanted} · переплавлено ${c.melted} · разобрано у кузнеца ${c.salvagedAtForge} / в поле ${c.salvagedInField} · открытий журнала ${c.unlocked}`);
+  console.log(`  Сырьё пришло ${m.in.total} (${m.inPerHour}/ч): монстры ${m.in.monsters} · поле ${m.in.field} · кузнец ${m.in.forge} · переплавка ${m.in.melt}`);
+  console.log(`  Сырьё ушло ${m.out.total} (${m.outPerHour}/ч): ковка ${m.out.craft} · починка и подъём тира ${m.out.forge} · потеряно ${m.lost}`);
+  console.log(`  Запас на конец ${m.end}: ${Object.entries(m.endByTier).sort().map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+  // R3-20: бот сырьё не продаёт, а лавка платит за него поштучно — кран золота, которого нет в «продажах».
+  console.log(`  Сырьё в ценах лавки (бот не продаёт): с тел ${m.sellWorth.monsters} · запас на конец ${m.sellWorth.end}`);
+  console.log(`  Золото: конец ${r.goldEnd} · ковка ${c.goldOnCraft} · зачарование ${c.goldOnEnchant} · магазин+кузня ${r.goldSpent} · пассивы ${r.goldOnPassives} · продажи ${r.goldSold} · с монстров ${r.goldEarned}`);
+  const p = c.power;
+  console.log(`  Сила оружия (ДПС) по источникам: нашёл +${p.found} · купил +${p.shop} · сковал +${p.craft} · подъём тира +${p.upgrade}  (в час: ${p.perHour.found} / ${p.perHour.shop} / ${p.perHour.craft} / ${p.perHour.upgrade})`);
+  console.log(`  В руке: ДПС ${p.weaponDps} (${p.weaponSource}) · журнал: баз ${c.journal.bases}, деталей ${c.journal.variants}, потолок t${c.journal.tierHi}, мификов ${c.journal.mythic}`);
+}
+
+/** «До/после ковки» на одном сиде — таблицей, чтобы разницу было видно глазами. */
+function printCraftCompare(off: RunReport, on: RunReport, ms: number): void {
+  console.log(`\n=== КОВКА: без / с · класс ${off.classId} · тир ${off.difficultyId} · сид ${off.seed} (${ms}ms) ===`);
+  const rows: [string, (r: RunReport) => string | number][] = [
+    ['часов', (r) => r.totalHours],
+    ['уровень', (r) => r.finalBuild.level],
+    ['убийств/ч', (r) => r.killsPerHour],
+    ['смертей', (r) => r.deaths],
+    ['скованно/ч', (r) => r.craftedPerHour],
+    ['переплавлено/ч', (r) => r.meltedPerHour],
+    ['разобрано/ч', (r) => r.salvagedPerHour],
+    ['зачаровано/ч', (r) => r.enchantedPerHour],
+    ['сырьё пришло/ч', (r) => r.craft.materials.inPerHour],
+    ['сырьё ушло/ч', (r) => r.craft.materials.outPerHour],
+    ['запас сырья', (r) => r.craft.materials.end],
+    ['сырьё с тел в золоте', (r) => r.craft.materials.sellWorth.monsters],
+    ['золото на конец', (r) => r.goldEnd],
+    ['золото: ковка', (r) => r.craft.goldOnCraft],
+    ['золото: зачарование', (r) => r.craft.goldOnEnchant],
+    ['золото: магазин+кузня', (r) => r.goldSpent],
+    ['золото: пассивы', (r) => r.goldOnPassives],
+    ['ДПС/ч: нашёл', (r) => r.craft.power.perHour.found],
+    ['ДПС/ч: купил', (r) => r.craft.power.perHour.shop],
+    ['ДПС/ч: сковал', (r) => r.craft.power.perHour.craft],
+    ['ДПС/ч: подъём тира', (r) => r.craft.power.perHour.upgrade],
+    ['ДПС в руке', (r) => `${r.craft.power.weaponDps} (${r.craft.power.weaponSource})`],
+  ];
+  for (const [name, f] of rows) console.log(`  ${name.padEnd(22)} ${String(f(off)).padStart(12)} ${String(f(on)).padStart(12)}`);
+  printCraft(on);
   console.log('');
 }
 

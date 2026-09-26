@@ -1,4 +1,4 @@
-import type { Item, RolledAffix, Rarity, BaseRoll, RolledStat } from '../types/items.js';
+import type { Item, ItemOrigin, RolledAffix, Rarity, BaseRoll, RolledStat } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { Rng } from './rng.js';
@@ -352,7 +352,7 @@ const nextUid = uuidv7;
  */
 function buildItem(
   base: ItemsBase[number],
-  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape },
+  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape; origin?: ItemOrigin },
 ): Item {
   const item: Item = {
     uid: nextUid(),
@@ -372,6 +372,8 @@ function buildItem(
   };
   if (o.baseRoll) item.baseRoll = o.baseRoll;
   if (o.shape?.spread !== undefined && o.shape.spread !== 1) item.spreadMult = o.shape.spread;
+  // Откуда вещь — пишет тот, кто её родил (§12.4): счётчик мификов журнала верит только этому полю.
+  if (o.origin) item.origin = o.origin;
   return item;
 }
 
@@ -495,7 +497,7 @@ export function bakedExtras(baseStats: StatModifier[], itemStats: StatModifier[]
  * у дропа — никаких исключений), имя согласуется по роду. Без аффиксов. `tiers` не
  * передан → базовый тир (×1.0, без префикса).
  */
-export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers): Item {
+export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers, origin?: ItemOrigin): Item {
   const ilvl = baseItemLevel(base, tiers);
   // Расходники не тирятся (нет префикса «Убогое зелье» и масштаба урона/брони).
   const tier = base.kind === 'consumable' ? undefined : pickTierClamped(tiers, ilvl, base.minTier, base.maxTier);
@@ -507,13 +509,14 @@ export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers): Item {
     reqMult: tier?.reqMult ?? 1,
     tierId: tier?.id,
     affixes: [],
+    origin,
   });
 }
 
-/** Ищет базу по id и создаёт normal-предмет (тир по уровню); null — база не найдена. */
-export function itemFromBaseId(itemsBase: ItemsBase, baseId: string, tiers?: ItemTiers): Item | null {
+/** Ищет базу по id и создаёт normal-предмет (тир по уровню); null — база не найдена. `origin` — кто родил (§12.4). */
+export function itemFromBaseId(itemsBase: ItemsBase, baseId: string, tiers?: ItemTiers, origin?: ItemOrigin): Item | null {
   const base = itemsBase.find((b) => b.id === baseId);
-  return base ? itemFromBase(base, tiers) : null;
+  return base ? itemFromBase(base, tiers, origin) : null;
 }
 
 /** Катит редкость с учётом смещения темы (dropBias повышает шанс редких). Пороги —
@@ -605,6 +608,16 @@ function weightedPickAffix(pool: Affix[], t: AffixTarget, rng: Rng): Affix | und
 }
 
 /**
+ * ПУЛ, из которого катает `rollAffixes`: включённые, прошедшие гейт magic/rare, подходящие предмету и
+ * доступные на его ilvl. Вынесен ради ОДНОГО ответа: проверка «пул наберёт оплаченную форму» перед
+ * зачарованием (`craft.ts`) обязана видеть ровно тот пул, из которого потом катится бросок.
+ */
+export function affixPool(affixes: Affixes, target: AffixTarget, rarity: Rarity, itemLevel: number): Affix[] {
+  const rareGate = (a: Affix): boolean => (rarity === 'magic' ? a.onMagic : rarity === 'rare' ? a.onRare : true);
+  return affixes.filter((a) => a.enabled !== false && rareGate(a) && affixFits(a, target) && affixEligible(a, itemLevel));
+}
+
+/**
  * Катит аффиксы по правилам D2: пул фильтруется по ТИПУ предмета (appliesTo/exclude), ilvl и гейту
  * magic/rare; общее число = rng(minAffixes,maxAffixes) распределяется по префиксам/суффиксам в
  * пределах maxPrefix/maxSuffix; выбор взвешенный по weight; из одной группы — не больше одного.
@@ -617,8 +630,7 @@ export function rollAffixes(
   itemLevel: number,
   rng: Rng,
 ): RolledAffix[] {
-  const rareGate = (a: Affix): boolean => (rarity === 'magic' ? a.onMagic : rarity === 'rare' ? a.onRare : true);
-  const usable = affixes.filter((a) => a.enabled !== false && rareGate(a) && affixFits(a, target) && affixEligible(a, itemLevel));
+  const usable = affixPool(affixes, target, rarity, itemLevel);
   let prefixes = usable.filter((a) => a.kind === 'prefix');
   let suffixes = usable.filter((a) => a.kind === 'suffix');
   const total = Math.max(0, rng.int(slots.minAffixes, slots.maxAffixes));
@@ -644,12 +656,13 @@ export function rollAffixes(
  * Генерирует предмет из базы (или уникум) с учётом редкости, iLvl и ТИРА. По ilvl
  * дропа берётся высший доступный тир (`opts.tiers`): урон/броня базы масштабируются
  * `statMult`, требования — `reqMult`, имя получает префикс тира. Аффиксы — по ilvl.
+ * `origin` — кто родил вещь (дроп, сундук, лавка…): его пишет ВЫЗЫВАЮЩИЙ, сам генератор этого не знает.
  */
 export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread },
+  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -681,6 +694,7 @@ export function generateItem(
         // Бросок базы — ПОСЛЕДНИМ из rng: остальной поток (редкость, аффиксы, имя) не сдвигается.
         baseRoll: rollBaseQ(base, rng),
         spread: opts.baseRoll,
+        origin: opts.origin,
       });
     }
   }
@@ -727,6 +741,7 @@ export function generateItem(
     // Колбы не катаются.
     baseRoll: isConsumable ? undefined : rollBaseQ(base, rng),
     spread: opts.baseRoll,
+    origin: opts.origin,
   });
 }
 
@@ -734,25 +749,31 @@ export function generateItem(
  * ⭐ ВХОД КОВКИ В ЕДИНЫЙ КОНВЕЙЕР (docs/CRAFT_WEAPONS.md §19). Скованная вещь собирается ТОЙ ЖЕ
  * `buildItem`, что и дроп, — второго конвейера нет, и «скованный Мастерский» по каркасу равен
  * «Мастерскому» с пола. Выходит всегда ОБЫЧНОЙ: аффиксы — отдельным глаголом «зачаровать».
+ * Происхождение — `craft`: скованное счётчику мификов не идёт никогда.
+ *
+ * `reqDiscount` — кузнечная скидка на требования, ТА ЖЕ, что у подъёма тира (`retierItem`): множитель
+ * требований тира × (1 − скидка), и уже потом кап и округление — одной `scaleReqs`. Скованная и поднятая у
+ * кузнеца вещь одной базы и ступени требуют ровно одинаково (решение владельца: кузнечная вещь легче).
  */
 export function buildCraftShell(
   base: ItemsBase[number],
   tier: ItemTiers[number],
   maxReqTotal?: number,
-  roll?: { baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape },
+  roll?: { baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape; reqDiscount?: number },
 ): Item {
   return buildItem(base, {
     rarity: 'normal',
     name: tieredName(tier.name, base.name, base.gender),
     itemLevel: tier.minItemLevel,
     statMult: tier.statMult,
-    reqMult: tier.reqMult,
+    reqMult: tier.reqMult * (1 - (roll?.reqDiscount ?? 0)),
     tierId: tier.id,
     affixes: [],
     maxReqTotal,
     baseRoll: roll?.baseRoll,
     spread: roll?.spread,
     shape: roll?.shape,
+    origin: 'craft',
   });
 }
 

@@ -477,18 +477,18 @@ describe('ёмкость аффиксов: потолок выведен из д
       expect(res.ok, res.reason).toBe(true);
       const cap = res.item!.affixCap!;
       for (let i = 0; i < 40; i++) {
-        const e = enchantItem(reg, res.item!, 'rare', createRng(100 + i));
+        const e = enchantItem(reg, res.item!, 'rare', createRng(100 + i))!;
         const kinds = new Map(e.affixes.map((a) => [a.affixId, a.kind]));
         const p = [...kinds.values()].filter((k) => k === 'prefix').length;
         expect({ p, s: kinds.size - p }).toEqual({ p: cap.prefix, s: cap.suffix });
       }
     }
     const caro = craftWeapon(reg, buildFor('long-sword', uniform(2), { strike: 'sw-a-x', grip: 'sw-gr-one', bind: 'sw-gd-short', head: 'sw-pm-lobed' })).item!;
-    expect(enchantItem(reg, caro, 'magic', createRng(7)).name.toLowerCase()).toContain('ранний меч');
+    expect(enchantItem(reg, caro, 'magic', createRng(7))!.name.toLowerCase()).toContain('ранний меч');
   });
   it('⚠ перекатка у кузнеца не сносит купленную форму', () => {
     const res = craftWeapon(reg, buildFor('long-sword', { strike: 4, grip: 4, bind: 4, head: 3 }));
-    const item = enchantItem(reg, res.item!, 'rare', createRng(3));
+    const item = enchantItem(reg, res.item!, 'rare', createRng(3))!;
     const save = { gold: 1e9, inventory: [item] } as unknown as SaveState;
     for (let i = 0; i < 3; i++) {
       expect(forgeReroll(reg, save, item.uid, createRng(50 + i)).ok).toBe(true);
@@ -525,7 +525,7 @@ describe('ковка: каркас — существующая база (пра
         expect(same.foundParts, b.id).toEqual(res.item!.parts);
         expect(same.spreadMult, b.id).toBe(res.item!.spreadMult);
         expect(same.damageMult, b.id).toBe(res.item!.damageMult);
-      } else expect(same, b.id).toBe(probe);
+      } else expect(same, b.id).toEqual(probe);   // без геометрии форма ничего не меняет (D17: детали уже записаны)
       const flat = (it: typeof found, stat: string) => it.baseStats.find((m) => m.stat === stat && m.kind === 'flat')?.value;
       // ⭐ Найденная и скованная катаются в ОДНОЙ вилке: края вилки ковки = найденная вещь на долях 0 и 1
       // (пересборка тира дропа — та же, что у кузницы), середина = прежнее число без броска.
@@ -544,8 +544,76 @@ describe('ковка: каркас — существующая база (пра
       // Статы целиком (урон, блок базы, вклад клинка и оголовья) — те же, что у найденной на середине вилки.
       // Найденная вещь без геометрии клинка вклада деталей пока не несёт (перейдёт с моделями своих частей).
       if (geom) expect(res.item!.baseStats, b.id).toEqual(at(0.5).baseStats);
-      expect(res.item!.requirements, b.id).toEqual(found.requirements);
+      // Требования — НЕ как у найденной: у скованной кузнечная скидка, та же, что у подъёма тира (F2, ниже).
+      const bal = reg.get('balance');
+      expect(res.item!.requirements, b.id).toEqual(
+        retierItem(b, found, tier, { reqDiscount: bal.forgePrices.upgradeReqDiscount, maxReqTotal: bal.maxTotalRequirement, spread }).requirements);
     }
+  });
+
+  it('⭐ кузнечная вещь легче в требованиях: скованная = найденная × (1 − скидка), округление как у подъёма тира', () => {
+    // Решение владельца: скидка `forgePrices.upgradeReqDiscount` — у ЛЮБОЙ кузнечной вещи, не только у поднятой.
+    // Без неё скованная ступень надевалась позже поднятой находки той же ступени, и ковка проигрывала всегда
+    // (замер К7, docs/CRAFT_WEAPONS.md §22).
+    const bal = reg.get('balance');
+    const d = bal.forgePrices.upgradeReqDiscount;
+    expect(d).toBeGreaterThan(0);
+    const cap = bal.maxTotalRequirement;
+    const sum = (r: Record<string, number | undefined>): number => Object.values(r).reduce<number>((s, v) => s + (v ?? 0), 0);
+    let checked = 0, viaUpgrade = 0, lighter = 0;
+    for (const b of weapons) {
+      const r = baseTierRange(reg, b);
+      for (let t = r.lo; t <= r.hi; t++) {
+        const steps = stepsForTierOf(b.id, t);
+        if (!steps) continue;
+        const res = craftWeapon(reg, buildFor(b.id, steps));
+        expect(res.ok, `${b.id} t${t}: ${res.reason}`).toBe(true);
+        const tier = craftTiers(reg)[t]!;
+        const found = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+          dropBias: 1, itemLevel: tier.minItemLevel, tierLevel: tier.minItemLevel, baseId: b.id,
+          tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal', maxReqTotal: cap,
+        }, createRng(t + 1));
+        const tag = `${b.id} t${t}`;
+        const got = res.item!.requirements;
+        // 1) ровно формула подъёма тира: множитель тира × (1 − скидка), затем кап и округление.
+        expect(got, tag).toEqual(retierItem(b, found, tier, { reqDiscount: d, maxReqTotal: cap }).requirements);
+        // 2) и ровно то, что даёт НАСТОЯЩИЙ подъём у кузнеца с соседней ступени (`upgradedItem`).
+        if (t > r.lo) {
+          const prev = craftTiers(reg)[t - 1]!;
+          const lower = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+            dropBias: 1, itemLevel: prev.minItemLevel, tierLevel: prev.minItemLevel, baseId: b.id,
+            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal', maxReqTotal: cap,
+          }, createRng(t + 7));
+          const up = upgradedItem(reg, lower);
+          expect(up?.tier, tag).toBe(tier.id);
+          expect(got, `${tag}: как поднятая кузнецом`).toEqual(up!.requirements);
+          viaUpgrade++;
+        }
+        // 3) без капа — каждое требование = найденное × (1 − скидка) с точностью до округления (±1).
+        if (sum(found.requirements) < cap) {
+          for (const [k, v] of Object.entries(found.requirements)) {
+            const c = (got as Record<string, number>)[k] ?? 0;
+            expect(Math.abs(c - v! * (1 - d)), `${tag} ${k}: ${c} против ${v}×${1 - d}`).toBeLessThanOrEqual(1);
+          }
+        }
+        expect(sum(got), tag).toBeLessThanOrEqual(sum(found.requirements));
+        if (sum(got) < sum(found.requirements)) lighter++;
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+    expect(viaUpgrade).toBeGreaterThan(50);
+    expect(lighter, 'скидка работает, а не съедается капом везде').toBeGreaterThan(checked / 2);
+  });
+
+  it('скидку показывает предпросмотр и несёт вещь после зачарования (окно = сервер)', () => {
+    const input = buildFor('long-sword', uniform(3));
+    const preview = craftWeapon(reg, input).item!;
+    const forged = craftWeapon(reg, input, { rng: createRng(4) }).item!;
+    expect(forged.requirements).toEqual(preview.requirements);
+    for (const at of ['lo', 'hi'] as const) expect(craftWeapon(reg, input, { at }).item!.requirements).toEqual(preview.requirements);
+    const enchanted = enchantItem(reg, forged, 'rare', createRng(9))!;
+    expect(enchanted.requirements).toEqual(forged.requirements);
   });
   it('⚠ ковка не портит базу в конфиге: сто ковок на t0 (множитель ×1) — статы базы те же', () => {
     const before = JSON.stringify(baseOf('long-sword').baseStats);
@@ -793,7 +861,7 @@ describe('цена: каждая деталь своим материалом, �
 describe('журнал кузнеца: разобрал — открыл (§12)', () => {
   const drop = (baseId: string, level: number, seed: number) => generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
     dropBias: 1, itemLevel: level, tierLevel: level, baseId, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'),
-    forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement,
+    forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement, origin: 'drop',   // находка: журнал учит деталям только её
   }, createRng(seed));
   it('детали найденной вещи выводятся из неё самой — одна вещь всегда даёт одно и то же', () => {
     const it1 = drop('war-axe', 30, 5);
@@ -856,5 +924,53 @@ describe('журнал кузнеца: разобрал — открыл (§12)'
     const anat = anatomyOf(reg, 'sword')!;
     expect(tagValue(anat, 'strike', partById(reg, 'sw-a-x')!, 'edge')).toBe('double');
     expect(tagValue(anat, 'strike', partById(reg, 'sw-a-falchion')!, 'edge')).toBe('single');
+  });
+});
+
+describe('⚠ R2-30: ступени деталей найденного — ровные вероятнее перекошенных НА ДЕЛЕ, а не на бумаге', () => {
+  /**
+   * Вес четвёрки `1/(1+Σ|s−q|)` предпочитал ровную ПО ОДНОЙ, но перекошенных четвёрок на ступень сотни — вместе
+   * они перевешивали: у t2 ровная выпадала в 3 % случаев, ступень 5 была у 26 % находок, у t3 — у 48 %. Булат и
+   * золочёный прибор (108 золота штука, верх лестницы §13) сыпались с обычных находок 18–30-го уровня. Меряем
+   * НАСТОЯЩИМ путём дропа (`generateItem` → `shapeFoundWeapon`, детали замораживаются при рождении).
+   */
+  const k = reg.get('balance').craft.salvage;
+  const UNITS: Record<CraftSlot, number> = { strike: k.units.strike, grip: k.units.grip, bind: k.units.bind, head: k.units.head };
+  function measure(t: number, n: number): { seen: number; any5: number; tight: number; units5: number } {
+    const tier = craftTiers(reg)[t]!;
+    const rng = createRng(4200 + t);
+    let seen = 0, any5 = 0, tight = 0, units5 = 0;
+    for (let i = 0; i < n; i++) {
+      const b = rng.pick(weapons);
+      const it1 = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+        dropBias: 1, itemLevel: tier.minItemLevel, tierLevel: tier.minItemLevel, baseId: b.id, tiers: reg.get('item-tiers'),
+        rarities: reg.get('rarities'), forceRarity: 'normal', baseRoll: reg.get('balance').loot.baseRoll, origin: 'drop',
+      }, rng));
+      if (it1.tier !== tier.id || !it1.foundParts) continue;
+      seen++;
+      const steps = CRAFT_SLOT_LIST.map((s) => it1.foundParts![s].step);
+      if (Math.max(...steps) === 5) any5++;
+      if (Math.max(...steps) - Math.min(...steps) <= 1) tight++;
+      for (const s of CRAFT_SLOT_LIST) if (it1.foundParts[s].step === 5) units5 += UNITS[s];
+    }
+    return { seen, any5: any5 / seen, tight: tight / seen, units5: units5 / seen };
+  }
+  it('⭐ у t0–t3 ступень 5 — редкость (≤ 5 %), и на каждой ступени ≥ 70 % находок собраны в пределах одной ступени материала', () => {
+    const bad: string[] = [];
+    for (let t = 0; t < craftTiers(reg).length; t++) {
+      const m = measure(t, 700);
+      expect(m.seen, craftTiers(reg)[t]!.id).toBeGreaterThan(300);
+      if (t <= 3 && m.any5 > 0.05) bad.push(`${craftTiers(reg)[t]!.id}: ступень 5 у ${(m.any5 * 100).toFixed(1)} % находок`);
+      if (m.tight < 0.7) bad.push(`${craftTiers(reg)[t]!.id}: ровных (разброс ≤ 1) лишь ${(m.tight * 100).toFixed(0)} %`);
+    }
+    expect(bad, bad.join('\n')).toEqual([]);
+  });
+  it('единиц ступени 5 за разбор обычной находки — таблица §10.9: до t3 почти ноль, t4 ≤ 0.5, t5 ≤ 1.2, у мифика — почти всё', () => {
+    const cap = [0.05, 0.05, 0.05, 0.1, 0.5, 1.2, 7];
+    for (let t = 0; t < craftTiers(reg).length; t++) {
+      const m = measure(t, 700);
+      expect(m.units5, craftTiers(reg)[t]!.id).toBeLessThanOrEqual(cap[t]!);
+    }
+    expect(measure(craftTiers(reg).length - 1, 300).units5, 'мифик сделан из булата').toBeGreaterThan(6);
   });
 });

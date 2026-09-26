@@ -18,17 +18,33 @@ const BEAT_MS = 2_000;
 
 let draining = false;
 let beat: ReturnType<typeof setInterval> | undefined;
+/** Удар сердца вне расписания — объявить слив сразу (R3-12). Есть, пока нода в кластере. */
+let beatNow: (() => Promise<void>) | undefined;
+/** R4-28: нода снимается из реестра — новых ударов сердца нет, идущие дожидаются (`installNodeShutdown`). */
+let stopped = false;
+/** R4-28: удары сердца, ещё идущие в базу. */
+const sending = new Set<Promise<void>>();
+/** Слив ноды установлен (R3-12): выход процесса — только через него. */
+let nodeShutdown = false;
 
 /** Идёт ли слив: гейтвей это видит и перестаёт присылать новых игроков. */
 export function isDraining(): boolean { return draining; }
+/**
+ * ⭐ R3-12: процессом выходит слив ноды — общий обработчик транспорта (`installShutdown`) уступает ему. Раньше на
+ * SIGTERM срабатывали оба, и общий выходил первым — до снятия ноды из реестра и раньше, чем дожидался слив.
+ */
+export function nodeShutdownInstalled(): boolean { return nodeShutdown; }
 
 /**
  * Подключить процесс к кластеру. `charIds` — те, кого нода держит прямо сейчас: их
  * закрепление продлевается, чтобы игрок при обрыве вернулся именно сюда, к своей комнате.
+ * `onLost` (R2-05) — те из них, чьё закрепление уже у ЧУЖОЙ ноды: их копии здесь проиграли.
  */
 export async function joinCluster(
   nodeId: string, url: string, charIds: () => string[],
   loop: ReturnType<typeof monitorEventLoopDelay>,
+  onLost?: (charIds: string[]) => void,
+  onGone?: (charIds: string[]) => void,
 ): Promise<void> {
   await initClusterSchema();
 
@@ -36,7 +52,8 @@ export async function joinCluster(
   let lastRoomSeconds = counters.roomSeconds;
   let lastAt = Date.now();
 
-  const send = async (): Promise<void> => {
+  const beatOnce = async (): Promise<void> => {
+    if (stopped) return;   // R4-28: нода уже снимается из реестра — её строку и закрепления не возвращаем
     const g = readGauges();
     const cpu = process.cpuUsage();
     const now = Date.now();
@@ -58,10 +75,28 @@ export async function joinCluster(
       draining,
     });
     loop.reset();
-    await touchClaims(charIds());
+    const held = charIds();
+    const kept = await touchClaims(held, nodeId);
+    // ⭐ R2-05: закрепление героя у другой ноды, а сессия здесь — проигравшая копия (нода подвисла, и её
+    // закрепление забрали). Снимаем её, а не играем дальше: иначе две живые копии одного героя.
+    const lost = held.filter((id) => !kept.has(id));
+    if (lost.length) onLost?.(lost);
+    // ⭐ R4-28: пока продление шло в базу, герой мог уйти, и снятие его закрепления прошло раньше продления — тогда продление
+    // вернуло закрепление без сессии, и вход по коду на другой ноде получал отказ до 30 с. Тех, кого нода уже не держит, —
+    // снять снова (в очереди героя: вернувшегося за это время не снимет).
+    const still = new Set(charIds());
+    const gone = held.filter((id) => kept.has(id) && !still.has(id));
+    if (gone.length) onGone?.(gone);
+  };
+  const send = (): Promise<void> => {
+    const run = beatOnce();
+    sending.add(run);
+    void run.finally(() => sending.delete(run)).catch(() => undefined);
+    return run;
   };
 
   await send();
+  beatNow = send;
   beat = setInterval(() => { void send().catch(() => undefined); }, BEAT_MS);
   beat.unref();
 }
@@ -69,11 +104,19 @@ export async function joinCluster(
 /**
  * Слив ноды (Ф4.5): перестать принимать новых, дать сохраниться, уйти.
  * `flush` — запись прогресса всех комнат; ждать её обязательно (Ф2: запись асинхронная).
+ *
+ * R3-12: это ЕДИНСТВЕННЫЙ выход процесса ноды — общий обработчик транспорта ему уступает (`nodeShutdownInstalled`).
+ * Порядок: слив объявлен сразу (удар сердца вне расписания — гейтвей перестаёт слать новых, не дожидаясь очередного
+ * через две секунды; входы сюда отвечают «перезапускаемся»), сейвы дописаны, нода и её закрепления сняты из
+ * реестра, выход. Всё — под одним предохранителем.
  */
 export function installNodeShutdown(nodeId: string, flush: () => Promise<unknown>): void {
+  nodeShutdown = true;
   let leaving = false;
   const shutdown = (): void => {
-    if (leaving) return;
+    // ⭐ R5-08: повторный сигнал (systemd шлёт SIGTERM всей группе, супервизор — свой, npm и tsx пересылают свой) — только в
+    // лог: слив уже идёт и выйдет сам.
+    if (leaving) { console.log(`[${nodeId}] повторный сигнал остановки — слив уже идёт`); return; }
     leaving = true;
     draining = true;
     console.log(`[${nodeId}] слив: новых игроков не принимаю, дописываю сейвы…`);
@@ -82,7 +125,16 @@ export function installNodeShutdown(nodeId: string, flush: () => Promise<unknown
     const guard = setTimeout(done, 8000);
     void (async () => {
       try {
+        // Объявление слива — рядом с записью, а не перед ней: молчащая база не должна съедать время сейвов.
+        const announce = (beatNow?.() ?? Promise.resolve()).catch((e: unknown) => console.warn(`[${nodeId}] объявить слив не удалось:`, e));
         await flush();
+        await announce;
+        // ⭐ R4-28: удары сердца — ДО снятия ноды: новых нет, идущие дописаны. Раньше удар по расписанию, ушедший в базу до
+        // снятия, ложился после него — строка ноды и закрепления всех её игроков возвращались, и гейтвей ещё десять секунд
+        // слал их на мёртвую ноду (а другие ноды им отказывали «герой на другом узле»).
+        stopped = true;
+        if (beat) clearInterval(beat);
+        await Promise.allSettled([...sending]);
         await releaseNode(nodeId);
       } catch (e) {
         console.error(`[${nodeId}] при сливе:`, e);
@@ -93,6 +145,8 @@ export function installNodeShutdown(nodeId: string, flush: () => Promise<unknown
       }
     })();
   };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
+  // ⭐ R5-08: `on`, а не `once`. `once` снимал обработчик первым же сигналом, и ВТОРОЙ SIGTERM (а при деплое по DEPLOY.md их
+  // приходит несколько) убивал процесс действием по умолчанию посреди записи сейвов: без дописанных копий и `releaseNode`.
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }

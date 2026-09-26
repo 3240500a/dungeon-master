@@ -1,4 +1,4 @@
-import type { Item } from '../types/items.js';
+import type { CraftParts, Item } from '../types/items.js';
 import type { QuestDef } from '../types/quest.js';
 import type { DamageType } from '../types/combat.js';
 import type { DropPayload, ScaledMonster } from '../types/world.js';
@@ -7,6 +7,7 @@ import type { DebuffState } from '../world/debuffs.js';
 import type { Grid } from '../world/grid.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { RunPlan } from '../dungeon/run/types.js';
+import type { CraftInput, CraftJournal } from '../formulas/craft.js';
 import type { PlayerInput, SessionEvent } from './session.js';
 import type { WorldDelta } from './delta.js';
 
@@ -73,6 +74,22 @@ export interface PeerInfo {
   weaponKey?: string;
   /** Внешность брони по слотам (C7): slot→modelId. Пусто — базы слотов. */
   armorModels?: Record<string, string>;
+  /**
+   * ИЗ ЧЕГО СДЕЛАНО ОРУЖИЕ В РУКАХ (D22, К6): база и четыре детали по рукам — ровно то, из чего клиент
+   * собирает модель (`craftMesh`), и НИЧЕГО больше из предмета (ни статов, ни аффиксов, ни uid). Нет руки —
+   * клиент рисует процедурный меш по `weaponKey`, как раньше. Собирает `weaponLookOf` (`session/weapon3d.ts`).
+   */
+  weaponLook?: WeaponLook;
+}
+
+/** Одна рука (D22): база и детали. Руки те же, что у `weaponKey`: `main` — главная, `off` — второе оружие. */
+export interface WeaponLookHand {
+  baseId: string;
+  parts: CraftParts;
+}
+export interface WeaponLook {
+  main?: WeaponLookHand;
+  off?: WeaponLookHand;
 }
 
 /** Игрок глазами клиента: динамика из снапшота, слитая со статикой из реестра пиров. */
@@ -147,26 +164,44 @@ export interface WorldSnapshot {
 }
 
 // ── Команды города (авторитетно исполняет сервер) ───────────────────────────
+// ⭐ R5-15: `maxGold` у платных команд — цена в золоте, которую показала игроку карточка. Сервер берёт по СВОЕМУ конфигу
+// и при цене выше показанной отказывает до траты («Цена изменилась: N золота», `priceRaised`). Нет поля — как раньше.
+// R6-16: и у покупки в лавке, и у узла мастерства; у продажи — `minGold`: лавка даёт меньше показанного — отказ.
 export type TownCommand =
-  | { cmd: 'buy'; uid: string }
-  | { cmd: 'sell'; uid: string }
-  | { cmd: 'forgeUpgrade'; uid: string }
-  | { cmd: 'forgeReroll'; uid: string }
+  | { cmd: 'buy'; uid: string; maxGold?: number }
+  | { cmd: 'sell'; uid: string; minGold?: number }
+  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number }
+  | { cmd: 'forgeReroll'; uid: string; maxGold?: number }
   /** Починка сломанного трофея: снимает флаг за золото и материалы. */
-  | { cmd: 'forgeRepair'; uid: string }
+  | { cmd: 'forgeRepair'; uid: string; maxGold?: number }
   /** Сдать всё сырьё из сумки в общий сундук аккаунта. */
   | { cmd: 'depositMaterials' }
-  /** Разбор у кузнеца: полный выход материалов. */
+  /** Разбор у кузнеца: полный выход материалов; найденное оружие открывает журнал кузнеца (§12). */
   | { cmd: 'forgeSalvage'; uid: string }
+  /**
+   * ⭐ Сковать оружие из деталей (docs/CRAFT_WEAPONS.md). `nonce` — ключ идемпотентности заявки (D4):
+   * придумывает клиент, сервер помнит его на АККАУНТЕ вместе с вещью. Повтор того же ключа — даже
+   * после реконнекта или на другой ноде — отвечает прежней вещью, а не кует вторую. Заявка — только
+   * `{id, step}` четырёх гнёзд, хват и доводка: базу, имя, ступень и цену сервер выводит сам.
+   */
+  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number }
+  /** Зачаровать СКОВАННУЮ обычную вещь из сумки до магической или редкой — за золото (§13). */
+  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number }
+  /**
+   * Потратить эскиз (жалость разбора, §12): открыть в журнале аккаунта выбранную деталь `variantId`. Ключевую форму
+   * НЕОТКРЫТОГО типа эскиз не открывает (`sketchable`). R3-11: раньше эскизы копились, а потратить их было нечем.
+   */
+  | { cmd: 'forgeSketch'; variantId: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
   | { cmd: 'salvage'; uid: string }
   | { cmd: 'equip'; uid: string }
   | { cmd: 'unequip'; slot: string }
-  | { cmd: 'allocAttr'; attr: string }
-  | { cmd: 'respec' }
-  | { cmd: 'respecPassives' }
-  | { cmd: 'respecSkills' }
-  | { cmd: 'allocPassive'; nodeId: string }
+  /** Вложить `n` очков в атрибут (нет — одно). Пачка очков — одна команда, а не `n` кадров (R2-15). */
+  | { cmd: 'allocAttr'; attr: string; n?: number }
+  | { cmd: 'respec'; maxGold?: number }
+  | { cmd: 'respecPassives'; maxGold?: number }
+  | { cmd: 'respecSkills'; maxGold?: number }
+  | { cmd: 'allocPassive'; nodeId: string; maxGold?: number }
   | { cmd: 'allocSkill'; nodeId: string }
   // Гнёзда модульных скилов: вставить/вынуть. Слот — индекс гнезда, открытость считает сервер по рангу.
   | { cmd: 'socketInsert'; nodeId: string; slot: number; insertId: string }
@@ -181,7 +216,8 @@ export type TownCommand =
   | { cmd: 'bind'; slot: number; value: string | null }
   | { cmd: 'pickup'; dropId: number }
   | { cmd: 'drop'; uid: string }
-  | { cmd: 'acceptQuest'; questId: string }
+  /** `replace` (R6-13): игрок согласился, что начатое задание того же вида доски пропадёт. Без него начатое держит место. */
+  | { cmd: 'acceptQuest'; questId: string; replace?: true }
   | { cmd: 'turnInQuest'; questId: string };
 
 // ── Кадры клиент → сервер ───────────────────────────────────────────────────
@@ -228,10 +264,21 @@ export type ServerFrame =
   | { t: 'snapDelta'; delta: WorldDelta; sum: number }
   | { t: 'events'; events: SessionEvent[] }
   | { t: 'saveUpdate'; save: SaveState }
-  | { t: 'shop'; items: Item[] }
-  // Полный слепок общего сундука (шлётся на stashOpen и после каждого stashMove).
-  /** `materials` — сырьё АККАУНТА (общее для всех героев), не вкладка: это счётчики, не предметы. */
-  | { t: 'stash'; tabs: Item[][]; cols: number; rows: number; tabCount: number; materials: Record<string, number> }
+  /**
+   * Прилавок. `prices` — АВТОРИТЕТНАЯ цена покупки каждой вещи (uid → `shopBuyPrice`, ровно то, что спишет `buy`):
+   * веб считает её той же функцией `@dm/shared`, а Unity-клиенту своей копии формулы (надбавка ступени, пол по
+   * сырью разбора) не держать — она уже разъехалась с сервером однажды (R2-36).
+   */
+  | { t: 'shop'; items: Item[]; prices: Record<string, number> }
+  // Полный слепок общего сундука (шлётся на входе, на stashOpen и после каждой транзакции над аккаунтом).
+  /**
+   * `materials` — сырьё АККАУНТА (общее для всех героев), не вкладка: это счётчики, не предметы.
+   * `forgeJournal` — журнал кузнеца аккаунта (§12): по нему окно ковки решает, что открыто. Это журнал,
+   * которым сервер ГЕЙТИТ ковку, — с флагом разработчика `DM_CRAFT_FULL_JOURNAL` ворота в нём открыты
+   * (только вне продакшена: при `NODE_ENV=production` сервер флаг игнорирует).
+   * Ключи заявок на ковку (`craftNonces`) клиенту не шлются: ему они ни к чему.
+   */
+  | { t: 'stash'; tabs: Item[][]; cols: number; rows: number; tabCount: number; materials: Record<string, number>; forgeJournal: CraftJournal }
   | { t: 'questBoard'; quests: QuestDef[] }
   | { t: 'peerJoined'; peer: PeerInfo }
   // Ф1.1: обновление СТАТИКИ игроков — экипировка, уровень, смена области.
@@ -253,6 +300,16 @@ export type ServerFrame =
   | { t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }
+  /**
+   * ⭐ ОТВЕТ НА КОМАНДУ ГОРОДА — на КАЖДУЮ обработанную: выполненную, отклонённую, повтор по номеру
+   * (Ф2.5), присланную не из того места (Ф3.1), слишком частую и невалидную. Идёт ПОСЛЕ `saveUpdate`,
+   * поэтому к приходу ответа у клиента уже новый сейв. `id` — номер из кадра `cmd` (если он был и
+   * валиден); `cmd` — имя команды (у невалидной — как прислали, обрезанное); `uid` — вещь, которую
+   * команда создала (ковка; на повтор ключа заявки — та же, что в первый раз) или переделала
+   * (зачарование); `unlocked` — что открылось в журнале кузнеца (разбор найденного у кузнеца).
+   * Старый кадр `error` на отказ остаётся — его читают прежние клиенты.
+   */
+  | { t: 'cmdResult'; id?: number; cmd: string; ok: boolean; reason?: string; uid?: string; unlocked?: string[] }
   | { t: 'error'; code: string; msg: string }
   // Эхо на ping (тот же id) — клиент замеряет RTT.
   | { t: 'pong'; id: number };

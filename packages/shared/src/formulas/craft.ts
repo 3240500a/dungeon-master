@@ -1,10 +1,10 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
-import type { BaseRoll, CraftPartPick, CraftParts, Item, Rarity, RolledStat } from '../types/items.js';
+import type { BaseRoll, CraftPartPick, CraftParts, Item, ItemOrigin, Rarity, RolledStat } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { MaterialCost } from '../economy/materials.js';
 import { createRng, type Rng } from './rng.js';
-import { affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
+import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
 import { axisOf, balanceAxisOf, bladeStats, strikeAxisOf } from './bladeStats.js';
 import {
   CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType,
@@ -135,6 +135,69 @@ export interface CraftJournal {
 
 export function emptyJournal(): CraftJournal {
   return { bases: [], variants: [], tierHi: -1, classSalvages: {}, sketches: 0, mythic: 0, typesSeen: [], typesForged: [] };
+}
+
+/**
+ * Безопасный ключ словаря из базы (id класса, id материала): короткий, из латиницы, цифр, `_` и `-`, и
+ * НЕ ключ прототипа — `__proto__` под этот алфавит подходит, поэтому отсекается отдельно.
+ */
+export const isSafeKey = (k: string): boolean =>
+  /^[A-Za-z0-9_-]{1,64}$/.test(k) && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
+
+/**
+ * ЖУРНАЛ ИЗ БАЗЫ → ВАЛИДНЫЙ ЖУРНАЛ. Лежит в JSONB аккаунта, и доверять форме нельзя: старая
+ * запись, ручная правка, чужая версия кода. Чего нет или что не того типа — пусто, ноль, −1.
+ * Массивы — только строки и без повторов; счётчики — целые ≥ 0. Возвращает НОВЫЙ объект.
+ */
+export function normalizeJournal(raw: unknown): CraftJournal {
+  const j = emptyJournal();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return j;
+  const r = raw as Record<string, unknown>;
+  const strs = (x: unknown): string[] =>
+    Array.isArray(x) ? [...new Set(x.filter((s): s is string => typeof s === 'string' && s.length > 0 && s.length <= 128))] : [];
+  const count = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) && x > 0 ? Math.floor(x) : 0);
+  j.bases = strs(r.bases);
+  j.variants = strs(r.variants);
+  j.typesSeen = strs(r.typesSeen);
+  j.typesForged = strs(r.typesForged);
+  j.tierHi = typeof r.tierHi === 'number' && Number.isInteger(r.tierHi) && r.tierHi >= -1 ? r.tierHi : -1;
+  j.sketches = count(r.sketches);
+  j.mythic = count(r.mythic);
+  const cs = r.classSalvages;
+  if (cs && typeof cs === 'object' && !Array.isArray(cs)) {
+    for (const [k, v] of Object.entries(cs as Record<string, unknown>)) {
+      const n = count(v);
+      if (isSafeKey(k) && n > 0) j.classSalvages[k] = n;
+    }
+  }
+  return j;
+}
+
+// ── Ключ заявки на ковку ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * КЛЮЧ ИДЕМПОТЕНТНОСТИ заявки на ковку (`nonce`): его придумывает клиент, сервер помнит последние
+ * `CRAFT_NONCES_KEEP` на АККАУНТЕ рядом с журналом. Повтор заявки после обрыва связи или переезда на
+ * другую ноду находит свой ключ и отвечает прежней вещью, а не кует вторую и не списывает второй раз.
+ */
+export const CRAFT_NONCE_RE = /^[A-Za-z0-9_-]{8,64}$/;
+export const CRAFT_NONCES_KEEP = 32;
+export interface CraftNonce { n: string; uid: string }
+
+export const isCraftNonce = (x: unknown): x is string => typeof x === 'string' && CRAFT_NONCE_RE.test(x);
+
+/** Ключи из базы → только валидные `{n, uid}`, без повторов (побеждает последний), не больше 32 последних. */
+export function normalizeCraftNonces(raw: unknown): CraftNonce[] {
+  if (!Array.isArray(raw)) return [];
+  const byN = new Map<string, CraftNonce>();
+  for (const e of raw) {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+    const { n, uid } = e as Record<string, unknown>;
+    if (!isCraftNonce(n) || typeof uid !== 'string' || !uid.length || uid.length > 128) continue;
+    byN.delete(n);                        // повтор — переезжает в конец, как свежий
+    byN.set(n, { n, uid });
+  }
+  return [...byN.values()].slice(-CRAFT_NONCES_KEEP);
 }
 
 /** Журнал «всё открыто» — для песочницы, где проверяют баланс, а не петлю открытия. */
@@ -271,12 +334,15 @@ export type ResolvedParts = PartSet;
  * ИД деталей → записи, с проверкой гнезда, класса, хвата, включённости и ОКНА МАТЕРИАЛОВ:
  * широкое лезвие из булата не куётся — не потому, что нельзя, а потому, что такой формы из такой
  * стали не делали, и окно формы это говорит.
+ * `recorded` — детали, ЗАПИСАННЫЕ на вещь (R6-10): выключенная после рождения вещи всё равно её деталь, и числа вещи собираются
+ * из неё, как переплавка (`meltReturn`) возвращает сырьё выключенной. Новую вещь из выключенной не собрать (ковка, дроп).
  */
 export function resolveParts(
   reg: ConfigRegistry,
   weaponClass: string,
   hands: number,
   picks: CraftParts,
+  opts: { recorded?: boolean } = {},
 ): { ok: true; parts: ResolvedParts } | { ok: false; reason: string } {
   const anat = anatomyRow(reg, weaponClass);
   if (!anat) return { ok: false, reason: 'Такого класса кузнец не знает' };
@@ -284,7 +350,7 @@ export function resolveParts(
   for (const slot of CRAFT_SLOT_LIST) {
     const pick = picks[slot];
     const p = pick && partById(reg, pick.id);
-    if (!p || p.enabled === false) return { ok: false, reason: `Нет такой детали: ${pick?.id ?? '—'}` };
+    if (!p || (p.enabled === false && !opts.recorded)) return { ok: false, reason: `Нет такой детали: ${pick?.id ?? '—'}` };
     if (p.slot !== slot) return { ok: false, reason: `«${p.name}» не для этого гнезда` };
     if (!partFits(p, weaponClass, slot, hands)) return { ok: false, reason: `«${p.name}» не подходит этому семейству` };
     if (!Number.isInteger(pick.step) || pick.step < p.stepMin || pick.step > p.stepMax) {
@@ -486,6 +552,50 @@ export interface CraftPreview {
   ranges?: Partial<Record<RolledStat, [number, number]>>;
 }
 
+const isPlainObject = (x: unknown): x is Record<string, unknown> =>
+  typeof x === 'object' && x !== null && !Array.isArray(x)
+  && (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);
+const onlyKeys = (o: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(o).every((k) => allowed.includes(k));
+const shortId = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= 64;
+const INPUT_KEYS = ['weaponClass', 'hands', 'parts', 'finish'] as const;
+const PICK_KEYS = ['id', 'step'] as const;
+
+/**
+ * ⭐ ЗАЯВКА С ПРОВОДА → ЧИСТАЯ `CraftInput`. Сервер не верит ни одному полю: заявка пересобирается
+ * заново из `{id, step}` четырёх гнёзд, и ни один лишний ключ до вещи не доезжает (иначе `parts`
+ * скованной вещи несли бы то, что прислал клиент). Отказ, а не молчаливая правка:
+ * - гнёзд ровно четыре, у каждого ровно `id` (строка) и `step` (целое 1…5);
+ * - хват — 1 или 2; класс — строка;
+ * - доводка — целый индекс существующей строки `balance.craft.finish`. ⚠ `finishOf` индекс ПРИЖИМАЕТ
+ *   молча — для окна это удобно, для заявки опасно: игрок платил бы за одну доводку, а получал другую.
+ * Остальное (есть ли деталь, её гнездо, класс, окно ступеней, журнал) проверяет `craftWeapon`.
+ */
+export function parseCraftInput(reg: ConfigRegistry, raw: unknown): { ok: true; input: CraftInput } | { ok: false; reason: string } {
+  const bad = (reason: string): { ok: false; reason: string } => ({ ok: false, reason });
+  if (!isPlainObject(raw) || !onlyKeys(raw, INPUT_KEYS)) return bad('Неверная заявка на ковку');
+  const { weaponClass, hands, parts, finish } = raw;
+  if (!shortId(weaponClass)) return bad('Неверная заявка: класс оружия');
+  if (hands !== 1 && hands !== 2) return bad('Неверная заявка: хват');
+  if (!isPlainObject(parts) || !onlyKeys(parts, CRAFT_SLOT_LIST) || !CRAFT_SLOT_LIST.every((s) => s in parts)) {
+    return bad('Неверная заявка: нужны ровно четыре детали');
+  }
+  const clean = {} as CraftParts;
+  for (const slot of CRAFT_SLOT_LIST) {
+    const pick = parts[slot];
+    if (!isPlainObject(pick) || !onlyKeys(pick, PICK_KEYS) || !shortId(pick.id)) return bad('Неверная заявка: деталь');
+    const step = pick.step;
+    if (typeof step !== 'number' || !Number.isInteger(step) || step < 1 || step > MATERIAL_STEPS) return bad('Неверная заявка: ступень материала');
+    clean[slot] = { id: pick.id, step };
+  }
+  const input: CraftInput = { weaponClass, hands, parts: clean };
+  if (finish !== undefined) {
+    const n = reg.get('balance').craft.finish.length;
+    if (typeof finish !== 'number' || !Number.isInteger(finish) || finish < 0 || finish >= Math.max(1, n)) return bad('Неверная заявка: доводка');
+    input.finish = finish;
+  }
+  return { ok: true, input };
+}
+
 /** Имя скованной вещи: приставка тира, согласованная с родом ТИПА, + имя типа. */
 export function craftedName(tier: Tier, type: TypeInfo): string {
   return `${agree(tier.name, type.gender)} ${lowFirst(type.name)}`;
@@ -559,7 +669,11 @@ export function craftWeapon(
   const baseRoll: BaseRoll | undefined = opts.rng ? rollBaseQ(base, opts.rng, floor)
     : opts.at ? fixedBaseRoll(base, opts.at === 'lo' ? lo : 1)
     : lo > 0 ? fixedBaseRoll(base, (lo + 1) / 2) : undefined;
-  const item = buildCraftShell(base, tier, reg.get('balance').maxTotalRequirement, { baseRoll, spread, shape });
+  // ⭐ Требования — со скидкой кузнеца, ТОЙ ЖЕ, что у подъёма тира (`forgePrices.upgradeReqDiscount`):
+  // «кузнечная вещь легче в требованиях». Без неё скованная ступень надевалась позже поднятой находки
+  // той же ступени, и ковка проигрывала подъёму всегда (замер К7, §22). Предпросмотр — этот же вызов.
+  const bal = reg.get('balance');
+  const item = buildCraftShell(base, tier, bal.maxTotalRequirement, { baseRoll, spread, shape, reqDiscount: bal.forgePrices.upgradeReqDiscount });
   if (!opts.rng && !opts.at) item.rollPreview = ranges;
   item.name = craftedName(tier, type);
   item.baseStats = [...item.baseStats, ...bake.mods]; // новый массив: статы базы в конфиге не трогаем
@@ -568,6 +682,8 @@ export function craftWeapon(
   if (bake.arcMult !== undefined) item.arcMult = bake.arcMult;
   item.affixCap = bake.affixCap;
   item.parts = structuredClone(input.parts);
+  // Что заплачено сырьём (без доводки): переплавка вернёт долю ЭТОГО, а не цены после правки конфига (§16).
+  item.craftPaid = cost.lines.filter((l) => l.n > 0).map((l) => ({ id: l.id, n: l.n }));
   if (type.typeId) item.typeId = type.typeId;
   return { ok: true, item, cost, bake, ranges, ...view };
 }
@@ -602,13 +718,84 @@ export function affixSlotsFor(rDef: RarityDef | undefined, cap?: AffixForm): { m
   return { minAffixes: total, maxAffixes: total, maxPrefix: P, maxSuffix: S };
 }
 
-/** Цена зачарования: золото × множитель ступени × цена редкости × M формы (§13). */
+/**
+ * ⭐ НАБЕРЁТ ЛИ ПУЛ ОПЛАЧЕННУЮ ФОРМУ — при ЛЮБОМ исходе броска (§17). `rollAffixes` при опустевшем
+ * пуле делает `break` МОЛЧА: выключил дизайнер полдюжины аффиксов — игрок заплатил за пять слотов,
+ * получил три, и никто не узнал. Поэтому отказ — до оплаты, и по худшему случаю, а не по среднему.
+ *
+ * Модель броска: каждый выбор выносит из пула «узел» — сам аффикс, его группу и тёзок по id (узлы —
+ * связные компоненты по группе и id; склеить лишнее — только строже). Узел бывает только-префиксным,
+ * только-суффиксным и смешанным. Худший случай: выборы одной стороны съедают смешанные узлы другой.
+ * Застрять цикл может трижды — кончились все узлы; добрали префиксы, а суффиксов не осталось; и
+ * наоборот. Здесь проверяются ровно эти три неравенства.
+ */
+export function affixSlotsFillable(
+  pool: readonly { id: string; kind: 'prefix' | 'suffix'; group?: string }[],
+  slots: { minAffixes: number; maxAffixes: number; maxPrefix: number; maxSuffix: number },
+): boolean {
+  const P = Math.max(0, slots.maxPrefix), S = Math.max(0, slots.maxSuffix);
+  if (slots.minAffixes > P + S) return false;               // нижнюю границу не набрать при любом пуле
+  const total = Math.min(Math.max(0, slots.maxAffixes), P + S);
+  if (total <= 0) return true;
+  // Узлы: объединяем аффиксы с общей группой и с общим id (выбор выносит и тех, и других).
+  const parent = pool.map((_, i) => i);
+  const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]!]!; i = parent[i]!; } return i; };
+  const union = (a: number, b: number): void => { parent[find(a)] = find(b); };
+  const firstBy = new Map<string, number>();
+  pool.forEach((a, i) => {
+    for (const key of [`id:${a.id}`, ...(a.group ? [`g:${a.group}`] : [])]) {
+      const j = firstBy.get(key);
+      if (j === undefined) firstBy.set(key, i); else union(i, j);
+    }
+  });
+  const sides = new Map<number, { p: boolean; s: boolean }>();
+  pool.forEach((a, i) => {
+    const r = find(i);
+    const u = sides.get(r) ?? { p: false, s: false };
+    if (a.kind === 'prefix') u.p = true; else u.s = true;
+    sides.set(r, u);
+  });
+  let pureP = 0, pureS = 0, mixed = 0;
+  for (const u of sides.values()) { if (u.p && u.s) mixed++; else if (u.p) pureP++; else if (u.s) pureS++; }
+  if (pureP + pureS + mixed < total) return false;
+  if (total > S && pureP + mixed - Math.min(S, mixed) < total - S) return false;
+  if (total > P && pureS + mixed - Math.min(P, mixed) < total - P) return false;
+  return true;
+}
+
+/**
+ * Слоты зачарования вещи до редкости `rarity` и ответ «пул их наберёт» — один расчёт для окна и сервера.
+ * Нет базы или редкости — `null`: зачаровывать нечего.
+ */
+export function enchantSlots(reg: ConfigRegistry, item: Item, rarity: Rarity):
+  { slots: ReturnType<typeof affixSlotsFor>; fillable: boolean } | null {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  const rDef = reg.get('rarities').find((r) => r.id === rarity);
+  if (!base || !rDef) return null;
+  const slots = affixSlotsFor(rDef, item.affixCap);
+  const pool = affixPool(reg.get('affixes'), affixTargetOfBase(base), rarity, item.itemLevel);
+  return { slots, fillable: affixSlotsFillable(pool, slots) };
+}
+
+/**
+ * ⭐ M ФОРМЫ, КОТОРУЮ ВЕЩЬ ПРИМЕТ при редкости `rarity` (R2-23): ёмкость, зажатая лимитами редкости
+ * (`affixSlotsFor`), а не объявленная. Магическая у 3+2 катает 1+1 — и платит как 1+1 (×1.09), а не ×5.97
+ * за пять слотов, которых не получит. Один шов на зачарование и перекатку (R2-10): обе катают ровно эту
+ * форму и обе за неё платят. Потолок редкости ниже P+S делает сплит неопределённым — тогда берём верх
+ * (P, S): переплатить безопаснее, чем недоплатить. Нет ёмкости (найденная вещь) — 1.
+ */
+export function rolledFormMult(reg: ConfigRegistry, item: Item, rarity: Rarity): number {
+  if (!item.affixCap) return 1;
+  const s = affixSlotsFor(reg.get('rarities').find((r) => r.id === rarity), item.affixCap);
+  return formMult(reg, { prefix: s.maxPrefix, suffix: s.maxSuffix });
+}
+
+/** Цена зачарования: золото × множитель ступени × цена редкости × M формы, которую она катает (§13). */
 export function enchantCost(reg: ConfigRegistry, item: Item, rarity: Rarity): number {
   const k = reg.get('balance').craft;
   const tier = craftTiers(reg)[tierIndexOfItem(reg, item)];
   const rDef = reg.get('rarities').find((r) => r.id === rarity);
-  const M = item.affixCap ? formMult(reg, item.affixCap) : 1;
-  return Math.round(k.cost.enchantGold * (tier?.reqMult ?? 1) * (rDef?.priceMult ?? 1) * M);
+  return Math.round(k.cost.enchantGold * (tier?.reqMult ?? 1) * (rDef?.priceMult ?? 1) * rolledFormMult(reg, item, rarity));
 }
 
 /**
@@ -616,10 +803,12 @@ export function enchantCost(reg: ConfigRegistry, item: Item, rarity: Rarity): nu
  * дропа, только слоты берутся из ёмкости вещи. Случайность здесь законна (правило Р3): форма
  * известна заранее, катаются значения. Имя строится от ТИПА («Жгучий ранний меч»), а не от
  * базы. Возвращает НОВЫЙ предмет — исходный не трогает.
+ * ⚠ Нет базы в конфиге — `null`, а не «вещь как была»: иначе зовущий принял бы нетронутую вещь за
+ * зачарованную и взял бы за неё золото.
  */
-export function enchantItem(reg: ConfigRegistry, item: Item, rarity: Rarity, rng: Rng): Item {
+export function enchantItem(reg: ConfigRegistry, item: Item, rarity: Rarity, rng: Rng): Item | null {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  if (!base) return item;
+  if (!base) return null;
   const rDef = reg.get('rarities').find((r) => r.id === rarity);
   const affixes = reg.get('affixes');
   const rolled = rollAffixes(affixes, affixTargetOfBase(base), rarity, affixSlotsFor(rDef, item.affixCap), item.itemLevel, rng);
@@ -663,8 +852,8 @@ function weighted<T>(items: T[], weight: (x: T) => number, rng: Rng): T | undefi
  * вещи — разбор отдаёт то, из чего вещь сделана. Ключевая деталь берётся из пула СВОЕЙ базы, поэтому
  * тип найденной вещи = её база. Редкость варианта = его частота на дропе (`rarityWeight`), не сила.
  * ⚠ Вывод стабилен, пока не меняются пулы вариантов: добавишь вариант — у старых вещей детали могут
- * переехать. Поэтому меч, клинок которого несёт статы (§26), получает детали НАВСЕГДА в момент
- * выпадения (`foundParts`, `shapeFoundWeapon`) — после этого вывод для него не зовётся.
+ * переехать. Поэтому любое найденное оружие получает детали НАВСЕГДА в момент рождения (`foundParts`,
+ * `shapeFoundWeapon`) — после этого вывод для него не зовётся. Вывод от `uid` остаётся старым сейвам.
  */
 export function partsOf(reg: ConfigRegistry, item: Item): CraftParts | null {
   if (item.parts) return item.parts;
@@ -693,17 +882,23 @@ function deriveParts(reg: ConfigRegistry, item: Item, seed: number): CraftParts 
   const has =(slot: CraftSlot, s: number): boolean => pools[slot].some((p) => p.stepMin <= s && s <= p.stepMax);
 
   // Ступени: все четвёрки, из которых кузнец собрал бы ровно эту ступень, — ровные предпочтительнее.
+  // ⚠ Предпочтительнее В СУММЕ, а не поштучно (R2-30): перекошенных четвёрок на ступень сотни, и при весе
+  // `1/(1+разброс)` они вместе перевешивали ровную — ступень 5 была у 26 % находок t2, у 48 % t3. Вес падает
+  // экспонентой от разброса (`craft.foundEvenness`), отсчёт — от ровнейшей: у неё вес 1 при любом k, и
+  // большое k не обнулит все веса разом (тогда `weighted` молча взял бы первую по перебору, а не ровную).
   type Steps = Record<CraftSlot, { step: number }>;
-  const exact: { s: Steps; wgt: number }[] = [];
+  const exact: { s: Steps; dev: number }[] = [];
   let near: { s: Steps; d: number } | null = null;
   for (let a = 1; a <= 5; a++) for (let b = 1; b <= 5; b++) for (let c = 1; c <= 5; c++) for (let d = 1; d <= 5; d++) {
     const s: Steps = { strike: { step: a }, grip: { step: b }, bind: { step: c }, head: { step: d } };
     if (!CRAFT_SLOT_LIST.every((sl) => has(sl, s[sl].step))) continue;
     const { q, tier } = tierOfSteps(reg, s);
-    if (tier === t) exact.push({ s, wgt: 1 / (1 + CRAFT_SLOT_LIST.reduce((acc, sl) => acc + Math.abs(s[sl].step - q), 0)) });
+    if (tier === t) exact.push({ s, dev: CRAFT_SLOT_LIST.reduce((acc, sl) => acc + Math.abs(s[sl].step - q), 0) });
     else if (!near || Math.abs(tier - t) < near.d) near = { s, d: Math.abs(tier - t) };
   }
-  const chosen = weighted(exact, (x) => x.wgt, rng)?.s ?? near?.s;
+  const even = reg.get('balance').craft.foundEvenness;
+  const devMin = exact.reduce((m, x) => Math.min(m, x.dev), Infinity);
+  const chosen = weighted(exact, (x) => Math.exp(-even * (x.dev - devMin)), rng)?.s ?? near?.s;
   if (!chosen) return null;
 
   const out = {} as CraftParts;
@@ -720,22 +915,90 @@ function deriveParts(reg: ConfigRegistry, item: Item, seed: number): CraftParts 
  * СТУПЕНИ ЗАПИСАННЫХ ДЕТАЛЕЙ ПОД НОВУЮ СТУПЕНЬ ВЕЩИ — для подъёма найденного меча в кузнице (§26).
  * Варианты те же (клинок не меняется вместе с тиром), а ступени материала — такие, чтобы из них ковалась
  * ровно ступень `t`: разбор обязан отдавать то, из чего вещь сделана (§10.9). Из подходящих четвёрок —
- * ближайшая к прежней; ровно не собирается (окна материалов не пускают) — ближайшая по ступени.
+ * ближайшая к прежней.
+ *
+ * ⚠ R4-31: РОВНО НЕ СОБИРАЕТСЯ (окна материалов не пускают) — `null`. Прежде бралась ближайшая по ступени, и t5-меч,
+ * чей клинок выше ступени 4 не куётся, становился t6 с деталями t5: разбор отдавал прежнее сырьё, а сама форма была
+ * такой, какую ковка на t6 не собирает и какой не бывает у найденного t6. Детали не из конфига — как есть: проверить нечем.
+ * Подъём у кузнеца на `null` не останавливается — см. `upgradeFoundParts` (R5-09).
  */
-export function restepParts(reg: ConfigRegistry, parts: CraftParts, t: number): CraftParts {
+export function restepParts(reg: ConfigRegistry, parts: CraftParts, t: number): CraftParts | null {
   const recs = CRAFT_SLOT_LIST.map((slot) => partById(reg, parts[slot].id));
   if (recs.some((p) => !p)) return parts;
   const win = recs.map((p) => { const a: number[] = []; for (let s = p!.stepMin; s <= p!.stepMax; s++) a.push(s); return a; });
-  let best: { s: CraftParts; d: number; move: number } | null = null;
+  let best: { s: CraftParts; move: number } | null = null;
   for (const a of win[0]!) for (const b of win[1]!) for (const c of win[2]!) for (const e of win[3]!) {
     const steps = [a, b, c, e];
     const s = {} as CraftParts;
     CRAFT_SLOT_LIST.forEach((slot, i) => { s[slot] = { id: parts[slot].id, step: steps[i]! }; });
-    const d = Math.abs(tierOfSteps(reg, s).tier - t);
+    if (tierOfSteps(reg, s).tier !== t) continue;
     const move = CRAFT_SLOT_LIST.reduce((acc, slot) => acc + Math.abs(s[slot].step - parts[slot].step), 0);
-    if (!best || d < best.d || (d === best.d && move < best.move)) best = { s, d, move };
+    if (!best || move < best.move) best = { s, move };
   }
-  return best?.s ?? parts;
+  return best?.s ?? null;
+}
+
+/**
+ * ⭐ ДЕТАЛИ НАЙДЕННОГО ПОД СТУПЕНЬ ПОДЪЁМА У КУЗНЕЦА (§26, §10.9). Сперва — те же четыре варианта на других ступенях
+ * (`restepParts`). Не собираются — ДЕРЖИТСЯ ТО, ЧТО НЕСЁТ ТИП И ЧИСЛА: ключевая деталь (тип, кодекс), а у клинка с
+ * геометрией ещё и оголовье (точка баланса — блок и укус). Прочие гнёзда числа найденной вещи не трогают (держак и
+ * обвязка — см. `shapeFoundWeapon`), и под ступень берётся другой вариант той же семьи: по частоте на дропе, как у
+ * находки (`rarityWeight`), с сидом от самой вещи — предпросмотр и подъём дают одно и то же, лотереи нет. Меняется
+ * как можно меньше гнёзд, ступени — ближе к прежним. Не дотягивается и держимое — `null`: выше эта форма не куётся.
+ *
+ * ⚠ R5-09: отказ R4-31 бил и по вещам, чьи числа от деталей не зависят вовсе: 15–52 % найденных t5 посохов, жезлов,
+ * арбалетов, топоров и кинжалов навсегда не поднимались до t6, потому что окно рукояти или обвязки кончалось на 4-й
+ * ступени. Кузница — главный путь к t6 до 80-го уровня, а по находке не видно, какая из них «не куётся».
+ */
+export function upgradeFoundParts(reg: ConfigRegistry, item: Item, t: number): CraftParts | null {
+  const parts = item.foundParts;
+  if (!parts) return null;
+  // ⚠ R6-10: ВЫКЛЮЧЕННАЯ ПОСЛЕ НАХОДКИ ДЕТАЛЬ на новую ступень не переезжает: такой формы кузнец больше не делает, и подъём
+  // обязан собрать то, что собрала бы ковка. Держак или обвязка — берётся другой вариант той же семьи (ниже); клинок, оголовье
+  // или ключ (на них тип и числа) — подъёма нет. Прежде `restepParts` переносил её как есть, а сборка статов её отвергала —
+  // и вещь уходила на t3 с множителем удара клинка, но без его платы скоростью.
+  const off = CRAFT_SLOT_LIST.some((slot) => partById(reg, parts[slot].id)?.enabled === false);
+  const same = off ? null : restepParts(reg, parts, t);
+  if (same) return same;
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base || base.kind !== 'weapon') return null;
+  const cls = base.weaponClass;
+  const hands = base.hands ?? 1;
+  const strike = partById(reg, parts.strike.id);
+  const held = new Set<CraftSlot>([keySlotOf(reg, cls)]);
+  if (strike && bladeStats(reg, strike)) { held.add('strike'); held.add('head'); }
+  const pools = {} as Record<CraftSlot, WeaponPart[]>;
+  for (const slot of CRAFT_SLOT_LIST) {
+    const own = partById(reg, parts[slot].id);
+    pools[slot] = held.has(slot)
+      ? (own && own.enabled !== false ? [own] : [])
+      : [...variantsFor(reg, cls, slot, hands)].sort((a, b) => a.id.localeCompare(b.id));
+    if (!pools[slot].length) return null;
+  }
+  const fits = (p: WeaponPart, s: number): boolean => p.stepMin <= s && s <= p.stepMax;
+  /** Записанный вариант гнезда остаётся на ступени `s`: он в пуле (включён, той семьи) и его окно её пускает. */
+  const keeps = (slot: CraftSlot, s: number): boolean => pools[slot].some((p) => p.id === parts[slot].id && fits(p, s));
+  type Steps = Record<CraftSlot, { step: number }>;
+  let best: { s: Steps; changed: number; move: number } | null = null;
+  for (let a = 1; a <= MATERIAL_STEPS; a++) for (let b = 1; b <= MATERIAL_STEPS; b++) for (let c = 1; c <= MATERIAL_STEPS; c++) for (let d = 1; d <= MATERIAL_STEPS; d++) {
+    const s: Steps = { strike: { step: a }, grip: { step: b }, bind: { step: c }, head: { step: d } };
+    if (!CRAFT_SLOT_LIST.every((sl) => pools[sl].some((p) => fits(p, s[sl].step)))) continue;
+    if (tierOfSteps(reg, s).tier !== t) continue;
+    const changed = CRAFT_SLOT_LIST.filter((sl) => !keeps(sl, s[sl].step)).length;
+    const move = CRAFT_SLOT_LIST.reduce((acc, sl) => acc + Math.abs(s[sl].step - parts[sl].step), 0);
+    if (!best || changed < best.changed || (changed === best.changed && move < best.move)) best = { s, changed, move };
+  }
+  if (!best) return null;
+  const w = reg.get('balance').craft.rarityWeight;
+  const rng = createRng(hashStr(`${foundSeed(item)}|${t}`));
+  const out = {} as CraftParts;
+  for (const slot of CRAFT_SLOT_LIST) {
+    const step = best.s[slot].step;
+    if (keeps(slot, step)) { out[slot] = { id: parts[slot].id, step }; continue; }
+    const p = weighted(pools[slot].filter((x) => fits(x, step)), (x) => w[x.rarity] ?? 0, rng)!;
+    out[slot] = { id: p.id, step };
+  }
+  return out;
 }
 
 /**
@@ -756,9 +1019,13 @@ function foundSeed(item: Item): number {
  *
  * Что берётся от деталей: ось длины (удар ↔ скорость), разброс ширины и точка баланса (блок ↔ укус).
  * Держак (дальность и дуга) и обвязка (ёмкость аффиксов) у найденной вещи не трогаются — её аффиксы
- * уже выпали. Уникальные не трогаются вовсе: они собраны руками. Ударная часть без геометрии — вещь
- * возвращается как была: остальные классы перейдут на эту систему сами, как только их ударные части
- * получат модели. Идемпотентна: статы пересобираются от базы, повторный вызов даёт то же самое.
+ * уже выпали. Уникальные не трогаются вовсе: они собраны руками.
+ * ⭐ Детали ЗАПИСЫВАЮТСЯ у любого найденного оружия (§12.1): вывод «на каждом чтении» переезжал бы при
+ * правке `rarityWeight` или пула, и разбор открывал бы не то, что было в вещи. Но статы берутся от
+ * деталей ТОЛЬКО у ударной части с геометрией; у остальных вещь возвращается с теми же числами, лишь с
+ * `foundParts` (сторож — тест «с деталями и без — одни статы»). Остальные классы перейдут на эту систему
+ * сами, как только их ударные части получат модели. Идемпотентна: статы пересобираются от базы,
+ * повторный вызов даёт то же самое.
  */
 export function shapeFoundWeapon(reg: ConfigRegistry, item: Item): Item {
   if (item.parts || item.rarity === 'unique' || item.kind !== 'weapon') return item;
@@ -766,10 +1033,21 @@ export function shapeFoundWeapon(reg: ConfigRegistry, item: Item): Item {
   if (!base || base.kind !== 'weapon') return item;
   const picks = item.foundParts ?? deriveParts(reg, item, foundSeed(item));
   if (!picks) return item;
-  const res = resolveParts(reg, base.weaponClass, base.hands ?? 1, picks);
-  if (!res.ok || !bladeStats(reg, res.parts.strike)) return item;
+  // R6-10: записанные детали собираются и выключенными после рождения вещи — это её детали (`recorded`).
+  const res = resolveParts(reg, base.weaponClass, base.hands ?? 1, picks, { recorded: !!item.foundParts });
   const t = tierIndexOfItem(reg, item);
   const statMult = reg.get('item-tiers').find((x) => x.id === item.tier)?.statMult ?? craftTiers(reg)[t]?.statMult ?? 1;
+  // ⚠ R6-10: ЗАПЕЧЬ НЕЧЕМ (деталь убрана из конфига, у клинка не стало геометрии), а вещь клинок уже запекал (подъём у
+  // кузнеца: `retierItem` оставил его `damageMult`/`spreadMult`, а статы собрал от базы) — ось удара снимается ЦЕЛИКОМ:
+  // множитель, разброс и числа формы. Одна сторона оси без другой — урон клинка без его платы скоростью.
+  const plain = (it: Item): Item => {
+    if (it.damageMult === undefined && it.spreadMult === undefined) return it;
+    const { damageMult: _d, spreadMult: _s, ...rest } = it;
+    return { ...rest, baseStats: scaleBaseStats(base.baseStats, statMult, it.baseRoll, reg.get('balance').loot.baseRoll) };
+  };
+  if (!res.ok) return plain(item);
+  // Не клинок с геометрией — детали записаны, числа вещи НЕ тронуты (ни статы, ни множители).
+  if (!bladeStats(reg, res.parts.strike)) return plain({ ...item, foundParts: structuredClone(picks) });
   const bake = bakeParts(reg, base, t, res.parts);
   const shape = shapeOfBake(bake);
   const out: Item = {
@@ -795,8 +1073,26 @@ export interface SalvageUnlock {
   /** Выдан эскиз (жалость). */
   sketch: boolean;
   tierUp: boolean;
+  /** Засчитан мифик: t6 и найден (`countsAsMythicFind`), а не куплен, не скован и не поднят кузнецом. */
   mythic: boolean;
 }
+
+/**
+ * Откуда вещь НАЙДЕНА (§12.2): дроп, сундук, босс. Только такая вещь учит журнал деталям и кодексу, копит
+ * жалость-эскиз и ворота t6. Лавка, награда, старт и ковка — нет; вещь без поля (сейв старше него) — тоже
+ * нет: доверять нечему.
+ */
+export const FIND_ORIGINS: ReadonlySet<ItemOrigin> = new Set<ItemOrigin>(['drop', 'chest', 'boss']);
+
+/** Откуда должна прийти мифическая вещь, чтобы её разбор засчитался воротам t6: те же найденные. */
+export const MYTHIC_ORIGINS: ReadonlySet<ItemOrigin> = FIND_ORIGINS;
+
+/** Найдена ли вещь (`FIND_ORIGINS`), а не куплена, выдана или без происхождения. */
+export const countsAsFind = (item: Pick<Item, 'origin'>): boolean => !!item.origin && FIND_ORIGINS.has(item.origin);
+
+/** Засчитается ли разбор этой вещи счётчику мификов: найдена, а не куплена, и ступень не поднята кузнецом. */
+export const countsAsMythicFind = (item: Pick<Item, 'origin' | 'tierForged'>): boolean =>
+  countsAsFind(item) && !item.tierForged;
 
 /**
  * ⭐ РАЗОБРАЛ — ОТКРЫЛ (§12). Разбор вещи у кузнеца открывает её базу и четыре её детали, двигает
@@ -804,6 +1100,10 @@ export interface SalvageUnlock {
  * класса дают «эскиз». 95-й перцентиль ожидания редкой детали без него — 36 часов, и каталог
  * превращается в издевательство.
  * Скованное сюда не идёт: у него свой глагол «переплавить», иначе ковка стала бы прачечной знаний.
+ * ⚠ Детали, кодекс, жалость и ворота t6 — только у НАЙДЕННОГО (`countsAsFind`). Стартовый набор бесплатен и
+ * бесконечен (создал героя → разобрал → удалил), а лавка катается по уровню первого в комнате: альт первого
+ * уровня скупал бы каталог деталей и эскизы по ценам t0. Купленное, выданное и вещь без происхождения
+ * открывают только ТИП и ПОТОЛОК СТУПЕНИ — «что это за вещь и какой она ступени»: цена лавки видит ступень (§12.4).
  */
 export function salvageIntoJournal(reg: ConfigRegistry, journal: CraftJournal, item: Item): SalvageUnlock {
   const j: CraftJournal = {
@@ -815,33 +1115,37 @@ export function salvageIntoJournal(reg: ConfigRegistry, journal: CraftJournal, i
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   const parts = partsOf(reg, item);
   if (!base || base.kind !== 'weapon' || !parts) return none;
-  const unlocked: string[] = [];
-  for (const slot of CRAFT_SLOT_LIST) if (!j.variants.includes(parts[slot].id)) { j.variants.push(parts[slot].id); unlocked.push(parts[slot].id); }
   const newBase = !j.bases.includes(base.id);
   if (newBase) j.bases.push(base.id);
-  const type = typeOfItem(reg, item);
-  const newType = type?.typeId && !j.typesSeen.includes(type.typeId) ? type.typeId : undefined;
-  if (newType) j.typesSeen.push(newType);
   const t = tierIndexOfItem(reg, item);
   const tierUp = t > j.tierHi;
   if (tierUp) j.tierHi = t;
+  if (!countsAsFind(item)) return { journal: j, unlocked: [], newBase, sketch: false, tierUp, mythic: false };
+  const unlocked: string[] = [];
+  for (const slot of CRAFT_SLOT_LIST) if (!j.variants.includes(parts[slot].id)) { j.variants.push(parts[slot].id); unlocked.push(parts[slot].id); }
+  const type = typeOfItem(reg, item);
+  const newType = type?.typeId && !j.typesSeen.includes(type.typeId) ? type.typeId : undefined;
+  if (newType) j.typesSeen.push(newType);
   const k = reg.get('balance').craft.journal;
   const n = (j.classSalvages[base.weaponClass] ?? 0) + 1;
   const sketch = n >= k.sketchAfter;
   j.classSalvages[base.weaponClass] = sketch ? n - k.sketchAfter : n;
   if (sketch) j.sketches += 1;
-  const mythic = t === craftTiers(reg).length - 1;
+  // ⚠ Ворота t6 считают только НАЙДЕННЫЕ мифики (`countsAsMythicFind`): иначе лавка на 80-м уровне,
+  // где вся витрина мифическая, продавала бы их за золото (§12.4), а кузница поднимала бы t5 до t6.
+  const mythic = t === craftTiers(reg).length - 1 && countsAsMythicFind(item);
   if (mythic) j.mythic += 1;
   return { journal: j, unlocked, newBase, newType, sketch, tierUp, mythic };
 }
 
 /**
  * Можно ли потратить эскиз на вариант. ⚠ Ключевой вариант НЕОТКРЫТОЙ базы — нельзя: ключ несёт
- * тип, и эскиз стал бы чертежом в обход разбора, а базы открываются только разбором.
+ * тип, и эскиз стал бы чертежом в обход разбора, а базы открываются только разбором. Выключенный — тоже нельзя
+ * (R3-11): ковать из него нельзя, и эскиз пропал бы зря.
  */
 export function sketchable(reg: ConfigRegistry, journal: CraftJournal, variantId: string): boolean {
   const p = partById(reg, variantId);
-  if (!p || journal.variants.includes(variantId)) return false;
+  if (!p || p.enabled === false || journal.variants.includes(variantId)) return false;
   for (const cls of p.classes) {
     if (p.slot !== keySlotOf(reg, cls)) return true;
     for (const h of [1, 2]) {
@@ -882,18 +1186,37 @@ export function craftSalvageYield(reg: ConfigRegistry, item: Item): MaterialCost
 /**
  * ⭐ ПЕРЕПЛАВКА скованного — вместо разбора (§16). Возвращает долю вложенного, журналу не пишет.
  * Без неё ковка стала бы прачечной: скуй обычную → разбери как редкую → получи дорогое.
+ * ⚠ Доля — от ЗАПЛАЧЕННОГО (`item.craftPaid`, записано ковкой), а не от нынешней цены: цену перекалибруют
+ * в редакторе (§13), и при пересчёте по ней каждая уже скованная вещь после подорожания переплавлялась бы
+ * дороже, чем обошлась, — печатный станок сырья. Нет записи (вещь старше поля) — по нынешней цене, как было.
  */
 export function meltReturn(reg: ConfigRegistry, item: Item): MaterialCost {
+  if (!item.parts) return {};
+  const k = reg.get('balance').craft;
+  if (Array.isArray(item.craftPaid)) {
+    const out: MaterialCost = {};
+    for (const line of item.craftPaid) {
+      if (!line || typeof line.id !== 'string' || !isSafeKey(line.id) || !Number.isFinite(line.n) || line.n <= 0) continue;
+      const n = Math.floor(Math.floor(line.n) * k.melt.share);
+      if (n > 0) out[line.id] = (out[line.id] ?? 0) + n;
+    }
+    return out;
+  }
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  if (!item.parts || !base || base.kind !== 'weapon') return {};
-  const res = resolveParts(reg, base.weaponClass, base.hands ?? 1, item.parts);
-  if (!res.ok) return {};
-  const cost = craftCost(reg, base.weaponClass, res.parts, item.parts, tierIndexOfItem(reg, item), item.affixCap ?? { prefix: 0, suffix: 0 });
-  const share = reg.get('balance').craft.melt.share;
+  const anat = base?.kind === 'weapon' ? anatomyRow(reg, base.weaponClass) : undefined;
+  if (!anat) return {};
+  // Те же строки, что у `craftCost` (единицы гнезда × M формы, доводка — нет), но БЕЗ проверок
+  // `resolveParts`: деталь, выключенную или убранную ПОСЛЕ ковки, переплавить всё равно обязаны —
+  // иначе вещь застряла бы у игрока навсегда. Нет записи детали — материал семьи гнезда.
+  const M = formMult(reg, item.affixCap ?? { prefix: 0, suffix: 0 });
   const out: MaterialCost = {};
-  for (const l of cost.lines) {
-    const n = Math.floor(l.n * share);
-    if (n > 0) out[l.id] = (out[l.id] ?? 0) + n;
+  for (const slot of CRAFT_SLOT_LIST) {
+    const pick = item.parts[slot];
+    if (!pick) continue;
+    const p = partById(reg, pick.id);
+    const id = materialId(p ? partFamily(anat, slot, p) : anat[slot].family, pick.step);
+    const n = Math.floor(Math.ceil(k.cost.units[slot] * M) * k.melt.share);
+    if (n > 0) out[id] = (out[id] ?? 0) + n;
   }
   return out;
 }

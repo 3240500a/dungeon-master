@@ -45,7 +45,7 @@ describe('serializeWorld / removePlayer', () => {
       expect(snap.players[0]).toHaveProperty(field);
     }
     // ...а статика доступна отдельно.
-    const pi = peerInfoOf(s.world.players['p1']!, r.get('items.base'));
+    const pi = peerInfoOf(s.world.players['p1']!, r);
     expect(pi.id).toBe('p1');
     expect(typeof pi.classId).toBe('string');
     expect(pi.maxHp).toBeGreaterThan(0);

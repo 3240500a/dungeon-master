@@ -28,7 +28,13 @@
       "zombie-fanatic",
       "zombie-shaman",
       "zombie-crossbow",
-      "zombie-lord"
+      "zombie-lord",
+      "zombie-crusher",
+      "zombie-spearman",
+      "zombie-halberdier",
+      "zombie-hexer",
+      "zombie-herbalist",
+      "zombie-bolter"
     ],
     "dropBias": 1,
     "modifiers": [],

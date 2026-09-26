@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { Rng } from '../formulas/rng.js';
+import { createRng, type Rng } from '../formulas/rng.js';
 import type { CombatStats, DamagePacket } from '../types/combat.js';
 import {
-  newDebuffState, addDebuffStack, tickDebuffs, debuffMods, type DebuffApply,
+  newDebuffState, addDebuffStack, tickDebuffs, debuffMods, statusChance, STATUS_CHANCE_CAP, type DebuffApply,
 } from './debuffs.js';
 import { resolvePlayerHit, type HitTarget } from './combat.js';
 
@@ -106,5 +106,81 @@ describe('resolvePlayerHit', () => {
     expect(weak.appliedDebuffs).not.toContain('bleed'); // 0.40 < 0.6 → мимо
     const strong = resolvePlayerHit(target(), stats({ ailmentPct: 0.6 }), phys(100), on, thr, 0);
     expect(strong.appliedDebuffs).toContain('bleed'); // 0.40×1.6 = 0.64 ≥ 0.6 → наложен
+  });
+});
+
+/**
+ * ⭐ ПОТОЛОК ШАНСА СТАТУСА (docs/CRAFT_WEAPONS.md §20). Деревья дают `ailmentPct` до ~1.8, и
+ * ошеломление с базой 0.60 уходило за 1.0 — «статус каждым ударом». Сервер обязан катать не выше
+ * 0.95 при ЛЮБЫХ бонусах, а окна — показывать ровно это число (одна функция `statusChance`).
+ */
+describe('⭐ потолок шанса статуса 0.95', () => {
+  /** Rng-самописец: пишет шанс каждого броска; успех как у hitRng (попадание гарантировано). */
+  const recorder = (): { log: number[]; rng: Rng } => {
+    const log: number[] = [];
+    return { log, rng: { ...hitRng, chance: (p) => { log.push(p); return 0 < p; } } };
+  };
+  /** Сколько бросков делает сам удар (попадание/блок/крит) — бросок статуса идёт следующим. */
+  const rollsBeforeStatus = (): number => {
+    const r = recorder();
+    resolvePlayerHit(target(), stats(), phys(100), {}, r.rng, 0);
+    return r.log.length;
+  };
+
+  it('statusChance: база × множитель, зажатая в [0, 0.95]; мусор на входе → 0', () => {
+    expect(STATUS_CHANCE_CAP).toBe(0.95);
+    expect(statusChance(0.4)).toBeCloseTo(0.4, 12);
+    expect(statusChance(0.4, 1.5)).toBeCloseTo(0.6, 12);
+    expect(statusChance(0.6, 2.788)).toBe(0.95);          // ошеломление × максимум деревьев
+    expect(statusChance(1)).toBe(0.95);
+    expect(statusChance(Infinity)).toBe(0.95);
+    expect(statusChance(0)).toBe(0);
+    expect(statusChance(NaN)).toBe(0);
+    expect(statusChance(0.5, NaN)).toBe(0);
+    expect(statusChance(-0.3)).toBe(0);
+    expect(statusChance(0.5, -2)).toBe(0);
+    expect(statusChance(-Infinity)).toBe(0);
+  });
+
+  it('сервер катает статус не выше 0.95 при любых бонусах — и ровно statusChance', () => {
+    const n0 = rollsBeforeStatus();
+    for (const base of [0.1, 0.6, 0.95, 1, 1.5]) {
+      for (const ap of [0, 0.5, 1.788, 5]) {
+        for (const kc of [0, 0.4, 2]) {
+          const r = recorder();
+          const atk = stats({ ailmentPct: ap, ailment: { chance: { wound: kc }, power: {}, dur: {} } });
+          resolvePlayerHit(target(), atk, phys(100), { onHit: [apply({ kind: 'wound', chance: base })] }, r.rng, 0);
+          expect(r.log.length, 'бросок статуса не случился').toBe(n0 + 1);
+          const p = r.log[n0]!;
+          expect(p, `база ${base}, ailmentPct ${ap}, шанс вида ${kc}`).toBeLessThanOrEqual(STATUS_CHANCE_CAP);
+          expect(p).toBe(statusChance(base, 1 + ap + kc));
+        }
+      }
+    }
+  });
+
+  it('бросок 0.97 не вешает статус даже при «шансе 300 %» — эксплойт долга §20 закрыт', () => {
+    const n0 = rollsBeforeStatus();
+    let i = 0;
+    // Удар попадает (бросок 0), а бросок статуса выпадает 0.97 — выше потолка.
+    const rng: Rng = { ...hitRng, chance: (p) => (i++ === n0 ? 0.97 : 0) < p };
+    const r = resolvePlayerHit(target(), stats({ ailmentPct: 4 }), phys(100), { onHit: [apply({ kind: 'daze', chance: 0.6 })] }, rng, 0);
+    expect(r.hit).toBe(true);
+    expect(r.appliedDebuffs).not.toContain('daze');
+  });
+
+  it('на живом ГПСЧ частота наложения ≈ 95 % от попаданий, а не 100 %', () => {
+    const rng = createRng(12345);
+    let hits = 0, applied = 0;
+    for (let k = 0; k < 20000; k++) {
+      const r = resolvePlayerHit(target(), stats({ ailmentPct: 10 }), phys(1), { onHit: [apply({ kind: 'wound', chance: 1 })] }, rng, 0);
+      if (!r.hit || r.blocked) continue;
+      hits++;
+      if (r.appliedDebuffs.includes('wound')) applied++;
+    }
+    expect(hits).toBeGreaterThan(15000);
+    expect(applied).toBeLessThan(hits);                    // хоть один промах статуса обязан быть
+    expect(applied / hits).toBeGreaterThan(0.94);
+    expect(applied / hits).toBeLessThan(0.96);
   });
 });

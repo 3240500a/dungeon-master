@@ -1,4 +1,6 @@
 import pg from 'pg';
+import { createHash } from 'node:crypto';
+import { CommitUnknown } from './errors.js';
 
 /**
  * Подключение к Postgres (Ф2). Одна точка входа: пул, помощник запроса и помощник транзакции.
@@ -14,7 +16,7 @@ import pg from 'pg';
  * (`RoomManager`) — иначе два кадра одного игрока обгоняли бы друг друга.
  */
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
 
 /**
  * Адрес базы. В разработке — локальный сервер со стенда, в бою обязателен `DM_PG`:
@@ -35,6 +37,20 @@ export const pool = new Pool({
   idleTimeoutMillis: 30_000,
   // Долгий запрос — это всегда ошибка в нашем коде: игровых запросов длиннее секунды не бывает.
   statement_timeout: 10_000,
+  // R1-15: предохранители на СТОРОНЕ КЛИЕНТА. `statement_timeout` считает сервер, и полуоткрытое соединение
+  // (база ушла, сокет молчит) он не спасает: запись висела бы вечно, а с ней — прощальная запись, которую
+  // ждёт вход персонажа. Ожидание соединения из пула, ответа на запрос и живость сокета — ограничены.
+  connectionTimeoutMillis: 5_000,
+  query_timeout: 15_000,
+  keepAlive: true,
+  // ⭐ R3-13: предохранитель на СТОРОНЕ БАЗЫ. Нода, чей хост умер без FIN/RST (или отрезан сетью), оставляла свои
+  // соединения «idle in transaction» — со всеми блокировками строк героев и сундуков, пока TCP keepalive сервера не
+  // заметит обрыв (с настройками ОС — около двух часов). Героя тем временем закрепляла другая нода, и каждая запись его
+  // сейва и сундука аккаунта ждала блокировку до `statement_timeout`: «Не удалось сохранить» и копии «на дописать» —
+  // часами. Игровые транзакции короче секунды: простоявшее в транзакции дольше предела соединение база закрывает
+  // сама, блокировки уходят с ним. Переменная — для теста; в бою умолчание. Живость сокета на стороне базы —
+  // `tcp_keepalives_*` в postgresql.conf (docs/DEPLOY.md).
+  idle_in_transaction_session_timeout: Number(process.env.DM_PG_IDLE_TX_MS ?? 30_000),
 });
 
 // Пул переизлучает ошибки простаивающих соединений. БЕЗ обработчика Node роняет процесс:
@@ -64,16 +80,70 @@ export async function q1<T extends pg.QueryResultRow = pg.QueryResultRow>(
  */
 export async function tx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   const c = await pool.connect();
+  // Соединение, на котором не прошёл даже ROLLBACK (оборвано, запрос завис), в пул не возвращаем — иначе
+  // следующая транзакция встала бы в очередь за зависшим запросом на том же сокете (R1-15).
+  let broken = false;
+  // R3-13: пока соединение у нас, база может закрыть его сама (простой в транзакции дольше предела — процесс замер).
+  // Пул слушает ошибки только простаивающих соединений: без своего слушателя это необработанное 'error' — падение
+  // процесса со всеми комнатами. Ошибку и так получит ждущий запрос; соединение в пул не вернётся.
+  const onError = (e: Error): void => { broken = true; console.warn('[db] соединение закрыто посреди транзакции:', e.message); };
+  c.on('error', onError);
+  // ⭐ R2-09: сбой НА `COMMIT` — не «не записано». По таймауту node-postgres лишь отклоняет промис, а отправленный
+  // `COMMIT` база доводит до конца: вызывающий обязан выяснить исход, а не откатывать память к «до». Сбой раньше
+  // фиксации — обычная ошибка: транзакцию откатил ROLLBACK или (соединение умерло) сама база.
+  let committing = false;
   try {
     await c.query('BEGIN');
     const out = await fn(c);
+    committing = true;
     await c.query('COMMIT');
     return out;
   } catch (e) {
-    try { await c.query('ROLLBACK'); } catch { /* соединение уже мертво */ }
-    throw e;
+    try { await c.query('ROLLBACK'); } catch { broken = true; /* соединение уже мертво */ }
+    throw committing ? new CommitUnknown(e, !broken) : e;
   } finally {
-    c.release();
+    c.off('error', onError);
+    c.release(broken);
+  }
+}
+
+/**
+ * ⭐ R2-22: СХЕМА ПРИМЕНЯЕТСЯ, ТОЛЬКО КОГДА ОНА ПОМЕНЯЛАСЬ. `ALTER TABLE … ADD COLUMN IF NOT EXISTS` берёт
+ * ИСКЛЮЧИТЕЛЬНУЮ блокировку таблицы, даже когда колонка уже есть, а `CREATE INDEX IF NOT EXISTS` — разделяемую;
+ * пакет шёл одной неявной транзакцией и держал всё взятое до конца. Долгий читатель (ночной аудит сундуков)
+ * останавливал ALTER, за ним вставали чтения и записи сундука, а за разделяемой блокировкой персонажей — все
+ * сейвы: кузница и сундук на всех нодах отвечали «Не удалось сохранить». И так — на КАЖДЫЙ старт каждой ноды.
+ *
+ * Теперь части схемы помечены отпечатком их текста (`schema_marks`): совпал — не делаем НИЧЕГО, блокировок нет.
+ * Правка схемы меняет текст, и она применяется один раз — с `lock_timeout`: не дождались блокировки — повтор
+ * через секунду, а не очередь из всех запросов кластера. Правило «вся схема в этом файле» не меняется.
+ */
+const SCHEMA_LOCK_WAIT_MS = 2_000;
+const SCHEMA_TRIES = 5;
+export async function applySchema(c: pg.ClientBase, name: string, parts: readonly string[]): Promise<void> {
+  const hash = createHash('sha1').update(parts.join('\n-- ⸻\n')).digest('hex');
+  await c.query(`CREATE TABLE IF NOT EXISTS schema_marks (
+    name text PRIMARY KEY, hash text NOT NULL, at timestamptz NOT NULL DEFAULT now()
+  )`);
+  const cur = await c.query<{ hash: string }>('SELECT hash FROM schema_marks WHERE name = $1', [name]);
+  if (cur.rows[0]?.hash === hash) return;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await c.query(`SET lock_timeout = ${SCHEMA_LOCK_WAIT_MS}`);
+      // Части — по одной: каждая своей неявной транзакцией, взятое одной не держится до конца всех.
+      for (const part of parts) await c.query(part);
+      await c.query(
+        `INSERT INTO schema_marks (name, hash, at) VALUES ($1, $2, now())
+         ON CONFLICT (name) DO UPDATE SET hash = excluded.hash, at = now()`, [name, hash]);
+      return;
+    } catch (e) {
+      // 55P03 — не дождались блокировки: таблицу держит долгий запрос. Повторяем, а не ждём вечно.
+      if ((e as { code?: string }).code !== '55P03' || attempt >= SCHEMA_TRIES) throw e;
+      console.warn(`[db] схема «${name}»: таблица занята, повтор ${attempt}/${SCHEMA_TRIES - 1}`);
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    } finally {
+      await c.query('RESET lock_timeout').catch(() => undefined);
+    }
   }
 }
 
@@ -91,18 +161,48 @@ export async function tx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
 const SCHEMA_LOCK = 947_213_001;
 
 export async function initSchema(): Promise<void> {
-  const c = await pool.connect();
+  // R2-22: схема на месте — ни одного DDL и ни одной блокировки таблиц (см. `applySchema`).
+  await withSchemaLock(SCHEMA_LOCK, (c) => applySchema(c, 'main', SCHEMA_MAIN));
+}
+
+/** R6-18: сколько процесс на старте ждёт блокировку схемы, которую держит другой (применяет правку схемы). */
+const SCHEMA_WAIT_MS = 10 * 60_000;
+
+/**
+ * ⭐ R6-18: СХЕМА — НА СВОЁМ СОЕДИНЕНИИ, БЕЗ ПОТОЛКОВ ПУЛА, ПОД КОНСУЛЬТАТИВНОЙ БЛОКИРОВКОЙ `key`. У соединений пула
+ * `statement_timeout` 10 с (параметр старта соединения) и `query_timeout` 15 с. Деплой с правкой схемы: супервизор поднимает
+ * гейтвей и ноды разом, первый держит блокировку, пока ждёт занятую таблицу (`applySchema`, до ~20 с), — остальные через
+ * 10 с получали 57014 на `pg_advisory_lock` и падали кругом перезапусков; а часть схемы дольше 10 с (новый индекс по
+ * растущему журналу вещей) отменялась на каждом старте — не поднялась бы ни одна нода, ни одиночный процесс.
+ * Теперь запросы схемы без потолка, а ожидание блокировки — опросом `pg_try_advisory_lock` с паузами до `SCHEMA_WAIT_MS`:
+ * ни один запрос не висит, а процесс ждёт ведущего, а не падает. Соединение закрывается после — блокировка уходит с ним.
+ */
+export async function withSchemaLock(key: number, fn: (c: pg.ClientBase) => Promise<void>): Promise<void> {
+  const c = new Client({ connectionString: URL_, connectionTimeoutMillis: 5_000, keepAlive: true });
+  c.on('error', (e) => console.warn('[db] соединение схемы:', e.message));
+  await c.connect();
   try {
-    await c.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK]);
-    await initSchemaLocked();
+    await c.query('SET statement_timeout = 0');
+    const deadline = Date.now() + SCHEMA_WAIT_MS;
+    for (let pause = 100, told = false; ; pause = Math.min(pause * 2, 2_000)) {
+      const got = await c.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [key]);
+      if (got.rows[0]?.ok) break;
+      if (Date.now() >= deadline) throw new Error(`[db] блокировку схемы ${key} держат дольше ${SCHEMA_WAIT_MS / 1000} с`);
+      if (!told) { told = true; console.log(`[db] схему применяет другой процесс — жду блокировку ${key}`); }
+      await new Promise((r) => setTimeout(r, pause));
+    }
+    try {
+      await fn(c);
+    } finally {
+      try { await c.query('SELECT pg_advisory_unlock($1)', [key]); } catch { /* соединение умерло — блокировка ушла с ним */ }
+    }
   } finally {
-    try { await c.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK]); } catch { /* соединение умерло */ }
-    c.release();
+    await c.end().catch(() => undefined);
   }
 }
 
-async function initSchemaLocked(): Promise<void> {
-  await q(`
+/** Основная схема: таблицы, запрет переписывания журнала вещей. Правка текста = миграция на следующем старте. */
+const SCHEMA_MAIN: readonly string[] = [`
     CREATE TABLE IF NOT EXISTS users (
       id         text PRIMARY KEY,
       username   text NOT NULL,
@@ -115,6 +215,10 @@ async function initSchemaLocked(): Promise<void> {
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS created_ip text;
     CREATE INDEX IF NOT EXISTS users_created_ip ON users (created_ip, created_at DESC);
+    -- R6-19: сеть адреса регистрации (IPv4 — сам адрес, IPv6 — /64): суточный потолок считается по ней, иначе ферма
+    -- меняла хвост IPv6 внутри своей сети. created_ip остаётся — для разбора.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS created_net text;
+    CREATE INDEX IF NOT EXISTS users_created_net ON users (created_net, created_at DESC);
     -- РОЛЬ. Инструментальные роуты (/api/dev/*) держались на том, что запрос пришёл с локальной
     -- машины. Это не пропуск, а его видимость: браузер разработчика тоже ходит с 127.0.0.1, значит
     -- под гейт подпадала ЛЮБАЯ открытая в нём страница. Теперь пускает роль, а не адрес.
@@ -144,8 +248,13 @@ async function initSchemaLocked(): Promise<void> {
     CREATE TABLE IF NOT EXISTS account_stash (
       user_id    text PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       data       jsonb NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      -- D8: оптимистичная блокировка сундука, как у сейва (Ф0.3). Сундук общий на аккаунт, а героев
+      -- у аккаунта можно держать онлайн сразу нескольких: без версии две записи внахлёст проходили
+      -- обе (last-writer-wins), и вторая молча затирала то, что потратила или положила первая.
+      version    integer NOT NULL DEFAULT 1
     );
+    ALTER TABLE account_stash ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 
     CREATE TABLE IF NOT EXISTS config_overrides (
       key        text PRIMARY KEY,
@@ -209,6 +318,11 @@ async function initSchemaLocked(): Promise<void> {
       action_mean_ms double precision NOT NULL DEFAULT 0,
       action_sd_ms   double precision NOT NULL DEFAULT 0
     );
+    -- Кузница (K7, §22): счётчики рядом с убийствами — «цена ковки ≈ времени фарма» проверяется по ним.
+    ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS crafted   integer NOT NULL DEFAULT 0;
+    ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS melted    integer NOT NULL DEFAULT 0;
+    ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS salvaged  integer NOT NULL DEFAULT 0;
+    ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS enchanted integer NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS play_sessions_user ON play_sessions (user_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS play_sessions_ip ON play_sessions (ip, started_at DESC);
     CREATE INDEX IF NOT EXISTS play_sessions_updated ON play_sessions (updated_at);
@@ -230,23 +344,23 @@ async function initSchemaLocked(): Promise<void> {
       json       jsonb NOT NULL,
       updated_at bigint NOT NULL
     );
-  `);
-
+  `,
   // Запрет на переписывание журнала — на стороне БАЗЫ, а не кода. Приложение может ошибиться
   // или быть скомпрометировано; здесь же любое UPDATE/DELETE по журналу падает с ошибкой.
-  await q(`
+  `
     CREATE OR REPLACE FUNCTION item_events_append_only() RETURNS trigger AS $fn$
     BEGIN
       RAISE EXCEPTION 'item_events — журнал только на дозапись, % запрещён', TG_OP;
     END;
     $fn$ LANGUAGE plpgsql;
-  `);
-  await q('DROP TRIGGER IF EXISTS item_events_no_rewrite ON item_events');
-  await q(`
+  `,
+  // Снять и поставить заново ОДНОЙ частью (одна неявная транзакция): между ними журнал не остаётся без запрета.
+  `
+    DROP TRIGGER IF EXISTS item_events_no_rewrite ON item_events;
     CREATE TRIGGER item_events_no_rewrite BEFORE UPDATE OR DELETE ON item_events
     FOR EACH STATEMENT EXECUTE FUNCTION item_events_append_only();
-  `);
-}
+  `,
+];
 
 /** Закрыть пул (тесты и graceful shutdown). */
 export async function closePool(): Promise<void> {

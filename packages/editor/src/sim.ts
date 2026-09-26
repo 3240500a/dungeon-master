@@ -169,6 +169,12 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
     statBox('Убито', `${r.kills}`),
     statBox('Смертей', `${r.deaths}`, r.deaths > 20 ? '#ff8080' : '#e8e8f0'),
     statBox('Убийств/ч', `${r.killsPerHour}`),
+    // K7: кузница рядом с темпом боя (§22) — видно, сколько ковки даёт час фарма.
+    statBox('Сковано/ч', `${r.craftedPerHour}`, r.craft.enabled ? '#caa64b' : '#666'),
+    statBox('Переплавлено/ч', `${r.meltedPerHour}`),
+    statBox('Разобрано/ч', `${r.salvagedPerHour}`),
+    statBox('Зачаровано/ч', `${r.enchantedPerHour}`),
+    statBox('Сырьё/ч: при/расх', `${r.craft.materials.inPerHour} / ${r.craft.materials.outPerHour}`),
     statBox('XP/ч', `${r.xpPerHour}`),
     statBox('Золото', `${r.goldEarned}`),
     statBox('Предметов', `${r.itemsFound}`),
@@ -179,6 +185,8 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
   const economy = grid([
     statBox('Золото с убийств', `${r.goldEarned}`, '#caa64b'),
     statBox('Продано лута', `${r.goldSold}`),
+    // R3-20: бот сырьё не продаёт (копит на кузницу), а лавка платит за него поштучно — кран, которого нет в «Продано».
+    statBox('Сырьё с тел, в золоте', `${r.craft.materials.sellWorth.monsters}`, '#8a8a9a'),
     statBox('Куплено в лавке', `${r.goldSpent}`, '#cf8b6b'),
     statBox('Чистыми', `${r.goldEarned + r.goldSold - r.goldSpent}`),
     statBox('Найдено предметов', `${r.itemsFound}`),

@@ -1,25 +1,240 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
-  generateItem, itemFromBaseId, createRng, shapeFoundWeapon,
+  generateItem, itemFromBaseId, createRng, shapeFoundWeapon, rollTierLevel,
   buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
-  migrateWalletToStash, stashMove, stashDims, stashTabCount,
-  ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
-  isDifficultyUnlocked, applyDeathPenalty,
+  craftAction, enchantAction, sketchAction, fullJournal, normalizeJournal, normalizeCraftNonces, SHOP_CONSUMABLES, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
+  stashMove, stashDims, stashTabCount,
+  ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor, pruneBoardQuests,
+  isDifficultyUnlocked, applyDeathPenalty, parseTownCommand, PRICE_CHANGED,
+  noteNodeId, sameRun, runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord, isDotKind, activeAbilityOf,
   PROTOCOL_VERSION,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
-  type DecorObject, type RunConfig, type RunPlan, type AccountStash,
+  type DecorObject, type RunConfig, type RunPlan, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
+  type PlayerEntity, type DebuffState, type DebuffKind, type TownStockRef,
 } from '@dm/shared';
-import { putCharacter, putCharacterWithStash } from '../db/db.js';
+import { putCharacter, putCharacterWithStash, getCharacter } from '../db/db.js';
+import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
 import { tickScheduler, TICK_MS, type Tickable } from './scheduler.js';
 import { counters } from './metrics.js';
-import { loadAccountStash, saveAccountStash } from './accountStash.js';
+import { loadAccountStash, type LoadedStash } from './accountStash.js';
 import { cmdAllowedIn, CommandDedup } from './guard.js';
-import { SessionTelemetry } from './telemetry.js';
+import { limits } from './rateLimit.js';
+import { SessionTelemetry, tallyForge } from './telemetry.js';
+import { craftFullJournalOn, craftFullJournalNotice } from './devFlags.js';
 import { upsertPlaySession } from '../db/telemetry.js';
+
+/**
+ * D10: СИД ИЗ КРИПТОГРАФИЧЕСКОГО ИСТОЧНИКА. Раньше каждый бросок сервера (перекатка, разбор,
+ * прилавок, доска квестов, штраф смерти, сид забега) сеялся `Date.now() & 0xffffff` — это
+ * 16,7 секунды по кругу, то есть сид угадывается по часам с точностью до миллисекунды, и бросок
+ * можно посчитать заранее: «жать перекатку в ту миллисекунду, где выпадет лучшее». Mulberry32 для
+ * самих бросков оставлен (он детерминирован и быстр); непредсказуемым сделан только сид.
+ */
+function randomSeed(): number { return randomInt(1, 2 ** 31 - 1); }
+/** Генератор для ОДНОГО городского броска (D10): свежий непредсказуемый сид на каждый вызов. */
+export function townRng(): Rng { return createRng(randomSeed()); }
+
+/** Итог команды города — он же тело кадра `cmdResult` (D3). */
+type CmdOutcome = { ok: boolean; reason?: string; uid?: string; unlocked?: string[] };
+/**
+ * Итог исполнения. `early` — отказ ДО исполнения (не то место, лимит частоты): сейв не трогали, и слать его
+ * клиенту незачем (R1-11). Служебное поле — в кадр не уходит.
+ */
+type RunOutcome = CmdOutcome & { early?: boolean };
+/**
+ * Итог действия внутри транзакции. `unchanged` — действие заведомо ничего не изменило (повтор ключа
+ * ковки): писать в базу нечего. Транзакция всё равно сверяет сейв со снимком и при расхождении пишет.
+ */
+type TxOutcome = CmdOutcome & { unchanged?: boolean };
+
+/** D12: команды со своим лимитом частоты — каждая стоит броска, генерации и записи в базу (эскиз — чтения и записи сундука). */
+const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', 'forgeSalvage', 'salvage', 'forgeSketch']);
+/** D13: отказ ковки и зачарования, пока кузнец не открыт (`balance.craft.live`). Разбор работает и так. */
+const CRAFT_CLOSED = 'Кузнец ещё не куёт';
+/**
+ * D1: флаг разработчика — ворота журнала кузнеца открыты для проверок ковки (в базу не пишется ничего:
+ * журнал аккаунта остаётся своим). Читается на каждый вызов — стенд переключает его без пересборки.
+ * ⚠ В продакшене (`NODE_ENV=production`) флаг игнорируется — решение в `devFlags.ts`.
+ */
+const craftFullJournal = (): boolean => craftFullJournalOn(process.env);
+// Забытый на боевом сервере флаг открыл бы каталог ковки всем — пусть это будет видно в логе с первой секунды
+// (в продакшене — что он проигнорирован).
+const craftJournalNote = craftFullJournalNotice(process.env);
+if (craftJournalNote) console.warn(`[room] ${craftJournalNote}`);
+/**
+ * Команды, которые сами держат атомарность (`withAccount` / `withSave`): их сейв откатывает
+ * транзакция, а общий откат после исключения только затёр бы то, что тик сделал за время ожидания базы.
+ * Разбор на месте (`salvage`) здесь больше не живёт (R2-14): он исполняется сразу и откатывается общим снимком.
+ */
+const TRANSACTED_CMDS: ReadonlySet<string> = new Set([
+  'forgeUpgrade', 'forgeRepair', 'forgeReroll', 'forgeSalvage', 'depositMaterials', 'stashMove', 'stashOpen',
+  'craft', 'forgeEnchant', 'forgeSketch',
+]);
+/**
+ * Команды, которые меняют МИР рядом с сейвом (земля, сущность игрока). Откат одного сейва после
+ * исключения в них дал бы вещь и на земле, и в сумке, — поэтому сейв им не откатываем вовсе.
+ */
+const WORLD_CMDS: ReadonlySet<string> = new Set(['drop', 'pickup', 'useConsumable']);
+/** Как часто шуметь в лог о невалидных (и присланных не из того места) командах одного игрока: флудер не должен топить лог. */
+const INVALID_WARN_MS = 10_000;
+/**
+ * R1-03: пауза между переходами по голосованию (спуск, арена, возврат в город). Честный игрок между ними
+ * идёт до выхода или алтаря — секунды; без паузы «арена ↔ город» соло гонялось сорок раз в секунду, и каждый
+ * круг — это новый этаж в памяти, рассылка кадров всем и запись сейвов в базу.
+ */
+const VOTE_COOLDOWN_MS = 1_500;
+/**
+ * R3-01: как близко к выходу (на финале — к порталу) должен стоять тот, кто зовёт спуск, в пикселях мира — два тайла.
+ * Клиент зовёт спуск с 34 (выход) и 44 (портал); остальное — запас на то, что позиция сервера отстаёт от предсказанной
+ * клиентом на время пути ввода (подбежал и сразу нажал, рывок). Рычагу и сундуку сервер даёт 56 при радиусах клиента 40 и 48.
+ */
+const EXIT_REACH_PX = 64;
+/** Что говорить тому, кто зовёт переход издалека (R3-01, R4-01): кадр `error` с кодом `far`. */
+const FAR_EXIT = 'Подойдите к выходу';
+const FAR_PORTAL = 'Подойдите к порталу';
+/** R5-07: ответ на любое действие в комнате, замороженной сливом процесса. */
+const FROZEN = 'Сервер перезапускается — войдите через несколько секунд';
+/** R5-19: взять задание с доски, пережившей свой срок, — сперва новая доска. */
+const BOARD_RENEWED = 'Доска обновилась — выбери задание заново';
+/** R5-04: «за» спуск посреди боя, вдали от выхода (тот же код `far` — клиент показывает текст). */
+const FAR_FIGHT = 'Сначала выйдите из боя — или подойдите к выходу';
+/** Код закрытия сокета, чья сессия потеряла право писать (R1-01): клиент уходит в лобби и входит заново — из базы. */
+const WS_STALE = 4009;
+/**
+ * ⭐ R4-25: отказ голосу за спуск, который переписал бы ЧУЖОЙ припаркованный забег голосующего (кадр `error`, код `run`).
+ * Раньше спуск молча ставил всем забег хозяина (или новый) — и «Завершить» со штрафом обходилось входом к другу.
+ */
+const RUN_CLASH = 'У вас незавершённый забег — продолжите или завершите его';
+/**
+ * ⭐ R4-20: сколько тиков без кадров ввода (≈ треть секунды при 30 Гц) комната ещё применяет последний. Дальше — стоять:
+ * скрытая вкладка кадров не шлёт, и раньше герой бежал и бил по последнему вводу, пока игрок не вернётся.
+ */
+const INPUT_STALE_TICKS = 10;
+/** R4-06: сколько героев помнит комната «какими ушли» — карта не растёт от потока входов-выходов. */
+const LEFT_MAX = 64;
+
+/**
+ * Итог записи сейва (R2-08, R2-09).
+ *  • `ok` — записано;
+ *  • `conflict` — база отказала: по версии сейва (сессию уже сняли, `dropStale`) или сундука (не записано НИЧЕГО), либо
+ *    данные она не примет никогда — класс 22 (R3-02: сессию сняли, правда — последняя запись в базе);
+ *  • `failed` — сбой базы ДО фиксации: не записано наверняка, правда — копия в памяти;
+ *  • `unknown` — сбой на самой фиксации, и исход выяснить не удалось: живую сессию сняли (`dropStale`).
+ */
+type WriteResult = 'ok' | 'conflict' | 'failed' | 'unknown';
+
+/**
+ * ⭐ ИТОГ ПРОЩАЛЬНОЙ ЗАПИСИ (R2-08). Не записалась (база упала, ответ на фиксацию потерян) — у менеджера остаётся
+ * `retry`: копия сейва на выходе, которую он ДОПИШЕТ, прежде чем читать сейв из базы для нового входа этого героя.
+ * Раньше неудачная прощальная запись считалась «законченной»: вход читал сейв ДО неё, а соседу по аккаунту
+ * выброшенная вещь уже записалась — вещь оказывалась у обоих. `retry` отвечает тем же `Farewell`.
+ */
+export interface Farewell { saved: boolean; retry?: () => Promise<Farewell> }
+const SAVED: Farewell = { saved: true };
+
+/**
+ * Вынуть вещи из сейва и (если передан) сундука — на месте, объекты те же (сессия держит ссылку на сейв).
+ * Возвращает, сколько вынуто.
+ */
+function stripItems(save: SaveState, stash: AccountStash | undefined, ids: ReadonlySet<string>): number {
+  let n = 0;
+  const keep = (it: Item | null | undefined): boolean => { if (it && ids.has(it.uid)) { n++; return false; } return true; };
+  save.inventory = save.inventory.filter(keep);
+  save.belt = save.belt.map((it) => (keep(it) ? it : null));
+  for (const [slot, it] of Object.entries(save.equipment)) if (!keep(it)) delete save.equipment[slot as keyof typeof save.equipment];
+  if (stash) stash.tabs = stash.tabs.map((tab) => tab.filter(keep));
+  return n;
+}
+
+/**
+ * Витрина и доска квестов героя-хозяина (R1-03). `at` — когда катали. `shop` — только СНАРЯЖЕНИЕ: зелья лавки
+ * в сток не входят (R2-04) — бросать в них нечего, и катаются они на каждый заход в город. `level` — уровень хозяина,
+ * под который катали снаряжение (R3-17). R5-22: `seed` — сид броска снаряжения, `rolled` — весь бросок по порядку (номер
+ * вещи в нём — то, что сейв помнит купленным), `owner` — герой-хозяин (его сейв держит опознание стока).
+ */
+interface TownStock { at: number; shop: Item[]; board: QuestDef[]; level: number; seed: number; rolled: Item[]; owner: string }
+/**
+ * ⭐ R5-22: опознание стока из сейва — годное и не протухшее (метка «из будущего» дальше срока — порча, не опознание).
+ * Купленное — только номера в пределах броска.
+ */
+function stockRef(v: SaveState['townStock'], now: number, ttlMs: number): TownStockRef | undefined {
+  if (!v || typeof v !== 'object' || !Array.isArray(v.bought)) return undefined;
+  if (![v.at, v.seed, v.level].every((n) => typeof n === 'number' && Number.isFinite(n))) return undefined;
+  if (now - v.at >= ttlMs || v.at - now > ttlMs) return undefined;
+  v.bought = v.bought.filter((i) => Number.isInteger(i) && i >= 0 && i < 256).slice(0, 256);
+  return v;
+}
+
+/**
+ * ⭐ ВИТРИНА ПРИНАДЛЕЖИТ ГЕРОЮ, А НЕ КОМНАТЕ (R1-03). Раньше прилавок и доска катались заново на КАЖДЫЙ вход
+ * в город, а вход в город бесплатен: соло «арена → город» проходит голосованием мгновенно. Ступень на прилавке —
+ * бросок (D21), и свободный перебросок делал его «лучшим из N»: t5 выше уровня героя, нужные детали, открытый
+ * потолок ступени журнала. Новая комната (вышел — зашёл) — тот же перебросок, только медленнее.
+ *
+ * Теперь сток держится за героем-хозяином комнаты (первым в ней) и обновляется не чаще `balance.townRestockSec`:
+ * ни круги по областям, ни новые комнаты его не перекатывают. Купленное и принятое с доски из стока убирается —
+ * повторный вход их не вернёт. ⭐ R5-22: карта — лишь кэш процесса; истина — опознание стока в сейве героя
+ * (`save.townStock`: когда, сид, уровень, купленное). Раньше на другой ноде (и после рестарта) снаряжение катилось заново —
+ * в кластере «выйти из города и войти на соседнюю ноду» было бесплатным перебросом. Доска квестов между нодами
+ * катается своя, но её квота — в сейве (R3-10, R4-33), а её поколение — то же `at`.
+ *
+ * ⚠ R2-04: ЗЕЛЬЯ ЛАВКИ — НЕ СТОК. Они — одинаковые вещи без броска, «перебросить» в них нечего, а в сток их
+ * положили вместе со снаряжением: раскупил пять лечебных — и следующие десять минут, в любой комнате, зелий нет.
+ * Лавка расходников катается на КАЖДЫЙ заход в город и в каждой комнате своя (`consumables`).
+ */
+const townStocks = new Map<string, TownStock>();
+let townStocksSweptAt = 0;
+/** Выбросить протухшие стоки — карта не должна расти вечно. Не чаще раза в минуту. */
+function sweepTownStocks(now: number, ttlMs: number): void {
+  if (now - townStocksSweptAt < 60_000) return;
+  townStocksSweptAt = now;
+  for (const [k, s] of townStocks) if (now - s.at >= ttlMs) townStocks.delete(k);
+}
+/**
+ * R1-10: чужое значение для строки лога. `String(v)` на объекте из кадра зовёт ЕГО `toString`/`valueOf`, а
+ * `{"toString":1}` из JSON делает их не функциями — и `String` бросает. Сюда — только то, что не бросает.
+ */
+function describeUntrusted(v: unknown): string {
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v == null) return String(v);
+  try { return JSON.stringify(v) ?? typeof v; } catch { return typeof v; }
+}
+
+/**
+ * Вернуть объект к снимку НА МЕСТЕ: сессия держит ссылку на сейв, подменять объект нельзя.
+ * Ключи, появившиеся после снимка, удаляются — `Object.assign` их бы оставил.
+ */
+function restoreInPlace(target: object, snapshot: string): void {
+  const src = JSON.parse(snapshot) as Record<string, unknown>;
+  const t = target as Record<string, unknown>;
+  for (const k of Object.keys(t)) if (!(k in src)) delete t[k];
+  Object.assign(t, src);
+}
+
+/** Кошелёк сырья сундука; у сундука старого формата поля могло не быть. */
+function walletOf(st: AccountStash): Record<string, number> { return (st.materials ??= {}); }
+
+/**
+ * Причина записи разбора для журнала вещей (D9): скованную вещь ПЕРЕПЛАВЛЯЮТ (`melt`), остальное
+ * разбирают (`salvage`). Метка и только: какой путь выхода взять, решает ядро по самой вещи.
+ */
+function salvageReason(save: SaveState, uid: string): string {
+  return save.inventory.find((i) => i.uid === uid)?.parts ? 'melt' : 'salvage';
+}
+
+/** Номер команды из кадра: `undefined` — не прислан, `null` — прислан, но негоден. */
+function cmdIdOf(v: unknown): number | undefined | null {
+  if (v === undefined) return undefined;
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
+}
+/** Имя команды для ответа — даже у невалидной (обрезанное: это эхо чужой строки). */
+function cmdNameOf(raw: unknown): string {
+  const c = typeof raw === 'object' && raw !== null ? (raw as { cmd?: unknown }).cmd : undefined;
+  return typeof c === 'string' ? c.slice(0, 32) : '?';
+}
 
 const TICK_DT = TICK_MS / 1000;
 /**
@@ -69,7 +284,6 @@ const AUTOSAVE_MS = 10_000; // периодический сброс прогр�
  * не выходит, и сигнатура «шестнадцать часов без пауз» не сработала бы никогда.
  */
 const TELEMETRY_FLUSH_MS = Number(process.env.DM_TELEMETRY_FLUSH_MS ?? 5 * 60_000);
-const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
 const ARENA_IMMUNE_MS = 2_000;      // спавн-иммунитет игрока в арене (мс)
 const ARENA_RESPAWN_MS = 3_000;     // задержка авто-возрождения после гибели в арене (мс)
@@ -89,31 +303,84 @@ interface Client {
   saveVersion: number;
   /** Хвост очереди записей сейва (Ф2): записи одного персонажа идут строго друг за другом. */
   saving: Promise<void>;
-  /** Номера уже выполненных команд (Ф2.5) — повтор после обрыва связи не выполняется дважды. */
-  dedup: CommandDedup;
+  /** Номера уже выполненных команд (Ф2.5) и их итоги (D3) — повтор не выполняется дважды и получает тот же ответ. */
+  dedup: CommandDedup<CmdOutcome>;
+  /** Когда последний раз шумели в лог о невалидной (или не из того места) команде и сколько промолчали с тех пор (D11, R1-10). */
+  invalidWarnAt: number;
+  invalidMuted: number;
   /** Наблюдения за игрой этой сессии (Ф3.2). Не влияет на игру, только измеряет. */
   tm: SessionTelemetry;
   /** id строки телеметрии в базе: null, пока сессия ни разу не записывалась. */
   tmRow: string | null;
   /** Когда телеметрию сбрасывали в базу — длинная сессия должна быть видна ДО своего конца. */
   tmFlushedAt: number;
+  /** Сессию сняли за устаревший сейв (R1-01, `dropStale`): её действия записывать уже некуда. */
+  stale: boolean;
+  /**
+   * Причины для журнала вещей ПО ВЕЩИ (D9, R2-21): действие метит СВОЮ вещь (скованную, разобранную, перенесённую),
+   * и та запись, что её застанет, подпишет её этой причиной; всё прочее в записи — автосейвом. Записанное снимается.
+   */
+  reasons: Map<string, string>;
+  /** Запись разбора на месте уже стоит в очереди и ещё не началась (R2-14): следующий разбор её не множит. */
+  fieldWrite: boolean;
+  /** R4-19: последний кадр ввода тик уже видел — нажатия из него стирать можно. */
+  inputSeen: boolean;
+  /** R4-20: тиков с последнего кадра ввода. */
+  inputAge: number;
 }
 
 /** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
 type AltarConfig = { biomeId?: string; templateId?: string; modifiers?: string[] };
 
-/** Инфо об отключённом игроке — чтобы вернуть его на ту же точку при реконнекте. */
-interface Disconnected { save: SaveState; userId: string; lastPos: { x: number; y: number }; floor: number; saveVersion: number; }
+/**
+ * Инфо об отключённом игроке — чья копия сейва ждёт реконнекта (или штрафа). Где и каким он ушёл — `LeftState` (R4-06).
+ * `saving` — хвост его записей: первой в нём стоит прощальная запись при выходе, и `saveVersion`
+ * становится верной только после неё (см. `removePlayer`).
+ * `paid` (R3-06, R4-16) — ушёл мёртвым (кооп: погиб и ждал следующего этажа): штраф за эту смерть уже взят. Не «мёртв
+ * сейчас» — смерть живёт в `LeftState` и снимается сменой этажа, а оплаченная смерть остаётся оплаченной.
+ * `fled` (R4-14) — ушёл живым посреди боя, не у портала: пати, ушедшая в город, не уносит его из боя даром.
+ */
+interface Disconnected { save: SaveState; userId: string; saveVersion: number; saving: Promise<void>; paid: boolean; fled: boolean; }
+
+/**
+ * ⭐ R4-06: КАКИМ ГЕРОЙ УШЁЛ ИЗ КОМНАТЫ (по charId) — любой вход в неё (реконнект, по коду, выселение второй вкладкой)
+ * возвращает его таким, а не свежим. Раньше сущность заводилась заново с полным здоровьем, маной и выносливостью, без
+ * дебаффов, стана и откатов: F5 посреди боя лечил целиком, а погибший в коопе оживал входом по коду.
+ *
+ * Смена этажа делает с записью то же, что с присутствующими (`floorChanged`): мёртвые оживают (запись снимается), точка
+ * ухода забывается (R4-16: «тот же этаж» — тот же ЭКЗЕМПЛЯР, а не та же глубина), город снимает дебаффы, арена
+ * возрождает всех. Время для ушедшего стоит: дебаффы хранят остаток, а не момент истечения.
+ */
+interface LeftState {
+  /** Точка ухода — только на том же экземпляре этажа. */
+  pos?: { x: number; y: number };
+  alive: boolean;
+  hp: number; mana: number; stamina: number;
+  /** Дебаффы с ОСТАТКОМ длительности в `expiresAt` (мс). */
+  debuffs: DebuffState;
+  stunTimer: number; attackCd: number; dodgeCd: number; combatTimer: number;
+  skillCd: Record<string, number>; toggles: string[]; skillBuffs: Record<string, number>;
+}
 
 /** Хуки комнаты в RoomManager: уничтожение + регистрация/снятие грейс-реконнекта по charId. */
 interface RoomHooks {
   onEmpty: (code: string) => void;
   onGrace: (charId: string) => void;
   onUngrace: (charId: string) => void;
+  /**
+   * R1-07: комната сама начала запись штрафа отключённого (истёк грейс, вайп пати). Менеджер обязан её
+   * запомнить как прощальную — иначе вход в этом окне читал сейв ДО штрафа: забег цел, золото цело.
+   */
+  onFarewell?: (charId: string, write: Promise<Farewell>) => void;
 }
 
 function idleInput(): PlayerInput {
   return { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
+}
+
+/** R4-14: героя жжёт урон по времени (яд, горение, кровотечение). */
+function burning(p: PlayerEntity): boolean {
+  return (Object.keys(p.debuffs) as DebuffKind[]).some((k) => isDotKind(k) && !!p.debuffs[k]);
 }
 
 /**
@@ -136,8 +403,17 @@ export class Room implements Tickable {
   private arenaRespawns = new Map<string, number>();
   private decor: DecorObject[] = [];
   private clients = new Map<string, Client>();
+  /** Прилавок, как его видит клиент: зелья лавки этой комнаты + снаряжение из стока героя. */
   private shop: Item[] = [];
+  /** Зелья лавки (R2-04): свои у комнаты, катаются на каждый заход в город — не сток. */
+  private consumables: Item[] = [];
   private questBoard: QuestDef[] = [];
+  /** Сток героя-хозяина, который сейчас на прилавке (R1-03): истина для покупки и доски, `shop`/`questBoard` — его вид. */
+  private stock: TownStock | null = null;
+  /** Когда голосование последний раз увело комнату в другую область/узел (R1-03). */
+  private movedAt = 0;
+  /** Статика игрока, разосланная последней (R1-11): неизменившуюся рассылать незачем. */
+  private peerSent = new Map<string, string>();
   private wipeAt = 0; // serverTime авто-возврата в город после вайпа пати (0 = не запланирован)
   // Ф0.10: у каждой комнаты своя фаза автосейва. Иначе все комнаты, созданные примерно
   // одновременно, сохраняются в один и тот же оборот цикла — сотня синхронных записей подряд.
@@ -158,17 +434,35 @@ export class Room implements Tickable {
   private runConfig: RunConfig | null = null;
   private runPlan: RunPlan | null = null;
   private runNodeId: string | null = null;
+  /**
+   * ⭐ R4-01: ЧТО НА УЗЛЕ `runNodeId` УЖЕ ВЗЯТО (открытые сундуки, убитые монстры заселения, дёрнутые рычаги) — истина
+   * комнаты. В сейвы участников уходит копией (`syncNodeState`): продолжить забег может любой из них. Живёт вместе с
+   * забегом: переживает город, снимается `endRun`, новый узел начинает с чистого листа.
+   */
+  private nodeState: RunNodeState | null = null;
+  /**
+   * ⭐ R4-04: СВОД ЗАПИСЕЙ ЗАБЕГА — что взято на КАЖДОМ узле, где был кто-то из участников (`nodeState` — запись текущего
+   * узла, тот же объект). Собирается из сейвов всех, кто в комнате этого забега, и раздаётся им же: любой узел, где уже
+   * были, собирается по записи. Живёт вместе с забегом (`startRun`/`resumeRun` другого забега/`endRun` его очищают).
+   */
+  private ledger = new Map<string, RunNodeState>();
+  /** id сущности монстра → его номер в списке заселения узла (id сущностей — сквозной счётчик мира, а не номер). */
+  private spawnIdx = new Map<number, number>();
   private hooks: RoomHooks;
   /** Отключённые игроки (charId → инфо) — ждут реконнекта в эту комнату. */
   private disconnected = new Map<string, Disconnected>();
+  /** R4-06: какими герои ушли (charId → состояние сущности) — см. `LeftState`. */
+  private left = new Map<string, LeftState>();
   /** Таймер грейс-окна при полностью пустой комнате (0 подключённых); null = не запущен. */
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** ⭐ R5-07: комната заморожена сливом процесса (`freeze`): мир и сейвы больше не меняются, только дописываются. */
+  private frozen = false;
 
   constructor(code: string, cfg: ConfigRegistry, hooks: RoomHooks) {
     this.code = code;
     this.cfg = cfg;
     this.hooks = hooks;
-    this.seed = ((Date.now() & 0xffffff) >>> 0) || 1;
+    this.seed = randomSeed();   // D10: сид сессии решает дроп — угадываемым по часам ему быть нельзя
     this.session = new GameSession(cfg, this.seed, this.difficultyId, { rewards: true });
     this.enterTown();
     tickScheduler.add(this);
@@ -192,73 +486,234 @@ export class Room implements Tickable {
   }
 
   /**
-   * Реконнект отключённого игрока (по charId) — возврат в ЭТУ комнату. Позиция: та же точка,
-   * если пати ещё на том же этаже; если без него спустились дальше — начало текущего этажа.
+   * Реконнект отключённого игрока (по charId) — возврат в ЭТУ комнату. Где и каким — решает запись ухода (`LeftState`,
+   * R4-06): тот же экземпляр этажа — та же точка, то же здоровье, дебаффы и откаты; этаж сменился — вход этажа.
    * Снимаем паузу (соло) и отменяем грейс-таймер.
    */
   reconnect(ws: GameConn, userId: string, save: SaveState, version: number): string {
-    const info = this.disconnected.get(save.charId);
     this.disconnected.delete(save.charId);
     this.hooks.onUngrace(save.charId);
     if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; }
     tickScheduler.add(this); // снять паузу (соло) — планировщик игнорит повторный add
-    const spawnAt = info && info.floor === this.depth ? info.lastPos : undefined; // тот же этаж → та же точка
-    return this.attach(ws, userId, save, version, spawnAt);
+    return this.attach(ws, userId, save, version);
   }
 
-  /** Общий путь входа/реконнекта: добавить игрока (опц. в заданную точку) и разослать кадры. */
-  private attach(ws: GameConn, userId: string, save: SaveState, version: number, spawnAt?: { x: number; y: number }): string {
+  /**
+   * R4-18: сколько мест в комнате занято, не считая этого героя (подключённые и ждущие реконнекта) — для потолка пати.
+   * Свой же charId не в счёт: возвращается на своё место.
+   * ⭐ R6-14: ждущий реконнекта держит место, только пока может вернуться на ТО ЖЕ место — запись ухода с точкой (тот же
+   * экземпляр этажа, R4-06). Пати ушла с этажа (город, спуск, финал) — место свободно: раньше отвалившийся спокойно держал
+   * его, пока жива комната, и три оставшихся не могли позвать четвёртого по коду. Вернуться он может всегда — возвращение
+   * («Продолжить», свой код) мест не спрашивает.
+   */
+  seatsTaken(charId: string): number {
+    let n = 0;
+    for (const c of this.clients.values()) if (this.session.world.players[c.pid]?.save.charId !== charId) n++;
+    for (const id of this.disconnected.keys()) if (id !== charId && this.left.get(id)?.pos) n++;
+    return n;
+  }
+
+  /** Общий путь входа/реконнекта: добавить игрока (туда и таким, каким ушёл, — R4-06) и разослать кадры. */
+  private attach(ws: GameConn, userId: string, save: SaveState, version: number): string {
     // Дедуп по charId: если этот персонаж уже активен (реконнект при ещё не разорванном старом ws —
     // TCP держит мёртвый коннект до heartbeat/таймаута), выселяем СТАРУЮ сущность БЕЗ грейса — иначе
     // в комнате два «меня» (тот самый баг «игра думает что нас трое»). Ровно один энтити на charId.
     for (const [oldPid, oc] of this.clients) {
       const op = this.session.world.players[oldPid];
       if (!op || op.save.charId !== save.charId) continue;
+      this.noteLeft(op);   // R4-06: новая сущность продолжит эту, а не начнёт с полного здоровья
       oc.ws.close(4001, 'replaced');
       this.session.removePlayer(oldPid);
       this.clients.delete(oldPid);
+      this.peerSent.delete(oldPid);
       this.broadcast({ t: 'peerLeft', id: oldPid });
       if (this.vote) { this.vote.yes.delete(oldPid); this.vote.no.delete(oldPid); }
       break; // на charId максимум один активный
     }
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
+    // ⭐ R2-19: вошли в комнату, стоящую в грейсе (по коду, а не реконнектом), — снять паузу, как `reconnect`.
+    // Раньше вошедший сидел в замороженном мире без тиков, кадров и автосейва, а истечение грейса уничтожало
+    // комнату вместе с ним. Отключённые ждут дальше — как ждут, пока в комнате играет кто-то ещё.
+    if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; tickScheduler.add(this); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), dedup: new CommandDedup(),
-      tm: new SessionTelemetry(), tmRow: null, tmFlushedAt: Date.now(), baselined: false, delta: new SnapshotDelta(), visible: new Set() });
-    this.session.addPlayer(pid, save, spawnAt);
+    const client: Client = { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), dedup: new CommandDedup<CmdOutcome>(),
+      invalidWarnAt: 0, invalidMuted: 0, stale: false, reasons: new Map(), fieldWrite: false, inputSeen: true, inputAge: 0,
+      tm: new SessionTelemetry(), tmRow: null, tmFlushedAt: Date.now(), baselined: false, delta: new SnapshotDelta(), visible: new Set() };
+    this.clients.set(pid, client);
+    // R2-02: аккаунт — в сущность игрока: выброшенное им помечается, и чужой аккаунт его не поднимет.
+    // R4-06: ушёл с этого же экземпляра этажа — встаёт там же и таким же (здоровье, дебаффы, откаты, смерть).
+    const left = this.takeLeft(save.charId);
+    this.session.addPlayer(pid, save, left?.pos, userId);
+    const deadAgain = left ? this.restoreLeft(pid, left) : false;
+    this.joinRun(save);
+    pruneBoardQuests(save);          // R5-20: сданное с доски в старом сейве — из журнала (квота помнит поколения)
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
+    // R1-03: первый в городской комнате — её хозяин: прилавок и доска — ЕГО сток. Раньше комната показывала
+    // сток, скатанный конструктором без хозяина (уровень 1), а новая комната была бесплатным перебросом.
+    if (this.area === 'town' && this.clients.size === 1) this.restock();
     void this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
     this.send(ws, {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
       floor: this.currentFloorInit(), peers: this.peerList(), save,
     });
-    // ⚠ ПЕРЕЕЗД СТАРОГО КОШЕЛЬКА: до ч7 сырьё лежало у каждого персонажа своё, теперь
-    // оно общее на аккаунт. Вливаем ОДИН раз и обнуляем поле в сейве — иначе при следующем
-    // входе влилось бы второй раз. Заодно шлём сундук, чтобы кузница знала кошелёк.
-    void (async () => {
-      const stash = await loadAccountStash(userId, this.cfg);
-      if (migrateWalletToStash(save, stash)) await this.persist(pid, stash);
-      await this.sendStash(pid);
-    })();
-    if (this.area === 'town') this.send(ws, { t: 'shop', items: this.shop });
+    // Сундук с журналом — сразу: кузница по нему решает, что открыто. ⚠ Переезд старого кошелька сейва в
+    // сундук аккаунта делает менеджер ДО входа (R1-06): здесь, уже в живой комнате, его откат после неудачной
+    // записи возвращал бы и всё, что игрок успел сделать за время ожидания базы (бросил вещь — она и на земле,
+    // и снова в сумке).
+    void this.sendStash(pid).catch((e: unknown) => console.error(`[room ${this.code}] сундук на входе ${save.charId}:`, e));
+    if (this.area === 'town') this.send(ws, this.shopFrame());
     if (this.runPlan && this.runNodeId) this.send(ws, { t: 'runPlan', plan: this.runPlan, currentNodeId: this.runNodeId });
     this.send(ws, { t: 'questBoard', quests: this.questBoard });
-    this.broadcastExcept(pid, { t: 'peerJoined', peer: this.peerInfo(pid) });
+    // ⭐ R2-03: статика ВСЕХ, кто уже в комнате, — вошедшему отдельным кадром. Клиент берёт статику только из
+    // `peerInfo`/`peerJoined`, а рассылка статики с R1-11 шлёт лишь изменившееся: тех, кто сидел здесь раньше,
+    // вошедший (и вернувшийся реконнектом) не узнавал никогда — безымянный «воин» с полной полоской HP.
+    this.send(ws, { t: 'peerInfo', peers: this.peerList() });
+    const info = this.peerInfo(pid);
+    this.peerSent.set(pid, JSON.stringify(info));
+    this.broadcastExcept(pid, { t: 'peerJoined', peer: info });
+    // ⭐ R3-06, R4-06: УШЁЛ МЁРТВЫМ — ВЕРНУЛСЯ МЁРТВЫМ, каким бы путём ни вернулся (реконнект, вход по коду, вторая вкладка).
+    // Погибший в коопе ждёт следующего этажа (`enterFloor` оживляет мёртвых), а вход заводил ему свежую сущность с полным
+    // здоровьем прямо на месте гибели. Окно смерти клиенту — заново, потерь в нём нет: штраф уже взят.
+    if (deadAgain) this.send(ws, { t: 'died', goldLost: 0, itemsLost: 0, toTown: false });
     return pid;
   }
 
-  removePlayer(pid: string): void {
+  /**
+   * ⭐ R4-04: ГЕРОЙ ВХОДИТ В КОМНАТУ ЗАБЕГА. Его записи узлов — в свод комнаты (взятое им где-то ещё взято и здесь), свод —
+   * ему и всем участникам. Указатель — ТОЛЬКО ВПЕРЁД: отставший встаёт на узел пати (как поставил бы `enterNode`), а
+   * ушедший дальше остаётся на своём. Раньше указатель ставился на узел комнаты в любую сторону, и запись пройденного
+   * узла заменялась записью узла комнаты: вошёл по коду к другу, стоящему раньше, вышел — «Продолжить» и спуск давали
+   * пройденный узел свежим, по кругу (сундуки, босс, опыт).
+   *
+   * R4-06: в подземелье без указателя забега не бывает — иначе вошедший (или воскрешённый входом) уходил потом с добычей
+   * без штрафа брошенного забега: «Завершить» штрафует только за `save.run`.
+   */
+  private joinRun(save: SaveState): void {
+    const cfg = this.runConfig;
+    if (!cfg) return;
+    if (save.run?.config && sameRun(save.run.config, cfg)) {
+      const spread = foldRunRecords(this.ledger, runRecords(save.run, cfg));
+      const st = this.nodeState;
+      if (st && this.depthOf(save.run.currentNodeId) < this.depthOf(st.id)) {
+        save.run.currentNodeId = st.id;
+        const was = Array.isArray(save.run.visited) ? save.run.visited : [];
+        save.run.visited = was.includes(st.id) ? was : [...was, st.id];
+      }
+      putRunRecords(save.run, this.ledger.values());
+      if (spread) for (const s of this.runSaves()) if (s !== save) putRunRecords(s.run!, this.ledger.values());
+      return;
+    }
+    if (!save.run && this.area === 'dungeon' && this.runNodeId) {
+      save.run = { templateId: cfg.templateId, config: cfg, currentNodeId: this.runNodeId, visited: [this.runNodeId] };
+      putRunRecords(save.run, this.ledger.values());
+    }
+  }
+
+  /** Глубина узла текущего забега (−1 — не узел этого плана). */
+  private depthOf(nodeId: string | undefined): number {
+    return this.runPlan?.nodes.find((n) => n.id === nodeId)?.depth ?? -1;
+  }
+
+  /** Сейвы участников ЭТОГО забега: подключённых и (`away`) ждущих реконнекта. */
+  private *runSaves(away = false): Generator<SaveState & { run: NonNullable<SaveState['run']> }> {
+    const cfg = this.runConfig;
+    if (!cfg) return;
+    const mine = (s: SaveState | undefined): s is SaveState & { run: NonNullable<SaveState['run']> } =>
+      !!s?.run?.config && sameRun(s.run.config, cfg);
+    for (const pid of this.clients.keys()) { const s = this.session.world.players[pid]?.save; if (mine(s)) yield s; }
+    if (away) for (const info of this.disconnected.values()) if (mine(info.save)) yield info.save;
+  }
+
+  /**
+   * R4-06: запомнить, каким герой уходит (выход, выселение, снятие сессии). Время для ушедшего стоит: дебаффы — остатком.
+   * Самые давние записи вытесняются потолком `LEFT_MAX`.
+   */
+  private noteLeft(p: PlayerEntity): void {
+    const now = this.session.world.timeMs;
+    const debuffs: DebuffState = {};
+    for (const [k, d] of Object.entries(p.debuffs)) if (d) debuffs[k as DebuffKind] = { ...d, expiresAt: Math.max(0, d.expiresAt - now) };
+    const charId = p.save.charId;
+    this.left.delete(charId);
+    this.left.set(charId, {
+      pos: { ...p.pos }, alive: p.alive, hp: p.hp, mana: p.mana, stamina: p.stamina, debuffs,
+      stunTimer: p.stunTimer, attackCd: p.attackCd, dodgeCd: p.dodgeCd, combatTimer: p.combatTimer,
+      skillCd: { ...p.skillCd }, toggles: [...p.toggles], skillBuffs: { ...p.skillBuffs },
+    });
+    if (this.left.size > LEFT_MAX) this.left.delete(this.left.keys().next().value!);
+  }
+
+  /** R4-06: запись ухода героя — только годная к возврату (мёртвый в арене возрождается свежим, как там и положено). */
+  private takeLeft(charId: string): LeftState | undefined {
+    const s = this.left.get(charId);
+    if (!s) return undefined;
+    this.left.delete(charId);
+    return s.alive || (this.area === 'dungeon' && s.pos) ? s : undefined;
+  }
+
+  /** R4-06: вернуть сущности героя состояние ухода. `true` — ушёл мёртвым с этого же этажа: мёртв и сейчас. */
+  private restoreLeft(pid: string, s: LeftState): boolean {
+    const p = this.session.world.players[pid];
+    if (!p) return false;
+    const now = this.session.world.timeMs;
+    // Максимумы — у свежей сущности (полные): выше них не встаёт ничего, ниже — как ушёл.
+    p.hp = Math.min(s.hp, p.hp); p.mana = Math.min(s.mana, p.mana); p.stamina = Math.min(s.stamina, p.stamina);
+    p.debuffs = {};
+    for (const [k, d] of Object.entries(s.debuffs)) if (d) p.debuffs[k as DebuffKind] = { ...d, expiresAt: now + d.expiresAt };
+    p.stunTimer = s.stunTimer; p.attackCd = s.attackCd; p.dodgeCd = s.dodgeCd; p.combatTimer = s.combatTimer;
+    p.skillCd = { ...s.skillCd }; p.toggles = [...s.toggles]; p.skillBuffs = { ...s.skillBuffs };
+    if (s.alive) return false;
+    p.alive = false; p.hp = 0;
+    return true;
+  }
+
+  /**
+   * R4-06, R4-16: этаж сменился — записи ушедших живут дальше так же, как присутствующие: мёртвые оживают (записи нет —
+   * вход свежим), точка ухода к новому этажу не относится, город снимает дебаффы и стан, арена возрождает всех.
+   */
+  private floorChanged(to: 'dungeon' | 'town' | 'arena'): void {
+    for (const [id, s] of this.left) {
+      if (!s.alive || to === 'arena') { this.left.delete(id); continue; }
+      delete s.pos;
+      if (to === 'town') { s.debuffs = {}; s.stunTimer = 0; }
+    }
+  }
+
+  /**
+   * Возвращает промис ПРОЩАЛЬНОЙ записи сейва: новый вход того же персонажа обязан дождаться её,
+   * прежде чем читать сейв из базы, — иначе прочитает копию до неё, и все его записи получат отказ
+   * по версии (прогресс новой сессии молча не сохранялся бы).
+   */
+  removePlayer(pid: string): Promise<Farewell> {
     const p = this.session.world.players[pid];
     const c = this.clients.get(pid);
+    // Уже снят (R1-01: сессию, потерявшую право писать, комната снимает сама, а закрытие её сокета доходит
+    // до менеджера позже) — ни записи, ни второго `peerLeft`, ни второго уничтожения комнаты.
+    if (!p && !c) return Promise.resolve(SAVED);
+    this.peerSent.delete(pid);
+    let done: Promise<Farewell> = Promise.resolve(SAVED);
+    if (p) this.noteLeft(p);   // R4-06: вернётся — таким, каким ушёл
     if (p && c) {
-      void this.persist(pid); // персист прогресса
+      const last = this.persist(pid); // персист прогресса
+      // R2-08: не записалось — копия на выходе (объект сейва тот же) и версия этой сессии остаются у менеджера.
+      done = last.then((r) => this.farewellOf(r, () => this.queued(c, () => this.write(c, p, undefined))));
       void this.writeTelemetry(c, true);   // Ф3.2: закрываем наблюдение за этой сессией
       // Грейс-реконнект — ТОЛЬКО из подземелья: тело убираем из мира (монстры не бьют «пустого»),
       // ждём возврата в ту же точку. В городе выход = чистый разрыв (реконнекта нет, ждать нечего).
       if (this.area === 'dungeon') {
-        this.disconnected.set(p.save.charId, { save: p.save, userId: c.userId, lastPos: { ...p.pos }, floor: this.depth, saveVersion: c.saveVersion });
+        // ⚠ ВЕРСИЯ — ПОСЛЕ прощальной записи. Раньше она бралась сразу, а запись выше её тут же
+        // поднимала: штраф «Завершить забег» (и истечения грейса) предъявлял устаревшую версию,
+        // база отказывала, и штраф вместе со снятием забега молча не записывался — бросить забег
+        // было бесплатно, а «продолжить» потом возвращало на тот же этаж со всей добычей.
+        // R4-14: ушёл живым посреди боя (не у портала, в бою или под ядом) — пати, ушедшая в город, не уносит его даром.
+        const fled = p.alive && !this.canLeave(pid) && this.inDanger(p);
+        const info: Disconnected = { save: p.save, userId: c.userId, saveVersion: c.saveVersion, saving: Promise.resolve(), paid: !p.alive, fled };
+        info.saving = last.then(() => { info.saveVersion = c.saveVersion; });
+        this.disconnected.set(p.save.charId, info);
         this.hooks.onGrace(p.save.charId);
+        // Копию отключённого пишет его собственная очередь — та же, что потом запишет штраф или вернёт героя.
+        const charId = p.save.charId;
+        done = last.then((r) => this.farewellOf(r, () => this.persistDisconnected(charId, info)));
       }
     }
     this.session.removePlayer(pid);
@@ -270,25 +725,61 @@ export class Room implements Tickable {
       if (this.disconnected.size > 0) this.enterGrace();
       else { this.stop(); this.hooks.onEmpty(this.code); }
     }
+    return done;
+  }
+
+  /**
+   * Итог прощальной записи (R2-08): записано или отменено базой (копию обогнали — писать её поздно) — готово;
+   * сбой базы или неизвестный исход фиксации — копия ещё не в базе, `retry` допишет её (сам себе ответит тем же).
+   */
+  private farewellOf(r: WriteResult, retry: () => Promise<WriteResult>): Farewell {
+    if (r === 'ok' || r === 'conflict') return SAVED;
+    return { saved: false, retry: () => retry().then((n) => this.farewellOf(n, retry)) };
   }
 
   /**
    * Забросить забег отключённого игрока (charId): персонаж считается погибшим — полный штраф
    * смерти + персист + снятие из грейс-карты. Пустая после этого комната уничтожается.
    * Вызывается по кнопке «Забросить» и как страховка при осознанном входе в НОВУЮ комнату.
+   * Промис — запись штрафа: вход после «Завершить» обязан читать сейв уже СО штрафом.
    */
-  abandonAsDead(charId: string): void {
+  abandonAsDead(charId: string): Promise<Farewell> {
     const info = this.disconnected.get(charId);
+    let done: Promise<Farewell> = Promise.resolve(SAVED);
     if (info) {
       // ШТРАФ ТОЛЬКО ЗА БРОШЕННЫЙ ЗАБЕГ. Стоять в городе и отключиться — не преступление;
       // без этой проверки уже погибший игрок платил бы второй раз за ту же смерть.
-      if (info.save.run) applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty, createRng((Date.now() & 0xffffff) || 1));
+      // R3-06: и погибший в коопе — у него забег цел (ждал следующего этажа), а штраф уже взят `onPlayerDeath`.
+      const run = info.save.run?.config;
+      if (info.save.run && !info.paid) applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty, townRng());
       info.save.run = undefined;   // «Завершить» обязано завершать: иначе модалка выскакивала снова
-      void this.persistDisconnected(charId, info);
+      // R2-08: штраф не записался — копия со штрафом остаётся у менеджера, вход её допишет, а не обойдёт.
+      // R4-15: копию обогнали (ответ на фиксацию прощальной записи потерян, версию подняли отзыв или откат) — штраф ляжет
+      // на строку базы: там правда о герое, а копия устарела.
+      const retry = (): Promise<WriteResult> => this.persistDisconnected(charId, info, this.buryOp(info.paid, run));
+      done = retry().then((r) => this.farewellOf(r, retry));
       this.disconnected.delete(charId);
     }
     this.hooks.onUngrace(charId);
     this.destroyIfEmpty();
+    return done;
+  }
+
+  /**
+   * ⭐ R2-05: закрепление героя у ДРУГОЙ ноды — здесь проигравшая копия. Живую сессию снимаем без записи (как
+   * устаревшую, сокет 4009: писать ей больше нельзя — правда теперь там), ждущего реконнекта забываем без штрафа
+   * (его забег продолжится там, где он жив). Возвращает, было ли что снимать.
+   */
+  fence(charId: string): boolean {
+    for (const c of this.clients.values()) {
+      if (this.session.world.players[c.pid]?.save.charId !== charId) continue;
+      this.dropStale(c);
+      return true;
+    }
+    if (!this.disconnected.delete(charId)) return false;
+    this.hooks.onUngrace(charId);
+    this.destroyIfEmpty();
+    return true;
   }
 
   /** Уничтожить комнату, если в ней никого (ни подключённых, ни ждущих реконнекта). */
@@ -313,14 +804,21 @@ export class Room implements Tickable {
   /** Комната опустела: пауза симуляции (мир замирает) + грейс-таймер. Возврат — через reconnect(). */
   private enterGrace(): void {
     tickScheduler.remove(this);
+    if (this.frozen) return;   // R5-07: процесс уходит — грейс-таймер (штраф через час) заводить незачем и нельзя
     if (this.graceTimer) clearTimeout(this.graceTimer);
     const ms = Math.max(0, this.cfg.get('balance').reconnectGraceSec) * 1000;
     this.graceTimer = setTimeout(() => this.expireGrace(), ms);
   }
 
-  /** Грейс истёк (никто не вернулся за час): все отключённые погибли, комната уничтожается. */
+  /**
+   * Грейс истёк (никто не вернулся за час): все отключённые погибли, пустая комната уничтожается.
+   * R2-19: с живым игроком внутри — не уничтожается (он мог войти по коду в комнату, стоявшую в грейсе).
+   */
   private expireGrace(): void {
+    this.graceTimer = null;
+    if (this.frozen) return;   // R5-07: после начала слива штрафов не пишем
     this.finalizeDisconnectedAsDead();
+    if (this.clients.size > 0) return;
     this.stop();
     this.hooks.onEmpty(this.code);
   }
@@ -328,14 +826,51 @@ export class Room implements Tickable {
   /** Отключённые считаются погибшими: полный штраф смерти + персист + снятие из грейс-карты.
    *  (следующий вход = новая комната = город со штрафом). */
   private finalizeDisconnectedAsDead(): void {
-    const penalty = this.cfg.get('balance').deathPenalty;
-    for (const [charId, info] of this.disconnected) {
-      if (info.save.run) applyDeathPenalty(info.save, penalty, createRng((Date.now() & 0xffffff) || 1));   // только за брошенный забег, см. `abandonAsDead`
-      info.save.run = undefined;   // погиб → забег окончен; без этого следующий вход снова предлагал «продолжить»
-      void this.persistDisconnected(charId, info);
-      this.hooks.onUngrace(charId);
-    }
-    this.disconnected.clear();
+    for (const [charId, info] of [...this.disconnected]) this.buryDisconnected(charId, info);
+  }
+
+  /**
+   * Отключённый считается погибшим: штраф смерти (только за брошенный забег и не второй раз, см. `abandonAsDead`), снятие
+   * забега, прощальная запись и снятие из грейса.
+   */
+  private buryDisconnected(charId: string, info: Disconnected): void {
+    const run = info.save.run?.config;
+    if (info.save.run && !info.paid) applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty, townRng());
+    info.save.run = undefined;   // погиб → забег окончен; без этого следующий вход снова предлагал «продолжить»
+    // R1-07: запись штрафа — ПРОЩАЛЬНАЯ, менеджер запоминает её ДО снятия грейса. Раньше она уходила
+    // в пустоту: вход в этом окне не находил ни грейса, ни записи в полёте и читал сейв до штрафа —
+    // забег цел, золото цело; а если штраф успевал первым, новая сессия становилась зомби.
+    // R2-08: не записалась — копия со штрафом остаётся у менеджера до следующей попытки. R4-15: копию обогнали — штраф
+    // ложится на строку базы.
+    const retry = (): Promise<WriteResult> => this.persistDisconnected(charId, info, this.buryOp(info.paid, run));
+    const write = retry().then((r) => this.farewellOf(r, retry));
+    this.hooks.onFarewell?.(charId, write);
+    this.hooks.onUngrace(charId);
+    this.disconnected.delete(charId);
+  }
+
+  /**
+   * ⭐ R4-14: ПАТИ УШЛА С ЭТАЖА (в город, финалом, R6-01: и спуском на следующий узел) — отключившиеся посреди боя живыми
+   * погибают. Раньше «закрыть вкладку за полшага до смерти, пока напарник у портала (у выхода)» уносило из любого боя:
+   * реконнект — живым, без штрафа. Ушедший у портала, не в бою или мёртвым — ждёт дальше.
+   */
+  private buryFled(): void {
+    for (const [charId, info] of [...this.disconnected]) if (info.fled && !info.paid) this.buryDisconnected(charId, info);
+  }
+
+  /**
+   * ⭐ R4-15: штраф брошенного забега — ПО СТРОКЕ БАЗЫ (копия отключённого устарела: см. `persistDisconnected`). Забега в
+   * строке нет — делать нечего (штраф уже лёг); оплаченная смерть (R3-06) снимает забег без второго штрафа.
+   * ⭐ R6-06: и только ТОТ ЖЕ забег (`run` — конфиг брошенного забега из копии), как снятие забега на финале. Раньше штраф
+   * ложился на любой забег строки: копия, проигравшая другой ноде, штрафовала героя за новый забег, начатый уже там.
+   */
+  private buryOp(paid: boolean, run: RunConfig | undefined): (s: SaveState) => boolean {
+    return (s) => {
+      if (!s.run?.config || !run || !sameRun(s.run.config, run)) return false;
+      if (!paid) applyDeathPenalty(s, this.cfg.get('balance').deathPenalty, townRng());
+      s.run = undefined;
+      return true;
+    };
   }
 
   /**
@@ -345,7 +880,7 @@ export class Room implements Tickable {
    * периодически (автосейв) и на чекпойнтах (город/смена этажа/левелап).
    */
   private persistAll(): Promise<unknown> {
-    const all: Promise<boolean>[] = [];
+    const all: Promise<WriteResult>[] = [];
     for (const [pid, c] of this.clients) {
       const p = this.session.world.players[pid];
       if (p) all.push(this.persist(c.pid));
@@ -358,132 +893,392 @@ export class Room implements Tickable {
    * Принудительно сохранить прогресс всех игроков — для graceful shutdown сервера.
    * Ф2: ЖДАТЬ ОБЯЗАТЕЛЬНО. Раньше запись была синхронной и `process.exit` сразу после вызова
    * был безопасен; с Postgres выход без ожидания просто выбросил бы незаписанные сейвы.
+   * R1-18: и записи ОТКЛЮЧЁННЫХ (прощальная, штраф «Завершить») — они в своих очередях, `persistAll` их не видит.
    */
-  flush(): Promise<unknown> { return this.persistAll(); }
+  /**
+   * ⭐ R5-07: ЗАМОРОЗИТЬ КОМНАТУ ПЕРЕД СЛИВОМ ПРОЦЕССА — слив становится БАРЬЕРОМ, а не снимком. Раньше `flush` дописывал
+   * сейвы и ждал записей, а комната жила дальше: тикала и исполняла команды. Сейв героя A (с мечом) записан сливом — A
+   * бросил меч, сосед по аккаунту B поднял и положил в сундук, запись B легла до выхода процесса: меч и в последнем сейве A,
+   * и в сундуке. Теперь после заморозки: тика нет (снята с планировщика), команды, ввод, голосования, рычаги и сундуки
+   * отказывают «перезапускается» без изменений, транзакция, дождавшаяся базы, не исполняется, грейс-таймер снят; выход
+   * игрока — только прощальная запись. Размораживания нет: процесс уходит.
+   */
+  freeze(): void {
+    if (this.frozen) return;
+    this.frozen = true;
+    tickScheduler.remove(this);
+    if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; }
+  }
 
+  /** R5-07: комната заморожена — игроку «перезапускается» (кадр `error`), действие не исполняется. */
+  private refuseFrozen(pid: string): boolean {
+    if (!this.frozen) return false;
+    const c = this.clients.get(pid);
+    if (c) this.send(c.ws, { t: 'error', code: 'busy', msg: FROZEN });
+    return true;
+  }
+
+  flush(): Promise<unknown> {
+    // ⭐ R4-10: запись, упавшая сбоем базы (взаимоблокировка, обрыв), — ещё одна попытка до выхода процесса. Раньше слив
+    // выходил без неё: у героя-соседа по аккаунту вещь уже записалась, а у этого — нет, и она оставалась у обоих.
+    const clients = [...this.clients.values()];
+    const live = Promise.all(clients.map((c) => this.persist(c.pid)))
+      .then((rs) => Promise.all(clients.filter((_, i) => rs[i] === 'failed').map((c) => this.persist(c.pid))));
+    this.lastSaveAt = Date.now();
+    return Promise.all([live, ...[...this.disconnected.values()].map((i) => i.saving)]);
+  }
+
+  /**
+   * Кадр ввода. ⭐ R4-19: НАЖАТИЕ, КОТОРОЕ ТИК ЕЩЁ НЕ ВИДЕЛ, СЛЕДУЮЩИЙ КАДР НЕ СТИРАЕТ. Рывок и тогл уходят только в кадре
+   * нажатия, а кадр перезаписывал ввод целиком: пришли два кадра между тиками — рывок пропал (у Unity с 60 Гц — каждый
+   * второй). Удар, каст, [E] и пояс, нажатые между тиками, сработают раз; рывок и пояс тик потом снимает сам (`step`).
+   */
   setInput(pid: string, input: PlayerInput): void {
     const c = this.clients.get(pid);
-    if (c) c.input = input;
+    if (!c || this.frozen) return;   // R5-07: заморожена — ввод не применяется
+    const prev = c.input;
+    let next = input;
+    if (!c.inputSeen) {
+      next = {
+        ...input,
+        attack: input.attack || prev.attack,
+        interact: input.interact || prev.interact,
+        cast: input.cast ?? prev.cast,
+        ...(input.dodge || prev.dodge ? { dodge: true } : {}),
+        ...((input.useBelt ?? prev.useBelt) !== undefined ? { useBelt: input.useBelt ?? prev.useBelt } : {}),
+      };
+    }
+    c.input = next;
+    c.inputSeen = false;
+    c.inputAge = 0;
   }
 
   // ── Команды города ──────────────────────────────────────────────────────────
-  async handleCmd(pid: string, command: TownCommand, id?: number): Promise<void> {
+  /**
+   * Команда города от клиента. `raw` и `rawId` — НЕПРОВЕРЕННЫЕ данные из кадра: форму команды
+   * проверяет схема (D11) до всякого исполнения, лишний ключ или не тот тип — отказ целиком.
+   *
+   * ⭐ ОБРАБОТЧИК НЕ БРОСАЕТ НИКОГДА. Любое исключение внутри превращается в отказ с `cmdResult`
+   * и считается (`dm_cmd_failed_total`). На каждую обработанную команду клиент получает ровно
+   * один `cmdResult` (D3) — после `saveUpdate`, чтобы к ответу у него уже был новый сейв.
+   */
+  async handleCmd(pid: string, raw: unknown, rawId?: unknown): Promise<void> {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (!c || !p) return;
-
-    // Ф2.5: повтор уже выполненной команды. Молча пропускаем, но сейв клиенту дошлём —
-    // повтор случается как раз тогда, когда клиент не уверен, что дошло, и ему нужен ответ.
-    if (!c.dedup.accept(id)) {
-      counters.cmdDuplicate++;
-      this.sendSave(pid);
+    // ⭐ R5-07: заморожена сливом — отказ ДО всего (в окно номеров не попадает: повтор после рестарта исполнится честно).
+    if (this.frozen) {
+      const fid = cmdIdOf(rawId);
+      this.send(c.ws, { t: 'cmdResult', ...(typeof fid === 'number' ? { id: fid } : {}), cmd: cmdNameOf(raw), ok: false, reason: FROZEN });
       return;
     }
+    let replied = false;
+    const answer = (id: number | undefined, cmd: string, out: CmdOutcome): void => {
+      replied = true;
+      // Только поля протокола: итог действия может нести служебное (`moved` у сдачи сырья и т. п.).
+      this.send(c.ws, {
+        t: 'cmdResult', ...(id !== undefined ? { id } : {}), cmd, ok: out.ok,
+        ...(out.reason !== undefined ? { reason: out.reason } : {}),
+        ...(out.uid !== undefined ? { uid: out.uid } : {}),
+        ...(out.unlocked !== undefined ? { unlocked: out.unlocked } : {}),
+      });
+    };
+    try {
+      // D11: СХЕМА ДО ВСЕГО. Номер тоже проверяем: `id: -1` или `"7"` честный клиент не пришлёт.
+      const id = cmdIdOf(rawId);
+      const parsed = parseTownCommand(raw);
+      if (!parsed.ok || id === null) {
+        counters.cmdInvalid++;
+        // R1-10: номер — ЧУЖОЕ значение: `String()` на `{"toString":1}` бросает, и невалидная команда
+        // превращалась в «ошибку сервера» с немым стеком в логе на каждый кадр.
+        this.warnInvalid(c, p.save.charId, cmdNameOf(raw), parsed.ok ? `номер команды ${describeUntrusted(rawId).slice(0, 32)}` : parsed.error);
+        const out: CmdOutcome = { ok: false, reason: 'Неверная команда' };
+        this.send(c.ws, { t: 'error', code: 'cmd', msg: out.reason! });
+        answer(id ?? undefined, cmdNameOf(raw), out);
+        return;
+      }
+      const command = parsed.command;
+
+      // R1-11: общий потолок частоты команд на соединение (кузница сверху держит свой, D12). Всплеск — как у
+      // потолка кадров: пачка честного клиента его не задевает (очки атрибутов идут ОДНОЙ командой на атрибут
+      // с числом, R2-15: по одному очку 195 кадров рвали соединение), а поток отказов
+      // больше не умножает исходящий трафик на размер сейва. До окна номеров: отказ по частоте номер
+      // не съедает — повтор с тем же номером позже исполнится честно.
+      // R4-17: ключ — АККАУНТ, а не вход в комнату: `pid` новый на каждый вход, и «выйти — войти по коду» обнулял лимит.
+      if (!limits.townCmd.take(c.userId)) {
+        counters.cmdTownRateLimited++;   // R2-25: свой счётчик — поток команд не выглядит злоупотреблением кузницей
+        const out: CmdOutcome = { ok: false, reason: 'Слишком часто' };
+        this.send(c.ws, { t: 'error', code: 'cmd', msg: out.reason! });
+        answer(id, command.cmd, out);
+        return;
+      }
+
+      // Ф2.5: повтор уже выполненной команды. Не исполняем, но сейв и ИТОГ оригинала дошлём —
+      // повтор случается как раз тогда, когда клиент не уверен, что дошло, и ему нужен ответ.
+      if (!c.dedup.accept(id)) {
+        counters.cmdDuplicate++;
+        this.resync(pid);
+        answer(id, command.cmd, c.dedup.outcome(id) ?? { ok: false, reason: 'Команда уже получена' });
+        return;
+      }
+
+      let run: RunOutcome;
+      try {
+        run = await this.runCmd(c, pid, command);
+      } catch (e) {
+        counters.cmdFailed++;
+        console.error(`[room ${this.code}] команда «${command.cmd}» игрока ${p.save.charId} упала:`, e);
+        run = { ok: false, reason: 'Ошибка сервера, попробуйте ещё раз' };
+      }
+      const { early, ...out } = run;
+      c.dedup.settle(id, out);
+      if (!out.ok) {
+        this.send(c.ws, { t: 'error', code: 'cmd', msg: out.reason ?? '' });
+        // R1-11: отказ ДО исполнения сейв не трогал — слать нечего. Отказ ядра — сейв шлём: клиент мог
+        // подвинуть вещь у себя заранее и обязан вернуться к правде; но в меру, а не на каждый из сотни.
+        if (!early) this.resync(pid);
+      } else {
+        // Ф1.1: успешная команда города могла сменить экипировку/уровень/максимум HP — значит
+        // статика устарела. Уходит только ИЗМЕНИВШАЯСЯ (R1-11): пустая команда пати не будит.
+        this.broadcastPeerInfo();
+        this.sendSave(pid);
+      }
+      answer(id, command.cmd, out);
+    } catch (e) {
+      // Сюда доходит только сбой вокруг исполнения (рассылка, сериализация) — команда уже учтена.
+      counters.cmdFailed++;
+      console.error(`[room ${this.code}] обработка команды игрока ${p.save.charId} упала:`, e);
+      if (!replied) {
+        try { answer(undefined, cmdNameOf(raw), { ok: false, reason: 'Ошибка сервера, попробуйте ещё раз' }); } catch { /* сокет уже мёртв */ }
+      }
+    }
+  }
+
+  /** Шум о невалидной команде — через общий глушитель `warnClient`. */
+  private warnInvalid(c: Client, charId: string, cmd: string, why: string): void {
+    // Имя команды и текст ошибки несут ЧУЖИЕ строки (ключи из кадра): управляющие символы вырезаем,
+    // иначе перевод строки в имени ключа подделал бы в логе целую запись. R2-26: и юникодные тоже — переводы
+    // строки U+2028/U+2029/U+0085 (C1 входит в Cc) и символы формата (разворот текста U+202E и прочие Cf).
+    const clean = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?').slice(0, 200);
+    this.warnClient(c, `невалидная команда «${clean(cmd)}» от ${charId}: ${clean(why)}`);
+  }
+
+  /**
+   * Шум в лог о командах игрока — не чаще раза в `INVALID_WARN_MS` на игрока, с числом промолчанных (D11).
+   * R1-10: сюда же — команды не из того места: они тоже присылаются потоком, и лог топили так же.
+   */
+  private warnClient(c: Client, text: string): void {
+    const now = Date.now();
+    if (now - c.invalidWarnAt < INVALID_WARN_MS) { c.invalidMuted++; return; }
+    const muted = c.invalidMuted ? ` (и ещё ${c.invalidMuted} с прошлого сообщения)` : '';
+    c.invalidWarnAt = now; c.invalidMuted = 0;
+    console.warn(`[room ${this.code}] ${text}${muted}`);
+  }
+
+  /**
+   * Сейв клиенту после отказа или повтора (R1-11) — не чаще лимита `cmdResync`. Отказ сейв не меняет; сейв
+   * нужен лишь клиенту, который успел поменять что-то у себя заранее. Поток отказов раньше получал полный сейв
+   * на каждый кадр (в 260 раз больше, чем присылал).
+   */
+  private resync(pid: string): void {
+    const c = this.clients.get(pid);
+    if (c && limits.cmdResync.take(c.userId)) this.sendSave(pid);   // R4-17: по аккаунту, как и лимит команд
+  }
+
+  /**
+   * Проверки места и частоты, затем исполнение. Отказ здесь — обычный итог, не исключение.
+   * Команды без своей транзакции (`TRANSACTED_CMDS`) и не трогающие мир (`WORLD_CMDS`)
+   * при исключении откатывают сейв к снимку: половина действия хуже, чем никакого.
+   */
+  private async runCmd(c: Client, pid: string, command: TownCommand): Promise<RunOutcome> {
+    const save = this.session.world.players[pid]!.save;
 
     // Ф3.1: городская команда, присланная не из города. Честный клиент такого не шлёт —
     // лавка, кузница и сундук открываются только подходом к объекту города.
     if (!cmdAllowedIn(command.cmd, this.area)) {
       counters.cmdOutOfPlace++;
-      console.warn(`[room ${this.code}] команда «${command.cmd}» вне города (область ${this.area}), игрок ${p.save.charId}`);
-      this.send(c.ws, { t: 'error', code: 'cmd', msg: 'Это доступно только в городе' });
-      return;
+      this.warnClient(c, `команда «${command.cmd}» вне города (область ${this.area}), игрок ${save.charId}`);
+      return { ok: false, reason: 'Это доступно только в городе', early: true };
+    }
+    // D12: тяжёлые команды кузницы — не чаще лимита. Токен списывается за ПОПЫТКУ, а не за
+    // успех: иначе перебор несуществующих uid был бы бесплатным.
+    if (FORGE_RATE_CMDS.has(command.cmd) && !limits.forgeCmd.take(c.userId)) {   // R4-17: по аккаунту
+      counters.cmdRateLimited++;
+      return { ok: false, reason: 'Слишком часто', early: true };
     }
 
     c.tm.action();   // Ф3.2: команда — намеренное действие, её ритм тоже о многом говорит
 
-    const save = p.save;
-    let r: { ok: boolean; reason?: string } = { ok: false, reason: 'неизвестная команда' };
+    const snap = TRANSACTED_CMDS.has(command.cmd) || WORLD_CMDS.has(command.cmd) ? null : JSON.stringify(save);
+    try {
+      return await this.dispatch(c, pid, save, command);
+    } catch (e) {
+      if (snap !== null) restoreInPlace(save, snap);
+      throw e;
+    }
+  }
+
+  /** Само исполнение команды. Схема уже проверена — аргументы нужных типов и длин. */
+  private async dispatch(c: Client, pid: string, save: SaveState, command: TownCommand): Promise<CmdOutcome> {
     switch (command.cmd) {
       case 'buy': {
-        const item = this.shop.find((i) => i.uid === command.uid);
-        r = item ? buyItem(this.cfg, save, item) : { ok: false, reason: 'нет в ассортименте' };
-        if (r.ok) { this.shop = this.shop.filter((i) => i.uid !== command.uid); this.broadcast({ t: 'shop', items: this.shop }); }
-        break;
+        // ⭐ R6-16: `maxGold` — цена кадра лавки, которую видел игрок: дороже ядро не берёт. Отказ «цена изменилась» — кадр
+        // лавки заново, с ценами СВОЕГО конфига: иначе клиент так и просил бы по старой (кадр шлётся на входе и после покупки).
+        const refreshed = (r: CmdOutcome): CmdOutcome => { if (!r.ok && r.reason?.startsWith(PRICE_CHANGED)) this.showShop(); return r; };
+        // R2-04: зелья лавки — свои у комнаты (не сток героя): купленное уходит только отсюда.
+        const potion = this.consumables.find((i) => i.uid === command.uid);
+        if (potion) {
+          const r = buyItem(this.cfg, save, potion, command.maxGold);
+          if (r.ok) { this.consumables = this.consumables.filter((i) => i !== potion); this.showShop(); }
+          return refreshed(r);
+        }
+        const found = this.shop.find((i) => i.uid === command.uid);
+        // R1-03: истина — сток героя. Его же могла показывать и другая комната (хозяин ушёл, в старой остался
+        // сосед), и там вещь уже купили: одна и та же вещь (тот же uid) не продаётся дважды.
+        const stock = this.stock;
+        const item = found && (!stock || stock.shop.includes(found)) ? found : undefined;
+        if (found && !item) this.showShop();
+        const r = item ? buyItem(this.cfg, save, item, command.maxGold) : { ok: false, reason: 'нет в ассортименте' };
+        if (r.ok) {
+          if (stock) {
+            stock.shop = stock.shop.filter((i) => i.uid !== command.uid);   // вышел-зашёл — не вернётся
+            this.noteBought(stock, item!);                                  // R5-22: и на другой ноде — тоже
+          }
+          this.showShop();
+        }
+        return refreshed(r);
       }
-      case 'sell': r = sellItem(this.cfg, save, command.uid); break;
-      // ⚠ Улучшение и починка ТРАТЯТ сырьё, а оно теперь в сундуке аккаунта — значит те же
-      // гарантии, что у `stashMove`: грузим сундук, действуем, пишем сейв и сундук ОДНОЙ
-      // транзакцией, и откатываем всё в памяти, если запись не прошла.
-      case 'forgeUpgrade': r = await this.withStash(c, pid, (st) => forgeUpgrade(this.cfg, save, command.uid, st)); break;
-      case 'forgeReroll': r = forgeReroll(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
-      case 'forgeSalvage': r = forgeSalvage(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
-      case 'forgeRepair': r = await this.withStash(c, pid, (st) => forgeRepair(this.cfg, save, command.uid, st)); break;
-      case 'depositMaterials': r = await this.withStash(c, pid, (st) => depositMaterials(save, st)); break;
+      // R6-16: `minGold` — «+N» подписи: лавка даёт меньше — отказ до продажи (клиент по причине перечитает конфиг).
+      case 'sell': return sellItem(this.cfg, save, command.uid, command.minGold);
+      // ⚠ Улучшение и починка ТРАТЯТ сырьё, а оно в сундуке аккаунта — значит сейв и сундук пишутся
+      // ОДНОЙ транзакцией, а при неудаче записи откатывается всё в памяти (`withAccount`).
+      // `subject` — вещь действия: её событие журнал вещей подпишет причиной действия, прочее — автосейвом (R2-21).
+      // ⭐ R5-15: `maxGold` — цена, которую видел игрок: выше неё ядро не берёт (`priceRaised`, отказ до траты).
+      case 'forgeUpgrade': return this.withAccount(c, pid, 'forge', (st) => forgeUpgrade(this.cfg, save, command.uid, walletOf(st), command.maxGold), { subject: command.uid });
+      case 'forgeRepair': return this.withAccount(c, pid, 'forge', (st) => forgeRepair(this.cfg, save, command.uid, walletOf(st), command.maxGold), { subject: command.uid });
+      case 'depositMaterials': return this.withAccount(c, pid, 'stash', (st) => depositMaterials(save, walletOf(st)));
+      // Перекатка трогает только сейв, но пишется сразу и со своей причиной (D9):
+      // иначе журнал вещей записал бы её «автосейвом».
+      case 'forgeReroll': return this.withSave(c, pid, 'forge', () => forgeReroll(this.cfg, save, command.uid, townRng(), command.maxGold), command.uid);
+      // D6: разбор у кузнеца пишет журнал аккаунта и доливает не влезшее в сумку сырьё в сундук —
+      // значит сейв и сундук одной транзакцией. Скованное переплавляется — в журнале вещей это `melt` (D9).
+      case 'forgeSalvage': return this.withAccount(c, pid, salvageReason(save, command.uid), (st) => forgeSalvage(this.cfg, save, st, command.uid, townRng()), { subject: command.uid });
       // Разбор на месте разрешён где угодно (`guard` не держит его в городе): смысл в том и есть —
       // переработать трофей, не возвращаясь. В городе им пользоваться незачем, кузница выгоднее.
-      case 'salvage': r = fieldSalvage(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
-      case 'equip': r = equip(this.cfg, save, command.uid); break;
-      case 'unequip': r = unequip(this.cfg, save, command.slot); break;
-      case 'allocAttr': r = allocAttr(save, command.attr); break;
-      case 'respec': r = respec(this.cfg, save); break;
-      case 'respecPassives': r = respecPassives(this.cfg, save); break;
-      case 'respecSkills': r = respecSkills(this.cfg, save); break;
-      case 'allocPassive': r = allocPassive(this.cfg, save, command.nodeId); break;
-      case 'allocSkill': r = allocActive(this.cfg, save, command.nodeId); break;
-      case 'socketInsert': r = socketInsert(this.cfg, save, command.nodeId, command.slot, command.insertId); break;
-      case 'socketClear': r = socketClear(this.cfg, save, command.nodeId, command.slot); break;
-      case 'moveBelt': r = moveToBelt(save, command.uid); break;
-      case 'moveItem': r = moveInventoryItem(this.cfg, save, command.uid, command.x, command.y); break;
-      case 'stashOpen': await this.sendStash(pid); r = { ok: true }; break;
-      case 'stashMove': {
-        // Ф0.4: сейв и сундук пишутся ОДНОЙ транзакцией прямо здесь. Раньше сундук уходил в базу
-        // сразу, а инвентарь — только следующим автосейвом (до 10 с): падение в этом окне давало
-        // предмет и там, и там. Если транзакция не прошла — откатываем перенос в памяти тоже,
-        // иначе разъедется уже оперативное состояние.
-        const stash = await loadAccountStash(c.userId, this.cfg);
-        const before = JSON.stringify(save.inventory);
-        r = stashMove(this.cfg, save, stash, command.uid, command.dst, command.x, command.y);
-        if (r.ok) {
-          if (await this.persist(pid, stash)) await this.sendStash(pid);
-          else {
-            save.inventory = JSON.parse(before) as typeof save.inventory;
-            r = { ok: false, reason: 'Не удалось сохранить перемещение, попробуйте ещё раз' };
-          }
-        }
-        break;
+      case 'salvage': return this.salvageInField(c, pid, save, command.uid);
+      // ⭐ КОВКА (D4). Сырьё — из сумки, недостающее — из кошелька сундука; золото — из сейва; вещь, списание,
+      // журнал и ключ заявки уходят в базу ОДНОЙ транзакцией. Все отказы ядро делает до траты.
+      case 'craft': {
+        if (!this.cfg.get('balance').craft.live) return { ok: false, reason: CRAFT_CLOSED };
+        const { nonce, input, maxGold } = command;
+        return this.withAccount(c, pid, 'craft', (st): TxOutcome => {
+          // Повтор ключа (обрыв связи, реконнект, другая нода): вещь уже скована и записана той самой
+          // транзакцией — отвечаем её uid и НЕ пишем ничего. Лишняя запись здесь только подписала бы
+          // «ковкой» то, что сейв успел набрать с прошлой записи, и зря подняла бы версию сундука.
+          const seen = normalizeCraftNonces(st.craftNonces).find((e) => e.n === nonce);
+          if (seen) return { ok: true, uid: seen.uid, unchanged: true };
+          return craftAction(this.cfg, save, st, nonce, input, townRng(), { fullJournal: craftFullJournal(), maxGold });
+        });
       }
-      case 'bind': r = setBinding(save, command.slot, command.value); break;
-      case 'drop': r = this.session.dropToGround(pid, command.uid) ? { ok: true } : { ok: false, reason: 'Нет предмета' }; break;
-      case 'useConsumable': r = this.useConsumable(pid, command.uid); break;
+      // D5: зачарование — только золото, но через транзакцию аккаунта, как вся кузница: при неудачной
+      // записи вещь и золото откатываются в памяти, а журнал вещей видит причину `enchant`.
+      case 'forgeEnchant': {
+        if (!this.cfg.get('balance').craft.live) return { ok: false, reason: CRAFT_CLOSED };
+        return this.withAccount(c, pid, 'enchant', () => enchantAction(this.cfg, save, command.uid, command.rarity, townRng(), command.maxGold), { subject: command.uid });
+      }
+      // ⭐ R3-11: эскиз (жалость разбора) открывает выбранную деталь в журнале аккаунта. Журнал — в сундуке, поэтому
+      // транзакция сундука, как вся кузница; отказы ядра — до изменения. От `craft.live` не зависит: эскизы копит
+      // разбор, который работает и при закрытой ковке, — потратить их на детали впрок можно и тогда.
+      case 'forgeSketch': return this.withAccount(c, pid, 'craft', (st) => sketchAction(this.cfg, st, command.variantId));
+      case 'equip': return equip(this.cfg, save, command.uid);
+      case 'unequip': return unequip(this.cfg, save, command.slot);
+      case 'allocAttr': return allocAttr(save, command.attr, command.n);   // R2-15: пачка очков — одна команда
+      case 'respec': return respec(this.cfg, save, command.maxGold);
+      case 'respecPassives': return respecPassives(this.cfg, save, command.maxGold);
+      case 'respecSkills': return respecSkills(this.cfg, save, command.maxGold);
+      case 'allocPassive': return allocPassive(this.cfg, save, command.nodeId, command.maxGold);   // R6-16: «след. ранг: N зол.»
+      case 'allocSkill': return allocActive(this.cfg, save, command.nodeId);
+      case 'socketInsert': return socketInsert(this.cfg, save, command.nodeId, command.slot, command.insertId);
+      case 'socketClear': return socketClear(this.cfg, save, command.nodeId, command.slot);
+      case 'moveBelt': return moveToBelt(save, command.uid);
+      case 'moveItem': return moveInventoryItem(this.cfg, save, command.uid, command.x, command.y);
+      case 'stashOpen': await this.sendStash(pid); return { ok: true };
+      // Ф0.4: сейв и сундук пишутся ОДНОЙ транзакцией. Раньше сундук уходил в базу сразу, а
+      // инвентарь — только следующим автосейвом (до 10 с): падение в этом окне давало предмет
+      // и там, и там. Если транзакция не прошла — перенос откатывается и в памяти.
+      case 'stashMove': return this.withAccount(c, pid, 'stash', (st) => stashMove(this.cfg, save, st, command.uid, command.dst, command.x, command.y), { subject: command.uid });
+      case 'bind': return setBinding(this.cfg, save, command.slot, command.value);
+      case 'drop': return this.session.dropToGround(pid, command.uid) ? { ok: true } : { ok: false, reason: 'Нет предмета' };
+      case 'useConsumable': return this.useConsumable(pid, command.uid);
       case 'pickup': {
+        // ⭐ R2-02: выброшенное игроком ДРУГОГО аккаунта не поднять. Торговли между аккаунтами нет, и леджер такую
+        // вещь не пустит: каждая следующая запись подобравшего падала бы на ней. Добыча с монстров — общая.
+        const drop = this.session.world.drops.find((d) => d.id === command.dropId);
+        if (drop?.owner !== undefined && drop.owner !== c.userId) {
+          return { ok: false, reason: 'Это выбросил игрок другого аккаунта — передавать вещи между аккаунтами нельзя' };
+        }
         const got = this.session.pickupDropById(pid, command.dropId);
         if (got?.item) this.broadcast({ t: 'events', events: [{ type: 'item-picked', playerId: pid, item: got.item, x: got.x, y: got.y }] });
-        r = got ? { ok: true } : { ok: false, reason: 'Далеко или инвентарь полон' };
-        break;
+        return got ? { ok: true } : { ok: false, reason: 'Далеко или инвентарь полон' };
       }
       case 'acceptQuest': {
-        const def = this.questBoard.find((q) => q.id === command.questId);
-        r = def ? acceptQuest(save, def) : { ok: false, reason: 'Нет на доске' };
+        const windowMs = Math.max(0, this.cfg.get('balance').townRestockSec) * 1000;
+        // ⭐ R5-19: ДОСКА ПЕРЕЖИЛА СВОЙ СРОК (катается она на заходе в город, а герой из города не выходил) — сперва новая
+        // доска, взять — с неё. Раньше принятое со старой доски писало поколением «сейчас» (`boardTime`), и следующая,
+        // честно скатанная доска отказывала в том же шаблоне весь свой срок. Теперь в квоте только настоящие поколения.
+        if (this.stock && windowMs > 0 && Date.now() - this.stock.at >= windowMs) {
+          this.restock();
+          this.showShop();
+          this.broadcastQuestBoard();
+          return { ok: false, reason: BOARD_RENEWED };
+        }
+        const found = this.questBoard.find((q) => q.id === command.questId);
+        // R1-03: как у прилавка — истина в стоке героя; принятое в другой комнате с той же доски не берётся дважды.
+        const stock = this.stock;
+        const def = found && (!stock || stock.board.includes(found)) ? found : undefined;
+        if (found && !def && stock) { this.questBoard = stock.board; this.broadcastQuestBoard(); }
+        // R3-10: одно задание шаблона за срок доски — по сейву берущего, а не по доске: доски альтов его не множат.
+        // R4-33: срок — между поколениями досок (`stock.at`), а не от принятия: честно обновлённая доска даёт сразу.
+        const quota = { now: Date.now(), windowMs, boardAt: stock?.at };
+        // R6-13: начатое задание того же вида вытесняется только с согласия игрока (`replace` — клиент спросил).
+        const r = def ? acceptQuest(save, def, quota, command.replace === true) : { ok: false, reason: 'Нет на доске' };
         if (r.ok && def) {
-          this.questBoard = this.questBoard.filter((q) => q.id !== def.id);
+          if (stock) this.questBoard = stock.board = stock.board.filter((q) => q.id !== def.id);   // вышел-зашёл — не вернётся
+          else this.questBoard = this.questBoard.filter((q) => q.id !== def.id);
           this.broadcastQuestBoard();
           this.questEvent(pid, 'accepted', def.id, def.name);
         }
-        break;
+        return r;
       }
       case 'turnInQuest': {
         const name = save.activeQuestDefs.find((d) => d.id === command.questId)?.name ?? command.questId;
-        r = turnInQuest(this.cfg, save, command.questId);
+        const r = turnInQuest(this.cfg, save, command.questId);
         if (r.ok) this.questEvent(pid, 'turned-in', command.questId, name);
-        break;
+        return r;
+      }
+      default: {
+        // Схема пропускает только известные команды; сюда можно попасть, лишь забыв ветку.
+        const never: never = command;
+        return { ok: false, reason: `неизвестная команда ${String((never as { cmd?: unknown }).cmd)}` };
       }
     }
-    if (!r.ok) this.send(c.ws, { t: 'error', code: 'cmd', msg: r.reason ?? '' });
-    // Ф1.1: успешная команда города могла сменить экипировку/уровень/максимум HP — значит
-    // статика устарела. Команды редки, поэтому шлём без всякой хитрости.
-    else this.broadcastPeerInfo();
-    this.sendSave(pid);
   }
 
-  /** Пьёт зелье из инвентаря/пояса: применяет к сущности игрока, расходует из сейва. */
+  /**
+   * Пьёт зелье из инвентаря/пояса: применяет к сущности игрока, расходует из сейва. ⭐ R4-35: по тем же правилам, что пояс
+   * ввода (`useBeltSlot`): мёртвые и оглушённые не пьют, а зелье без эффекта (полное здоровье) не тратится. Раньше команда
+   * лечила сквозь стан и съедала зелье впустую.
+   */
   private useConsumable(pid: string, uid: string): { ok: boolean; reason?: string } {
     const p = this.session.world.players[pid];
     const snap = this.session.snapshotOf(pid);
     if (!p || !snap) return { ok: false, reason: 'нет игрока' };
+    if (!p.alive) return { ok: false, reason: 'Мёртвые не пьют' };
+    if (p.stunTimer > 0) return { ok: false, reason: 'Оглушён' };
     const inBelt = p.save.belt.findIndex((it) => it?.uid === uid);
     const item = inBelt >= 0 ? p.save.belt[inBelt] : p.save.inventory.find((it) => it.uid === uid);
     if (!item?.use) return { ok: false, reason: 'не расходник' };
-    applyConsumable(p, item.use, snap.derived.maxHp, snap.derived.maxMana); // единый эффект
+    if (!applyConsumable(p, item.use, snap.derived.maxHp, snap.derived.maxMana)) return { ok: false, reason: 'Нет эффекта' }; // единый эффект
     // расход
     if (inBelt >= 0) p.save.belt[inBelt] = null;
     else { const i = p.save.inventory.findIndex((it) => it.uid === uid); if (i >= 0) p.save.inventory.splice(i, 1); }
@@ -494,20 +1289,37 @@ export class Room implements Tickable {
   // Из города: старт/резюм забега (можно выбрать сложность-тир). В подземелье: спуск по РЕБРУ
   // графа (targetNodeId — выбор ветки на развилке); на финале (нет рёбер) — завершение забега.
   descend(pid: string, difficultyId?: string, targetNodeId?: string, runConfig?: AltarConfig): void {
-    if (this.vote) return;
+    if (this.refuseFrozen(pid) || this.vote || !this.voteAllowed(pid)) return;
     if (this.area === 'town') {
+      // R4-25: зовущий сам переписал бы свой припаркованный забег чужим — отказ до голосования.
+      if (this.runClash(pid, false)) { this.tellBlocked(pid, 'run'); return; }
       const diffId = this.validDifficulty(pid, difficultyId);
       this.vote = { kind: 'descend', diffId, runCfg: runConfig, yes: new Set([pid]), no: new Set() };
       this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size });
     } else {
       const node = this.currentNode();
       if (!node) return;
+      // ⭐ R3-01: СПУСК — ОТ ВЫХОДА, ЗАВЕРШЕНИЕ — ОТ ПОРТАЛА ФИНАЛА. Раньше проверялись только голосование и пауза, и
+      // модифицированный клиент спускался прямо с точки входа через полторы секунды после каждого этажа: двадцать этажей
+      // за полминуты, ни одного рычага и двери, а `enterNode` писал прогресс сложности — тиры открывались без единого
+      // пройденного этажа, квесты «достичь этажа» закрывались, глубокие сундуки сыпали добычу. Рядом с выходом должен
+      // стоять тот, кто зовёт; остальные голосуют откуда угодно, если на них не идёт монстр (R5-04, `canDescend`), а
+      // завершение финала — только у портала или мёртвыми (R5-04, как уход в город).
+      const near = (at: { x: number; y: number } | undefined): boolean => this.stands(pid, at);
       if (node.edges.length === 0) {
         // Финал — «завершить забег» (портал в город).
+        if (!this.decor.some((d) => d.kind === 'portal' && near(d))) { this.tellFar(pid, FAR_PORTAL); return; }
         this.vote = { kind: 'descend', finish: true, yes: new Set([pid]), no: new Set() };
         this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size });
       } else {
-        const target = targetNodeId && node.edges.some((e) => e.to === targetNodeId) ? targetNodeId : node.edges[0]!.to;
+        // Выход i ведёт по ребру i (контракт генератора: выходов столько же, сколько рёбер). Ветку выбрал — стоять у её
+        // выхода; не выбрал (или прислал не ребро) — ребро того выхода, у которого стоит.
+        const exits = this.session.world.exits ?? [];
+        const chosen = targetNodeId ? node.edges.findIndex((e) => e.to === targetNodeId) : -1;
+        const idx = chosen >= 0 ? (near(exits[chosen]) ? chosen : -1) : exits.findIndex((e, i) => i < node.edges.length && near(e));
+        if (idx < 0) { this.tellFar(pid, FAR_EXIT); return; }
+        const target = node.edges[idx]!.to;
+        if (this.runClash(pid, false)) { this.tellBlocked(pid, 'run'); return; }   // R4-25
         const tnode = this.runPlan!.nodes.find((n) => n.id === target);
         this.vote = { kind: 'descend', targetNodeId: target, yes: new Set([pid]), no: new Set() };
         this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size, targetNodeId: target, targetNodeType: tnode?.type });
@@ -520,44 +1332,277 @@ export class Room implements Tickable {
   private currentNode() {
     return this.runPlan && this.runNodeId ? this.runPlan.nodes.find((n) => n.id === this.runNodeId) : undefined;
   }
+  /**
+   * Стоит ли игрок у точки перехода (выход, портал) — с запасом `EXIT_REACH_PX` на отставание позиции сервера от
+   * предсказанной клиентом (R3-01).
+   */
+  private stands(pid: string, at: { x: number; y: number } | undefined): boolean {
+    const pos = this.session.world.players[pid]?.pos;
+    return !!pos && !!at && Math.hypot(at.x - pos.x, at.y - pos.y) <= EXIT_REACH_PX;
+  }
+  /** Отказ перехода издалека — инициатору кадр `error` с кодом `far` (честный клиент видит подсказку, а не молчание). */
+  private tellFar(pid: string, msg: string): void {
+    const c = this.clients.get(pid);
+    if (c) this.send(c.ws, { t: 'error', code: 'far', msg });
+  }
+  /**
+   * R4-14: может ли игрок уйти из подземелья в город — мёртв или стоит у точки входа (портал возврата) или у портала узла.
+   * Ровно там, где уход предлагает клиент.
+   */
+  private canLeave(pid: string): boolean {
+    const p = this.session.world.players[pid];
+    if (!p) return false;
+    if (!p.alive) return true;
+    return this.stands(pid, this.session.world.spawn) || this.decor.some((d) => d.kind === 'portal' && this.stands(pid, d));
+  }
+  /**
+   * ⭐ R4-25: спуск переписал бы ЧУЖОЙ припаркованный забег этого игрока. Из города продолжается забег первого, у кого он
+   * припаркован (хозяина, если есть у него), — у остальных он обязан быть тем же или никаким; в подземелье — забег комнаты.
+   * Завершение финала чужого забега не трогает (`endRun` снимает только забег комнаты). `finish` — это оно.
+   */
+  private runClash(pid: string, finish: boolean): boolean {
+    const run = this.session.world.players[pid]?.save.run;
+    if (!run?.config || finish) return false;
+    const target = this.area === 'town' ? this.parkedHost()?.run?.config : this.runConfig ?? undefined;
+    return !!target && !sameRun(run.config, target);
+  }
+  /** Первый (по входу) в комнате, у кого припаркован забег, — его забег продолжит спуск из города (R4-25). */
+  private parkedHost(): SaveState | undefined {
+    for (const pid of this.clients.keys()) { const s = this.session.world.players[pid]?.save; if (s?.run?.config) return s; }
+    return undefined;
+  }
+  /**
+   * ⭐ R5-04: может ли игрок спуститься с этажа голосом «за»: мёртв, стоит у выхода — или на него сейчас никто не идёт
+   * (`inDanger`). Спуск уносит всю пати на следующий этаж, и «за» из гущи боя с 1 HP было бегством от смерти без штрафа.
+   * Вне опасности голосуют откуда угодно — как и прежде: ждать всех у выхода незачем.
+   */
+  private canDescend(pid: string): boolean {
+    const p = this.session.world.players[pid];
+    if (!p) return false;
+    if (!p.alive || !this.inDanger(p)) return true;
+    return (this.session.world.exits ?? []).some((e) => this.stands(pid, e));
+  }
+  /**
+   * ⭐ R4-14, R5-11: ГЕРОЙ В ОПАСНОСТИ — его ЦЕЛИТ живой монстр (гонится или замахивается; цель монстра — ближайший живой
+   * игрок, ровно как в `GameSession`), или его жжёт урон по времени. Раньше мерой был `combatTimer` — окно боевого айдла
+   * (`combatLingerSec`, 15 с), которое ставит и СВОЙ замах героя: добил последнего монстра, собрал добычу, спокойно закрыл
+   * вкладку — и пати, ушедшая в город, хоронила его со штрафом как сбежавшего из боя.
+   */
+  private inDanger(p: PlayerEntity): boolean {
+    if (burning(p)) return true;
+    const w = this.session.world;
+    const alive = Object.values(w.players).filter((o) => o.alive);
+    for (const m of w.monsters) {
+      if (!m.alive || (m.aiState !== 'chase' && !m.windup)) continue;
+      let best: PlayerEntity | undefined;
+      let bestD = Infinity;
+      for (const o of alive) {
+        const d = Math.hypot(o.pos.x - m.pos.x, o.pos.y - m.pos.y);
+        if (d < bestD) { bestD = d; best = o; }
+      }
+      if (best === p) return true;
+    }
+    return false;
+  }
+  /** Почему голос «за» этого игрока сейчас не засчитывается (R4-14, R4-25, R5-04); `null` — засчитывается. */
+  private voteBlock(v: NonNullable<Room['vote']>, pid: string): 'far' | 'fight' | 'run' | null {
+    // R5-04: завершение финала — тот же уход в город, что и голос «в город» (R4-14): только у портала или мёртвым.
+    if ((v.kind === 'town' || (v.kind === 'descend' && v.finish)) && this.area === 'dungeon' && !this.canLeave(pid)) return 'far';
+    if (v.kind === 'descend' && !v.finish && this.area === 'dungeon' && !this.canDescend(pid)) return 'fight';
+    if (v.kind === 'descend' && this.runClash(pid, !!v.finish)) return 'run';
+    return null;
+  }
+  /**
+   * Отказ голосу или переходу — игроку кадр `error` (`far` — подойти к порталу; R5-04: и «выйти из боя» тем же кодом —
+   * клиент показывает текст; `run` — чужой забег под перезаписью).
+   */
+  private tellBlocked(pid: string, why: 'far' | 'fight' | 'run'): void {
+    if (why === 'far') { this.tellFar(pid, FAR_PORTAL); return; }
+    if (why === 'fight') { this.tellFar(pid, FAR_FIGHT); return; }
+    const c = this.clients.get(pid);
+    if (c) this.send(c.ws, { t: 'error', code: 'run', msg: RUN_CLASH });
+  }
   /** Игрок дёрнул рычаг: сессия открывает его дверь (если рядом) → броадкаст всем. */
   pullLever(pid: string, leverId: number): void {
+    if (this.refuseFrozen(pid)) return;
     const doorId = this.session.openLever(pid, leverId);
-    if (doorId != null) this.broadcast({ t: 'doorOpened', doorId });
+    if (doorId == null) return;
+    this.broadcast({ t: 'doorOpened', doorId });
+    // R4-01: дёрнутый рычаг — в запись узла: продолжение откроет его дверь сразу.
+    if (this.nodeState && this.area === 'dungeon' && noteNodeId(this.nodeState.levers, leverId)) this.syncNodeState();
   }
 
   /**
-   * Действие, которое трогает СУНДУК АККАУНТА (сырьё кузницы, сдача): грузим сундук, выполняем,
-   * пишем сейв и сундук одной транзакцией, при неудаче записи откатываем и сейв, и сундук
-   * в памяти. Без отката разъедется оперативное состояние — ровно та ошибка, которую уже
-   * закрывали в `stashMove`.
+   * ⭐ D7: ДЕЙСТВИЕ НАД СЕЙВОМ И СУНДУКОМ АККАУНТА — атомарно. Грузим сундук (с его версией, D8),
+   * выполняем, пишем сейв и сундук ОДНОЙ транзакцией. Не прошла запись (сундук обогнал другой герой
+   * этого аккаунта, база упала) — сейв откатывается к снимку в памяти, а загруженная копия сундука
+   * просто выбрасывается: её в памяти больше никто не держит, значит откатывать там нечего.
+   *
+   * Сундук — объект города, поэтому по умолчанию действие отказывает вне города: пока ждали базу,
+   * пати могла уйти в подземелье. `anywhere` — только для служебного вливания кошелька на входе.
+   * `why` — причина для журнала вещей (D9).
    */
-  private async withStash(
-    c: { userId: string },
-    pid: string,
-    act: (wallet: Record<string, number>) => { ok: boolean; reason?: string },
-  ): Promise<{ ok: boolean; reason?: string }> {
-    const save = this.session.world.players[pid]?.save;
-    if (!save) return { ok: false, reason: 'Нет персонажа' };
-    const stash = await loadAccountStash(c.userId, this.cfg);
-    stash.materials ??= {};
-    const beforeSave = JSON.stringify(save);
-    const beforeWallet = JSON.stringify(stash.materials);
-    const r = act(stash.materials);
+  private withAccount(
+    c: Client, pid: string, why: string,
+    act: (stash: AccountStash) => TxOutcome,
+    opts: { anywhere?: boolean; subject?: string } = {},
+  ): Promise<CmdOutcome> {
+    return this.transact(c, pid, why, true, opts.anywhere ?? false, (st) => act(st!), opts.subject);
+  }
+
+  /**
+   * Действие над ОДНИМ сейвом, записанное сразу и со своей причиной (D9). Сундука в деле нет,
+   * поэтому неудачная запись действие НЕ откатывает: сейв в памяти целостен, его допишет
+   * ближайший автосейв (как у любой команды без транзакции).
+   */
+  private withSave(c: Client, pid: string, why: string, act: () => CmdOutcome, subject?: string): Promise<CmdOutcome> {
+    return this.transact(c, pid, why, false, true, () => act(), subject);
+  }
+
+  /**
+   * ⭐ РАЗБОР НА МЕСТЕ (R2-14) — СРАЗУ, без ожидания базы. Раньше он шёл транзакцией (`withSave`) и ждал записи
+   * внутри очереди кадров соединения: зелье, голос, рычаг и сундук, присланные после него посреди боя, стояли за
+   * одной-двумя записями в базу — десятки миллисекунд, а под нагрузкой базы до 15 с. А ждать было нечего: запись
+   * одного сейва при неудаче действие не откатывает. Вещь уничтожена в памяти сразу, запись встаёт в очередь
+   * записей игрока и уходит со своей причиной — журнал вещей подпишет разобранную вещь разбором (R2-21), даже если
+   * первой её застанет стоявший раньше автосейв. Лимит кузницы (D12) остаётся: отказ «Слишком часто» клиент видит.
+   */
+  private salvageInField(c: Client, pid: string, save: SaveState, uid: string): CmdOutcome {
+    const why = salvageReason(save, uid);   // ДО разбора: после него вещи в сумке уже нет
+    const r = fieldSalvage(this.cfg, save, uid, townRng());
     if (!r.ok) return r;
-    if (await this.persist(pid, stash)) { await this.sendStash(pid); return r; }
-    Object.assign(save, JSON.parse(beforeSave) as typeof save);
-    stash.materials = JSON.parse(beforeWallet) as Record<string, number>;
-    return { ok: false, reason: 'Не удалось сохранить, попробуйте ещё раз' };
+    c.reasons.set(uid, why);
+    // K7: действие стоит, как только совершено: запись одного сейва его не откатывает.
+    tallyForge(c.tm, why);
+    // Запись разбора уже ждёт в очереди — новая её не множит: та, начавшись, снимет сейв со всеми разборами.
+    if (!c.fieldWrite) {
+      c.fieldWrite = true;
+      const p = this.session.world.players[pid]!;
+      void this.queued(c, () => { c.fieldWrite = false; return this.write(c, p, undefined, why); });
+    }
+    return r;
+  }
+
+  /**
+   * Общий путь транзакций. Всё — ВНУТРИ очереди записей игрока: пока действие ждёт базу, никакая
+   * другая запись этого игрока (автосейв, выход) не начнётся и не запишет полуготовое состояние,
+   * а начатая раньше — закончится до нашего снимка. `subject` — вещь действия для журнала вещей (R2-21).
+   */
+  private transact(
+    c: Client, pid: string, why: string, account: boolean, anywhere: boolean,
+    act: (stash: AccountStash | undefined) => TxOutcome, subject?: string,
+  ): Promise<CmdOutcome> {
+    return this.queued(c, async (): Promise<CmdOutcome> => {
+      const p = this.session.world.players[pid];
+      if (!p || this.clients.get(pid) !== c) return { ok: false, reason: 'Нет персонажа' };
+      const loaded = account ? await loadAccountStash(c.userId, this.cfg) : undefined;
+      // Пока ждали базу, игрок мог уйти (сокет закрыт, прощальная запись уже в очереди за нами) — тогда
+      // действовать не над кем: его сейв сейчас пишут на выход, а ответ всё равно не дойдёт.
+      if (this.clients.get(pid) !== c) return { ok: false, reason: 'Нет персонажа' };
+      if (this.frozen) return { ok: false, reason: FROZEN };   // R5-07: пока ждали базу, начался слив — не исполняем
+      if (!anywhere && this.area !== 'town') return { ok: false, reason: 'Это доступно только в городе' };
+      const save = p.save;
+      const before = JSON.stringify(save);
+      let tx: TxOutcome;
+      try {
+        tx = act(loaded?.stash);
+      } catch (e) {
+        restoreInPlace(save, before);   // половина действия хуже, чем никакого
+        throw e;
+      }
+      const { unchanged, ...r } = tx;
+      if (r.ok && unchanged && JSON.stringify(save) === before) {
+        // Нечего писать (повтор ключа ковки). Сундук всё равно шлём: повтор приходит как раз после
+        // реконнекта, и клиенту нужен свежий слепок, а не тот, что был до обрыва.
+        if (loaded) this.sendStashOf(c, loaded.stash);
+        return r;
+      }
+      if (!r.ok) {
+        // Отказ обязан случаться ДО траты. Если функция всё же что-то тронула — это ошибка в ней:
+        // откатываем и шумим, чтобы её нашли, а не молча отдаём игроку полдействия.
+        if (JSON.stringify(save) !== before) {
+          restoreInPlace(save, before);
+          console.error(`[room ${this.code}] отказ «${r.reason ?? ''}» (${why}) изменил сейв ${save.charId} — откачено`);
+        }
+        return r;
+      }
+      // R2-21: вещь действия (скованная — по uid ответа) журнал вещей подпишет этим действием; прочее — автосейвом.
+      const subjects = [...new Set([subject, r.uid].filter((u): u is string => !!u))];
+      for (const u of subjects) c.reasons.set(u, why);
+      // ⭐ R1-05: пока запись «сейв + сундук» ждёт базу, сейв игрока НЕ ТРОГАЕТ НИКТО: тик не подбирает ему
+      // вещей и не пьёт зелий (`session.saveHeld`), а переход по голосованию ждёт (`checkVote`). Иначе откат
+      // неудачной записи стёр бы и чужое: поднятая с земли вещь пропала бы совсем, выпитое зелье вернулось бы,
+      // указатель забега, поставленный переходом, — снят. А неудачу записи с D8 можно вызвать нарочно: второй
+      // герой аккаунта трогает сундук. Одиночный сейв (`withSave`) при неудаче не откатывается — держать его
+      // незачем, а в бою зелье нужно сразу.
+      if (loaded) this.session.saveHeld.add(pid);
+      try {
+        // K7: действие кузницы в телеметрию — только состоявшееся: записано, или запись одного сейва
+        // не прошла, но действие стоит (его допишет автосейв). Откат и повтор ключа ковки — не считаются.
+        const w = await this.write(c, p, loaded, why);
+        if (w === 'ok') {
+          tallyForge(c.tm, why);
+          if (loaded) this.sendStashOf(c, loaded.stash);
+          return r;
+        }
+        // R1-01, R2-09: база отказала по версии сейва или исход фиксации неизвестен — сессию уже сняли
+        // (`dropStale`): дописывать действие некому, а откатывать память к «до» НЕЛЬЗЯ — в базе оно могло
+        // остаться, и откат дал бы вещь и там, и в памяти (выбросить — и она у двоих).
+        if (c.stale) return { ok: false, reason: 'Нет персонажа' };
+        if (!loaded) {
+          tallyForge(c.tm, why);
+          return r;
+        }
+        // Откат после ожидания базы: не записано НАВЕРНЯКА (конфликт сундука, сбой до фиксации). Сейв всё это
+        // время был на удержании — снимок ровно то, что было до действия.
+        restoreInPlace(save, before);
+        for (const u of subjects) if (c.reasons.get(u) === why) c.reasons.delete(u);
+        return { ok: false, reason: 'Не удалось сохранить, попробуйте ещё раз' };
+      } finally {
+        if (loaded) {
+          this.session.saveHeld.delete(pid);
+          if (this.vote) this.checkVote();   // голосование, отложенное на время записи
+        }
+      }
+    });
+  }
+
+  /**
+   * Поставить работу в очередь записей игрока (Ф2): записи одного персонажа идут строго друг
+   * за другом. Отказ прошлой работы очередь не рвёт.
+   */
+  private queued<T>(c: Client, fn: () => Promise<T>): Promise<T> {
+    const next = c.saving.then(fn, fn);
+    c.saving = next.then(() => undefined, () => undefined);
+    return next;
   }
 
   /** Игрок открыл сундук: сессия высыпает содержимое на землю (если рядом) → события всем. */
   openChest(pid: string, chestId: number): void {
-    this.session.openChest(pid, chestId);
+    if (this.refuseFrozen(pid)) return;
+    // ⭐ R4-01: команда пришла МЕЖДУ тиками — её события забираем сразу. Раньше они ложились в буфер уже прошедшего тика:
+    // «сундук открыт» и «выпала вещь» не доходили ни до клиента (веб-3D не гасил меш сундука), ни до записи узла.
+    const events = this.session.collectEvents(() => { this.session.openChest(pid, chestId); });
+    if (!events.length) return;
+    let changed = false;
+    for (const e of events) if (this.noteNode(e)) changed = true;
+    if (changed) this.syncNodeState();
+    this.broadcast({ t: 'events', events });
   }
 
+  /**
+   * В город — голосованием. ⭐ R4-01: ИЗ ПОДЗЕМЕЛЬЯ — ОТ ПОРТАЛА: у точки входа (портал возврата) или у портала узла
+   * (отдых, финал) — ровно там, где клиент его предлагает. Раньше кадр `return` принимался откуда угодно: модифицированный
+   * клиент уходил из любого боя за полшага до смерти, без штрафа, и тут же продолжал узел. Из арены — откуда угодно:
+   * там нет ни добычи, ни штрафа, а Unity-клиент зовёт выход у своего края зала.
+   */
   returnTown(pid: string): void {
-    if (this.vote || this.area === 'town') return;
+    if (this.refuseFrozen(pid) || this.vote || this.area === 'town' || !this.voteAllowed(pid)) return;
+    // R4-14: и звать, и голосовать «за» — только у портала (или мёртвым): см. `castVote`, `checkVote`.
+    if (this.area === 'dungeon' && !this.canLeave(pid)) {
+      this.tellFar(pid, FAR_PORTAL);
+      return;
+    }
     this.vote = { kind: 'town', yes: new Set([pid]), no: new Set() };
     this.broadcast({ t: 'voteStart', kind: 'town', by: pid, needed: this.clients.size });
     this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
@@ -565,7 +1610,7 @@ export class Room implements Tickable {
   }
   /** Вход в PvP-арену из города (через алтарь) — голосование, затем круглый зал с уроном игрок↔игрок. */
   enterArena(pid: string): void {
-    if (this.vote || this.area !== 'town') return; // арена только из города
+    if (this.refuseFrozen(pid) || this.vote || this.area !== 'town' || !this.voteAllowed(pid)) return; // арена только из города
     this.vote = { kind: 'arena', yes: new Set([pid]), no: new Set() };
     this.broadcast({ t: 'voteStart', kind: 'arena', by: pid, needed: this.clients.size });
     this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
@@ -581,30 +1626,75 @@ export class Room implements Tickable {
     return this.difficultyId;
   }
   castVote(pid: string, accept: boolean): void {
-    if (!this.vote) return;
+    // Голос только от игрока комнаты: сессия, снятая за устаревший сейв (R1-01), ещё может прислать кадр,
+    // пока её сокет закрывается, — и «за» призрака провело бы переход без согласия живых.
+    if (!this.vote || !this.clients.has(pid) || this.refuseFrozen(pid)) return;
+    // ⭐ R4-14, R4-25, R5-04: «за» засчитывается только тому, кто может перейти: в город из подземелья и завершение финала —
+    // у портала или мёртвым (иначе напарник у портала уводил из любого боя без штрафа), спуск — не из-под монстра вдали от
+    // выхода и не переписывая свой чужой забег.
+    const block = accept ? this.voteBlock(this.vote, pid) : null;
+    if (block) { this.tellBlocked(pid, block); return; }
     if (accept) this.vote.yes.add(pid); else this.vote.no.add(pid);
     if (this.vote.no.size > 0) { this.broadcast({ t: 'voteEnd', passed: false }); this.vote = null; return; }
     this.broadcast({ t: 'voteUpdate', yes: this.vote.yes.size, total: this.clients.size });
     this.checkVote();
   }
+  /**
+   * Можно ли начать голосование за переход: только игроку комнаты (см. `castVote`) и не раньше паузы после
+   * прошлого перехода (R1-03). Отказ паузой — кадр `error` инициатору: честный клиент видит «подождите», а не молчание.
+   */
+  private voteAllowed(pid: string): boolean {
+    const c = this.clients.get(pid);
+    if (!c) return false;
+    if (Date.now() - this.movedAt < VOTE_COOLDOWN_MS) {
+      this.send(c.ws, { t: 'error', code: 'rate', msg: 'Подождите немного' });
+      return false;
+    }
+    return true;
+  }
   private checkVote(): void {
-    if (!this.vote || this.clients.size === 0) return;
+    if (!this.vote || this.clients.size === 0 || this.frozen) return;   // R5-07: заморожена — переходов нет
     if (this.vote.yes.size >= this.clients.size) {
+      // R1-05: чей-то сейв сейчас в транзакции «сейв + сундук» — переход ждёт её конца (`transact` зовёт
+      // проверку снова). Переход пишет в сейвы всех (указатель забега, прогресс сложности, квесты), а
+      // неудачная запись откатила бы сейв к снимку ДО перехода: комната в подземелье, а забега у игрока
+      // «нет» — и «Завершить» потом обходилось бы без штрафа.
+      if (this.session.saveHeld.size > 0) return;
+      // ⭐ R4-14, R4-25: «за», поданное раньше, ещё в силе? Голосовавший мог отойти от портала обратно в бой, а хозяин
+      // комнаты — смениться (и с ним забег, который продолжит спуск). Голос, который уже не в силе, снимается.
+      for (const pid of [...this.vote.yes]) {
+        const block = this.voteBlock(this.vote, pid);
+        if (!block) continue;
+        this.vote.yes.delete(pid);
+        this.tellBlocked(pid, block);
+      }
+      if (this.vote.yes.size < this.clients.size) {
+        this.broadcast({ t: 'voteUpdate', yes: this.vote.yes.size, total: this.clients.size });
+        return;
+      }
       const v = this.vote;
       this.vote = null;
+      this.movedAt = Date.now();
       this.broadcast({ t: 'voteEnd', passed: true });
-      if (v.kind === 'town') { this.enterTown(); return; }
+      if (v.kind === 'town') {
+        if (this.area === 'dungeon') this.buryFled();   // R4-14: сбежавшие из боя отключением в город не уходят даром
+        this.enterTown();
+        return;
+      }
       if (v.kind === 'arena') { this.enterArenaFloor(); return; }
       // descend
       if (this.area === 'town') {
         if (v.diffId) this.difficultyId = v.diffId; // тир забега
-        const host = this.firstSave();
+        const host = this.parkedHost();   // R4-25: забег первого, у кого он припаркован, — не молча новый поверх
         if (host?.run && this.resumeRun(host)) return; // продолжить незавершённый забег
         this.startRun(v.runCfg);
         return;
       }
       if (v.finish) { this.finishRun(); return; } // финал → город + завершение
-      if (v.targetNodeId) { this.enterNode(v.targetNodeId); return; } // спуск по ветке
+      // ⭐ R6-01: и спуск по ветке — тоже уход с этажа: сбежавший из боя отключением погибает, как при уходе в город и на
+      // финале. Раньше хоронил только город: напарник у выхода спускался, и сбежавший при 1 HP входил «Продолжить» живым у
+      // входа нового узла, без штрафа и без монстра рядом.
+      if (v.targetNodeId) { this.buryFled(); this.enterNode(v.targetNodeId); return; } // спуск по ветке
     }
   }
 
@@ -622,28 +1712,38 @@ export class Room implements Tickable {
     // Модификаторы: только включённые, scope:'run', и (если шаблон ограничивает) из allowedModifiers.
     const runMods = this.cfg.get('run-modifiers');
     const allowed = tpl?.allowedModifiers ?? [];
-    const modifiers = (cfg?.modifiers ?? []).filter((id) => {
+    // Кадр проверяет схема менеджера (R1-19); здесь — вторая линия: выбор алтаря едет из кадра, и не-массив
+    // в нём ронял старт забега ПОСЛЕ «голосование прошло» — пати видела успех, а спуска не было.
+    const picked: unknown[] = Array.isArray(cfg?.modifiers) ? cfg.modifiers : [];
+    const modifiers = picked.filter((id): id is string => typeof id === 'string').filter((id) => {
       const m = runMods.find((r) => r.id === id);
       return !!m && m.enabled !== false && m.scope === 'run' && (allowed.length === 0 || allowed.includes(id));
     });
     // Свежий сид на КАЖДЫЙ новый забег (this.seed — сид РУМА/сима, один на сессию → все забеги были одинаковыми).
-    const runSeed = ((Date.now() & 0xffffff) >>> 0) || 1;
+    const runSeed = randomSeed();   // D10: сид забега решает этажи и дроп — не по часам
     return { templateId: tpl?.id ?? 'default', biomeId: biome.id, tier: this.difficultyId, seed: runSeed, modifiers };
   }
   /** Начать новый забег: RunConfig (с выбором алтаря) → RunPlan → первый узел. */
   private startRun(cfg?: AltarConfig): void {
     this.runConfig = this.buildRunConfig(cfg);
     this.runPlan = generateRunPlan(this.cfg, this.runConfig);
+    this.ledger.clear();
     this.enterNode(this.runPlan.startId);
   }
-  /** Продолжить забег из сейва (граф регенерится из config.seed). */
+  /**
+   * Продолжить забег из сейва (граф регенерится из config.seed). ⭐ R4-04: с САМОГО ГЛУБОКОГО указателя этого забега среди
+   * тех, кто в комнате: раньше продолжался узел хозяина, и `enterNode` ставил его всем — ушедшего вперёд тянуло назад, и
+   * пройденный им узел потом вставал свежим.
+   */
   private resumeRun(save: SaveState): boolean {
     if (!save.run) return false;
+    if (!this.runConfig || !sameRun(this.runConfig, save.run.config)) this.ledger.clear();
     this.runConfig = save.run.config;
     this.difficultyId = save.run.config.tier;
     this.runPlan = generateRunPlan(this.cfg, save.run.config);
-    const nid = this.runPlan.nodes.some((n) => n.id === save.run!.currentNodeId) ? save.run.currentNodeId : this.runPlan.startId;
-    this.enterNode(nid);
+    let nid = this.depthOf(save.run.currentNodeId) >= 0 ? save.run.currentNodeId : this.runPlan.startId;
+    for (const s of this.runSaves()) if (this.depthOf(s.run.currentNodeId) > this.depthOf(nid)) nid = s.run.currentNodeId;
+    this.enterNode(nid, true);
     return true;
   }
   /**
@@ -653,19 +1753,60 @@ export class Room implements Tickable {
    * через окно смерти. Общее у них ровно одно — забега больше нет, и продолжать нечего.
    */
   private endRun(): void {
-    for (const pid of this.clients.keys()) { const p = this.session.world.players[pid]; if (p) p.save.run = undefined; }
+    // R4-25: снимается только ЭТОТ забег — чужой припаркованный у гостя комнаты остаётся ему (завершить его — «Завершить»).
+    const cfg = this.runConfig;
+    for (const pid of this.clients.keys()) {
+      const s = this.session.world.players[pid]?.save;
+      if (s?.run && (!cfg || !s.run.config || sameRun(s.run.config, cfg))) s.run = undefined;
+    }
     this.runConfig = null; this.runPlan = null; this.runNodeId = null;
+    this.nodeState = null; this.spawnIdx.clear(); this.ledger.clear();
   }
   /** Финал забега: забег окончен + возврат в город. */
   private finishRun(): void {
+    const cfg = this.runConfig;
+    this.buryFled();   // R4-14: сбежавший из боя финала отключением не завершает забег даром
     this.endRun();
+    // ⭐ R3-05: ЗАБЕГ ОКОНЧЕН И ДЛЯ ТЕХ, КТО ЖДЁТ РЕКОННЕКТА. `endRun` снимает указатель только у подключённых, и копия
+    // партнёра, отвалившегося на финале, держала финал — в памяти и в базе (прощальная запись): «Завершить» и истечение
+    // грейса брали с него штраф смерти за пройденный забег, а «Продолжить» высаживало обратно на финал. Финал — не смерть:
+    // указатель снимается без штрафа, запись прощальная (`onFarewell`) — вход героя её дождётся. Вайп сюда не ходит:
+    // там отключённые — погибшие (`finalizeDisconnectedAsDead`).
+    // R4-25: только этот забег; R4-15: копию обогнали — забег снимается со строки базы (если он там этот же).
+    const clear = (s: SaveState): boolean => {
+      if (!s.run?.config || !cfg || !sameRun(s.run.config, cfg)) return false;
+      s.run = undefined;
+      return true;
+    };
+    for (const [charId, info] of this.disconnected) {
+      if (!clear(info.save)) continue;
+      const retry = (): Promise<WriteResult> => this.persistDisconnected(charId, info, clear);
+      const write = retry().then((r) => this.farewellOf(r, retry));   // до вызова: `?.()` без хука аргументы не вычисляет
+      this.hooks.onFarewell?.(charId, write);
+    }
     this.enterTown();
   }
-  /** Войти в узел забега: сгенерировать этаж по floorSpec, заселить по ролям/фичам, разослать кадры. */
-  private enterNode(nodeId: string): void {
+  /**
+   * Войти в узел забега: сгенерировать этаж по floorSpec, заселить по ролям/фичам, разослать кадры.
+   * `resumed` — продолжение забега на уже пройденном узле (`resumeRun`): квестам «достичь этажа» это не засчитывается,
+   * а узел собирается КАК ЕГО ОСТАВИЛИ (R4-01): открытые сундуки открыты, убитые не встают, рычаги дёрнуты.
+   * ⭐ R4-04: так же — ЛЮБОЙ узел, где кто-то из участников уже был (свод записей комнаты): указатель, отмотанный назад,
+   * или пати, разошедшаяся по комнатам, узел свежим больше не получают. Пройденный без записи (сейв старше записей) —
+   * взят целиком. И такой вход — тоже не новый для квестов (R3-10).
+   */
+  private enterNode(nodeId: string, resumed = false): void {
     if (!this.runPlan || !this.runConfig) { this.startRun(); return; }
     const node = this.runPlan.nodes.find((n) => n.id === nodeId);
     if (!node) return;
+    const runCfg = this.runConfig;
+    // ⭐ R4-01, R4-04: записи — из сейвов ВСЕХ участников этого забега здесь (и ждущих реконнекта), до того, как цикл ниже
+    // перепишет им указатель.
+    for (const s of this.runSaves(true)) foldRunRecords(this.ledger, runRecords(s.run, runCfg));
+    const kept = this.ledger.get(nodeId);
+    let bare = false;
+    if (!kept) for (const s of this.runSaves(true)) if (visitedNode(s.run, runCfg, nodeId)) { bare = true; break; }
+    const revisit = resumed || !!kept || bare;
+    this.floorChanged('dungeon');   // R4-06, R4-16: ушедшие с прошлого этажа сюда не «на то же место»
     this.wipeAt = 0;
     this.area = 'dungeon'; this.runNodeId = nodeId; this.depth = node.depth;
     for (const c of this.clients.values()) c.tm.floors++;   // Ф3.2: этажей за сессию
@@ -678,19 +1819,37 @@ export class Room implements Tickable {
     this.decor = layout.decor;
     const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));   // суб-тайл-коллизия
     const pool = resolveMonsterPool(biome, node.depth);
-    const hostSave = this.firstSave();
-    const el = hostSave ? effectiveLevel(hostSave, this.cfg.get('balance').power).total : 1;
+    // Продолжение заселяет той же мощью, что первый вход: от неё зависят броски генератора, и номера убитых иначе
+    // указывали бы на других монстров (вырос в городе — и босс «ожил» под чужим номером).
+    const el = kept?.el ?? this.partyLevel();
     const rng = createRng((node.floorSpec.seed >>> 0) || 1);
-    const monsters = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
+    const spawned = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
+    // R4-04: пройденный без записи — взят целиком: ни заселения, ни сундуков; двери рычагов открыты.
+    const killed = new Set(bare ? spawned.map((_, i) => i) : (kept?.killed ?? []).filter((i) => i < spawned.length));
+    const alive: number[] = [];
+    const monsters = spawned.filter((_, i) => { if (killed.has(i)) return false; alive.push(i); return true; });
+    const opened = new Set(bare ? layout.chests.map((c) => c.id) : kept?.chests ?? []);
+    const pulled = new Set(bare ? layout.levers.map((l) => l.id) : kept?.levers ?? []);
     this.session.enterFloor(node.depth, {
       // ⚠ `chests` ОБЯЗАТЕЛЬНО: этаж их генерил, но сессия их не получала — и сундуков в живой
       // игре не было вовсе (в симе были, он передавал их явно). Это же убивало и весь ЦЕЛЫЙ дроп:
       // с тела падают только сломанные трофеи, а надеть в забеге было нечего.
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles,
-      chests: layout.chests,
-      doors: layout.doors, levers: layout.levers,
+      chests: layout.chests.map((c) => (opened.has(c.id) ? { ...c, opened: true } : c)),
+      doors: layout.doors, levers: layout.levers.map((l) => (pulled.has(l.id) ? { ...l, used: true } : l)),
+      // Уровень этажа — по ПОЛНОМУ заселению: убитый босс не опускает ступень нетронутых сундуков.
+      floorLevel: spawned.reduce((m, sp) => Math.max(m, sp.def.level), 0),
       runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: biome.id,
     });
+    // Мир заселён ровно списком `monsters` и в его порядке — отсюда номер заселения каждой сущности.
+    this.spawnIdx = new Map(this.session.world.monsters.map((m, k) => [m.id, alive[k]!]));
+    this.nodeState = {
+      id: nodeId, el,
+      chests: layout.chests.filter((c) => opened.has(c.id)).map((c) => c.id).sort((a, b) => a - b),
+      killed: [...killed].sort((a, b) => a - b),
+      levers: layout.levers.filter((l) => pulled.has(l.id)).map((l) => l.id).sort((a, b) => a - b),
+    };
+    this.ledger.set(nodeId, this.nodeState);   // запись текущего узла — тот же объект в своде (её ведёт `noteNode`)
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
@@ -699,32 +1858,74 @@ export class Room implements Tickable {
     const qev: SessionEvent[] = [];
     for (const pid of this.clients.keys()) {
       const s = this.session.world.players[pid]!.save;
-      const visited = [...(s.run?.visited ?? []), nodeId];
-      s.run = { templateId: this.runConfig.templateId, config: this.runConfig, currentNodeId: nodeId, visited };
+      // R4-25: чужой забег спуском не переписывается — голос с ним не засчитывается (`runClash`); здесь его нет.
+      const prev = s.run?.config && sameRun(s.run.config, runCfg) ? s.run : undefined;
+      const was = prev?.visited ?? [];
+      const visited = was.includes(nodeId) ? was : [...was, nodeId];   // продолжение узла не множит его в списке
+      // ⭐ R4-04: указатель НЕ УЕЗЖАЕТ НАЗАД — ушедший дальше (вошёл к пати, стоящей раньше) остаётся на своём узле.
+      const ahead = !!prev && this.depthOf(prev.currentNodeId) > node.depth;
+      s.run = { templateId: runCfg.templateId, config: runCfg, currentNodeId: ahead ? prev!.currentNodeId : nodeId, visited };
+      putRunRecords(s.run, this.ledger.values());
       s.difficultyProgress[this.difficultyId] = Math.max(s.difficultyProgress[this.difficultyId] ?? 0, node.depth);
-      for (const qid of trackFloor(s, node.depth).completed) qev.push(this.questCompleted(pid, s, qid));
+      // ⚠ R3-10: «достичь этажа» — только НОВЫЙ вход. Продолжение припаркованного забега (свой или хозяина комнаты)
+      // возвращает на пройденный узел, и квест с доски, принятый в городе, закрывался бы спуском мгновенно. R4-04: и узел,
+      // где кто-то из участников уже был, — тоже не новый.
+      if (!revisit) for (const qid of trackFloor(s, node.depth).completed) qev.push(this.questCompleted(pid, s, qid));
       this.sendSave(pid);
     }
     if (qev.length) this.broadcast({ t: 'events', events: qev });
     this.persistAll();
   }
 
+  /**
+   * ⭐ R4-01: событие сессии, меняющее узел: убит монстр ЗАСЕЛЕНИЯ (по номеру в списке), открыт сундук. `true` — запись
+   * изменилась. Только в подземелье и только на узле записи.
+   */
+  private noteNode(e: SessionEvent): boolean {
+    const st = this.nodeState;
+    if (!st || this.area !== 'dungeon' || this.runNodeId !== st.id) return false;
+    if (e.type === 'monster-died') {
+      const i = this.spawnIdx.get(e.id);
+      if (i === undefined) return false;
+      this.spawnIdx.delete(e.id);
+      return noteNodeId(st.killed, i);
+    }
+    if (e.type === 'chest-opened') return noteNodeId(st.chests, e.id);
+    return false;
+  }
+
+  /**
+   * ⭐ R4-01: запись узла — КОПИЕЙ в сейв каждого участника этого забега: и подключённых, и ждущих реконнекта (их копия
+   * дописывается прощальной записью). R4-04: и тем, чей указатель на другом узле (ушёл дальше), — в `nodes`: запись есть у
+   * каждого пройденного узла. Уходит в базу с ближайшей записью (автосейв, город).
+   */
+  private syncNodeState(): void {
+    const st = this.nodeState;
+    if (!st) return;
+    for (const s of this.runSaves(true)) putRunRecord(s.run, st);
+  }
+
   // ── Области ─────────────────────────────────────────────────────────────────
   private enterTown(): void {
+    const from = this.area;
+    this.floorChanged('town');   // R4-06, R4-16
     this.wipeAt = 0; // отменяем ожидающий вайп-таймер
     this.area = 'town'; this.depth = 0; this.decor = [];
+    this.spawnIdx.clear();   // монстры узла ушли вместе с этажом; запись узла (`nodeState`) ждёт продолжения
     const t = townLayout();
     this.session.enterFloor(0, { grid: t.grid, spawn: t.spawn, monsters: [] });
-    this.regenShop();
-    this.questBoard = generateBoard(this.cfg, createRng(((Date.now() & 0xffffff) >>> 0) || 1));
+    this.restock();   // R1-03: сток героя-хозяина — свежий, только если подошёл срок
     for (const pid of this.clients.keys()) ensureMainQuest(this.cfg, this.session.world.players[pid]!.save);
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
-    this.broadcast({ t: 'shop', items: this.shop });
+    this.broadcast(this.shopFrame());
     this.broadcastQuestBoard();
     for (const pid of this.clients.keys()) this.sendSave(pid); // город мог выдать main-квест
-    this.persistAll(); // чекпойнт: возврат в город
+    // Чекпойнт: возврат в город. Из арены — без записи (R1-03): там нет ни добычи, ни штрафа, ни опыта,
+    // а круг «город ↔ арена» гонялся десятки раз в секунду — и каждый писал сейвы всех в базу.
+    // Если что-то всё же поменялось (выбросил вещь), это допишет ближайший автосейв.
+    if (from !== 'arena') this.persistAll();
   }
   /**
    * PvP-арена: круглый зал, урон игрок↔игрок, монстров нет. Игроки расставлены по
@@ -732,8 +1933,10 @@ export class Room implements Tickable {
    * Выход — «В город» (returnTown), как из подземелья.
    */
   private enterArenaFloor(): void {
+    this.floorChanged('arena');   // R4-06: арена возрождает всех — ушедшие вернутся свежими
     this.wipeAt = 0;
     this.area = 'arena'; this.depth = 0; this.decor = [];
+    this.spawnIdx.clear();
     this.arenaRespawns.clear(); this.arenaSpawnByPid.clear();
     const a = arenaLayout(ARENA_SIZE);
     this.arenaSpawns = a.spawns;
@@ -749,30 +1952,131 @@ export class Room implements Tickable {
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
   }
-  private regenShop(): void {
+  /** Зелья лавки (R2-04): гарантированный запас (`SHOP_CONSUMABLE_STOCK` каждого) — на каждый заход в город, в каждой комнате свой. */
+  private freshConsumables(): Item[] {
+    const itemsBase = this.cfg.get('items.base');
+    const out: Item[] = [];
+    for (const id of SHOP_CONSUMABLES) for (let n = 0; n < SHOP_CONSUMABLE_STOCK; n++) { const p = itemFromBaseId(itemsBase, id, undefined, 'shop'); if (p) out.push(p); }
+    return out;
+  }
+
+  /**
+   * Снаряжение кузницы для стока героя (R1-03): броски тира, редкости и аффиксов — поэтому оно и сток. ⭐ R5-22: бросок —
+   * от сида стока (`seed`, из криптографического источника, D10): тот же сид и уровень дают те же вещи в том же порядке на
+   * любой ноде. Личность вещи (`uid`) у каждого броска своя — купленная повтором броска не удвоится.
+   */
+  private rollGear(seed: number, heroLevel: number): Item[] {
     const itemsBase = this.cfg.get('items.base');
     const rarities = this.cfg.get('rarities');
     const tiers = this.cfg.get('item-tiers');
     const affixes = this.cfg.get('affixes');
     const uniques = this.cfg.get('uniques');
-    const rng = createRng(((Date.now() & 0xffffff) >>> 0) || 1);
-    const level = Math.max(1, this.firstSave()?.level ?? 1);
-    this.shop = [];
-    // Зелья/расходники — лавка (гарантированный сток, по 5 каждого).
-    for (const id of SHOP_CONSUMABLES) for (let n = 0; n < 5; n++) { const p = itemFromBaseId(itemsBase, id); if (p) this.shop.push(p); }
+    const rng = createRng((seed >>> 0) || 1);
+    const level = Math.max(1, heroLevel);
+    const loot = this.cfg.get('balance').loot;
+    const gear: Item[] = [];
     // Оружие/броня — кузница. Гарантируем товар в КАЖДОЙ вкладке магазина (ближний/дальний/броня):
     // N роллов на категорию по её базам (generateItem с baseId → полноценный ролл: тир/редкость/аффиксы).
-    const meleeBases = itemsBase.filter((b) => b.kind === 'weapon' && b.attackType === 'melee');
-    const rangedBases = itemsBase.filter((b) => b.kind === 'weapon' && b.attackType === 'ranged');
-    const armorBases = itemsBase.filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry');
+    // ⚠ Только ВКЛЮЧЁННЫЕ базы: выключенная база (ещё не в игре) не падает с монстров — не должна и продаваться.
+    const on = itemsBase.filter((b) => b.enabled !== false);
+    const meleeBases = on.filter((b) => b.kind === 'weapon' && b.attackType === 'melee');
+    const rangedBases = on.filter((b) => b.kind === 'weapon' && b.attackType === 'ranged');
+    const armorBases = on.filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry');
     const rollFrom = (pool: typeof itemsBase, count: number): void => {
       for (let i = 0; i < count && pool.length; i++) {
         // Меч с прилавка — как с пола: клинок несёт статы своей геометрии (§26).
-        this.shop.push(shapeFoundWeapon(this.cfg, generateItem(itemsBase, affixes, uniques,
-          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement, baseRoll: this.cfg.get('balance').loot.baseRoll }, rng)));
+        gear.push(shapeFoundWeapon(this.cfg, generateItem(itemsBase, affixes, uniques, {
+          dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities,
+          // D21: ступень базы — БРОСОК в окне, ровно как у дропа (`rollTierLevel`). Без него прилавок
+          // выставлял высшую ступень уровня каждый раз — надёжный кран верхних ступеней для разбора.
+          tierLevel: rollTierLevel(level + 1, loot.tierWindow, rng),
+          rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement, baseRoll: loot.baseRoll,
+          // Происхождение (D16): купленное в счётчик мифических находок журнала не идёт.
+          origin: 'shop',
+        }, rng)));
       }
     };
     rollFrom(meleeBases, 9); rollFrom(rangedBases, 6); rollFrom(armorBases, 9);
+    return gear;
+  }
+
+  /**
+   * Снаряжение и доска квестов — СТОК ГЕРОЯ-ХОЗЯИНА (первого в комнате), см. `townStocks` (R1-03). Пока срок
+   * `balance.townRestockSec` не вышел, комната показывает тот же сток — после любых кругов по областям и в любой
+   * новой комнате этого героя; вышел — катаем новый. Без хозяина (комната только создана) прилавок пуст: показать
+   * его некому, а первый вошедший всё равно получит свой сток (`attach`). Зелья лавки — свежие на каждый вызов
+   * (R2-04): зовётся на каждый заход в город и на вход хозяина в новую комнату.
+   *
+   * ⭐ R5-22: опознание стока — в сейве хозяина (`save.townStock`); карта процесса — кэш тех же вещей (чтобы uid на прилавке
+   * не менялись от захода к заходу). Кэша нет или он другого поколения (другая нода, рестарт) — снаряжение собирается
+   * заново из сида за вычетом купленного.
+   */
+  private restock(): void {
+    const host = this.firstSave();
+    const now = Date.now();
+    const ttl = Math.max(0, this.cfg.get('balance').townRestockSec) * 1000;
+    sweepTownStocks(now, ttl);
+    if (!host) {
+      this.stock = { at: now, shop: [], board: [], level: 0, seed: 0, rolled: [], owner: '' };
+    } else {
+      let ref = stockRef(host.townStock, now, ttl);
+      let kept = townStocks.get(host.charId);
+      if (kept && (!ref || kept.at !== ref.at)) kept = undefined;   // кэш другого поколения — не этот сток
+      if (!ref) {
+        ref = host.townStock = { at: now, seed: randomSeed(), level: host.level, bought: [] };
+      } else if (host.level > ref.level) {
+        // ⭐ R3-17: ХОЗЯИН ВЫРОС — СНАРЯЖЕНИЕ ПО НОВОМУ УРОВНЮ. Сток держит уровень, под который его катали, и новичок,
+        // за забег выросший с первого до двадцатого, до конца срока видел в кузнице снаряжение первого уровня (до R1-03
+        // прилавок катался заново на каждый заход в город). Перекатывается только снаряжение, доска и срок — прежние.
+        // Бесплатным перебросом это не стало: `level` — наибольший уровень, под который катали, и растёт он раз на уровень.
+        ref.seed = randomSeed(); ref.level = host.level; ref.bought = [];
+      }
+      if (!kept || kept.seed !== ref.seed) {
+        const rolled = this.rollGear(ref.seed, ref.level);
+        const board = kept?.board ?? generateBoard(this.cfg, townRng());
+        kept = { at: ref.at, seed: ref.seed, level: ref.level, rolled, shop: [...rolled], board, owner: host.charId };
+        townStocks.set(host.charId, kept);
+      }
+      // Купленное на другой ноде (или в другой комнате) — с прилавка долой и здесь.
+      const bought = new Set(ref.bought);
+      if (bought.size) { const k = kept; k.shop = k.shop.filter((it) => !bought.has(k.rolled.indexOf(it))); }
+      this.stock = kept;
+    }
+    this.consumables = host ? this.freshConsumables() : [];
+    this.shop = [...this.consumables, ...this.stock.shop];
+    this.questBoard = this.stock.board;
+  }
+
+  /**
+   * ⭐ R5-22: куплено со стока — номер вещи в броске в опознание стока сейва хозяина: другая нода и новый процесс её уже не
+   * выставят. Хозяина в комнате нет (ушёл, а в старой комнате купил сосед) — записать некуда: это покупка по полной цене,
+   * а не перебросок, и повтор той же вещи будет уже другой вещью (свой `uid`).
+   */
+  private noteBought(stock: TownStock, item: Item): void {
+    const i = stock.rolled.indexOf(item);
+    if (i < 0) return;
+    for (const c of this.clients.values()) {
+      const s = this.session.world.players[c.pid]?.save;
+      if (s?.charId !== stock.owner) continue;
+      const ref = s.townStock;
+      if (ref && ref.at === stock.at && ref.seed === stock.seed && !ref.bought.includes(i)) ref.bought.push(i);
+      return;
+    }
+  }
+
+  /**
+   * Кадр прилавка — с АВТОРИТЕТНОЙ ценой покупки каждой вещи (`shopBuyPrice`, её же спишет `buyItem`). Unity-клиент
+   * рисует ценник по ней, а не своей копией формулы: копия не знала надбавки ступени и пола по сырью разбора и
+   * показывала «по карману» то, в чём сервер отказывал «Недостаточно золота» (R2-36).
+   */
+  private shopFrame(): Extract<ServerFrame, { t: 'shop' }> {
+    return { t: 'shop', items: this.shop, prices: Object.fromEntries(this.shop.map((it) => [it.uid, shopBuyPrice(this.cfg, it)])) };
+  }
+
+  /** Прилавок пересобран (покупка, сток сменился в другой комнате) — показать всем в комнате. */
+  private showShop(): void {
+    this.shop = [...this.consumables, ...(this.stock?.shop ?? [])];
+    this.broadcast(this.shopFrame());
   }
 
   // ── Луп ─────────────────────────────────────────────────────────────────────
@@ -783,9 +2087,25 @@ export class Room implements Tickable {
    * мелкие и терять их нельзя.
    */
   step(emit = true): void {
+    if (this.frozen) return;   // R5-07: снята с планировщика; и вызванный напрямую шаг мир не двигает
     const inputs: Record<string, PlayerInput> = {};
-    for (const [pid, c] of this.clients) inputs[pid] = c.input;
+    for (const [pid, c] of this.clients) {
+      // ⭐ R4-20: кадры ввода перестали приходить (скрытая вкладка, обрыв) — герой стоит и не бьёт, взгляд тот же. Раньше
+      // последний ввод применялся вечно: бежал и махал в монстров, пока игрок не вернётся.
+      inputs[pid] = c.inputAge >= INPUT_STALE_TICKS ? { ...idleInput(), facing: c.input.facing } : c.input;
+      c.inputAge++;
+    }
     const events = this.session.tick(TICK_DT, inputs);
+    // R4-19: кадр увиден тиком — нажатия из него сработали; рывок и пояс — только в кадре нажатия, второй раз их нет.
+    // ⭐ R5-03: и каст ТОГЛА (аура, стойка) — тоже нажатие: его переключение не «держится», а щёлкает. Он оставался во вводе,
+    // и каждый тик без нового кадра (догон планировщика, кадры реже тиков, склейка нажатия с отпусканием) переключал
+    // снова — аура включалась и тут же гасла. Удержанный каст атаки держится, как держался.
+    for (const c of this.clients.values()) {
+      if (c.inputSeen) continue;
+      c.inputSeen = true;
+      if (c.input.dodge || c.input.useBelt !== undefined) { const { dodge: _d, useBelt: _u, ...held } = c.input; c.input = held; }
+      if (c.input.cast != null && this.isToggleNode(c.input.cast)) c.input = { ...c.input, cast: null };
+    }
     counters.ticks++;
     // Снапшот шлём по СВОЕЙ частоте (Ф1.5) и только на последнем шаге пачки догона (Ф0.2):
     // промежуточные состояния клиенту не нужны, ему нужно актуальное.
@@ -803,16 +2123,26 @@ export class Room implements Tickable {
 
     const touched = new Set<string>();
     const quest: SessionEvent[] = [];
+    let nodeChanged = false;
     for (const e of events) {
       if (e.type === 'gold' || e.type === 'xp' || e.type === 'levelup' || e.type === 'item-picked' || e.type === 'materials') touched.add(e.playerId);
       this.observe(e);   // Ф3.2: наблюдения о поведении, на саму игру не влияют
+      if (this.noteNode(e)) nodeChanged = true;   // R4-01: убитые и открытое — в запись узла
       if (e.type === 'monster-died' && e.by) this.track(e.by, 'kill', e.def.id, touched, quest);
-      else if (e.type === 'item-picked') this.track(e.playerId, 'collect-item', e.item.baseId, touched, quest);
+      // R4-26: своё выброшенное и поднятое снова «собранным» не считается — иначе «собрать N» закрывала одна вещь.
+      else if (e.type === 'item-picked' && !e.thrown) this.track(e.playerId, 'collect-item', e.item.baseId, touched, quest);
       else if (e.type === 'player-died') { if (this.area === 'arena') this.onArenaDeath(e.playerId); else this.onPlayerDeath(e.playerId, touched); }
     }
+    if (nodeChanged) this.syncNodeState();
     this.broadcast({ t: 'events', events: quest.length ? [...events, ...quest] : events });
     for (const pid of touched) this.sendSave(pid);
     if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
+  }
+
+  /** R5-03: узел древа — тогл (аура, стойка): его каст срабатывает по нажатию, а не удержанием. Та же мера, что у клиента. */
+  private isToggleNode(nodeId: string): boolean {
+    const cat = activeAbilityOf(this.cfg, nodeId)?.category;
+    return cat === 'aura' || cat === 'stance';
   }
 
   /**
@@ -824,7 +2154,7 @@ export class Room implements Tickable {
     const p = this.session.world.players[pid];
     const c = this.clients.get(pid);
     if (!p || !c) return;
-    const summary = applyDeathPenalty(p.save, this.cfg.get('balance').deathPenalty, createRng((Date.now() & 0xffffff) || 1));
+    const summary = applyDeathPenalty(p.save, this.cfg.get('balance').deathPenalty, townRng());
     touched.add(pid); // отправить урезанные золото/инвентарь через saveUpdate
 
     // Соло = «вайп» на 1 игрока. Вайп → авто-возврат в город ЧЕРЕЗ таймер (окно смерти видно ~4с;
@@ -865,34 +2195,138 @@ export class Room implements Tickable {
 
   /**
    * ЕДИНСТВЕННАЯ точка записи сейва живого игрока (Ф0.3). Предъявляет версию, которую держит
-   * эта сессия, и запоминает новую. Отказ означает, что нашу копию кто-то обогнал — на исправном
-   * сервере такого быть не может (реестр живых сессий это исключает), поэтому шумим в лог.
+   * эта сессия, и запоминает новую. Отказ по версии означает, что нашу копию кто-то обогнал — на исправном
+   * сервере такого быть не может (реестр живых сессий это исключает), поэтому шумим в лог и СНИМАЕМ сессию
+   * (R1-01, `dropStale`): играть копией, которую уже нельзя записать, — это зомби и дюп через соседа по пати.
    *
-   * `stash` — если передан, сейв и сундук пишутся ОДНОЙ транзакцией (Ф0.4).
+   * `account` — если передан, сейв и сундук пишутся ОДНОЙ транзакцией (Ф0.4) с проверкой версии
+   * сундука (D8). `reason` — причина для журнала вещей (D9), по умолчанию `autosave`.
+   *
+   * Никогда не отклоняется: ошибка базы — это итог (`WriteResult`) и строка в логе, а не исключение. Иначе
+   * `void this.persist(...)` превращал бы любой сбой базы в необработанный отказ промиса,
+   * а тот по умолчанию роняет весь процесс вместе со всеми комнатами.
    */
-  private persist(pid: string, stash?: AccountStash): Promise<boolean> {
+  private persist(pid: string, account?: LoadedStash, reason?: string): Promise<WriteResult> {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
-    if (!c || !p) return Promise.resolve(false);
+    if (!c || !p) return Promise.resolve('conflict');
     // ОЧЕРЕДЬ НА ПЕРСОНАЖА. Запись стала асинхронной (Ф2), а версия сейва — это счётчик,
     // который надо прочитать, предъявить и обновить. Две записи внахлёст предъявили бы одну
     // и ту же версию: вторая гарантированно получила бы отказ и потеряла бы свои изменения.
     // Поэтому записи одного клиента идут строго друг за другом.
-    const run = async (): Promise<boolean> => {
-      const next = stash
-        ? await putCharacterWithStash(p.save.charId, c.userId, p.save, c.saveVersion, stash)
-        : await putCharacter(p.save.charId, c.userId, p.save, c.saveVersion);
-      if (next === null) {
+    return this.queued(c, () => this.write(c, p, account, reason));
+  }
+
+  /**
+   * Сама запись — звать ТОЛЬКО изнутри очереди игрока (`persist` / `transact`).
+   *
+   * R2-02: леджер отклонил запись из-за вещи чужого аккаунта или отозванной — вещь изымается (`confiscate`), и
+   * запись повторяется. R2-09: исход фиксации неизвестен (база записала, а ответ потерян, — слой базы уже сверил
+   * строку и не смог решить) — живую сессию снимаем (`dropStale`), а не пишем и не откатываем её память наугад.
+   */
+  private async write(c: Client, p: { save: SaveState }, account: LoadedStash | undefined, reason = 'autosave'): Promise<WriteResult> {
+    // Снятая сессия (R1-01, R2-05, R2-09) права писать не имеет — даже записью, вставшей в очередь до снятия.
+    if (c.stale) return 'conflict';
+    for (let attempt = 0; ; attempt++) {
+      // Причины по вещи (D9, R2-21) — снимком: что успеют пометить, пока запись в пути, уйдёт следующей.
+      const reasons = new Map(c.reasons);
+      try {
+        if (account) {
+          const res = await putCharacterWithStash(p.save.charId, c.userId, p.save, c.saveVersion, account.stash, account.version, reason, reasons);
+          if (res.ok) { c.saveVersion = res.version; account.version = res.stashVersion; this.settleReasons(c, reasons); return 'ok'; }
+          if (res.conflict === 'stash') {
+            // Законный случай: другой герой этого аккаунта тронул сундук раньше. Не записано НИЧЕГО.
+            counters.stashConflicts++;
+            console.warn(`[room ${this.code}] сундук аккаунта ${c.userId} обогнали (версия ${account.version}), запись ${p.save.charId} (${reason}) откатывается`);
+            return 'conflict';
+          }
+        } else {
+          const next = await putCharacter(p.save.charId, c.userId, p.save, c.saveVersion, reason, reasons);
+          if (next !== null) { c.saveVersion = next; this.settleReasons(c, reasons); return 'ok'; }
+        }
         counters.saveConflicts++;
-        console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв ${p.save.charId} (версия ${c.saveVersion}) — этот процесс держит копию, которую кто-то обогнал`);
-        return false;
+        console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв ${p.save.charId} (версия ${c.saveVersion}) — этот процесс держит копию, которую кто-то обогнал; сессия снята`);
+        this.dropStale(c);
+        return 'conflict';
+      } catch (e) {
+        if (e instanceof LedgerViolation && attempt < 2 && this.confiscate(c, p.save, account?.stash, e)) continue;
+        // ⭐ R4-10: взаимоблокировка (40P01) или сбой сериализации (40001) — транзакция откатана целиком, повтор безопасен.
+        // Раньше это был `failed` до следующего автосейва: слив ноды в этом окне оставлял переданную соседу по аккаунту
+        // вещь у обоих, а полученную — ни у кого.
+        if (isTxRetryable(e) && attempt < 2) continue;
+        counters.saveErrors++;
+        if (e instanceof CommitUnknown) {
+          console.error(`[room ${this.code}] запись сейва ${p.save.charId} (${reason}): исход фиксации неизвестен — сессия снята, вход прочитает правду из базы`, e);
+          this.dropStale(c);
+          return 'unknown';
+        }
+        // ⭐ R3-02: ДАННЫЕ, КОТОРЫЕ БАЗА НЕ ПРИМЕТ НИКОГДА (класс 22: U+0000 и непарный суррогат в jsonb, 0x00 в тексте).
+        // Раньше это был обычный `failed`: сессия играла дальше копией, которую нельзя записать, — выбрасывала вещи соседу
+        // по аккаунту, а прощальная копия оставалась у менеджера «на дописать» и каждый вход отвечал «сохраняем».
+        // Рестарт терял копию — сейв до отравления возвращал выброшенное (дюп) и откатывал неудачные броски. Писать эту
+        // копию нечем — снимаем сессию (4009), как устаревшую: вход прочитает последний записанный сейв. Не записано
+        // ничего — значит и `conflict`: прощальной записи догонять нечего.
+        if (isDataException(e)) {
+          console.error(`[room ${this.code}] сейв ${p.save.charId} (${reason}) база не примет никогда — сессия снята, герой вернётся к последней записи:`, e);
+          this.dropStale(c);
+          return 'conflict';
+        }
+        console.error(`[room ${this.code}] запись сейва ${p.save.charId} (${reason}) упала:`, e);
+        return 'failed';
       }
-      c.saveVersion = next;
-      return true;
-    };
-    const next = c.saving.then(run, run);   // отказ прошлой записи не должен рвать очередь
-    c.saving = next.then(() => undefined, () => undefined);
-    return next;
+    }
+  }
+
+  /** Записанные причины снимаются; помеченное заново, пока запись была в пути, ждёт следующей. */
+  private settleReasons(c: Client, sent: ReadonlyMap<string, string>): void {
+    for (const [uid, why] of sent) if (c.reasons.get(uid) === why) c.reasons.delete(uid);
+  }
+
+  /**
+   * ⭐ R2-02: ВЕЩЬ, КОТОРУЮ ЛЕДЖЕР НЕ ПУСТИТ, ИЗЫМАЕТСЯ — из сейва (и сундука этой записи) на месте, игроку —
+   * сообщение и свежий сейв, запись — повторяется. Раньше отказ леджера просто глотался: каждая следующая запись
+   * игрока падала на той же вещи, и на выходе он терял всё с момента, как она появилась, — а продав её, снова
+   * писался: канал «вещь чужого аккаунта → золото». Вещь остаётся за своим аккаунтом, дюпа нет.
+   * Возвращает, было ли что изымать (нечего — повторять незачем).
+   */
+  private confiscate(c: Client, save: SaveState, stash: AccountStash | undefined, e: LedgerViolation): boolean {
+    const n = stripItems(save, stash, new Set(e.itemIds));
+    if (!n) return false;
+    counters.ledgerConfiscated += n;
+    console.error(`[room ${this.code}] леджер отклонил запись ${save.charId}: ${e.message} — изъято вещей: ${n}, запись повторяется`);
+    if (this.clients.get(c.pid) === c) {
+      this.send(c.ws, { t: 'error', code: 'ledger', msg: 'Вещь с чужого аккаунта изъята: передавать вещи между аккаунтами нельзя' });
+      this.sendSave(c.pid);
+    }
+    return true;
+  }
+
+  /**
+   * ⭐ СЕССИЯ ПОТЕРЯЛА ПРАВО ПИСАТЬ (R1-01). База отказала по версии сейва: этого героя записал кто-то другой
+   * («Завершить» из другой вкладки, отзыв вещи или откат администратором, вход на другой ноде). Раньше сессия
+   * лишь шумела в лог и играла дальше — ЗОМБИ: ни одна её запись больше не проходила, а в памяти она могла снять
+   * оружие и бросить его соседу по пати, чей сейв писался честно, — вещь оказывалась у обоих. Теперь такая
+   * сессия снимается сразу, без прощальной записи и без грейса (писать ей нечем), сокет закрывается кодом 4009,
+   * и клиент входит заново — уже из базы. Закрытие сокета дойдёт до менеджера позже: `removePlayer` к тому
+   * времени ничего не найдёт и ничего не запишет.
+   */
+  private dropStale(c: Client): void {
+    if (this.clients.get(c.pid) !== c) return;   // уже снята (выход, выселение)
+    c.stale = true;
+    counters.sessionsStale++;
+    void this.writeTelemetry(c, true);
+    const p = this.session.world.players[c.pid];
+    if (p) this.noteLeft(p);   // R4-06: вход заново (из базы) в эту же комнату — таким, каким сняли
+    this.session.removePlayer(c.pid);
+    this.clients.delete(c.pid);
+    this.peerSent.delete(c.pid);
+    try { c.ws.close(WS_STALE, 'stale'); } catch { /* уже закрыт */ }
+    this.broadcast({ t: 'peerLeft', id: c.pid });
+    if (this.vote) { this.vote.yes.delete(c.pid); this.vote.no.delete(c.pid); this.checkVote(); }
+    if (this.clients.size === 0) {
+      if (this.disconnected.size > 0) this.enterGrace();
+      else { this.stop(); this.hooks.onEmpty(this.code); }
+    }
   }
 
   /**
@@ -928,16 +2362,79 @@ export class Room implements Tickable {
     c.tmRow = await upsertPlaySession(c.tmRow, c.userId, p.save.charId, c.ws.ip, c.tm, ended);
   }
 
-  /** То же для отключённого игрока (грейс): у него своя копия сейва и своя версия. */
-  private async persistDisconnected(charId: string, info: Disconnected): Promise<boolean> {
-    const next = await putCharacter(charId, info.userId, info.save, info.saveVersion);
-    if (next === null) {
-      counters.saveConflicts++;
-      console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв отключённого ${charId} (версия ${info.saveVersion})`);
-      return false;
+  /**
+   * То же для отключённого игрока (грейс): у него своя копия сейва и своя версия. Встаёт в его
+   * собственную очередь — первой в ней стоит прощальная запись `removePlayer`, и только после неё
+   * версия отключённого верна. Не отклоняется: сбой базы — итог и строка в логе. Вещь, которую не пускает
+   * леджер, изымается и здесь (R2-02): иначе штраф «Завершить» не записался бы никогда.
+   */
+  private persistDisconnected(charId: string, info: Disconnected, onStale?: (s: SaveState) => boolean): Promise<WriteResult> {
+    const run = async (): Promise<WriteResult> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const next = await putCharacter(charId, info.userId, info.save, info.saveVersion);
+          if (next === null) {
+            counters.saveConflicts++;
+            // ⭐ R4-15: КОПИЯ ОТКЛЮЧЁННОГО УСТАРЕЛА — правда в базе. Так бывает, когда прощальная запись легла, а ответ на
+            // фиксацию потерян (версия копии осталась прежней), или строку героя переписали отзыв вещи и откат. Раньше
+            // штраф «Завершить» и истечения грейса на этом молча пропадал: забег и золото в базе целы, «Продолжить» снова
+            // предлагалось. Теперь действие (штраф, снятие забега) ложится на СВЕЖУЮ строку базы.
+            const settled = onStale ? await this.settleStored(charId, info.userId, onStale) : 'conflict';
+            if (settled === 'ok') {
+              console.warn(`[room ${this.code}] копия отключённого ${charId} устарела (версия ${info.saveVersion}) — действие записано по строке базы`);
+              return 'ok';
+            }
+            // ⭐ R5-10: строку обгоняли каждую попытку — действие (штраф, снятие забега) НЕ легло: копия остаётся у менеджера
+            // на дописать (`failed`), а не «записано». Раньше здесь был `conflict`, и штраф пропадал молча.
+            if (settled === 'failed') {
+              console.warn(`[room ${this.code}] строку ${charId} обгоняли при записи по ней — действие допишется позже`);
+              return 'failed';
+            }
+            console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв отключённого ${charId} (версия ${info.saveVersion})`);
+            return 'conflict';
+          }
+          info.saveVersion = next;
+          return 'ok';
+        } catch (e) {
+          if (isTxRetryable(e) && attempt < 2) continue;   // R4-10: взаимоблокировка — откатано целиком, повтор безопасен
+          if (e instanceof LedgerViolation && attempt < 2) {
+            const n = stripItems(info.save, undefined, new Set(e.itemIds));
+            if (n) {
+              counters.ledgerConfiscated += n;
+              console.error(`[room ${this.code}] леджер отклонил запись отключённого ${charId}: ${e.message} — изъято вещей: ${n}`);
+              continue;
+            }
+          }
+          counters.saveErrors++;
+          // R3-02: копию, которую база не примет никогда, держать «на дописать» бессмысленно — правда в базе.
+          if (isDataException(e)) {
+            console.error(`[room ${this.code}] сейв отключённого ${charId} база не примет никогда — копия отброшена, правда в базе:`, e);
+            return 'conflict';
+          }
+          console.error(`[room ${this.code}] запись сейва отключённого ${charId} упала:`, e);
+          return e instanceof CommitUnknown ? 'unknown' : 'failed';
+        }
+      }
+    };
+    const next = info.saving.then(run, run);
+    info.saving = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  /**
+   * ⭐ R4-15: действие над СТРОКОЙ БАЗЫ героя (свежей, со своей версией) — когда копия в памяти устарела. `op` меняет сейв и
+   * говорит, было ли что менять; нечего — уже лежит. Строку обогнали между чтением и записью — ещё раз.
+   * ⭐ R5-10: обогнали и повтор — `failed` (не легло, попробовать позже), а не `conflict`: героя нет или он чужой — вот это
+   * `conflict` (писать некуда).
+   */
+  private async settleStored(charId: string, userId: string, op: (s: SaveState) => boolean): Promise<WriteResult> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const row = await getCharacter(charId);
+      if (!row || row.userId !== userId) return 'conflict';
+      if (!op(row.data)) return 'ok';
+      if (await putCharacter(charId, userId, row.data, row.version) !== null) return 'ok';
     }
-    info.saveVersion = next;
-    return true;
+    return 'failed';
   }
 
   /**
@@ -1119,13 +2616,29 @@ export class Room implements Tickable {
     const pid = this.clients.keys().next().value;
     return pid ? this.session.world.players[pid]?.save : undefined;
   }
+  /**
+   * ⭐ R6-27: МОЩЬ УЗЛА — ПО СИЛЬНЕЙШЕМУ ГЕРОЮ ЗАБЕГА: подключённых и ждущих реконнекта этого же забега. Раньше — по первому
+   * в комнате: комнату заводил свежий альт 1-го уровня, основной входил по коду — и проходил этажи открытия сложностей
+   * (прогресс сложности растёт у всех) против монстров, заселённых под альта, собирая их множители золота и находок.
+   * Ждущие реконнекта — в счёте: иначе основной отключался бы перед спуском и возвращался на узел, заселённый под альта.
+   */
+  private partyLevel(): number {
+    const power = this.cfg.get('balance').power;
+    let el = 0;
+    for (const pid of this.clients.keys()) {
+      const s = this.session.world.players[pid]?.save;
+      if (s) el = Math.max(el, effectiveLevel(s, power).total);
+    }
+    for (const s of this.runSaves(true)) el = Math.max(el, effectiveLevel(s, power).total);
+    return el || 1;
+  }
   private currentFloorInit(): FloorInit {
     // Арена рендерится клиентом как обычный этаж (грид+спавн), поэтому area → 'dungeon'.
     return floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor);
   }
   /** Статика игрока для кадра `peerInfo` (Ф1.1). */
   private peerInfo(pid: string): PeerInfo {
-    return peerInfoOf(this.session.world.players[pid]!, this.cfg.get('items.base'));
+    return peerInfoOf(this.session.world.players[pid]!, this.cfg);   // весь реестр: вид оружия из деталей (D22)
   }
   /**
    * Статика ВСЕХ игроков комнаты, включая самого получателя: клиент сливает её со снапшотом,
@@ -1138,23 +2651,57 @@ export class Room implements Tickable {
    * Разослать обновлённую статику (Ф1.1). Зовётся редко: вход, успешная команда города
    * (экипировка/уровень/распределение), смена области. Держать это в каждом кадре было
    * тем же, что слать имя игрока тридцать раз в секунду.
+   *
+   * R1-11: уходит только статика, ИЗМЕНИВШАЯСЯ с прошлой рассылки. Клиент сливает кадр по id игрока
+   * (`peerStatics.set`), поэтому неполный список ничего не стирает. Раньше любая успешная команда — хоть
+   * пустая, «привязать то же, что привязано» — будила всю пати полным списком: восемьдесят кадров в секунду
+   * на каждого, кто сидит рядом с флудером.
    */
   private broadcastPeerInfo(): void {
     if (this.clients.size === 0) return;
-    this.broadcast({ t: 'peerInfo', peers: this.peerList() });
+    const changed: PeerInfo[] = [];
+    for (const id of this.clients.keys()) {
+      const info = this.peerInfo(id);
+      const key = JSON.stringify(info);
+      if (this.peerSent.get(id) === key) continue;
+      this.peerSent.set(id, key);
+      changed.push(info);
+    }
+    if (changed.length) this.broadcast({ t: 'peerInfo', peers: changed });
   }
   private sendSave(pid: string): void {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (c && p) this.send(c.ws, { t: 'saveUpdate', save: p.save });
   }
-  /** Шлёт клиенту полный слепок его аккаунт-сундука (на stashOpen и после stashMove). */
+  /** Шлёт клиенту полный слепок его аккаунт-сундука из базы (на stashOpen и на входе). */
   private async sendStash(pid: string): Promise<void> {
     const c = this.clients.get(pid);
     if (!c) return;
-    const stash = await loadAccountStash(c.userId, this.cfg);
+    const { stash } = await loadAccountStash(c.userId, this.cfg);
+    this.sendStashOf(c, stash);
+  }
+  /**
+   * Слепок сундука, который у нас уже в руках (только что записан транзакцией) — без похода в базу.
+   * Вместе с журналом кузнеца: окно ковки решает по нему, что открыто. Ключи заявок не шлём.
+   */
+  private sendStashOf(c: Client, stash: AccountStash): void {
     const d = stashDims(this.cfg);
-    this.send(c.ws, { t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg), materials: stash.materials ?? {} });
+    this.send(c.ws, {
+      t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg), materials: stash.materials ?? {},
+      forgeJournal: this.journalView(stash),
+    });
+  }
+  /**
+   * Журнал для окна — ТОТ, которым сервер гейтит ковку. С флагом разработчика ворота открыты (базы,
+   * детали, потолок ступени, мифики), а кодекс и счётчики остаются своими: иначе окно показывало бы
+   * запертым то, что сервер скуёт. В базу это не пишется — только в кадр.
+   */
+  private journalView(stash: AccountStash): CraftJournal {
+    const own = normalizeJournal(stash.forgeJournal);
+    if (!craftFullJournal()) return own;
+    const full = fullJournal(this.cfg);
+    return { ...own, bases: full.bases, variants: full.variants, tierHi: Math.max(own.tierHi, full.tierHi), mythic: Math.max(own.mythic, full.mythic) };
   }
   private broadcastQuestBoard(): void {
     this.broadcast({ t: 'questBoard', quests: this.questBoard });

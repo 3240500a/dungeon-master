@@ -5,11 +5,24 @@ import { levelForXp } from '../formulas/xp.js';
  * zod-схема SaveState для валидации на сервере (базовый анти-чит). Вложенные
  * предметы валидируются структурно; критичные величины сервер дополнительно
  * пересчитывает (см. sanitizeSave).
+ *
+ * ⭐ РАЗБОР НЕ РАЗРУШАЕТ: сейв, предмет и аффикс — `.passthrough()`. zod по умолчанию молча СРЕЗАЕТ
+ * незнакомые ключи, а схема знает только то, что проверяет: без сквозного пропуска скованная вещь
+ * теряла детали (`parts`), найденная — `foundParts`/`origin`/`tierForged`, клинок — `spreadMult`, сейв —
+ * кошелёк материалов и гнёзда. Проверяем известное, остальное несём как есть (save.test.ts).
  */
 const statModifier = z.object({
   stat: z.string(),
   kind: z.enum(['flat', 'increased']),
   value: z.number(),
+});
+
+/** Прок «шанс каста» (`ProcSpec`): шанс — доля [0, 1], как в конфиге аффиксов. */
+const procSpec = z.object({
+  skillId: z.string(),
+  level: z.number(),
+  chance: z.number().min(0).max(1),
+  trigger: z.enum(['hit', 'struck']).optional(),
 });
 
 const item = z.object({
@@ -34,15 +47,28 @@ const item = z.object({
     z.object({
       affixId: z.string(),
       kind: z.enum(['prefix', 'suffix']),
-      modifier: statModifier,
-    }),
+      // У прок-аффикса (шанс каста) стат-мода нет — только `proc`; обязательный `modifier` валил весь сейв.
+      modifier: statModifier.optional(),
+      proc: procSpec.optional(),
+    }).passthrough(),
   ),
   baseStats: z.array(statModifier),
   // Доля броска базы (урон/броня в вилке тира): без неё подъём тира вернул бы вещь в центр вилки.
   baseRoll: z.record(z.string(), z.number().min(0).max(1)).optional(),
+  // Что заплачено сырьём за ковку: переплавка возвращает долю этого, а не нынешней цены (§16).
+  craftPaid: z.array(z.object({ id: z.string().min(1), n: z.number().int().min(0) })).optional(),
   gridW: z.number().int().min(1).default(1),
   gridH: z.number().int().min(1).default(1),
   pos: z.object({ x: z.number(), y: z.number() }).nullish(),
+}).passthrough();
+
+/** R4-01: что взято на узле забега (`RunNodeState`). */
+const runNodeStateSchema = z.object({
+  id: z.string(),
+  el: z.number().min(0),
+  chests: z.array(z.number().int().min(0)),
+  killed: z.array(z.number().int().min(0)),
+  levers: z.array(z.number().int().min(0)),
 });
 
 export const saveStateSchema = z.object({
@@ -77,9 +103,22 @@ export const saveStateSchema = z.object({
       questId: z.string(),
       status: z.enum(['active', 'completed', 'turned-in']),
       counters: z.record(z.string(), z.number()),
+      // R3-10: время принятия квеста с доски — по нему квота «одно задание шаблона за срок доски».
+      acceptedAt: z.number().optional(),
+      // R4-33: когда катали доску, с которой квест принят, — квота меряется между поколениями досок.
+      boardAt: z.number().optional(),
     }),
   ),
   activeQuestDefs: z.array(z.unknown()),
+  // R5-20: поколение доски убранного из журнала задания по шаблону — квота доски держится и без истории.
+  boardQuota: z.record(z.string(), z.number()).optional(),
+  // R5-22: опознание стока кузницы героя — любая нода собирает тот же прилавок (пишет только сервер).
+  townStock: z.object({
+    at: z.number(),
+    seed: z.number().int(),
+    level: z.number().int().min(0),
+    bought: z.array(z.number().int().min(0)),
+  }).optional(),
   maxDepth: z.number().int().min(0),
   difficultyProgress: z.record(z.string(), z.number()).default({}),
   lastDifficulty: z.string().default('normal'),
@@ -103,9 +142,13 @@ export const saveStateSchema = z.object({
       }),
       currentNodeId: z.string(),
       visited: z.array(z.string()).default([]),
+      // R4-01: что взято на текущем узле (открытые сундуки, убитые монстры, рычаги) — без неё продолжение фармило узел.
+      node: runNodeStateSchema.optional(),
+      // R4-04: и на каждом пройденном узле — отмотанный назад указатель не давал пройденный узел свежим.
+      nodes: z.array(runNodeStateSchema).optional(),
     })
     .optional(),
-});
+}).passthrough();
 
 export type ValidatedSave = z.infer<typeof saveStateSchema>;
 

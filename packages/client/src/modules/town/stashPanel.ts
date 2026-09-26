@@ -3,7 +3,7 @@ import type { App } from '../../core/app.js';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemsOverlapping, type Dims } from '../inventory/grid.js';
 import { renderGrid } from '../inventory/gridView.js';
-import { getHeld, beginHold, clearHeld, resolveHeldOnClose } from '../inventory/heldItem.js';
+import { getHeld, beginHold, clearHeld, dropCell, resolveHeldOnClose } from '../inventory/heldItem.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, button, tabsBar } from '../../ui/kit.js';
 import { materialsView } from '../inventory/materialsView.js';
@@ -77,10 +77,10 @@ function place(app: App, dims: Dims, col: number, row: number, tab: number): voi
   const held = getHeld();
   if (!held) return;
   const { item, grabOx, grabOy } = held;
-  const tx = col - grabOx;
-  const ty = row - grabOy;
+  const at = dropCell(item, grabOx, grabOy, col, row, dims);
   clearHeld();
-  if (tx < 0 || ty < 0 || tx + item.gridW > dims.cols || ty + item.gridH > dims.rows) { app.bus.emit('state:changed', {}); return; }
-  app.sendCmd({ cmd: 'stashMove', uid: item.uid, dst: tab, x: tx, y: ty });
+  // Не ляжет целиком — не шлём (R2-35): строгая схема сервера сочла бы клетку < 0 «неверной командой».
+  if (!at) { app.bus.emit('state:changed', {}); return; }
+  app.sendCmd({ cmd: 'stashMove', uid: item.uid, dst: tab, x: at.x, y: at.y });
   app.bus.emit('state:changed', {});
 }

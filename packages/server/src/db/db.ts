@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { SaveState, AccountStash } from '@dm/shared';
 import { q, q1, tx } from './pool.js';
 import { syncItems } from './items.js';
+import { CommitUnknown } from './errors.js';
 
 /**
  * Хранилище: Postgres (`db/pool.ts`). Аккаунты — `users` (логин+хеш пароля), `sessions`
@@ -21,25 +22,32 @@ import { syncItems } from './items.js';
 export interface UserRow { id: string; username: string; passHash: string; passSalt: string; role: string; }
 const USER_COLS = 'id, username, pass_hash AS "passHash", pass_salt AS "passSalt", role';
 
-/** Создаёт пользователя (ник уникален, регистронезависимо). Бросает при дубле (UNIQUE). */
-export async function createUser(username: string, passHash: string, passSalt: string, ip?: string): Promise<string> {
+/**
+ * Создаёт пользователя (ник уникален, регистронезависимо). Бросает при дубле (UNIQUE). `ip` — адрес регистрации (для
+ * разбора), `net` — его сеть (`ipBucket`, R6-19): по ней считается суточный потолок аккаунтов.
+ */
+export async function createUser(username: string, passHash: string, passSalt: string, ip?: string, net?: string): Promise<string> {
   const id = `u_${randomUUID()}`;
-  await q('INSERT INTO users (id, username, pass_hash, pass_salt, created_ip) VALUES ($1, $2, $3, $4, $5)',
-    [id, username, passHash, passSalt, ip ?? null]);
+  await q('INSERT INTO users (id, username, pass_hash, pass_salt, created_ip, created_net) VALUES ($1, $2, $3, $4, $5, $6)',
+    [id, username, passHash, passSalt, ip ?? null, net ?? null]);
   return id;
 }
 
 /**
- * Ф3.5: сколько аккаунтов заведено с этого адреса за последние часы.
+ * Ф3.5: сколько аккаунтов заведено с этой СЕТИ адреса (`ipBucket`: IPv4 — сам адрес, IPv6 — /64) за последние часы.
  *
  * Лимит частоты (Ф0.5) защищает от шквала за минуту, но не мешает завести двадцать аккаунтов
  * не спеша — а именно так и разводят ферму ботов. Суточный потолок стоит ботоводу времени
  * и не стоит ничего честному игроку: он заводит аккаунт один раз.
+ * ⭐ R6-19: по сети, а не по точному адресу — иначе ферма меняла хвост IPv6 внутри своей /64. Строки до правки (сети нет)
+ * считаются по адресу: для IPv4 сеть и есть адрес.
  */
-export async function countRecentRegistrations(ip: string, hours = 24): Promise<number> {
+export async function countRecentRegistrations(net: string, hours = 24): Promise<number> {
   const r = await q1<{ n: string }>(
-    `SELECT COUNT(*) n FROM users WHERE created_ip = $1 AND created_at > now() - ($2 || ' hours')::interval`,
-    [ip, String(hours)]);
+    `SELECT COUNT(*) n FROM users
+     WHERE (created_net = $1 OR (created_net IS NULL AND created_ip = $1))
+       AND created_at > now() - ($2 || ' hours')::interval`,
+    [net, String(hours)]);
   return Number(r?.n ?? 0);
 }
 export async function getUserByName(username: string): Promise<UserRow | null> {
@@ -132,9 +140,21 @@ export async function deleteSession(token: string): Promise<void> {
 export interface CharacterSummary { charId: string; name: string; classId: string; level: number; }
 export interface CharacterRow { userId: string; data: SaveState; version: number; }
 
-/** Создаёт сейв нового персонажа. Возвращает стартовую версию (1). Бросает при дубле charId. */
-export async function createCharacter(charId: string, userId: string, data: SaveState): Promise<number> {
+/**
+ * Создаёт сейв нового персонажа. Возвращает стартовую версию (1) — или `null`, если у аккаунта уже `maxChars` героев.
+ * Бросает при дубле charId.
+ *
+ * ⭐ R4-30: ПОТОЛОК РОСТЕРА — В ТРАНЗАКЦИИ СОЗДАНИЯ, под блокировкой строки аккаунта. Раньше ручка считала героев отдельным
+ * запросом и создавала следующим: пять одновременных запросов при четырёх героях видели «четыре» все пять — и героев
+ * становилось девять (лишние — лавки, доски и стартовые комплекты альтов).
+ */
+export async function createCharacter(charId: string, userId: string, data: SaveState, maxChars?: number): Promise<number | null> {
   return tx(async (c) => {
+    if (maxChars !== undefined) {
+      await c.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [userId]);
+      const n = await c.query<{ n: string }>('SELECT COUNT(*) AS n FROM characters WHERE user_id = $1', [userId]);
+      if (Number(n.rows[0]?.n ?? 0) >= maxChars) return null;
+    }
     await c.query('INSERT INTO characters (char_id, user_id, data, updated_at, version) VALUES ($1, $2, $3, now(), 1)',
       [charId, userId, JSON.stringify(data)]);
     // Стартовый комплект — тоже вещи: они рождаются здесь и должны попасть в журнал.
@@ -153,19 +173,56 @@ export async function createCharacter(charId: string, userId: string, data: Save
  */
 export async function putCharacter(
   charId: string, userId: string, data: SaveState, expectedVersion: number, reason = 'autosave',
+  reasons?: ReadonlyMap<string, string>,
 ): Promise<number | null> {
-  return tx(async (c) => {
-    const r = await c.query<{ version: number }>(
-      `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
-       WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
-      [JSON.stringify(data), charId, userId, expectedVersion]);
-    const version = r.rows[0]?.version;
-    if (version == null) return null;
-    // Ф2: движение вещей записывается ТОЙ ЖЕ транзакцией, что и сейв. Иначе леджер и сейв
-    // разъедутся ровно на то окно, в котором и происходят дюпы.
-    await syncItems(c, userId, charId, data, undefined, reason);
-    return version;
-  });
+  const snap = snapshotOf(data);
+  try {
+    return await tx(async (c) => {
+      const r = await c.query<{ version: number }>(
+        `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+         WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
+        [snap.json, charId, userId, expectedVersion]);
+      const version = r.rows[0]?.version;
+      if (version == null) return null;
+      // Ф2: движение вещей записывается ТОЙ ЖЕ транзакцией, что и сейв. Иначе леджер и сейв
+      // разъедутся ровно на то окно, в котором и происходят дюпы.
+      await syncItems(c, userId, charId, snap.save, undefined, reason, reasons);
+      return version;
+    });
+  } catch (e) {
+    if (e instanceof CommitUnknown) return committedAnyway(charId, snap.json, expectedVersion, e);
+    throw e;
+  }
+}
+
+/**
+ * ⭐ R2-09: ОТВЕТ НА COMMIT ПОТЕРЯН — ВЫЯСНИТЬ, ЧЕМ КОНЧИЛОСЬ. Строка персонажа с версией +1 и РОВНО нашими данными
+ * (сравнение jsonb — по смыслу, не по порядку ключей) — запись наша: у героя одна живая сессия, и ни у кого больше
+ * нет этих данных при этой версии. Версия не сдвинулась, а судьба фиксации решена (`settled`) — не записано
+ * наверняка: бросаем исходную ошибку, как любой сбой до фиксации. Всё прочее — исход неизвестен (фиксация могла
+ * ещё не дойти): `CommitUnknown` дальше, и комната снимает сессию, а не откатывает память к «до».
+ */
+async function committedAnyway(charId: string, json: string, expectedVersion: number, e: CommitUnknown): Promise<number> {
+  let row: { version: number; mine: boolean } | null = null;
+  try {
+    row = await q1<{ version: number; mine: boolean }>(
+      'SELECT version, data = $1::jsonb AS mine FROM characters WHERE char_id = $2', [json, charId]);
+  } catch { /* база молчит — исход так и неизвестен */ }
+  if (row && Number(row.version) === expectedVersion + 1 && row.mine) return Number(row.version);
+  if (row && Number(row.version) === expectedVersion && e.settled) throw e.original;
+  throw e;
+}
+
+/**
+ * ⭐ R1-16: ОДИН СНИМОК на запись — и для строки, и для журнала вещей, снятый в момент вызова. Комната отдаёт
+ * сюда ЖИВОЙ сейв, а между запросами транзакции её тик продолжает идти (подбор, пояс): раньше строка
+ * сериализовалась в одном месте, а журнал строился по тому же объекту позже — и записывал вещь «у персонажа»,
+ * которой в строке нет (или наоборот). После падения до следующего автосейва ночной аудит видел «пропажу» и
+ * «несовпадение» там, где дюпа не было, — и настоящий дюп тонул в ложных.
+ */
+function snapshotOf<T>(data: T): { json: string; save: T } {
+  const json = JSON.stringify(data);
+  return { json, save: JSON.parse(json) as T };
 }
 
 /** Персонаж по charId (с владельцем и версией) — для проверки владения на входе. */
@@ -181,28 +238,70 @@ export async function getCharacter(charId: string): Promise<CharacterRow | null>
  * секунд спустя. Падение процесса в этом окне давало предмет и там, и там: ровно та схема,
  * которой дюпали D2R через сундук. Теперь либо обе строки, либо ни одной.
  *
- * Возвращает новую версию сейва либо `null`, если версия разошлась (тогда не записано ничего).
+ * D8: СУНДУК ТОЖЕ ПОД ВЕРСИЕЙ. Он общий на аккаунт, а героев одного аккаунта можно держать онлайн
+ * одновременно (две вкладки) — у каждого своя комната и своя копия сундука. Раньше сундук писался
+ * «кто последний, тот и прав»: второй герой затирал то, что первый только что потратил или положил,
+ * — готовый способ тратить одно сырьё дважды. Теперь сундук пишется, только если его версия та же,
+ * что читали (`expectedStashVersion`, 0 — строки ещё не было); иначе транзакция откатывается ЦЕЛИКОМ,
+ * вместе с сейвом, и не записано ничего.
+ *
+ * Возвращает новые версии сейва и сундука либо что именно разошлось (тогда не записано ничего).
+ * `reason` — причина для журнала вещей (D9): `stash`, `forge`, `craft`, `salvage`…
  */
 export async function putCharacterWithStash(
-  charId: string, userId: string, data: SaveState, expectedVersion: number, stash: AccountStash,
-): Promise<number | null> {
-  return tx(async (c) => {
-    const r = await c.query<{ version: number }>(
-      `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
-       WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
-      [JSON.stringify(data), charId, userId, expectedVersion]);
-    const version = r.rows[0]?.version;
-    if (version == null) return null;   // версия разошлась — коммитим пустую транзакцию, ничего не изменив
-    await c.query(
-      `INSERT INTO account_stash (user_id, data, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
-      [userId, JSON.stringify(stash)]);
-    // Ф2: сундук участвует в этой записи, поэтому и он попадает в проекцию — только так
-    // перенос «инвентарь → сундук» виден леджеру как ОДНО перемещение, а не пропажа и находка.
-    await syncItems(c, userId, charId, data, stash, 'stash');
-    return version;
-  });
+  charId: string, userId: string, data: SaveState, expectedVersion: number,
+  stash: AccountStash, expectedStashVersion: number, reason = 'stash',
+  reasons?: ReadonlyMap<string, string>,
+): Promise<StashWriteResult> {
+  const snap = snapshotOf(data), st = snapshotOf(stash);   // R1-16: строка и журнал — из одного снимка
+  try {
+    return await tx(async (c): Promise<StashWriteResult> => {
+      const r = await c.query<{ version: number }>(
+        `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+         WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
+        [snap.json, charId, userId, expectedVersion]);
+      const version = r.rows[0]?.version;
+      // Версия сейва разошлась — коммитим пустую транзакцию, ничего не изменив.
+      if (version == null) return { ok: false, conflict: 'save' };
+      const s = expectedStashVersion > 0
+        // Строка есть: пишем, только если её никто не обогнал. Под READ COMMITTED параллельная
+        // запись ждёт нашей блокировки строки и после неё перепроверяет условие по НОВОЙ версии.
+        ? await c.query<{ version: number }>(
+          `UPDATE account_stash SET data = $2, updated_at = now(), version = version + 1
+           WHERE user_id = $1 AND version = $3 RETURNING version`,
+          [userId, st.json, expectedStashVersion])
+        // Строки не было: вставка без затирания. Если вторая сессия успела вставить первой,
+        // DO NOTHING вернёт ноль строк — это такой же конфликт, как и расхождение версии.
+        : await c.query<{ version: number }>(
+          `INSERT INTO account_stash (user_id, data, updated_at, version) VALUES ($1, $2, now(), 1)
+           ON CONFLICT (user_id) DO NOTHING RETURNING version`,
+          [userId, st.json]);
+      const stashVersion = s.rows[0]?.version;
+      // Сейв уже переписан в этой транзакции — откатываем её броском, иначе сейв ушёл бы без сундука.
+      if (stashVersion == null) throw new StashConflict();
+      // Ф2: сундук участвует в этой записи, поэтому и он попадает в проекцию — только так
+      // перенос «инвентарь → сундук» виден леджеру как ОДНО перемещение, а не пропажа и находка.
+      await syncItems(c, userId, charId, snap.save, st.save, reason, reasons);
+      return { ok: true, version, stashVersion };
+    });
+  } catch (e) {
+    if (e instanceof StashConflict) return { ok: false, conflict: 'stash' };
+    // R2-09: сейв и сундук — одна транзакция: строка персонажа наша — значит и сундук записан (его версия +1).
+    if (e instanceof CommitUnknown) {
+      const version = await committedAnyway(charId, snap.json, expectedVersion, e);
+      return { ok: true, version, stashVersion: expectedStashVersion + 1 };
+    }
+    throw e;
+  }
 }
+
+/** Итог записи сейва вместе с сундуком: новые версии обоих либо что именно разошлось. */
+export type StashWriteResult =
+  | { ok: true; version: number; stashVersion: number }
+  | { ok: false; conflict: 'save' | 'stash' };
+
+/** Сундук обогнали — бросается ВНУТРИ транзакции, чтобы `tx` откатил и уже записанный сейв. */
+class StashConflict extends Error {}
 
 /** Краткий ростер пользователя (для экрана выбора). */
 export async function listCharacters(userId: string): Promise<CharacterSummary[]> {
@@ -227,15 +326,25 @@ export async function countCharacters(userId: string): Promise<number> {
 }
 
 /**
- * Сбрасывает НЕЗАВЕРШЁННЫЕ забеги у ВСЕХ персонажей (удаляет `save.run`). Зовётся на старте
- * сервера: рестарт = чистый лист, без «хвостов» (иначе спуск из города РЕЗЮМИТ старый забег и
- * игнорит выбор алтаря). Возвращает число затронутых персонажей.
+ * Сбрасывает НЕЗАВЕРШЁННЫЕ забеги (удаляет `save.run`). Зовётся на старте игрового процесса: рестарт = чистый
+ * лист, без «хвостов» (иначе спуск из города РЕЗЮМИТ старый забег и игнорит выбор алтаря). Возвращает число
+ * затронутых персонажей.
+ *
+ * ⭐ R2-11: КРОМЕ ГЕРОЕВ, ЖИВЫХ НА ДРУГОЙ НОДЕ. Раньше сброс шёл по всей базе: поочерёдный перезапуск нод стирал
+ * забеги и поднимал версию сейва тем, кто прямо сейчас играл на соседних нодах, — их следующая запись получала
+ * отказ по версии, и сессии снимались (R1-01) пачками посреди забега. Живой — значит закреплён за другой нодой,
+ * которая подаёт признаки жизни (`self` — эта нода: её прежние закрепления с прошлого запуска — её хвосты).
+ * Таблицы кластера к этому моменту обязаны быть созданы (`initClusterSchema`).
  */
-export async function clearAllRuns(): Promise<number> {
+export async function clearAllRuns(self: string, nodeStaleSec = 10): Promise<number> {
   // `data - 'run'` — удаление ключа из jsonb прямо в базе: разбирать сейвы в Node незачем.
   const rows = await q<{ char_id: string }>(
     `UPDATE characters SET data = data - 'run', version = version + 1, updated_at = now()
-     WHERE data ? 'run' RETURNING char_id`);
+     WHERE data ? 'run'
+       AND NOT EXISTS (SELECT 1 FROM char_claims cc JOIN cluster_nodes n ON n.id = cc.node_id
+                       WHERE cc.char_id = characters.char_id AND cc.node_id <> $1
+                         AND n.beat_at > now() - ($2 || ' seconds')::interval)
+     RETURNING char_id`, [self, String(nodeStaleSec)]);
   return rows.length;
 }
 
@@ -260,16 +369,25 @@ export async function deleteConfigOverride(key: string): Promise<void> {
 }
 
 // ── Общий сундук аккаунта (shared stash: одна истина на всех персонажей пользователя) ──
-/** Сундук аккаунта из БД (или null, если ещё пуст). */
-export async function getAccountStash(userId: string): Promise<AccountStash | null> {
-  const r = await q1<{ data: AccountStash }>('SELECT data FROM account_stash WHERE user_id = $1', [userId]);
-  return r?.data ?? null;
+/**
+ * Сундук аккаунта из БД вместе с версией (D8) — или null, если строки ещё нет. Версию предъявляет
+ * `putCharacterWithStash`: запись пройдёт, только если сундук с тех пор никто не менял.
+ */
+export async function getAccountStash(userId: string): Promise<{ data: AccountStash; version: number } | null> {
+  const r = await q1<{ data: AccountStash; version: number }>(
+    'SELECT data, version FROM account_stash WHERE user_id = $1', [userId]);
+  return r ? { data: r.data, version: Number(r.version) } : null;
 }
-/** Пишет/обновляет сундук аккаунта (last-writer-wins). */
+/**
+ * Пишет/обновляет сундук аккаунта БЕЗ проверки версии (last-writer-wins) — только для инструментов.
+ * Игра пишет сундук исключительно через `putCharacterWithStash`. Версию всё равно поднимаем:
+ * иначе живая сессия, прочитавшая сундук до этой записи, затёрла бы её своей копией.
+ */
 export async function putAccountStash(userId: string, data: AccountStash): Promise<void> {
   await q(
-    `INSERT INTO account_stash (user_id, data, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+    `INSERT INTO account_stash (user_id, data, updated_at, version) VALUES ($1, $2, now(), 1)
+     ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at,
+       version = account_stash.version + 1`,
     [userId, JSON.stringify(data)]);
 }
 

@@ -41,8 +41,52 @@ export const counters = {
   cmdOutOfPlace: 0,
   /** Команд отброшено как повтор по номеру (Ф2.5). */
   cmdDuplicate: 0,
+  /** Команд, не прошедших схему (D11): лишний ключ, не тот тип, мусор вместо объекта. */
+  cmdInvalid: 0,
+  /** Команд, чей обработчик бросил исключение (D11). Ноль на исправном сервере — растёт = ошибка в коде. */
+  cmdFailed: 0,
+  /** Команд кузницы, отклонённых лимитом частоты (D12). */
+  cmdRateLimited: 0,
+  /**
+   * Команд города, отклонённых ОБЩИМ лимитом частоты (R1-11). Отдельно от кузницы (R2-25): поток экипировок и
+   * перекладок — не злоупотребление кузницей, и настоящий упор в её лимит не должен в нём тонуть.
+   */
+  cmdTownRateLimited: 0,
+  /**
+   * Вещей, изъятых из сейва на записи (R2-02): леджер числит их за другим аккаунтом или отозванными. Ненулевое —
+   * повод смотреть, откуда вещь пришла: выброс и подбор между аккаунтами закрыт, других законных путей нет.
+   */
+  ledgerConfiscated: 0,
+  /** Кадров, на которых обработчик бросил синхронно (R2-01): кадр погашен, процесс жив. Ноль на исправном сервере. */
+  frameErrors: 0,
+  /**
+   * Записей сундука, отклонённых по версии (D8): два героя одного аккаунта тронули сундук
+   * одновременно. В отличие от `saveConflicts` это НЕ инцидент — так бывает законно; вторая
+   * запись откатывается целиком, и игрок видит «попробуйте ещё раз».
+   */
+  stashConflicts: 0,
+  /** Записей сейва, упавших с ошибкой базы (не по версии). Сейв остаётся в памяти до следующей записи. */
+  saveErrors: 0,
+  /**
+   * Кузница (K7, §22): успешные ковки, переплавки скованного, разборы найденного (у кузнеца и на месте),
+   * зачарования — записанные в базу. Повтор ключа ковки и отказы сюда не идут.
+   */
+  forgeCrafted: 0,
+  forgeMelted: 0,
+  forgeSalvaged: 0,
+  forgeEnchanted: 0,
   /** Выселено живых сессий (Ф0.3): реконнекты и попытки двойного входа. */
   sessionsEvicted: 0,
+  /**
+   * Снято сессий, потерявших право писать (R1-01): база отказала по версии сейва, и сессия закрыта кодом 4009.
+   * Растёт вместе с `saveConflicts`; ненулевое значение — повод посмотреть, кто писал этого героя в обход сессии.
+   */
+  sessionsStale: 0,
+  /**
+   * Неудачных фоновых попыток дописать копию героя, которую база не приняла на выходе (R3-19). Растёт — база
+   * отказывает дольше короткого сбоя, а правда об этих героях живёт только в памяти ноды.
+   */
+  farewellRetryFailed: 0,
   /** Шагов симуляции выполнено — из этого считается фактическая частота мира. */
   ticks: 0,
   /** Отключено клиентов, не успевавших читать (переполнение исходящей очереди). */
@@ -133,8 +177,22 @@ export function renderMetrics(): string {
   g('dm_rate_limited_total', 'Отказов лимитеров частоты', counters.rateLimited, 'counter');
   g('dm_save_conflicts_total', 'Записей сейва отклонено по версии (ИНЦИДЕНТ, если растёт)', counters.saveConflicts, 'counter');
   g('dm_sessions_evicted_total', 'Живых сессий выселено при повторном входе', counters.sessionsEvicted, 'counter');
+  g('dm_sessions_stale_total', 'Сессий снято за устаревший сейв (R1-01)', counters.sessionsStale, 'counter');
   g('dm_cmd_out_of_place_total', 'Городских команд прислано не из города (Ф3.1)', counters.cmdOutOfPlace, 'counter');
   g('dm_cmd_duplicate_total', 'Команд отброшено как повтор по номеру (Ф2.5)', counters.cmdDuplicate, 'counter');
+  g('dm_cmd_invalid_total', 'Команд отброшено схемой (D11)', counters.cmdInvalid, 'counter');
+  g('dm_cmd_failed_total', 'Команд, чей обработчик бросил исключение (ОШИБКА, если растёт)', counters.cmdFailed, 'counter');
+  g('dm_cmd_rate_limited_total', 'Команд кузницы отклонено лимитом частоты (D12)', counters.cmdRateLimited, 'counter');
+  g('dm_cmd_town_rate_limited_total', 'Команд города отклонено общим лимитом частоты (R1-11)', counters.cmdTownRateLimited, 'counter');
+  g('dm_ledger_confiscated_total', 'Вещей чужого аккаунта или отозванных изъято из сейва на записи (R2-02)', counters.ledgerConfiscated, 'counter');
+  g('dm_frame_errors_total', 'Кадров, погашенных из-за исключения в обработчике (R2-01; ОШИБКА, если растёт)', counters.frameErrors, 'counter');
+  g('dm_stash_conflicts_total', 'Записей сундука отклонено по версии (D8)', counters.stashConflicts, 'counter');
+  g('dm_save_errors_total', 'Записей сейва, упавших с ошибкой базы', counters.saveErrors, 'counter');
+  g('dm_farewell_retry_failed_total', 'Фоновых попыток дописать недописанную копию героя, снова упавших (R3-19)', counters.farewellRetryFailed, 'counter');
+  g('dm_forge_crafted_total', 'Вещей скованно (K7)', counters.forgeCrafted, 'counter');
+  g('dm_forge_melted_total', 'Скованных вещей переплавлено (K7)', counters.forgeMelted, 'counter');
+  g('dm_forge_salvaged_total', 'Найденных вещей разобрано — у кузнеца и на месте (K7)', counters.forgeSalvaged, 'counter');
+  g('dm_forge_enchanted_total', 'Скованных вещей зачаровано (K7)', counters.forgeEnchanted, 'counter');
 
   loop.reset();
   return lines.join('\n') + '\n';

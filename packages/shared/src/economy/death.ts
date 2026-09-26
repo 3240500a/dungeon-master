@@ -15,12 +15,12 @@ export interface DeathPenaltyBalance {
   materialStackLossPercent: number;
 }
 
-/** Бросок для выбора жертв — детерминизм по сиду важен и для тестов, и для воспроизводимости. */
-export interface DeathRng { int(min: number, max: number): number }
+/** Бросок для выбора жертв и дробной доли потерь — детерминизм по сиду важен и для тестов, и для воспроизводимости. */
+export interface DeathRng { int(min: number, max: number): number; chance(p: number): boolean }
 
 /**
  * АВТОРИТЕТНЫЙ штраф за смерть над `SaveState`: теряется доля золота и доля
- * НЕэкипированного инвентаря (первые предметы списка). Экипировка/стеш/пояс СОХРАНЯЮТСЯ.
+ * НЕэкипированного инвентаря (жертвы — случайные, дробная доля — броском). Экипировка/стеш/пояс СОХРАНЯЮТСЯ.
  * hp сущности НЕ трогает — возрождение решает сессия/комната (соло → город; кооп → на
  * следующем этаже). Возвращает сводку потерь для окна смерти. Порт клиентского
  * `death/penalty.ts` (потерянного при переходе на сервер) — см. docs/MULTIPLAYER.md.
@@ -29,7 +29,14 @@ export function applyDeathPenalty(save: SaveState, penalty: DeathPenaltyBalance,
   const goldLost = Math.floor(save.gold * penalty.goldPercent);
   save.gold = Math.max(0, save.gold - goldLost);
 
-  const n = Math.floor(save.inventory.length * penalty.inventoryDropPercent);
+  // ⚠ R5-21: ДОЛЯ — БРОСКОМ, А НЕ ВНИЗ (как множитель сырья с монстров): целая часть теряется всегда, дробная — с её
+  // вероятностью, и в среднем уходит ровно настроенная доля при любом размере сумки. `floor` оставлял одну вещь в сумке
+  // без риска вовсе (0 потерь при доле 0.5), а нечётная сумка всегда теряла меньше: из трёх — одну (33 %), из пяти — две.
+  // Без броска — ближайшее целое. Допуск 1e-9: 10 × 0.3 в плавающей — это 3.0000000000000004, а не «три с хвостиком».
+  const raw = save.inventory.length * penalty.inventoryDropPercent;
+  const whole = Math.floor(raw + 1e-9);
+  const frac = raw - whole > 1e-9 ? raw - whole : 0;
+  const n = whole + (frac > 0 && (rng ? rng.chance(frac) : frac >= 0.5) ? 1 : 0);
   let itemsLost = 0;
   let materialsLost = 0;
   // ⚠ Жертвы выбираются СЛУЧАЙНО, а не «первые по списку». Прежний `splice(0, N)` означал, что

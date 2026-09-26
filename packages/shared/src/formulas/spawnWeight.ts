@@ -71,22 +71,34 @@ export function monsterDepthCurve(m: Monster, tiers: DepthTiers): number[] {
   return tiers.map((t) => t.weights[key] ?? 0);
 }
 
-/** Вес спавна монстра на этаже `floor`: интерполяция кривой между контрольными этажами (fromFloor). */
+/**
+ * Доля слота монстра (`spawnShare`, 0…1; нет поля — 1). ⭐ Двойники — та же заготовка с другим оружием —
+ * делят вес источника: доли группы дают в сумме 1, и состав пачек по роли и тиру не сдвигается. Мусор
+ * (NaN, минус, больше 1) прижимается в [0, 1]: кривой конфиг не должен раздувать вес монстра.
+ */
+export function spawnShareOf(m: { spawnShare?: number }): number {
+  const s = m.spawnShare;
+  if (s === undefined) return 1;
+  return Number.isFinite(s) ? Math.min(1, Math.max(0, s)) : 0;
+}
+
+/** Вес спавна монстра на этаже `floor`: интерполяция кривой между контрольными этажами (fromFloor) × доля слота. */
 export function spawnWeightAt(m: Monster, tiers: DepthTiers, floor: number): number {
-  if (!tiers.length) return 1;
+  const share = spawnShareOf(m);
+  if (!tiers.length) return share;
   const curve = monsterDepthCurve(m, tiers);
   const xs = tiers.map((t) => t.fromFloor);
-  if (floor <= xs[0]!) return Math.max(0, curve[0]!);
+  if (floor <= xs[0]!) return Math.max(0, curve[0]!) * share;
   const last = xs.length - 1;
-  if (floor >= xs[last]!) return Math.max(0, curve[last]!);
+  if (floor >= xs[last]!) return Math.max(0, curve[last]!) * share;
   for (let i = 0; i < last; i++) {
     const a = xs[i]!, b = xs[i + 1]!;
     if (floor >= a && floor <= b) {
       const t = (floor - a) / (b - a || 1);
-      return Math.max(0, curve[i]! + (curve[i + 1]! - curve[i]!) * t);
+      return Math.max(0, curve[i]! + (curve[i + 1]! - curve[i]!) * t) * share;
     }
   }
-  return Math.max(0, curve[last]!);
+  return Math.max(0, curve[last]!) * share;
 }
 
 /**

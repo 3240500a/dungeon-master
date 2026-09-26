@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import initJolt from 'jolt-physics';
-import { TILE, Cell, type DungeonLayout } from '@dm/shared';
+import { TILE, Cell, type DungeonLayout, type WeaponLook } from '@dm/shared';
 import { WALL_H } from './env3d.js';
 import type { MarkEvent } from './clipModel.js';
 
@@ -303,8 +303,9 @@ export interface RagdollHandle {
   /** Нокдаун (сбить с ног): падение рагдоллом в направлении (dx,dz), лежит downSec, потом ВСТАЁТ за riseSec
    *  (таз kinematic лерпит с пола к стойке + рампа моторов/бленда). Не смерть — по завершении обычный режим. */
   knockdown?(dx: number, dz: number, downSec: number, riseSec: number): void;
-  /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
-  setWeapon?(key: string, models?: { main?: string; off?: string }): void;
+  /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…).
+   *  `look` (D22) — вид из деталей по рукам: undefined — не трогать, null — снять (процедурный меш). */
+  setWeapon?(key: string, models?: { main?: string; off?: string }, look?: WeaponLook | null): void;
   /** Свап внешности брони по слотам (C6c): slot→{modelId, materialId} надетых предметов → пересобрать скин-слой (сабмеш + материал). */
   setAppearance?(equip: Record<string, { modelId?: string; materialId?: string } | undefined>): void;
   /** Боевой айдл: on=true → боевая стойка (combat_idle), off → обычная. Кроссфейд плавный (GAIT.combatBlend). */

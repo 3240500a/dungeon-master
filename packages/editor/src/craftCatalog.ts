@@ -41,7 +41,7 @@ export function renderCraftCatalog(main: HTMLElement, reg: ConfigRegistry, sb: C
       const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
         dropBias: 1, itemLevel: sb.level, tierLevel: rollTierLevel(sb.level, bal.loot.tierWindow, rng), categoryWeights: { weapon: 1 },
         tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), rareNames: reg.get('rare-names'), maxReqTotal: bal.maxTotalRequirement,
-        baseRoll: bal.loot.baseRoll,
+        baseRoll: bal.loot.baseRoll, origin: 'drop',   // как дроп игры: иначе мифики не засчитались бы воротам t6
       }, rng));
       if (it.kind === 'weapon' && it.rarity !== 'unique') sb.drops.push(it);
     }

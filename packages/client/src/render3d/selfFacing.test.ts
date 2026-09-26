@@ -39,11 +39,11 @@ describe('свой фейсинг', () => {
   });
 
   it('⚠ ОТПРАВЛЯЕМ РОВНО ТО, ЧТО НАРИСОВАЛИ — один источник', () => {
-    // Второй расчёт в `sendInput` означал бы, что игрок видит один угол, а сервер получает другой:
-    // кадр и отправка идут с разной частотой.
+    // Второй расчёт в отправке (`pumpInput`, L2: сэмплер общий с 2D) означал бы, что игрок видит один угол, а сервер
+    // получает другой: кадр и отправка идут с разной частотой.
     const s = src('online3d.ts');
-    const send = /function sendInput\(\): void \{[\s\S]*?\n  \}/.exec(s);
-    expect(send, 'sendInput не найден — тест устарел').not.toBe(null);
+    const send = /function pumpInput\(dt: number\): void \{[\s\S]*?\n  \}/.exec(s);
+    expect(send, 'pumpInput не найден — тест устарел').not.toBe(null);
     expect(/const facing = myFacingInit \? myFacing/.test(send![0]), '⚠ фейсинг считается второй раз').toBe(true);
   });
 

@@ -1,4 +1,8 @@
-import { allocAttr, equip, unequip, allocActive, allocPassive, socketInsert, socketClear, respec, respecSkills, respecPassives, moveInventoryItem, moveToBelt, debuffLabel, type SaveState, type TownCommand, setBinding } from '@dm/shared';
+import {
+  allocAttr, equip, unequip, allocActive, allocPassive, socketInsert, socketClear, respec, respecSkills, respecPassives, moveInventoryItem, moveToBelt, debuffLabel,
+  setBinding, craftAction, enchantAction, sketchAction, forgeSalvage, fieldSalvage, createRng, emptyStash,
+  type AccountStash, type SaveState, type TownCommand,
+} from '@dm/shared';
 import { App } from '@dm/client/core/app.js';
 import { GameState } from '@dm/client/core/gameState.js';
 import { setItemLabelResolvers } from '@dm/client/modules/inventory/itemView.js';
@@ -10,8 +14,11 @@ import { setRarityMeta } from '@dm/client/modules/loot/rarity.js';
  * калькулятор переиспользовал ПАНЕЛИ игры (стат-блок/паперкукла/атласы) — «одна истина» по статам.
  * Команды панелей (`allocAttr/equip/allocPassive/…`) применяются ТЕМИ ЖЕ функциями `townActions`, что
  * и сервер (одна истина по мутациям), сеть не трогаем. Золото раздуто → билд «свободный» (как d2planner).
+ *
+ * Кузница — тоже ТЕ ЖЕ действия, что у сервера (`craftAction` / `enchantAction` / `forgeSalvage`), над
+ * сундуком `stash` (сырьё + журнал кузнеца): не передан — свой пустой, как у нового аккаунта.
  */
-export function makeHarness(data: Record<string, unknown>, save: SaveState, onChange: () => void): App {
+export function makeHarness(data: Record<string, unknown>, save: SaveState, onChange: () => void, stash?: AccountStash): App {
   const app = new App();
   app.config.loadAll(data);
   refreshResolvers(app);
@@ -19,31 +26,65 @@ export function makeHarness(data: Record<string, unknown>, save: SaveState, onCh
   const gs = new GameState(save);
   app.state = gs; // сеттер подключает провайдеры дерайва/скиллов из конфига
   gs.hp = gs.derived().maxHp; gs.mana = gs.derived().maxMana; gs.stamina = gs.derived().maxStamina;
-  app.sendCmd = (cmd: TownCommand): void => { applyCmd(app, gs, cmd); onChange(); };
+  const st = stash ?? emptyStash(app.config);
+  app.sendCmd = (cmd: TownCommand, id = app.nextCmdId()): number => {
+    const r = applyCmd(app, gs, cmd, st);
+    onChange();
+    // Ответ — как у сервера: ПОСЛЕ перерисовки (у сервера — после `saveUpdate`), тем же кадром
+    // `cmdResult`. Окно, которое ждёт итога (`app.request`), получает его сразу, а не таймаутом.
+    app.replies.settle({
+      t: 'cmdResult', id, cmd: cmd.cmd, ok: r.ok,
+      ...(r.reason !== undefined ? { reason: r.reason } : {}),
+      ...(r.uid !== undefined ? { uid: r.uid } : {}),
+      ...(r.unlocked !== undefined ? { unlocked: r.unlocked } : {}),
+    });
+    return id;
+  };
   return app;
 }
 
-function applyCmd(app: App, gs: GameState, cmd: TownCommand): void {
+/** Итог команды моста — те же поля, что у ответа сервера (`cmdResult`). */
+interface HarnessOutcome { ok: boolean; reason?: string; uid?: string; unlocked?: string[] }
+
+/** Бросок моста: не боевой сервер, достаточно разных чисел на каждую команду. */
+let harnessSeed = 1;
+const harnessRng = (): ReturnType<typeof createRng> => createRng((harnessSeed++ * 2654435761) >>> 0 || 1);
+
+/**
+ * Команда моста — ТЕМ ЖЕ ядром, что у сервера (ковка и зачарование — `craftAction` / `enchantAction`),
+ * поэтому окно ковки в редакторе и игра не разойдутся.
+ */
+function applyCmd(app: App, gs: GameState, cmd: TownCommand, stash: AccountStash): HarnessOutcome {
   const reg = app.config, s = gs.save;
   switch (cmd.cmd) {
-    case 'allocAttr': allocAttr(s, cmd.attr); break;
-    case 'equip': equip(reg, s, cmd.uid); break;
-    case 'unequip': unequip(reg, s, cmd.slot); break;
-    case 'allocSkill': allocActive(reg, s, cmd.nodeId); break;
-    case 'socketInsert': socketInsert(reg, s, cmd.nodeId, cmd.slot, cmd.insertId); break;
+    case 'craft': return craftAction(reg, s, stash, cmd.nonce, cmd.input, harnessRng(), { maxGold: cmd.maxGold });   // R5-15: как сервер
+    case 'forgeEnchant': return enchantAction(reg, s, cmd.uid, cmd.rarity, harnessRng(), cmd.maxGold);
+    case 'forgeSketch': return sketchAction(reg, stash, cmd.variantId);   // R3-11: то же ядро, что у сервера
+    case 'forgeSalvage': return forgeSalvage(reg, s, stash, cmd.uid, harnessRng());
+    case 'salvage': return fieldSalvage(reg, s, cmd.uid, harnessRng());
+    case 'allocAttr': return allocAttr(s, cmd.attr, cmd.n);
+    case 'equip': return equip(reg, s, cmd.uid);
+    case 'unequip': return unequip(reg, s, cmd.slot);
+    case 'allocSkill': return allocActive(reg, s, cmd.nodeId);
+    case 'socketInsert': return socketInsert(reg, s, cmd.nodeId, cmd.slot, cmd.insertId);
     // ⚠ Бинды применяем ТОЙ ЖЕ `setBinding`, что и сервер. Без них панель биндов в калькуляторе
     // выглядела бы живой и не делала ничего, а строки «Урон (ЛКМ)/(ПКМ)» в стат-листе считаются
     // именно по привязке — то есть главный результат планирования был бы недостижим.
-    case 'bind': setBinding(s, cmd.slot, cmd.value); break;
-    case 'socketClear': socketClear(reg, s, cmd.nodeId, cmd.slot); break;
-    case 'allocPassive': allocPassive(reg, s, cmd.nodeId); break;
-    case 'respec': respec(reg, s); break;
-    case 'respecSkills': respecSkills(reg, s); break;
-    case 'respecPassives': respecPassives(reg, s); break;
-    case 'moveItem': moveInventoryItem(reg, s, cmd.uid, cmd.x, cmd.y); break;
-    case 'moveBelt': moveToBelt(s, cmd.uid); break;
-    case 'drop': { const i = s.inventory.findIndex((it) => it.uid === cmd.uid); if (i >= 0) s.inventory.splice(i, 1); break; } // «выбросить» = просто убрать из билда
-    default: break; // прочие команды (магазин/квесты) калькулятору не нужны
+    case 'bind': return setBinding(reg, s, cmd.slot, cmd.value);
+    case 'socketClear': return socketClear(reg, s, cmd.nodeId, cmd.slot);
+    case 'allocPassive': return allocPassive(reg, s, cmd.nodeId, cmd.maxGold);   // R6-16: как сервер
+    case 'respec': return respec(reg, s, cmd.maxGold);
+    case 'respecSkills': return respecSkills(reg, s, cmd.maxGold);
+    case 'respecPassives': return respecPassives(reg, s, cmd.maxGold);
+    case 'moveItem': return moveInventoryItem(reg, s, cmd.uid, cmd.x, cmd.y);
+    case 'moveBelt': return moveToBelt(s, cmd.uid);
+    case 'drop': { // «выбросить» = просто убрать из билда
+      const i = s.inventory.findIndex((it) => it.uid === cmd.uid);
+      if (i < 0) return { ok: false, reason: 'Нет предмета' };
+      s.inventory.splice(i, 1);
+      return { ok: true };
+    }
+    default: return { ok: false, reason: 'Калькулятор эту команду не исполняет' }; // магазин/квесты ему не нужны
   }
 }
 

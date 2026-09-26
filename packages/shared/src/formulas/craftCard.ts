@@ -5,6 +5,7 @@ import type { Item } from '../types/items.js';
 import { attackByType, estimateAttack } from './playerCombat.js';
 import { createRng } from './rng.js';
 import { statusKindOf } from './craft.js';
+import { STATUS_CHANCE_CAP, statusChance } from '../world/debuffs.js';
 
 /**
  * КАРТОЧКА ОРУЖИЯ — «всё, что у нас есть» о вещи в руках конкретного героя (docs/CRAFT_WEAPONS.md,
@@ -33,10 +34,12 @@ export interface WeaponStatus {
   name: string;
   /** Шанс оружия из `debuffs` до бонусов. */
   baseChance: number;
-  /** Итоговый шанс за попадание: база × (1 + ailmentPct + шанс-бонус статуса). */
+  /** Итоговый шанс за попадание — РОВНО тот, что катает бой: `statusChance(база, 1 + ailmentPct + шанс-бонус)`. */
   chance: number;
-  /** ⚠ Шанс не клампится в бою: выше 100 % статус вешается каждый удар (долг §20). */
-  over100: boolean;
+  /** Шанс до потолка: база × (1 + ailmentPct + шанс-бонус статуса). Выше потолка бонусы не работают. */
+  rawChance: number;
+  /** Шанс упёрся в потолок `STATUS_CHANCE_CAP` (0.95): прибавка к шансу сверх него пропадает. */
+  capped: boolean;
   maxStacks: number;
   durationSec: number;
   /** Среднее число стаков на цели при ударах в темпе героя — по реальной механике общего таймера. */
@@ -87,7 +90,7 @@ const DEBUFF_NAME: Record<string, string> = {
  */
 export function avgStatusStacks(chance: number, aps: number, durationSec: number, maxStacks: number, seed = 1): number {
   if (chance <= 0 || aps <= 0 || maxStacks <= 0) return 0;
-  const p = Math.min(1, chance);
+  const p = statusChance(chance);   // потолок боя: 100 % на входе всё равно катается как 95 %
   const dt = 1 / aps;
   const T = 120;
   const runs = 24;
@@ -146,11 +149,15 @@ export function weaponCard(reg: ConfigRegistry, input: WeaponCardInput): WeaponC
   if (kind && deb?.weapon) {
     const dd = d as unknown as Record<string, number>;
     const cMul = 1 + (d.ailmentPct ?? 0) + (dd[`${kind}ChancePct`] ?? 0);
-    const chance = deb.weapon.chance * cMul;
+    // База — как в `weaponDebuffs`/`elementDebuffs` (не выше 1), иначе кривой конфиг разведёт окно и бой.
+    const base = Math.min(1, deb.weapon.chance);
+    const rawChance = base * cMul;
+    // ⭐ Тот же потолок, что в бою (`resolvePlayerHit`): окно не обещает шанса, которого нет.
+    const chance = statusChance(base, cMul);
     const dur = (deb.weapon.durationMs / 1000) * (1 + (dd[`${kind}DurPct`] ?? 0));
     card.status = {
       kind, name: DEBUFF_NAME[kind] ?? kind,
-      baseChance: deb.weapon.chance, chance, over100: chance > 1,
+      baseChance: base, chance, rawChance, capped: rawChance > STATUS_CHANCE_CAP,
       maxStacks: deb.weapon.maxStacks, durationSec: dur,
       avgStacks: avgStatusStacks(chance, aps, dur, deb.weapon.maxStacks),
     };

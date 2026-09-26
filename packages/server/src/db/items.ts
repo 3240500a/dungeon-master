@@ -2,6 +2,9 @@ import type { PoolClient } from 'pg';
 import { tx } from './pool.js';
 import type { SaveState, AccountStash, Item } from '@dm/shared';
 import { isUuid } from '@dm/shared';
+import { LedgerViolation } from './errors.js';
+
+export { LedgerViolation };
 
 /**
  * Предметы как данные (Ф2): леджер `items` + журнал `item_events`.
@@ -70,10 +73,7 @@ export function itemsOfStash(stash: AccountStash): Item[] {
   return out;
 }
 
-interface Row { id: string; loc: string; user_id: string; data: Item }
-
-/** Нарушение инварианта леджера. Запись сейва отменяется целиком. */
-export class LedgerViolation extends Error {}
+interface Row { id: string; loc: string; user_id: string }
 
 /**
  * Свести леджер с тем, что реально лежит у персонажа (и, если передан, в сундуке).
@@ -84,11 +84,17 @@ export class LedgerViolation extends Error {}
  * `stash === undefined` означает «сундук в этой записи не участвует»: тогда вещи, лежащие
  * в сундуке, не считаются пропавшими. Без этой оговорки обычный автосейв персонажа объявлял
  * бы весь сундук утраченным.
+ *
+ * ⭐ R2-21: `reasons` — причина ПО ВЕЩИ. Действие кузницы подписывает свою вещь (скованную, разобранную), а всё,
+ * что запись заодно застала (купленное, поднятое с тех пор), идёт автосейвом. Раньше одна причина ложилась на
+ * всё новое: покупка перед ковкой считалась ковкой, ночной аудит видел «кузнеца-выброс» и терял её из добычи.
+ * Без карты — старое правило: одна причина на всю запись (вход, новый персонаж, инструменты).
  */
 export async function syncItems(
   c: PoolClient, userId: string, charId: string, save: SaveState,
-  stash: AccountStash | undefined, reason: string,
+  stash: AccountStash | undefined, reason: string, reasons?: ReadonlyMap<string, string>,
 ): Promise<void> {
+  const why = (id: string): string => (reasons ? reasons.get(id) ?? 'autosave' : reason);
   const charLoc = locOfChar(charId);
   // Что должно быть: id → место.
   const want = new Map<string, { loc: ItemLoc; item: Item }>();
@@ -101,49 +107,76 @@ export async function syncItems(
 
   // Что записано: только те места, которые эта запись имеет право менять.
   const locs = stash ? [charLoc, LOC_STASH] : [charLoc];
-  const have = new Map<string, Row>();
   // Фильтр по аккаунту ОБЯЗАТЕЛЕН: место `stash` одинаково у всех пользователей, и без него
   // автосейв одного игрока объявил бы «пропавшими» сундуки всех остальных.
-  const rows = await c.query<Row>(
-    'SELECT id, loc, user_id, data FROM items WHERE user_id = $2 AND loc = ANY($1)', [locs, userId]);
-  for (const r of rows.rows) have.set(r.id, r);
+  // Данных вещей здесь не читаем: содержимое сравнивает сама база (см. ниже), тащить сюда весь инвентарь незачем.
+  const mine = await c.query<{ id: string }>(
+    'SELECT id FROM items WHERE user_id = $2 AND loc = ANY($1)', [locs, userId]);
 
-  const ids = [...want.keys()];
-  // Вещи, которых в наших местах нет: либо новые, либо пришли откуда-то ещё (земля, сундук).
-  const foreign = ids.length
-    ? (await c.query<Row>('SELECT id, loc, user_id, data FROM items WHERE id = ANY($1)', [ids])).rows
+  // ⭐ R4-10: БЛОКИРОВКИ СТРОК ВЕЩЕЙ — ВСЕ СРАЗУ И В ОДНОМ ПОРЯДКЕ (по id), до любой правки. Раньше строки брались по ходу
+  // дела: сперва нужные (в порядке сейва), потом пропавшие из наших мест. Два героя аккаунта, обменявшиеся вещами (выбросил
+  // — поднял сосед), писались встречно: X держал I2 и ждал I1, Y — наоборот, и база обрывала одного взаимоблокировкой. А
+  // слив ноды в этом окне оставлял отданную вещь у обоих, полученную — ни у кого. Под блокировкой строки читаются заново:
+  // пока ждали, соседняя запись могла вещь забрать — тогда она уже не «наша» и пропавшей не считается.
+  const ids = [...new Set([...want.keys(), ...mine.rows.map((r) => r.id)])];
+  const locked = ids.length
+    ? (await c.query<Row>('SELECT id, loc, user_id FROM items WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids])).rows
     : [];
-  const known = new Map<string, Row>(foreign.map((r) => [r.id, r]));
+  // Все строки — и нужные (новые, пришедшие с земли и из сундука), и лежащие в наших местах.
+  const known = new Map<string, Row>(locked.map((r) => [r.id, r]));
+  const have = new Map<string, Row>();
+  for (const r of locked) if (r.user_id === userId && locs.includes(r.loc)) have.set(r.id, r);
 
+  // Нарушения — ВСЕ сразу и до единой записи (R2-02): комната вынимает вещи-нарушители из сейва и пишет остальное.
+  // Раньше бросок шёл на первой, и вещь чужого аккаунта в сумке молча губила каждую следующую запись игрока.
+  const bad: string[] = [];
+  const said: string[] = [];
+  for (const id of want.keys()) {
+    const cur = known.get(id);
+    if (!cur) continue;
+    if (cur.loc === LOC_REVOKED) {
+      bad.push(id); said.push(`вещь ${id} отозвана и не может вернуться в игру (${reason})`);
+    } else if (cur.user_id !== userId) {
+      // Торговли между игроками нет, значит вещь не может законно сменить аккаунт.
+      bad.push(id); said.push(`вещь ${id} числится за аккаунтом ${cur.user_id}, а появилась у ${userId} (${reason})`);
+    }
+  }
+  if (bad.length) throw new LedgerViolation(said.join('; '), bad);
+
+  // Место то же — вещь могли перековать или перекатать: содержимое сравнивается ПАКЕТОМ ниже.
+  const same: { id: string; data: Item }[] = [];
   for (const [id, w] of want) {
     const cur = known.get(id);
     if (!cur) {
       await c.query(
         `INSERT INTO items (id, user_id, loc, base_id, data) VALUES ($1, $2, $3, $4, $5)`,
         [id, userId, w.loc, w.item.baseId, JSON.stringify(w.item)]);
-      await event(c, id, 'created', userId, null, w.loc, reason, w.item);
+      await event(c, id, 'created', userId, null, w.loc, why(id), w.item);
       continue;
-    }
-    if (cur.loc === LOC_REVOKED) {
-      throw new LedgerViolation(`вещь ${id} отозвана и не может вернуться в игру (${reason})`);
-    }
-    if (cur.user_id !== userId) {
-      // Торговли между игроками нет, значит вещь не может законно сменить аккаунт.
-      throw new LedgerViolation(
-        `вещь ${id} числится за аккаунтом ${cur.user_id}, а появилась у ${userId} (${reason})`);
     }
     if (cur.loc !== w.loc) {
       await c.query('UPDATE items SET loc = $2, data = $3, moved_at = now() WHERE id = $1',
         [id, w.loc, JSON.stringify(w.item)]);
-      await event(c, id, 'moved', userId, cur.loc, w.loc, reason, null);
+      await event(c, id, 'moved', userId, cur.loc, w.loc, why(id), null);
       continue;
     }
-    // Место то же — но вещь могли перековать/перекатать. Сравниваем содержимое.
-    const before = JSON.stringify(cur.data);
-    const after = JSON.stringify(w.item);
-    if (before !== after) {
-      await c.query('UPDATE items SET data = $2 WHERE id = $1', [id, after]);
-      await event(c, id, 'changed', userId, w.loc, w.loc, reason, w.item);
+    same.push({ id, data: w.item });
+  }
+
+  // ⭐ R2-06: СОДЕРЖИМОЕ СРАВНИВАЕТ БАЗА. `items.data` — jsonb, а jsonb хранит ключи в своём порядке (короткие
+  // первыми): строковое сравнение с вещью в порядке JS не совпадало почти никогда, и КАЖДАЯ запись переписывала
+  // каждую вещь сейва (и сундука) с полным снимком в вечный журнал. `IS DISTINCT FROM` у jsonb — по смыслу.
+  // Один запрос на всю запись, а не запрос на вещь.
+  if (same.length) {
+    const changed = await c.query<{ id: string }>(
+      `UPDATE items i SET data = u.data
+       FROM jsonb_to_recordset($1::jsonb) AS u(id uuid, data jsonb)
+       WHERE i.id = u.id AND i.data IS DISTINCT FROM u.data
+       RETURNING i.id`,
+      [JSON.stringify(same)]);
+    for (const r of changed.rows) {
+      const w = want.get(r.id)!;
+      await event(c, r.id, 'changed', userId, w.loc, w.loc, why(r.id), w.item);
     }
   }
 
@@ -151,7 +184,7 @@ export async function syncItems(
   for (const [id, r] of have) {
     if (want.has(id)) continue;
     await c.query('UPDATE items SET loc = $2, moved_at = now() WHERE id = $1', [id, LOC_WORLD]);
-    await event(c, id, 'gone', userId, r.loc, LOC_WORLD, reason, null);
+    await event(c, id, 'gone', userId, r.loc, LOC_WORLD, why(id), null);
   }
 }
 
@@ -166,21 +199,43 @@ async function event(
 }
 
 /**
+ * ⭐ R1-17: БЛОКИРОВКИ ИНСТРУМЕНТА — В ПОРЯДКЕ ЗАПИСИ ИГРЫ. Игра пишет строку персонажа, потом сундук, потом
+ * строки вещей (`putCharacterWithStash` → `syncItems`); инструмент по живому серверу берёт ВСЕ строки персонажей
+ * аккаунта (по `char_id`, всегда в одном порядке) и сундук `FOR UPDATE` раньше вещей. Раньше строки читались без
+ * блокировки и писались безусловно: запись игры, успевшая между чтением и записью, затиралась старой копией
+ * (вещь, только что ушедшая в сундук, оказывалась и там, и в сейве), а порядок «вещь → персонаж» против игрового
+ * «персонаж → вещь» давал взаимную блокировку. Под `FOR UPDATE` чтение ждёт открытую запись игры и видит её итог.
+ * Живая сессия с устаревшей копией после этого получит отказ по версии и будет снята (`Room.dropStale`, R1-01).
+ */
+export async function lockAccount(c: PoolClient, userId: string): Promise<{
+  chars: { char_id: string; data: SaveState; version: number }[];
+  stash: AccountStash | undefined;
+}> {
+  const chars = await c.query<{ char_id: string; data: SaveState; version: number }>(
+    'SELECT char_id, data, version FROM characters WHERE user_id = $1 ORDER BY char_id FOR UPDATE', [userId]);
+  const st = await c.query<{ data: AccountStash }>('SELECT data FROM account_stash WHERE user_id = $1 FOR UPDATE', [userId]);
+  return { chars: chars.rows, stash: st.rows[0]?.data };
+}
+
+/**
  * Отозвать вещь: вынуть её из сейва/сундука, где бы она ни лежала, и закрыть ей путь назад.
  * Одной транзакцией — иначе игрок с открытой сессией впишет её обратно между нашими запросами.
  */
 export async function revokeItem(id: string, reason: string): Promise<{ user: string; from: string; touched: string[] } | null> {
   return tx(async (c) => {
+    // Владелец — без блокировки: аккаунт у вещи не меняется никогда (такой переход леджер отклоняет).
+    const owner = (await c.query<{ user_id: string }>('SELECT user_id FROM items WHERE id = $1', [id])).rows[0];
+    if (!owner) return null;
+    const locked = await lockAccount(c, owner.user_id);
+    // Строка вещи — последней (порядок записи игры), и уже под блокировкой перечитываем, где она.
     const cur = await c.query<{ user_id: string; loc: string }>(
       'SELECT user_id, loc FROM items WHERE id = $1 FOR UPDATE', [id]);
     const row = cur.rows[0];
     if (!row) return null;
 
     // Из сейвов персонажей.
-    const chars = await c.query<{ char_id: string; data: SaveState; version: number }>(
-      'SELECT char_id, data, version FROM characters WHERE user_id = $1', [row.user_id]);
     const touched: string[] = [];
-    for (const ch of chars.rows) {
+    for (const ch of locked.chars) {
       const before = JSON.stringify(ch.data);
       const save = ch.data;
       save.inventory = save.inventory.filter((i) => i.uid !== id);
@@ -196,14 +251,14 @@ export async function revokeItem(id: string, reason: string): Promise<{ user: st
     }
 
     // Из сундука аккаунта.
-    const st = await c.query<{ data: { tabs: { uid: string }[][] } }>(
-      'SELECT data FROM account_stash WHERE user_id = $1', [row.user_id]);
-    if (st.rows[0]) {
-      const data = st.rows[0].data;
+    if (locked.stash) {
+      const data = locked.stash;
       const before = JSON.stringify(data);
       data.tabs = data.tabs.map((tab) => tab.filter((i) => i.uid !== id));
       if (JSON.stringify(data) !== before) {
-        await c.query('UPDATE account_stash SET data = $1, updated_at = now() WHERE user_id = $2',
+        // Версию поднимаем (D8): живая сессия, прочитавшая сундук до отзыва, получит отказ,
+        // а не впишет свою копию поверх.
+        await c.query('UPDATE account_stash SET data = $1, version = version + 1, updated_at = now() WHERE user_id = $2',
           [JSON.stringify(data), row.user_id]);
         touched.push('сундук');
       }

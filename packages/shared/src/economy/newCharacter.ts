@@ -1,5 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
+import { shapeFoundWeapon } from '../formulas/craft.js';
 import { packInventory } from '../inventory/grid.js';
 import { SAVE_VERSION, type SaveState } from '../types/save.js';
 import type { Item } from '../types/items.js';
@@ -20,8 +21,13 @@ export function newCharacterSave(reg: ConfigRegistry, classId: string, name: str
   const equipment: SaveState['equipment'] = {};
   const inventory: Item[] = [];
   for (const id of [cls.startWeaponId, ...STARTER_ARMOR]) {
-    const item = itemFromBaseId(reg.get('items.base'), id, reg.get('item-tiers'));
-    if (!item) continue;
+    const raw = itemFromBaseId(reg.get('items.base'), id, reg.get('item-tiers'), 'start');
+    if (!raw) continue;
+    // Стартовый меч — как найденный (§12.1, §26): детали записаны на вещь, клинок с геометрией несёт свои
+    // статы — карточка и бой видят то же, что у находки той же базы. Броню не трогает.
+    // ⚠ R3-04: комплект бесплатен и бесконечен (создал → переложил → удалил), поэтому `origin: 'start'` лавка берёт
+    // за 1, а кузнец не разбирает вовсе (`shopSellPrice`, `salvagePlan`).
+    const item = shapeFoundWeapon(reg, raw);
     if (item.slot && !equipment[item.slot]) { item.pos = null; equipment[item.slot] = item; }
     else inventory.push(item);
   }

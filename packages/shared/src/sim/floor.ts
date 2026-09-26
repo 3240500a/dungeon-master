@@ -2,6 +2,7 @@ import { ConfigRegistry } from '../config/registry.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { generateItem, rollTierLevel } from '../formulas/itemgen.js';
 import { shapeFoundWeapon } from '../formulas/craft.js';
+import { spawnWeightAt, weightedPickId } from '../formulas/spawnWeight.js';
 import { effectiveLevel, startChallenge, challengeAtFloor, type Difficulty } from '../formulas/power.js';
 import type { Rng } from '../formulas/rng.js';
 import type { SaveState } from '../types/save.js';
@@ -28,6 +29,30 @@ function floorRoomTypes(floor: number, rng: Rng): RoomType[] {
 }
 
 /**
+ * ВЫБОР МОНСТРА КАК В ИГРЕ (`dungeon/floor.ts` `spawnPacksEl`): пул первого биома без выключенных, внутри
+ * роли и во всём пуле — по весу спавна на этаже (`spawnWeightAt`: кривая глубины × доля слота `spawnShare`).
+ * ⚠ Равномерный выбор врал: двойники (та же заготовка с другим оружием) делят вес источника, а поштучно
+ * каждый весил как источник — метатели в «Бое» раздулись с 1/13 до 4/19, лорд у воинов стал 1/8 и там,
+ * где игра его не ставит вовсе. `pick('')` или роль без кандидатов — весь пул, как у игры.
+ */
+export function monsterPicker(reg: ConfigRegistry, floor: number): { pool: string[]; pick: (rng: Rng, role?: string) => string } {
+  const monsters = reg.get('monsters');
+  const monById = new Map(monsters.map((m) => [m.id, m]));
+  const pool = reg.get('biomes')[0]!.monsterPool.filter((id) => monById.has(id) && monById.get(id)!.enabled !== false);
+  const byRole = new Map<string, string[]>();
+  for (const id of pool) { const r = monById.get(id)!.role ?? ''; (byRole.get(r) ?? byRole.set(r, []).get(r)!).push(id); }
+  const depthTiers = reg.get('depth-tiers');
+  const weightAt = (id: string): number => { const m = monById.get(id); return m ? spawnWeightAt(m, depthTiers, floor) : 1; };
+  const wpick = (ids: string[], rng: Rng): string =>
+    weightedPickId(ids, weightAt, rng.float(0, 1), (r) => ids[Math.floor(r * ids.length)] ?? pool[0]!);
+  const pick = (rng: Rng, role = ''): string => {
+    const c = role ? byRole.get(role) : undefined;
+    return c && c.length ? wpick(c, rng) : wpick(pool, rng);
+  };
+  return { pool, pick };
+}
+
+/**
  * Симуляция зачистки этажа: собирает пачки по составу, бьёт их подряд с переносом
  * HP и регеном между (ходьба), копит XP/золото/лут (бот тут же экипирует находки).
  * Смерть в любой пачке → этаж не пройден. Множители награды — по тиру.
@@ -43,8 +68,6 @@ export function simulateFloor(
 ): FloorResult {
   const theme = reg.get('biomes')[0]!;
   const monsters = reg.get('monsters');
-  const enabledIds = new Set(monsters.filter((m) => m.enabled !== false).map((m) => m.id));
-  const pool = theme.monsterPool.filter((id) => enabledIds.has(id));
   const packsCfg = reg.get('packs');
   const monAffixes = reg.get('monster-affixes');
   const monsterGear = reg.get('monster-gear');
@@ -57,12 +80,9 @@ export function simulateFloor(
   const cl = challengeAtFloor(startChallenge(el, diff), diff, floor);
   const model = makePlayerModel(reg, save, { useSkills: policy.useSkills });
 
-  // Монстр по РОЛИ из пула (для состава пачки); фолбэк — любой из пула.
-  const roleOf = new Map(monsters.map((m) => [m.id, m.role]));
-  const pickId = (role: string): string => {
-    const c = pool.filter((id) => (roleOf.get(id) ?? '') === role);
-    return role && c.length ? rng.pick(c) : rng.pick(pool);
-  };
+  // Монстр по РОЛИ из пула (для состава пачки), по весу спавна игры; фолбэк — любой из пула.
+  const picker = monsterPicker(reg, floor);
+  const pickId = (role = ''): string => picker.pick(rng, role);
 
   let xp = 0, drops = 0, packsCleared = 0, minHpFrac = 1;
   let timeSec = floorOverheadSec;
@@ -78,7 +98,7 @@ export function simulateFloor(
     const pack = entries.flatMap((e) =>
       Array.from({ length: rng.int(e.min, e.max) }, () =>
         generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(e.role), depth: mDepth, mderive }, rng)));
-    if (!pack.length) pack.push(generateMonster(monsters, monsterGear, monAffixes, { baseId: rng.pick(pool), depth: mDepth, mderive }, rng));
+    if (!pack.length) pack.push(generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(), depth: mDepth, mderive }, rng));
 
     const r = simulateFight(model, pack, rng, { startHp: hp });
     timeSec += r.timeSec;
@@ -97,7 +117,7 @@ export function simulateFloor(
           // Сложность двигает уровень МОНСТРОВ, а не уровень вещи напрямую (`ilvlBonus` вырезан).
           { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, cl),
             tierLevel: rollTierLevel(Math.max(1, cl), reg.get('balance').loot.tierWindow, rng),
-            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), baseRoll: reg.get('balance').loot.baseRoll }, rng));
+            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), baseRoll: reg.get('balance').loot.baseRoll, origin: 'drop' }, rng));
         drops += 1;
         // Лут сразу оседает: экип лучшего, остальное в золото (мутирует save).
         considerDrop(reg, save, item, policy);

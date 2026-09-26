@@ -12,6 +12,22 @@ const gen = (opts: Parameters<typeof generateMonster>[3], seed = 1) =>
   generateMonster(monsters, gear, affixes, opts, createRng(seed));
 
 describe('generateMonster (деривация из атрибутов+гира)', () => {
+  it('⚠ каждый включённый монстр ссылается на СУЩЕСТВУЮЩЕЕ снаряжение своего слота (иначе бьёт кулаками молча)', () => {
+    // `resolveGear` на промахе не падает: оружие → «кулаки» 1–2, броня/шлем/щит → ничего. Опечатка в id
+    // превратила бы носителя класса в безоружного — и класс перестал бы падать трофеем.
+    const kindOf = { weapon: 'weapon', armor: 'armor', helm: 'armor', offhand: 'shield' } as const;
+    for (const m of monsters.filter((x) => x.enabled !== false)) {
+      for (const [slot, kind] of Object.entries(kindOf) as [keyof typeof kindOf, string][]) {
+        const id = m[slot];
+        if (!id && slot !== 'weapon') continue;
+        const g = gear.find((x) => x.id === id);
+        expect(g?.kind, `${m.id}.${slot} = «${id}»`).toBe(kind);
+        if (slot === 'helm') expect(g && 'slot' in g ? g.slot : undefined, `${m.id}.helm`).toBe('helm');
+        if (slot === 'armor') expect(g && 'slot' in g ? g.slot : undefined, `${m.id}.armor`).toBe('chest');
+      }
+    }
+  });
+
   it('деривит валидный стат-блок из заготовки', () => {
     const m = gen({ baseId: 'zombie', depth: 5 });
     expect(m.hp).toBeGreaterThan(0);

@@ -10,6 +10,10 @@ import type { Item } from '../types/items.js';
 import type { MonsterFaction } from '../types/world.js';
 import { GameSession, type PlayerInput, type SessionEvent, type FloorLayout } from './session.js';
 import { serializeWorld } from './serialize.js';
+import { respecSkills, equip, unequip, allocAttr, respec, socketInsert, socketClear } from '../economy/townActions.js';
+import { addDebuffStack } from '../world/debuffs.js';
+import { itemFromBaseId } from '../formulas/itemgen.js';
+import { addToInventory } from '../inventory/grid.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -304,6 +308,11 @@ function injectSkill(r: ConfigRegistry, _classId: string, id: string, active: Re
   });
 }
 
+/** Выучить узлы рангом 1: сессия кастует ТОЛЬКО выученное (R4-05), как игра после `allocActive`. */
+function learn(p: { save: { skills: Record<string, number> } }, ...ids: string[]): void {
+  for (const id of ids) p.save.skills[id] = 1;
+}
+
 /** Слабый монстр (hp/armor 0) в точке. */
 function weakMon(r: ConfigRegistry, x: number, y: number) {
   const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'),
@@ -318,6 +327,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_nova', activeFx({ category: 'cast', shape: 'nova', radius: 130, damageMult: 2 }));
     const s = new GameSession(r, 5, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_nova');
     const grid = openField(20, 12);
     const spawn = cellToWorld(8, 6);
     // Три монстра в клетках вокруг точки спавна (в пределах radius=130).
@@ -337,6 +347,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'archer', 't_fan', activeFx({ category: 'attack', count: 3, spread: 0.2, damageMult: 3 }));
     const s = new GameSession(r, 6, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'archer'));
+    learn(p, 't_fan');
     const grid = openField(24, 12);
     const spawn = cellToWorld(5, 6);
     const mp = cellToWorld(10, 6); // прямо по +x от игрока
@@ -355,6 +366,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_boom', activeFx({ category: 'cast', shape: 'boomerang', radius: 260, damageMult: 3 }));
     const s = new GameSession(r, 7, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_boom');
     const grid = openField(24, 12);
     const spawn = cellToWorld(5, 6);
     // Две цели на линии полёта (+x): ближняя и дальняя.
@@ -375,6 +387,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_dash', activeFx({ category: 'cast', shape: 'dash', damageMult: 3, knockback: 1, dashDist: 130, dashSpeed: 700, dashWeightBonus: 200 }));
     const s = new GameSession(r, 8, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_dash');
     const grid = openField(24, 12);
     const spawn = cellToWorld(5, 6);
     const mp = cellToWorld(7, 6); // на пути рывка
@@ -396,6 +409,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_curse', activeFx({ category: 'curse', radius: 200, element: 'fire', ailment: { chance: 1, mag: 5, maxStacks: 5, durationMs: 3000 } }));
     const s = new GameSession(r, 9, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_curse');
     const grid = openField(24, 12);
     const mp = cellToWorld(7, 6);
     s.enterFloor(1, { grid, spawn: cellToWorld(5, 6), monsters: [weakMon(r, mp.x, mp.y)] });
@@ -410,6 +424,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_cast', activeFx({ category: 'cast', shape: 'nova', radius: 200, cooldown: 5 }));
     const s = new GameSession(r, 10, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_cast');
     const grid = openField(24, 12);
     s.enterFloor(1, { grid, spawn: cellToWorld(5, 6), monsters: [] });
     p.mana = 100;
@@ -436,6 +451,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_slowatk', activeFx({ category: 'attack', windupSec: 0.5, damageMult: 3, speed: 0.6 }));
     const s = new GameSession(r, 12, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_slowatk');
     const grid = openField(24, 12);
     s.enterFloor(1, { grid, spawn: cellToWorld(6, 6), monsters: [] });
     p.mana = 100;
@@ -451,6 +467,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_atk', activeFx({ category: 'attack', attackTypes: ['melee'], damageMult: 6 }));
     const s = new GameSession(r, 21, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_atk');
     const grid = openField(20, 12);
     const spawn = cellToWorld(6, 6);
     // Два монстра близко перед игроком (в пределах дуги/дальности оружия), лицом +x.
@@ -469,6 +486,7 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     injectSkill(r, 'warrior', 't_bowonly', activeFx({ category: 'attack', damageMult: 6, attackTypes: ['ranged'] }));
     const s = new GameSession(r, 22, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior')); // стартовое оружие — мили
+    learn(p, 't_bowonly');
     const grid = openField(20, 12);
     const spawn = cellToWorld(6, 6);
     s.enterFloor(1, { grid, spawn, monsters: [weakMon(r, spawn.x + 40, spawn.y)] });
@@ -487,6 +505,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
     }));
     const s = new GameSession(r, 11, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_stance');
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
 
     s.tick(1 / 30, { p1: idle }); // базовый снимок
@@ -512,6 +531,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
     injectSkill(r, 'warrior', 't_stance', activeFx({ category: 'stance', manaCost: 0, reservePct: 0.3 }));
     const s = new GameSession(r, 12, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_stance');
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
     s.tick(1 / 30, { p1: idle });
     const maxMana = s.snapshotOf('p1')!.derived.maxMana;
@@ -529,6 +549,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
     injectSkill(r, 'warrior', 't_b', activeFx({ category: 'stance', manaCost: 0, reservePct: 0.2, toggleGroup: 'stance' }));
     const s = new GameSession(r, 12, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_a', 't_b');
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
 
     s.tick(1 / 30, { p1: { ...idle, cast: 't_a' } });
@@ -545,6 +566,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
     }));
     const s = new GameSession(r, 13, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_buff');
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
     p.mana = 15; // в пределах пула маны воина (не клампится)
 
@@ -619,6 +641,7 @@ describe('GameSession — замах/прерывание (фаза C)', () => {
     injectSkill(r, 'warrior', 't_heavy', activeFx({ category: 'attack', windupSec: 0.4, damageMult: 3, speed: 0.6 }));
     const s = new GameSession(r, 21, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_heavy');
     const grid = openField(16, 12);
     const spawn = cellToWorld(6, 6);
     const mp = cellToWorld(7, 6); // прямо перед игроком (в дуге strike)
@@ -641,6 +664,7 @@ describe('GameSession — замах/прерывание (фаза C)', () => {
     injectSkill(r, 'warrior', 't_heavy2', activeFx({ category: 'attack', windupSec: 0.6, damageMult: 3 }));
     const s = new GameSession(r, 22, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_heavy2');
     const grid = openField(16, 12);
     const mp = cellToWorld(7, 6);
     s.enterFloor(1, { grid, spawn: cellToWorld(6, 6), monsters: [{ def: (() => { const d = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(4)); d.hp = 500; d.armor = 0; return d; })(), x: mp.x, y: mp.y }] });
@@ -717,6 +741,7 @@ describe('GameSession — контент Заступника (фаза D)', () 
     const m = s.world.monsters[0]!;
     const atk = r.get('skill-tree').nodes.find((n) => n.branchId === 'b-class-zastupnik'
       && n.effect.active && (n.effect.active.category === 'attack' || n.effect.active.category === 'cast'))!;
+    learn(p, atk.id);
     for (let i = 0; i < 300 && m.alive; i++) {
       p.mana = 100; p.stamina = 100;
       s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: atk.id } });
@@ -738,6 +763,7 @@ describe('GameSession — контент Заступника (фаза D)', () 
     const m = s.world.monsters[0]!;
     const hammer = r.get('skill-tree').nodes.find((n) => n.branchId === 'b-class-zastupnik'
       && ((n.effect.active as { stunSec?: number } | undefined)?.stunSec ?? 0) > 0)!;
+    learn(p, hammer.id);
     let stunned = false;
     for (let i = 0; i < 120 && !stunned; i++) {
       p.mana = 100; p.stamina = 100;
@@ -1050,5 +1076,782 @@ describe(`GameSession — ${'⭐ ВСТАВКА ПЛАТИТ СВОИМ РЕСУ
     expect(evs.some((e) => e.type === 'swing' && e.ability === 't_ward_s'), 'удар прошёл').toBe(true);
     expect(p.skillBuffs['ins:ins-ward'], 'а печати нет — вставка не оплачена').toBeUndefined();
     expect(p.stamina, 'списана только цена носителя').toBeCloseTo(30 - 4, 0);
+  });
+});
+
+describe('⚠ R4-05: кастуется только ВЫУЧЕННОЕ', () => {
+  /** Воин 1-го уровня без единого скила (как новый герой) на пустом поле. */
+  function fresh(seed: number) {
+    const r = reg();
+    const s = new GameSession(r, seed, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [] });
+    s.tick(1 / 30, { p1: idle });   // первый снимок
+    return { r, s, p };
+  }
+  const swings = (evs: SessionEvent[], id: string): number => evs.filter((e) => e.type === 'swing' && e.ability === id).length;
+
+  it('⭐ невыученная атака не срабатывает и не тратит ресурс; выучил — та же команда бьёт', () => {
+    const { s, p } = fresh(41);
+    expect(p.save.skills, 'новый герой без скилов').toEqual({});
+    let evs: SessionEvent[] = [];
+    p.stamina = 20;
+    evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 'b-axe1h-a1' } }));
+    expect(p.stamina, 'ресурс не списан').toBeGreaterThanOrEqual(20);
+    for (let i = 0; i < 60; i++) evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 'b-axe1h-a1' } }));
+    expect(swings(evs, 'b-axe1h-a1'), 'невыученная атака').toBe(0);
+
+    p.save.skills['b-axe1h-a1'] = 1;
+    evs = [];
+    for (let i = 0; i < 60; i++) { p.stamina = 50; evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 'b-axe1h-a1' } })); }
+    expect(swings(evs, 'b-axe1h-a1'), 'выученная — бьёт').toBeGreaterThan(0);
+  });
+
+  it('⭐ невыученная аура не включается, невыученный бафф 40-го уровня не вешается', () => {
+    const { s, p } = fresh(42);
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-aura-a1' } });
+    expect(p.toggles, 'аура не включилась').toEqual([]);
+    p.stamina = 50;
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-class-warrior-a5' } });
+    expect(p.skillBuffs, 'бафф не повешен').toEqual({});
+
+    p.save.skills['b-aura-a1'] = 1;
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-aura-a1' } });
+    expect(p.toggles, 'выученная — включилась').toEqual(['b-aura-a1']);
+  });
+
+  it('⭐ сброс скилов гасит включённую ауру и бафф: бонусы и резерв уходят со следующего тика', () => {
+    const { r, s, p } = fresh(43);
+    const base = s.snapshotOf('p1')!.derived.damagePct;
+    p.save.skills['b-aura-a1'] = 1;
+    p.save.skills['b-class-warrior-a5'] = 1;
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-aura-a1' } });
+    p.stamina = 50;
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-class-warrior-a5' } });
+    s.tick(1 / 30, { p1: idle });
+    expect(p.toggles).toEqual(['b-aura-a1']);
+    expect(p.skillBuffs['b-class-warrior-a5']).toBeGreaterThan(0);
+    expect(s.snapshotOf('p1')!.derived.damagePct, 'аура даёт урон').toBeGreaterThan(base);
+
+    p.save.gold = 1_000_000;
+    expect(respecSkills(r, p.save).ok).toBe(true);
+    s.tick(1 / 30, { p1: idle });
+    expect(p.toggles, 'аура погашена').toEqual([]);
+    expect(p.skillBuffs, 'бафф снят').toEqual({});
+    expect(s.snapshotOf('p1')!.derived.damagePct, 'бонус ауры ушёл').toBe(base);
+    const maxMana = s.snapshotOf('p1')!.derived.maxMana;
+    p.mana = 0;
+    for (let i = 0; i < 3000; i++) s.tick(1 / 30, { p1: idle });
+    expect(p.mana, 'резерв маны снят — пул снова полный').toBeCloseTo(maxMana, 5);
+  });
+});
+
+describe('⚠ R4-07: рывок, его урон и отброс не проходят сквозь закрытую дверь и стену', () => {
+  /** Поле 26×12 с перегородкой во всю высоту в столбце 10 (x 320..352). */
+  function barrier(cell: Cell): Grid {
+    const g = openField(26, 12);
+    for (let y = 1; y < 11; y++) g[y]![10] = cell;
+    return g;
+  }
+
+  for (const rank of [1, 5, 20]) {
+    it(`⭐ рывок ранга ${rank} в закрытую дверь: герой на своей стороне, монстр в двух клетках за дверью цел`, () => {
+      const r = reg();
+      const s = new GameSession(r, 60 + rank, 'normal');
+      const save = newBotSave(r, 'warrior');
+      save.skills['b-shield-a2'] = rank;
+      const p = s.addPlayer('p1', save);
+      const behind = cellToWorld(12, 6);
+      s.enterFloor(1, { grid: barrier(Cell.Door), spawn: cellToWorld(8, 6), monsters: [tankMon(r, behind.x, behind.y, 'undead')] });
+      const m = s.world.monsters[0]!;
+      for (let i = 0; i < 30; i++) s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 } } });
+      expect(p.pos.x, 'герой упёрся в дверь').toBeCloseTo(10 * TILE - p.radius, 6);
+      m.pos = { ...behind }; m.vel = { x: 0, y: 0 };
+      const hp0 = m.hp;
+      const evs: SessionEvent[] = [];
+      p.stamina = 50;
+      evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 'b-shield-a2' } }));
+      expect(evs.some((e) => e.type === 'swing' && e.ability === 'b-shield-a2'), 'рывок сработал').toBe(true);
+      for (let i = 0; i < 30; i++) evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0 } }));
+      expect(p.pos.x, 'не прошёл дверь').toBeLessThanOrEqual(10 * TILE - p.radius + 1e-6);
+      expect(s.world.grid[6]![10], 'дверь закрыта').toBe(Cell.Door);
+      expect(evs.some((e) => e.type === 'hit' && e.target === 'monster'), 'урон рывка не прошёл за дверь').toBe(false);
+      expect(m.hp).toBe(hp0);
+    });
+  }
+
+  it('⭐ отброс не выталкивает монстра сквозь стену в одну клетку', () => {
+    const r = reg();
+    r.get('balance').knockdown.enabled = false;   // проверяем отброс, а не падение
+    injectSkill(r, 'warrior', 't_shove', activeFx({ category: 'attack', attackTypes: ['melee'], damageMult: 0.01, knockback: 400, shoveChance: 1 }));
+    const s = new GameSession(r, 70, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    learn(p, 't_shove');
+    const spawn = cellToWorld(8, 6);
+    s.enterFloor(1, { grid: barrier(Cell.Wall), spawn, monsters: [tankMon(r, spawn.x + 20, spawn.y, 'undead')] });
+    const m = s.world.monsters[0]!;
+    let hit = false;
+    for (let i = 0; i < 60 && !hit; i++) {
+      p.mana = 100; p.stamina = 100;
+      hit = s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 't_shove' } }).some((e) => e.type === 'hit' && e.target === 'monster' && e.hit);
+    }
+    expect(hit, 'удар прошёл').toBe(true);
+    expect(m.pos.x, 'монстр у стены, а не за ней').toBeLessThanOrEqual(10 * TILE - m.radius + 1e-6);
+  });
+});
+
+describe('⚠ R4-09: город безопасен — вход в него снимает дебаффы, стан и замах', () => {
+  /** Герой на этаже `depth` с 5 HP, смертельным кровотечением и ядом, в стане и посреди замаха. */
+  function doomed(seed: number) {
+    const r = reg();
+    const s = new GameSession(r, seed, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(3, { grid: openField(20, 12), spawn: cellToWorld(5, 5), monsters: [] });
+    s.tick(1 / 30, { p1: idle });
+    p.hp = 5;
+    addDebuffStack(p.debuffs, { kind: 'bleed', chance: 1, mag: 40, maxStacks: 5, durationMs: 4000 }, s.world.timeMs);
+    addDebuffStack(p.debuffs, { kind: 'poison', chance: 1, mag: 40, maxStacks: 5, durationMs: 4000 }, s.world.timeMs);
+    p.stunTimer = 3;
+    p.windup = { kind: 'attack', remaining: 1, loadout: '' };
+    return { s, p };
+  }
+
+  it('⭐ смертельный DoT с этажа (или арены) не доезжает до города: жив, ни одного player-died', () => {
+    const { s, p } = doomed(80);
+    s.enterFloor(0, { grid: openField(20, 12), spawn: cellToWorld(3, 3), monsters: [] });   // город
+    expect(p.debuffs, 'дебаффы сняты').toEqual({});
+    expect(p.stunTimer).toBe(0);
+    expect(p.windup).toBeNull();
+    const evs: SessionEvent[] = [];
+    for (let i = 0; i < 150; i++) evs.push(...s.tick(1 / 30, { p1: idle }));
+    expect(p.alive).toBe(true);
+    expect(evs.some((e) => e.type === 'player-died')).toBe(false);
+  });
+
+  it('следующий этаж подземелья — ещё бой: там дебаффы едут дальше', () => {
+    const { s, p } = doomed(81);
+    s.enterFloor(4, { grid: openField(20, 12), spawn: cellToWorld(3, 3), monsters: [] });
+    expect(p.debuffs.bleed?.stacks).toBe(1);
+    expect(p.debuffs.poison?.stacks).toBe(1);
+  });
+});
+
+/**
+ * ⚠ R5-02: здоровье не держится выше максимума, когда максимум упал. Максимум пересчитывался каждый тик, а текущее
+ * только росло: надел +жизнь (или включил стойку), налился, снял — и «танковое» здоровье жило на стеклянной пушке весь
+ * бой, через этажи и город. Мана и выносливость подрезались и раньше.
+ */
+describe('⚠ R5-02: здоровье не выше максимума — снял +жизнь, выключил стойку, сбросил живучесть', () => {
+  /** Воин на пустом поле; первый снимок снят. */
+  function hero(seed: number) {
+    const r = reg();
+    const s = new GameSession(r, seed, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [] });
+    s.tick(1 / 30, { p1: idle });
+    return { r, s, p };
+  }
+  /** Несколько тиков, в каждом — здоровье не выше максимума этого снимка. */
+  function holds(s: GameSession, p: { hp: number; maxHp: number }, ticks: number, input: PlayerInput = idle): void {
+    for (let i = 0; i < ticks; i++) {
+      s.tick(1 / 30, { p1: input });
+      expect(p.hp, `тик ${i}: ${p.hp} при максимуме ${p.maxHp}`).toBeLessThanOrEqual(p.maxHp);
+    }
+  }
+
+  it('⭐ амулет +45 к жизни: надел, налился, снял — со следующего тика здоровье не выше нового максимума', () => {
+    const { r, s, p } = hero(90);
+    const max0 = p.maxHp;
+    const base = r.get('items.base').find((b) => (b as { slot?: string }).slot === 'amulet' && b.enabled !== false)!;
+    const amu = itemFromBaseId(r.get('items.base'), base.id, r.get('item-tiers'), 'drop')!;
+    amu.affixes.push({ affixId: 'hearty', kind: 'prefix', modifier: { stat: 'maxHp', kind: 'flat', value: 45 } });
+    amu.requirements = {};
+    expect(addToInventory(p.save.inventory, amu, r.get('balance').inventory)).toBe(true);
+    expect(equip(r, p.save, amu.uid).ok).toBe(true);
+    s.tick(1 / 30, { p1: idle });
+    expect(p.maxHp, 'амулет поднял максимум').toBe(max0 + 45);
+    p.hp = p.maxHp;                                   // налился: зелье, реген, левелап — итог один
+    expect(unequip(r, p.save, 'amulet').ok).toBe(true);
+    holds(s, p, 90);
+    expect(p.maxHp).toBe(max0);
+    expect(p.hp, 'прибавка ушла вместе с амулетом').toBe(max0);
+  });
+
+  it('⭐ стойка +15 % к жизни: включил, налился, выключил — прибавка ушла со следующего тика', () => {
+    const { s, p } = hero(91);
+    const max0 = p.maxHp;
+    p.save.skills['b-stance-a5'] = 1;
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-stance-a5' } });
+    s.tick(1 / 30, { p1: idle });
+    expect(p.toggles).toEqual(['b-stance-a5']);
+    expect(p.maxHp, 'стойка подняла максимум').toBeGreaterThan(max0);
+    p.hp = p.maxHp;
+    holds(s, p, 1, { ...idle, cast: 'b-stance-a5' });   // выключил
+    expect(p.toggles).toEqual([]);
+    holds(s, p, 60);
+    expect(p.maxHp).toBe(max0);
+    expect(p.hp).toBe(max0);
+  });
+
+  it('⭐ сброс атрибутов из Живучести: максимум упал — упало и здоровье', () => {
+    const { r, s, p } = hero(92);
+    const max0 = p.maxHp;
+    p.save.unspentAttributePoints = 20;
+    expect(allocAttr(p.save, 'vitality', 20).ok).toBe(true);
+    s.tick(1 / 30, { p1: idle });
+    expect(p.maxHp, 'Живучесть подняла максимум').toBeGreaterThan(max0);
+    p.hp = p.maxHp;
+    p.save.gold = 1_000_000;
+    expect(respec(r, p.save).ok).toBe(true);
+    holds(s, p, 30);
+    expect(p.maxHp).toBe(max0);
+    expect(p.hp).toBe(max0);
+  });
+
+  it('раненого не лечит: здоровье ниже нового максимума остаётся как было (подрезка, а не выравнивание)', () => {
+    const { s, p } = hero(93);
+    p.save.unspentAttributePoints = 20;
+    allocAttr(p.save, 'vitality', 20);
+    s.tick(1 / 30, { p1: idle });
+    p.hp = 10;
+    const regen = s.snapshotOf('p1')!.derived.hpRegen;
+    s.tick(1 / 30, { p1: idle });
+    expect(p.hp).toBeCloseTo(10 + regen / 30, 6);
+  });
+});
+
+/**
+ * ⚠ R5-05: УДАР И КАСТ ИГРОКА НЕ ПРОХОДЯТ СКВОЗЬ СТЕНУ И ЗАКРЫТУЮ ДВЕРЬ. Монстр отвечает только по прямой видимости
+ * (удар и выстрел её требуют), а нова, земля, метеор, бумеранг и проклятие игрока видимости не спрашивали: маг из
+ * коридора выжигал комнату босса за запертой рычагом дверью, и никто не мог ему ответить. Туда же — ближний удар
+ * длинным древком, рывок вдоль тонкой стены и прыжок в стену (R4-07 оставил их урон без проверки видимости).
+ */
+describe('⚠ R5-05: удар и каст игрока не проходят сквозь стену и закрытую дверь', () => {
+  /** Поле 30×13 с перегородкой во всю высоту в столбце 12 (x 384..416) из `cell`. */
+  function split(cell: Cell): Grid {
+    const g = openField(30, 13);
+    for (let y = 1; y < 12; y++) g[y]![12] = cell;
+    return g;
+  }
+  /** Герой класса `cls` у перегородки (столбец 10), неубиваемый монстр за ней (столбец 14), скилл `nodeId` выучен. */
+  function across(seed: number, cls: string, nodeId: string, layout: Partial<FloorLayout> = {}, r = reg()) {
+    const s = new GameSession(r, seed, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, cls));
+    p.save.skills[nodeId] = 5;
+    const behind = cellToWorld(14, 6);
+    s.enterFloor(1, { grid: split(Cell.Wall), spawn: cellToWorld(10, 6), monsters: [tankMon(r, behind.x, behind.y, 'undead')], ...layout });
+    return { r, s, p, m: s.world.monsters[0]! };
+  }
+  /** Жмёт каст каждый второй тик `ticks` тиков с полным ресурсом; события — все. */
+  function castFor(s: GameSession, p: { mana: number; stamina: number }, nodeId: string, ticks: number): SessionEvent[] {
+    const evs: SessionEvent[] = [];
+    for (let i = 0; i < ticks; i++) {
+      p.mana = 999; p.stamina = 999;
+      evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: i % 2 === 0 ? nodeId : null } }));
+    }
+    return evs;
+  }
+  const swings = (evs: SessionEvent[], id: string): number => evs.filter((e) => e.type === 'swing' && e.ability === id).length;
+  const monsterHits = (evs: SessionEvent[]): number => evs.filter((e) => e.type === 'hit' && e.target === 'monster').length;
+
+  for (const nodeId of ['b-class-mage-a2', 'b-fire-a2', 'b-fire-a1']) {
+    it(`⭐ ${nodeId} сквозь стену в клетку: скилл срабатывает, а монстр за стеной цел и без статусов`, () => {
+      const { s, p, m } = across(100, 'mage', nodeId);
+      const hp0 = m.hp;
+      const evs = castFor(s, p, nodeId, 300);
+      expect(swings(evs, nodeId), 'скилл кастовался').toBeGreaterThan(0);
+      expect(monsterHits(evs), 'ни одного попадания за стену').toBe(0);
+      expect(m.hp).toBe(hp0);
+      expect(m.debuffs).toEqual({});
+    });
+  }
+
+  it('⭐ проклятие не вешается сквозь стену', () => {
+    const { s, p, m } = across(101, 'mage', 'b-curse-a4');
+    const evs = castFor(s, p, 'b-curse-a4', 30);
+    expect(swings(evs, 'b-curse-a4')).toBeGreaterThan(0);
+    expect(m.debuffs, 'яд проклятия за стеной не висит').toEqual({});
+  });
+
+  it('контроль: без перегородки та же нова, тот же бумеранг и то же проклятие достают', () => {
+    for (const nodeId of ['b-class-mage-a2', 'b-fire-a1', 'b-curse-a4']) {
+      const { s, p, m } = across(102, 'mage', nodeId, { grid: openField(30, 13) });
+      const hp0 = m.hp;
+      const evs = castFor(s, p, nodeId, 120);
+      if (nodeId === 'b-curse-a4') { expect(m.debuffs.poison, nodeId).toBeTruthy(); continue; }
+      expect(monsterHits(evs), nodeId).toBeGreaterThan(0);
+      expect(m.hp, nodeId).toBeLessThan(hp0);
+    }
+  });
+
+  it('⭐ бумеранг о стену разворачивается к владельцу и гаснет у него, а не улетает сквозь', () => {
+    const { s, p } = across(103, 'mage', 'b-fire-a1');
+    castFor(s, p, 'b-fire-a1', 1);
+    for (let i = 0; i < 30 && !s.world.projectiles.length; i++) s.tick(1 / 30, { p1: idle });   // каст-тайм
+    expect(s.world.projectiles.length, 'бумеранг вылетел').toBe(1);
+    let maxX = 0;
+    for (let i = 0; i < 200 && s.world.projectiles.length; i++) {
+      s.tick(1 / 30, { p1: idle });
+      for (const pr of s.world.projectiles) maxX = Math.max(maxX, pr.pos.x);
+    }
+    expect(maxX, 'не залетел в стену').toBeLessThan(12 * TILE);
+    expect(s.world.projectiles.length, 'вернулся и погас').toBe(0);
+  });
+
+  it('⭐ закрытая дверь рычага держит нову; рычаг дёрнут — та же нова достаёт', () => {
+    const doorCells = Array.from({ length: 11 }, (_, i) => ({ cx: 12, cy: i + 1 }));
+    const lever = cellToWorld(10, 5);
+    const { s, p, m } = across(104, 'mage', 'b-class-mage-a2', {
+      grid: split(Cell.Door), doors: [{ id: 1, cells: doorCells }], levers: [{ id: 7, x: lever.x, y: lever.y, doorId: 1 }],
+    });
+    const hp0 = m.hp;
+    const shut = castFor(s, p, 'b-class-mage-a2', 90);
+    expect(swings(shut, 'b-class-mage-a2')).toBeGreaterThan(0);
+    expect(monsterHits(shut), 'сквозь закрытую дверь — ничего').toBe(0);
+    expect(m.hp).toBe(hp0);
+    p.pos = cellToWorld(10, 6);
+    expect(s.openLever('p1', 7), 'рычаг открыл дверь').toBe(1);
+    m.pos = cellToWorld(14, 6); m.vel = { x: 0, y: 0 };
+    const open = castFor(s, p, 'b-class-mage-a2', 90);
+    expect(monsterHits(open), 'дверь открыта — попадает').toBeGreaterThan(0);
+    expect(m.hp).toBeLessThan(hp0);
+  });
+
+  it('⭐ PvP: нова и проклятие не достают соперника за стеной', () => {
+    const r = reg();
+    const s = new GameSession(r, 105, 'normal');
+    const p1 = s.addPlayer('p1', newBotSave(r, 'mage'));
+    const p2 = s.addPlayer('p2', newBotSave(r, 'warrior'));
+    p1.save.skills['b-class-mage-a2'] = 5; p1.save.skills['b-curse-a4'] = 5;
+    s.enterFloor(1, { grid: split(Cell.Wall), spawn: cellToWorld(10, 6), monsters: [], pvp: true });
+    p1.pos = cellToWorld(11, 6); p2.pos = cellToWorld(13, 6);
+    const evs: SessionEvent[] = [];
+    for (let i = 0; i < 120; i++) {
+      p1.mana = 999;
+      const cast = i % 4 === 0 ? 'b-class-mage-a2' : i % 4 === 2 ? 'b-curse-a4' : null;
+      evs.push(...s.tick(1 / 30, { p1: { ...idle, cast }, p2: idle }));
+    }
+    expect(swings(evs, 'b-class-mage-a2')).toBeGreaterThan(0);
+    expect(swings(evs, 'b-curse-a4')).toBeGreaterThan(0);
+    expect(evs.filter((e) => e.type === 'hit' && e.target === 'player').length, 'соперник за стеной не задет').toBe(0);
+    expect(p2.debuffs).toEqual({});
+  });
+
+  it('⭐ ближний удар пикой (досягаемость ×1.8) не проходит стену в клетку; без стены — проходит', () => {
+    for (const walled of [true, false]) {
+      const r = reg();
+      const s = new GameSession(r, 106, 'normal');
+      const save = newBotSave(r, 'warrior');
+      save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'pike', r.get('item-tiers'), 'drop')!;
+      const p = s.addPlayer('p1', save);
+      const at = { x: 12 * TILE - p.radius - 1, y: cellToWorld(0, 6).y };
+      const mx = 13 * TILE + 13;
+      s.enterFloor(1, { grid: walled ? split(Cell.Wall) : openField(30, 13), spawn: at, monsters: [tankMon(r, mx, at.y, 'undead')] });
+      const m = s.world.monsters[0]!;
+      const evs: SessionEvent[] = [];
+      for (let i = 0; i < 60; i++) {
+        p.pos = { ...at }; m.pos = { x: mx, y: at.y }; m.vel = { x: 0, y: 0 };
+        evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: 0, attack: true } }));
+      }
+      expect(evs.some((e) => e.type === 'swing' && e.ability === 'attack'), 'удар был').toBe(true);
+      if (walled) expect(monsterHits(evs), 'сквозь стену — ничего').toBe(0);
+      else expect(monsterHits(evs), 'в открытую — достаёт').toBeGreaterThan(0);
+    }
+  });
+
+  it('⭐ прыжок в стену: удар приземления не достаёт монстра за ней', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_leap', activeFx({ category: 'cast', shape: 'leap', radius: 120, dashDist: 150, damageMult: 3 }));
+    const { s, p, m } = across(107, 'warrior', 't_leap', {}, r);
+    const hp0 = m.hp;
+    const evs = castFor(s, p, 't_leap', 60);
+    expect(swings(evs, 't_leap')).toBeGreaterThan(0);
+    expect(monsterHits(evs)).toBe(0);
+    expect(m.hp).toBe(hp0);
+  });
+
+  it('⭐ рывок вдоль тонкой стены не рубит монстра по ту сторону', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_dash', activeFx({ category: 'cast', shape: 'dash', damageMult: 3, dashDist: 130, dashSpeed: 700 }));
+    const s = new GameSession(r, 108, 'normal');
+    const save = newBotSave(r, 'warrior');
+    // Широкий и длинный замах: полуширина коридора рывка больше двух клеток — раньше доставал через стену.
+    save.equipment.weapon = { ...save.equipment.weapon!, reachMult: 2, arcMult: 1.5 };
+    const p = s.addPlayer('p1', save);
+    learn(p, 't_dash');
+    const g = openField(30, 13);
+    for (let x = 1; x < 29; x++) g[6]![x] = Cell.Wall;           // стена во всю ширину по строке 6
+    const mp = cellToWorld(8, 7);
+    s.enterFloor(1, { grid: g, spawn: cellToWorld(5, 5), monsters: [tankMon(r, mp.x, mp.y, 'undead')] });
+    const m = s.world.monsters[0]!;
+    const hp0 = m.hp;
+    p.mana = 999;
+    const evs = s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 't_dash' } });
+    expect(swings(evs, 't_dash'), 'рывок сработал').toBe(1);
+    expect(monsterHits(evs)).toBe(0);
+    expect(m.hp).toBe(hp0);
+  });
+});
+
+/**
+ * ⚠ R5-06: ДОБИТОЕ СТАТУСОМ — ТОМУ, КТО СТАТУС ПОВЕСИЛ. Смерть от тика кровотечения, яда или поджига записывалась первому
+ * в комнате: опыт, левелапы, «Уничтожить N» и лечение за убийство уходили хозяину — простаивающему у входа или вовсе
+ * мёртвому альту, — а игрок статус-билда, вошедший вторым, не получал ничего. Тот же ярлык брал шум брони хозяина.
+ */
+describe('⚠ R5-06: добитое статусом — тому, кто статус повесил', () => {
+  /** Хозяин (вошёл первым) и основной герой-маг с проклятием яда; монстр на 500 опыта у основного. */
+  function coop(seed: number) {
+    const r = reg();
+    const s = new GameSession(r, seed, 'normal', { rewards: true });
+    const host = s.addPlayer('host', newBotSave(r, 'mage'));
+    const main = s.addPlayer('main', newBotSave(r, 'mage'));
+    main.save.skills['b-curse-a4'] = 1;
+    const mp = cellToWorld(20, 6);
+    const mon = tankMon(r, mp.x, mp.y, 'undead');
+    mon.def.hp = 30; mon.def.xp = 500; mon.def.hpRegen = 0;
+    s.enterFloor(1, { grid: openField(30, 13), spawn: cellToWorld(3, 6), monsters: [mon] });
+    main.pos = cellToWorld(18, 6);
+    return { r, s, host, main, m: s.world.monsters[0]! };
+  }
+  /** Тикает до смерти монстра; основной герой не умирает (здоровье доливается), хозяин стоит. */
+  function untilDead(s: GameSession, main: { hp: number; maxHp: number; mana: number }, m: { alive: boolean }, first: PlayerInput, ids = ['host', 'main']): SessionEvent[] {
+    const evs: SessionEvent[] = [];
+    for (let i = 0; i < 600 && m.alive; i++) {
+      main.hp = main.maxHp; main.mana = 999;
+      const inputs: Record<string, PlayerInput> = {};
+      for (const id of ids) inputs[id] = id === 'main' && i === 0 ? first : idle;
+      evs.push(...s.tick(1 / 30, inputs));
+    }
+    return evs;
+  }
+  const died = (evs: SessionEvent[]) => evs.find((e) => e.type === 'monster-died') as Extract<SessionEvent, { type: 'monster-died' }> | undefined;
+  const xpTo = (evs: SessionEvent[], id: string): number => evs.filter((e) => e.type === 'xp' && e.playerId === id).reduce((a, e) => a + (e as { amount: number }).amount, 0);
+
+  for (const hostDead of [true, false]) {
+    it(`⭐ яд проклятия второго героя добил монстра — убийство и опыт его; хозяин (${hostDead ? 'мёртв' : 'жив, стоит у входа'}) не получает ничего`, () => {
+      const { s, host, main, m } = coop(hostDead ? 110 : 111);
+      if (hostDead) { host.alive = false; host.hp = 0; }
+      const evs = untilDead(s, main, m, { ...idle, cast: 'b-curse-a4' });
+      expect(m.alive, 'яд добил').toBe(false);
+      expect(evs.some((e) => e.type === 'hit' && e.target === 'monster'), 'прямого удара не было — только яд').toBe(false);
+      expect(died(evs)?.by).toBe('main');
+      expect(xpTo(evs, 'main')).toBe(500);
+      expect(xpTo(evs, 'host')).toBe(0);
+      expect(host.save.xp).toBe(0);
+      expect(main.save.xp).toBe(500);
+    });
+  }
+
+  it('⭐ кровотечение от удара оружием (через попадание) — тоже тому, кто ударил', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_bleed', activeFx({ category: 'attack', damageMult: 1, ailment: { kind: 'bleed', chance: 1, mag: 5, maxStacks: 5, durationMs: 4000 } }));
+    const s = new GameSession(r, 112, 'normal', { rewards: true });
+    const host = s.addPlayer('host', newBotSave(r, 'warrior'));
+    const main = s.addPlayer('main', newBotSave(r, 'warrior'));
+    learn(main, 't_bleed');
+    const mp = cellToWorld(20, 6);
+    const mon = tankMon(r, mp.x, mp.y, 'undead');
+    mon.def.xp = 500; mon.def.hpRegen = 0;
+    s.enterFloor(1, { grid: openField(30, 13), spawn: cellToWorld(3, 6), monsters: [mon] });
+    const m = s.world.monsters[0]!;
+    main.pos = { x: mp.x - 30, y: mp.y };
+    for (let i = 0; i < 120 && !m.debuffs.bleed; i++) {
+      main.hp = main.maxHp; main.stamina = 999; main.mana = 999;
+      s.tick(1 / 30, { host: idle, main: { ...idle, facing: 0, cast: 't_bleed' } });
+    }
+    expect(m.debuffs.bleed, 'кровотечение повешено ударом').toBeTruthy();
+    m.hp = 0.01;                                        // следующий тик кровотечения добивает
+    const evs = s.tick(1 / 30, { host: idle, main: idle });
+    expect(m.alive).toBe(false);
+    expect(died(evs)?.by).toBe('main');
+    expect(xpTo(evs, 'main')).toBe(500);
+    expect(host.save.xp).toBe(0);
+  });
+
+  it('повесивший ушёл из комнаты — добитое статусом не засчитывается никому (и не первому в комнате)', () => {
+    const { s, host, main, m } = coop(113);
+    for (let i = 0; i < 40 && !m.debuffs.poison; i++) {
+      main.mana = 999; main.hp = main.maxHp;
+      s.tick(1 / 30, { host: idle, main: { ...idle, cast: i === 0 ? 'b-curse-a4' : null } });
+    }
+    expect(m.debuffs.poison, 'яд повешен').toBeTruthy();
+    s.removePlayer('main');
+    const evs = untilDead(s, host, m, idle, ['host']);
+    expect(m.alive).toBe(false);
+    expect(died(evs)?.by).toBeUndefined();
+    expect(xpTo(evs, 'host')).toBe(0);
+    expect(host.save.xp).toBe(0);
+  });
+
+  it('⭐ шум брони — у ЦЕЛИ монстра, а не у первого в комнате: латник-хозяин вдали не делает тихого соседа слышным', () => {
+    for (const [hostPlate, mainPlate, heard] of [[true, false, false], [false, true, true]] as const) {
+      const r = reg();
+      (r.get('armor-classes').find((c) => c.id === 'plate') as { noise: number }).noise = 0.8;   // латы: слышно ×1.8
+      const s = new GameSession(r, 114, 'normal');
+      const host = s.addPlayer('host', newBotSave(r, 'warrior'));
+      const main = s.addPlayer('main', newBotSave(r, 'warrior'));
+      const plate = itemFromBaseId(r.get('items.base'), 'plate-armor', r.get('item-tiers'), 'drop')!;
+      if (hostPlate) host.save.equipment.chest = plate;
+      if (mainPlate) main.save.equipment.chest = plate;
+      const mp = cellToWorld(20, 6);
+      const mon = tankMon(r, mp.x, mp.y, 'undead');
+      mon.def.hearing = 100; mon.def.vision = 0;             // только слух
+      s.enterFloor(1, { grid: openField(30, 13), spawn: cellToWorld(2, 2), monsters: [mon] });
+      host.pos = cellToWorld(2, 2);
+      main.pos = { x: mp.x - 150, y: mp.y };                 // 150: тихого не слышно (100), латника — да (180)
+      const m = s.world.monsters[0]!;
+      for (let i = 0; i < 5; i++) { m.pos = { ...mp }; s.tick(1 / 30, { host: idle, main: idle }); }
+      expect(m.aiState, `латы: хозяин ${hostPlate}, сосед ${mainPlate}`).toBe(heard ? 'chase' : 'idle');
+    }
+  });
+});
+
+/**
+ * ⚠ R6-02: ЗАМАХ ПОМНИТ, ЧЕМ ОН НАЧАТ. Скорость удара решается на старте замаха, а урон считался на ударе — по ЖИВОМУ сейву.
+ * Команды экипировки и гнёзд ходят где угодно (scope 'any') и приходят между тиками: изменённый клиент замахивался кинжалом
+ * и бил молотом (темп кинжала, урон/дальность/вес молота — ×1.17–1.25 к лучшему честному), кастовал с пустыми гнёздами
+ * (цена голого скила) и вставлял «пламенное лезвие» до удара — огонь без маны; та же щель — аура скорости на замахе и аура
+ * урона к удару. Теперь снаряжение или ауры сменились за замах — удар пропал (цена и откат уже списаны); вставки удара — те,
+ * что оплачены на касте.
+ */
+describe('⚠ R6-02: смена снаряжения, аур и вставок за время замаха не доезжает до удара', () => {
+  /** Воин (все атрибуты 120) с кинжалом в руке, молотом и кольцом в сумке; перед ним неубиваемый манекен без уворота. */
+  function rig(seed: number, mut?: (r: ConfigRegistry) => void) {
+    const r = reg();
+    mut?.(r);
+    const s = new GameSession(r, seed, 'normal');
+    const save = newBotSave(r, 'warrior');
+    for (const k of Object.keys(save.attributes) as (keyof typeof save.attributes)[]) save.attributes[k] = 120;
+    delete save.equipment.offhand;
+    const tiers = r.get('item-tiers');
+    const [dagger, maul, ring] = ['dagger', 'maul', 'simple-ring'].map((id) => itemFromBaseId(r.get('items.base'), id, tiers, 'drop')!);
+    save.inventory = [];
+    for (const it of [dagger!, maul!, ring!]) expect(addToInventory(save.inventory, it, r.get('balance').inventory)).toBe(true);
+    expect(equip(r, save, dagger!.uid).ok).toBe(true);
+    const p = s.addPlayer('p1', save);
+    const spawn = cellToWorld(6, 6);
+    const at = { x: spawn.x + 34, y: spawn.y };
+    s.enterFloor(1, { grid: openField(20, 12), spawn, monsters: [tankMon(r, at.x, at.y, 'beast')] });
+    const m = s.world.monsters[0]!;
+    /** Тик с манекеном на месте (ИИ его не уводит) и полными пулами. */
+    const tick = (input: PlayerInput): SessionEvent[] => { m.pos = { ...at }; p.pos = { ...spawn }; return s.tick(1 / 30, { p1: { ...input, facing: 0 } }); };
+    /** Дотикать, пока идёт замах (и ещё кадр), — всё, что он успел нанести. */
+    const settle = (): SessionEvent[] => { const evs: SessionEvent[] = []; for (let i = 0; i < 90 && (i === 0 || p.windup); i++) evs.push(...tick(idle)); return evs; };
+    return { r, s, p, save, dagger: dagger!, maul: maul!, ring: ring!, tick, settle };
+  }
+  const monsterHits = (evs: SessionEvent[]) => evs.filter((e): e is Extract<SessionEvent, { type: 'hit' }> => e.type === 'hit' && e.target === 'monster');
+
+  it('⭐ замах кинжалом, молот в руку до удара — удар пропал; честный замах тем же кинжалом — попал', () => {
+    for (const swap of [false, true]) {
+      const { r, p, save, maul, tick, settle } = rig(61);
+      const evs = tick({ ...idle, attack: true });
+      expect(evs.some((e) => e.type === 'swing' && e.ability === 'attack'), 'замах пошёл').toBe(true);
+      expect(p.windup, 'удар — по завершении замаха').not.toBeNull();
+      if (swap) expect(equip(r, save, maul.uid).ok, 'команда города между тиками').toBe(true);
+      const hits = monsterHits(settle());
+      if (swap) expect(hits, 'ни урона молота темпом кинжала, ни удара вообще').toEqual([]);
+      else expect(hits.length, 'контроль: без подмены удар есть').toBe(1);
+    }
+  });
+
+  it('⭐ смена ЛЮБОЙ надетой вещи за замах гасит удар: кольцо на скорость на замахе, на урон — к удару', () => {
+    const { r, save, ring, tick, settle } = rig(62);
+    tick({ ...idle, attack: true });
+    expect(equip(r, save, ring.uid).ok).toBe(true);
+    expect(monsterHits(settle())).toEqual([]);
+    // Следующий замах — уже с кольцом с самого начала: бьёт как обычно.
+    const after: SessionEvent[] = [];
+    for (let i = 0; i < 90; i++) after.push(...tick({ ...idle, attack: true }));
+    expect(monsterHits(after).length, 'удары вернулись со следующего замаха').toBeGreaterThan(0);
+  });
+
+  it('⭐ аура скорости на замахе, аура урона к удару (тогл — вводом в любой кадр) — удар пропал', () => {
+    for (const swap of [false, true]) {
+      const { p, tick, settle } = rig(67);
+      learn(p, 'b-aura-a5', 'b-aura-a1');
+      tick({ ...idle, cast: 'b-aura-a5' });
+      for (let i = 0; i < 30; i++) tick(idle);   // аура включена задолго до замаха
+      expect(p.toggles).toEqual(['b-aura-a5']);
+      tick({ ...idle, attack: true });
+      expect(p.windup).not.toBeNull();
+      const evs = swap ? tick({ ...idle, cast: 'b-aura-a1' }) : [];
+      if (swap) expect(p.toggles, 'эксклюзив-группа: скорость сменилась уроном').toEqual(['b-aura-a1']);
+      const hits = monsterHits([...evs, ...settle()]);
+      if (swap) expect(hits, 'темп ауры скорости с уроном ауры урона не бьёт').toEqual([]);
+      else expect(hits.length, 'контроль').toBe(1);
+    }
+  });
+
+  it('⭐ каст, который разрешает только кинжал: за каст-тайм молот в руку — каст не исполнился', () => {
+    for (const swap of [false, true]) {
+      const { r, p, save, maul, tick, settle } = rig(63, (rr) => injectSkill(rr, 'warrior', 't_dagger_nova',
+        activeFx({ category: 'cast', shape: 'nova', radius: 130, damageMult: 2, castTimeSec: 0.6, weaponClasses: ['dagger'] })));
+      learn(p, 't_dagger_nova');
+      p.mana = 30;
+      const evs = tick({ ...idle, cast: 't_dagger_nova' });
+      expect(evs.some((e) => e.type === 'swing' && e.ability === 't_dagger_nova'), 'каст начат с кинжалом').toBe(true);
+      expect(p.windup).not.toBeNull();
+      if (swap) expect(equip(r, save, maul.uid).ok).toBe(true);
+      const hits = monsterHits(settle());
+      if (swap) expect(hits, 'кинжального каста с молотом в руке нет').toEqual([]);
+      else expect(hits.length, 'контроль: без подмены нова бьёт').toBe(1);
+    }
+  });
+
+  /** Атака-скил на выносливости + «пламенное лезвие» (мана); гнездо — по флагу `socketed` на касте. */
+  function insertRig(seed: number, insertId: string, socketed: boolean) {
+    const k = rig(seed, (rr) => injectSkill(rr, 'warrior', 't_edge', activeFx({ category: 'attack', resource: 'stamina', manaCost: 6, damageMult: 2 })));
+    const { r, p, save } = k;
+    learn(p, 't_edge');
+    save.skills[r.get('skill-tree').nodes.find((n) => n.effect.grantsInsert === insertId)!.id] = 1;   // донор вставки
+    if (socketed) expect(socketInsert(r, save, 't_edge', 0, insertId).ok).toBe(true);
+    p.stamina = 30; p.mana = 25;
+    return k;
+  }
+
+  it('⭐ каст с пустым гнездом, «пламенное лезвие» вставлено до удара — удар без огня и без траты маны', () => {
+    const { r, p, save, tick, settle } = insertRig(64, 'ins-flame-edge', false);
+    const evs = tick({ ...idle, cast: 't_edge' });
+    expect(evs.some((e) => e.type === 'swing' && e.ability === 't_edge')).toBe(true);
+    const manaAfterCast = p.mana;
+    expect(socketInsert(r, save, 't_edge', 0, 'ins-flame-edge').ok, 'вставка — командой между тиками').toBe(true);
+    const hits = monsterHits(settle());
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.byType.fire, 'огня, за который не платили, нет').toBe(0);
+    expect(p.mana, 'мана за вставку не списана задним числом').toBeGreaterThanOrEqual(manaAfterCast);
+  });
+
+  it('обратное: оплаченная вставка, вынутая до удара, удару всё равно достаётся', () => {
+    const { r, save, tick, settle } = insertRig(65, 'ins-flame-edge', true);
+    tick({ ...idle, cast: 't_edge' });
+    expect(socketClear(r, save, 't_edge', 0).ok).toBe(true);
+    const hits = monsterHits(settle());
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.byType.fire, 'заплачено на касте — огонь есть').toBeGreaterThan(0);
+  });
+
+  it('⭐ печать, вставленная за замах, не срабатывает: прок — только у оплаченного на касте', () => {
+    const { r, p, save, tick, settle } = insertRig(66, 'ins-ward', false);
+    tick({ ...idle, cast: 't_edge' });
+    expect(socketInsert(r, save, 't_edge', 0, 'ins-ward').ok).toBe(true);
+    settle();
+    expect(p.skillBuffs['ins:ins-ward'], 'печати нет').toBeUndefined();
+  });
+});
+
+/**
+ * ⚠ R6-15: У БАФФА ЕСТЬ ОТКАТ. Ветка `buff` отказывала только пока бафф висит, а `skillCd` не читала и не ставила: у всех
+ * пяти баффов игры откат длиннее действия (воин a5 — 12 с на 8 с), и повтор в кадр истечения держал бафф 100 % времени.
+ */
+describe('⚠ R6-15: бафф держит свой откат', () => {
+  it('⭐ «b-class-warrior-a5» зажат 40 с: касты не чаще отката (12 с), откат встаёт сразу, клиенту — свинг с откатом', () => {
+    const r = reg();
+    const s = new GameSession(r, 7, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    p.save.skills['b-class-warrior-a5'] = 1;
+    s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+    const node = r.get('skill-tree').nodes.find((n) => n.id === 'b-class-warrior-a5')!;
+    const a = node.effect.active!;
+    expect(a.category).toBe('buff');
+    const cd = a.cooldown;
+    expect(cd, 'предпосылка: откат длиннее действия').toBeGreaterThan(a.category === 'buff' ? a.durationSec : Infinity);
+    const casts: number[] = [];
+    const swings: Extract<SessionEvent, { type: 'swing' }>[] = [];
+    let up = 0;
+    const dt = 1 / 30, T = 40 * 30;
+    for (let i = 0; i < T; i++) {
+      p.stamina = 50; p.mana = 50;
+      const had = (p.skillBuffs['b-class-warrior-a5'] ?? 0) > 0;
+      const evs = s.tick(dt, { p1: { ...idle, cast: 'b-class-warrior-a5' } });
+      const has = (p.skillBuffs['b-class-warrior-a5'] ?? 0) > 0;
+      if (has) up++;
+      if (!had && has) {
+        casts.push(i * dt);
+        expect(p.skillCd['b-class-warrior-a5'], 'откат встал в кадр каста').toBeGreaterThan(cd - 0.1);
+      }
+      for (const e of evs) if (e.type === 'swing' && e.ability === 'b-class-warrior-a5') swings.push(e);
+    }
+    expect(casts.length, 'касты были').toBeGreaterThan(1);
+    for (let k = 1; k < casts.length; k++) expect(casts[k]! - casts[k - 1]!, `промежуток ${k}`).toBeGreaterThanOrEqual(cd - 1e-6);
+    expect(up / T, 'время под баффом — действие/откат, а не 100 %').toBeLessThan(0.75);
+    expect(swings.length, 'свинг на каждый каст — клиент рисует откат слота').toBe(casts.length);
+    expect(swings[0]!.cooldownMs).toBeCloseTo(cd * 1000, 0);
+    expect(swings[0]!.lockMs, 'бафф не занимает общий attack-лок').toBe(0);
+  });
+});
+
+/**
+ * ⚠ R6-26: ДОБЫЧА НЕ ПЕРЕЛЕТАЕТ СТЕНУ И НЕ БЕРЁТСЯ СКВОЗЬ НЕЁ. Бросок наград (44–84 px прочь от убившего) проверял лишь
+ * клетку приземления: убитый у стены в клетку или у закрытой двери ронял добычу в соседнюю комнату, а то и в запечатанную
+ * область. Подбор (клик, [E], автоподбор) мерил только расстояние — вещь и золото за стеной брались сквозь неё.
+ */
+describe('⚠ R6-26: добыча и стена', () => {
+  /** Поле 20×12, стена во всю высоту по столбцу 10: правая половина запечатана. */
+  function walled(): Grid { const g = openField(20, 12); for (let y = 0; y < 12; y++) g[y]![10] = Cell.Wall; return g; }
+  const wallX = 10 * TILE;
+
+  it('⭐ убитый у стены монстр: ни золото, ни сырьё, ни вещь не ложатся за стеной (40 сидов)', () => {
+    let drops = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const r = reg();
+      const loot = r.get('balance').loot as { dropChance: number; goldChance: number; potions: { chance: number }; materials: { chance: number } };
+      loot.dropChance = 1; loot.goldChance = 1; loot.materials.chance = 1; loot.potions.chance = 1;
+      const s = new GameSession(r, seed, 'normal');
+      const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+      const pp = cellToWorld(8, 6), mp = cellToWorld(9, 6);
+      s.enterFloor(1, { grid: walled(), spawn: pp, monsters: [weakMon(r, mp.x, mp.y)] });
+      const m = s.world.monsters[0]!;
+      for (let i = 0; i < 300 && m.alive; i++) { m.pos = { ...mp }; p.pos = { ...pp }; s.tick(1 / 30, { p1: { ...idle, facing: 0, attack: true } }); }
+      expect(m.alive, `сид ${seed}`).toBe(false);
+      // Кадр смерти: всё, что упало, ещё лежит (автоподбор — со следующего тика).
+      for (const d of s.world.drops) { drops++; expect(d.pos.x, `сид ${seed}: ${d.kind} за стеной`).toBeLessThan(wallX); }
+    }
+    expect(drops, 'сторож не выродился').toBeGreaterThan(80);
+  });
+
+  it('⭐ подбор по клику, [E] и автоподбор сквозь стену — нет; без стены те же точки — да', () => {
+    for (const wall of [true, false]) {
+      const r = reg();
+      const s = new GameSession(r, 5, 'normal');
+      const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+      const y = cellToWorld(9, 6).y;
+      s.enterFloor(1, { grid: wall ? walled() : openField(20, 12), spawn: cellToWorld(9, 6), monsters: [] });
+      const at = { x: wallX - 14, y };                         // вплотную к стене
+      p.pos = { ...at };
+      const item = itemFromBaseId(r.get('items.base'), 'dagger', r.get('item-tiers'), 'drop')!;
+      s.world.drops.push({ id: 900, kind: 'item', pos: { x: wallX + TILE + 1, y }, item });          // 47 px — в радиусе клика (48)
+      s.world.drops.push({ id: 901, kind: 'gold', pos: { x: wallX + TILE + 1, y: y + 20 }, gold: 10 }); // ≈51 px — в радиусе автоподбора (56)
+      const got = s.pickupDropById('p1', 900);
+      p.pos = { ...at };
+      s.tick(1 / 30, { p1: { ...idle, interact: true } });   // [E] + автоподбор
+      const left = s.world.drops.map((d) => d.id).sort();
+      if (wall) {
+        expect(got, 'клик сквозь стену').toBeNull();
+        expect(left, '[E] и автоподбор сквозь стену').toEqual([900, 901]);
+      } else {
+        expect(got?.item?.uid, 'контроль: без стены клик берёт').toBe(item.uid);
+        expect(left, 'контроль: золото подобрано само').toEqual([]);
+      }
+    }
+  });
+
+  it('⭐ сундук и рычаг за стеной не открываются; стоя рядом — открываются', () => {
+    const r = reg();
+    const s = new GameSession(r, 6, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const y = cellToWorld(9, 6).y;
+    const beyond = { x: wallX + TILE + 8, y };                // клетка за стеной, 54 px от игрока: в радиусе 56
+    s.enterFloor(1, {
+      grid: walled(), spawn: cellToWorld(9, 6), monsters: [],
+      chests: [{ id: 1, x: beyond.x, y: beyond.y, tier: 'plain' }],
+      levers: [{ id: 1, x: beyond.x, y: beyond.y + 10, doorId: 1 }],
+      doors: [{ id: 1, cells: [{ cx: 15, cy: 2 }] }],
+    });
+    p.pos = { x: wallX - 14, y };
+    expect(s.openChest('p1', 1), 'сундук сквозь стену').toBe(false);
+    expect(s.openLever('p1', 1), 'рычаг сквозь стену').toBeNull();
+    p.pos = { x: beyond.x + 20, y: beyond.y + 5 };            // по ту сторону, рядом с обоими
+    expect(s.openChest('p1', 1)).toBe(true);
+    expect(s.openLever('p1', 1)).toBe(1);
   });
 });

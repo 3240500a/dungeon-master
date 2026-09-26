@@ -2,7 +2,9 @@
 // Строятся вдоль −Y; хват доворачивает клинок/древко вперёд (+Z). userData.baseRot/basePos — база для бленда
 // idle-верха/удара в poseRuntime. attachWeapons цепляет группы к костям кистей и возвращает их (порядок: основная, офф).
 import * as THREE from 'three';
+import type { ConfigRegistry, WeaponLook, WeaponLookHand } from '@dm/shared';
 import type { Humanoid } from './humanoid.js';
+import { disposeOwnGeometry, mountCraftLook, releaseCraftLook } from './craftWeapon3d.js';
 
 // Одиночные наборы оружия. Офф-рука (щит/второе оружие) добавляется отдельным селектором → ключ 'main+off'.
 export const WEAPONS = ['none',
@@ -93,7 +95,27 @@ export function dropWeaponHost(g: THREE.Group): void {
 const _hqA = new THREE.Quaternion(), _hqF = new THREE.Quaternion();
 const _hsA = new THREE.Vector3(), _hsF = new THREE.Vector3();
 
-export function attachWeapons(human: Humanoid, weapon: string, models?: { main?: string; off?: string }): THREE.Group[] {
+/**
+ * Вид оружия из деталей (D22) для `attachWeapons`: реестр и руки из `weaponLook`. Рука с видом получает модель
+ * ковки (`craftWeapon3d`) вместо процедурного меша — сразу, если построитель уже загружен, иначе догрузкой
+ * (`applyCraftLooks`). ⚠ Вид ГЛАВНЕЕ GLB-модели базы: у пиров GLB нет вовсе (в `peerInfo` их не шлют), и свой меч
+ * иначе выглядел бы не так, как его видят другие. Нет вида или он не строится — GLB/процедурка, как раньше.
+ */
+export interface CraftLookOpts { reg: ConfigRegistry; look?: WeaponLook }
+
+/**
+ * Снять группу руки: устареть (догрузка модели её пропустит), отпустить модель ковки в кэш, освободить СВОЮ
+ * геометрию (процедурную). Общую геометрию модели ковки не трогает — её держат и другие куклы.
+ */
+export function disposeWeaponGroup(g: THREE.Group): void {
+  g.userData.stale = true;
+  g.parent?.remove(g);
+  dropWeaponHost(g);
+  releaseCraftLook(g);
+  disposeOwnGeometry(g);
+}
+
+export function attachWeapons(human: Humanoid, weapon: string, models?: { main?: string; off?: string }, craft?: CraftLookOpts): THREE.Group[] {
   const groups: THREE.Group[] = [];
   /**
    * ⚠⚠ ПУСТАЯ РУКА ВСЁ РАВНО ЗАНИМАЕТ СВОЙ СЛОТ. Номер группы — это КОНТРАКТ: 0 = главная рука,
@@ -104,7 +126,7 @@ export function attachWeapons(human: Humanoid, weapon: string, models?: { main?:
    *
    * Пустая группа ничего не рисует и ничего не весит: это просто держатель номера.
    */
-  const attach = (kind: string, boneName: string, modelId?: string): void => {
+  const attach = (kind: string, boneName: string, modelId?: string, look?: WeaponLookHand): void => {
     if (kind === 'none') { groups.push(new THREE.Group()); return; }
     const g = makeWeaponMesh(kind); const bone = human.bones.get(boneName);
     if (!bone) return;
@@ -113,15 +135,20 @@ export function attachWeapons(human: Humanoid, weapon: string, models?: { main?:
     else g.rotation.set(-Math.PI / 2, 0, 0);                                                    // клинок/древко — вперёд (+Z), параллельно земле
     g.userData.baseRot = g.rotation.clone(); g.userData.basePos = g.position.clone();           // база хвата — для бленда idle-верха/удара
     g.userData.handBone = boneName;   // имя кисти → рантайм переносит оружие на кисть ВИДИМОГО атлас-меша (2B)
-    if (modelId) g.userData.weaponModelId = modelId;   // Ф3: async-своп процедурных детей на GLB (applyWeaponModels)
+    // D22: вид из деталей главнее GLB (см. `CraftLookOpts`). Щит видом не бывает — у него нет деталей.
+    const craftLook = kind !== 'shield' && craft && look ? look : undefined;
+    if (craftLook) g.userData.craftLook = craftLook;
+    else if (modelId) g.userData.weaponModelId = modelId;   // Ф3: async-своп процедурных детей на GLB (applyWeaponModels)
     bone.add(g); groups.push(g);
+    if (craftLook) mountCraftLook(g, craft!.reg);   // построитель уже загружен → модель сразу; нет → догрузит `applyCraftLooks`
   };
   if (weapon === 'dual') weapon = 'sword+dagger';   // легаси-алиас старого комбо
   if (weapon === 'none') return groups;
+  const look = craft?.look;
   const plus = weapon.lastIndexOf('+');
-  if (plus > 0) { attach(weapon.slice(0, plus), 'RightHand', models?.main); attach(weapon.slice(plus + 1), 'LeftHand', models?.off); }   // main+off: щит ИЛИ второе оружие в левую руку
+  if (plus > 0) { attach(weapon.slice(0, plus), 'RightHand', models?.main, look?.main); attach(weapon.slice(plus + 1), 'LeftHand', models?.off, look?.off); }   // main+off: щит ИЛИ второе оружие в левую руку
   else if (weapon === 'shield') { attach('shield', 'LeftHand', models?.off ?? models?.main); }   // только щит (в офф-руке)
-  else if (weapon === 'bow') { attach('bow', 'LeftHand', models?.main); }
-  else attach(weapon, 'RightHand', models?.main);
+  else if (weapon === 'bow') { attach('bow', 'LeftHand', models?.main, look?.main); }
+  else attach(weapon, 'RightHand', models?.main, look?.main);
   return groups;
 }

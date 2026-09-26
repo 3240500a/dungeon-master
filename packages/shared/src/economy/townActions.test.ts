@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, socketInsert, socketClear } from './townActions.js';
+import { allocAttr, respec, attrRespecRefund, forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, unequip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
+import { emptyStash } from './stashActions.js';
 import { createRng } from '../formulas/rng.js';
 import { carriedMaterials } from './materials.js';
-import { generateItem } from '../formulas/itemgen.js';
+import { generateItem, itemFromBaseId } from '../formulas/itemgen.js';
+import { shapeFoundWeapon } from '../formulas/craft.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -22,6 +24,8 @@ function mkItem(uid: string, gridW: number, gridH: number, x: number, y: number)
   };
 }
 const saveWith = (...items: Item[]): SaveState => ({ inventory: items } as unknown as SaveState);
+/** Вещь в сумке по uid — ПОСЛЕ улучшения это новый объект (D14), старая ссылка его не видит. */
+const inBag = (save: SaveState, uid: string): Item => save.inventory.find((i) => i.uid === uid)!;
 
 describe('moveInventoryItem (авторитетная перекладка инвентаря)', () => {
   it('в пустую клетку — кладёт', () => {
@@ -70,10 +74,10 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
   const rich = (): Record<string, number> => ({ 'iron-1': 99, 'iron-2': 99, 'iron-3': 99, 'iron-4': 99, 'iron-5': 99 });
 
   /** Настоящий предмет из конвейера генерации — у выдуманного нет ни тира, ни базовых статов. */
-  const rolled = (ilvl: number): Item => generateItem(
+  const rolled = (ilvl: number, rarity: Item['rarity'] = 'normal'): Item => generateItem(
     reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
     { dropBias: 1, itemLevel: ilvl, baseId: swordBase.id, tiers: reg.get('item-tiers'),
-      rarities: reg.get('rarities'), forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement },
+      rarities: reg.get('rarities'), forceRarity: rarity, maxReqTotal: reg.get('balance').maxTotalRequirement },
     createRng(1));
 
   it('⭐ улучшение поднимает ТИР на ступень, а не множит статы', () => {
@@ -84,24 +88,27 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     // улучшения: после него `it` уже на следующей ступени, и `forgeGold` вернул бы цену ДРУГОГО шага.
     const paid = forgeGold(reg, it, 'upgrade');
     expect(forgeUpgrade(reg, save, it.uid, wallet).ok).toBe(true);
-    expect(it.tier).toBe('t1');
+    // D14: улучшение ЗАМЕНЯЕТ объект в сумке — смотрим на то, что лежит там теперь.
+    const up = inBag(save, it.uid);
+    expect(up.tier).toBe('t1');
     expect(save.gold).toBe(1000 - paid);
     expect(wallet['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
     // Имя обновилось приставкой нового тира, а не украсилось звёздочкой.
     const t1 = reg.get('item-tiers').find((t) => t.id === 't1')!;
-    expect(it.name.startsWith(t1.name)).toBe(true);
+    expect(up.name.startsWith(t1.name)).toBe(true);
   });
 
   it('⭐ кузнечный тир РАВЕН найденному по статам, но ЛЕГЧЕ по требованиям', () => {
     const forged = rolled(1);
     const save = { gold: 1000, inventory: [forged], materials: rich() } as unknown as SaveState;
     expect(forgeUpgrade(reg, save, forged.uid, wallet).ok).toBe(true);
+    const up = inBag(save, forged.uid);
     const found = rolled(8); // тот же t1, но с пола
     expect(found.tier).toBe('t1');
     const dmg = (i: Item): number => i.baseStats.filter((m) => m.kind === 'flat').reduce((a, m) => a + m.value, 0);
-    expect(dmg(forged)).toBe(dmg(found));                    // сила одинаковая — иначе тир ничего не значит
+    expect(dmg(up)).toBe(dmg(found));                        // сила одинаковая — иначе тир ничего не значит
     const req = (i: Item): number => Object.values(i.requirements).reduce((a, b) => a + (b ?? 0), 0);
-    expect(req(forged)).toBeLessThan(req(found));            // а носится раньше — в этом смысл крафта
+    expect(req(up)).toBeLessThan(req(found));                // а носится раньше — в этом смысл крафта
   });
 
   it('⚠ выше потолка базы не поднять — лестница конечна по построению', () => {
@@ -114,12 +121,12 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     while (forgeUpgrade(reg, save, it.uid, deep).ok && steps < 50) steps++;
     expect(steps).toBeGreaterThan(0);
     expect(steps).toBeLessThan(20);                          // упёрлись, а не крутили бесконечно
-    expect(it.tier).toBe(swordBase.maxTier);
+    expect(inBag(save, it.uid).tier).toBe(swordBase.maxTier);
     expect(forgeUpgrade(reg, save, it.uid, deep).reason).toContain('Лучше');
   });
 
   it('⚠ перекатка КОНЕЧНА: предел из конфига', () => {
-    const it = rolled(30);
+    const it = rolled(30, 'magic');   // у обычной перекатывать нечего (R2-13) — предел мерить не на чем
     const save = { gold: 1_000_000, inventory: [it] } as unknown as SaveState;
     let n = 0;
     while (forgeReroll(reg, save, it.uid, createRng(n + 1)).ok && n < 50) n++;
@@ -175,11 +182,52 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
   });
 
   it('реролл: −золото, перекатывает аффиксы (столько же)', () => {
-    const it = weapon('w');
+    const it = weapon('w', 'magic');
     const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
     expect(forgeReroll(reg, save, 'w', createRng(1)).ok).toBe(true);
     expect(save.gold).toBe(1000 - forgeGold(reg, it, 'reroll'));
-    expect(Array.isArray(it.affixes)).toBe(true);   // пул мог дать 0/1 — но операция прошла и списала золото
+    expect(it.affixes.length).toBeGreaterThan(0);
+    expect(it.rerolls).toBe(1);
+  });
+
+  it('⚠ R2-13: обычную и уникальную не перекатить — отказ ДО платы, перекатка не тратится', () => {
+    for (const rarity of ['normal', 'unique'] as const) {
+      const it = weapon('w', rarity);
+      const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
+      const r = forgeReroll(reg, save, 'w', createRng(1));
+      expect(r.ok, rarity).toBe(false);
+      expect(r.reason, rarity).toMatch(rarity === 'normal' ? /нечего перекатывать/ : /Уникальные/);
+      expect(save.gold, rarity).toBe(1000);
+      expect(it.rerolls, rarity).toBeUndefined();
+    }
+  });
+
+  it('⚠ D14: улучшение ЗАМЕНЯЕТ вещь — ключи, снятые пересборкой клинка, исчезают', () => {
+    // Найденный клинок, чья новая форма НЕ даёт множителя урона. Ищем перебором, а не по имени базы:
+    // тест не должен ломаться от правки каталога клинков.
+    let found: Item | undefined;
+    for (const b of reg.get('items.base').filter((x) => x.kind === 'weapon' && x.enabled !== false)) {
+      for (let seed = 1; seed < 20 && !found; seed++) {
+        const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+          { dropBias: 1, itemLevel: 1, baseId: b.id, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal',
+            maxReqTotal: reg.get('balance').maxTotalRequirement, baseRoll: reg.get('balance').loot.baseRoll }, createRng(seed)));
+        const next = it.foundParts ? upgradedItem(reg, { ...it, damageMult: 1.37 }) : undefined;
+        if (next && !('damageMult' in next)) found = it;
+      }
+      if (found) break;
+    }
+    expect(found, 'в каталоге есть найденный клинок без множителя урона').toBeTruthy();
+    // Вещь из старого сейва: множитель остался от прежней формы клинка, пересборка его снимет.
+    const stale = { ...found!, damageMult: 1.37 } as Item;
+    const expected = upgradedItem(reg, stale)!;
+    const save = { gold: 1e9, inventory: [stale] } as unknown as SaveState;
+    const deep: Record<string, number> = Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 9999]));
+    expect(forgeUpgrade(reg, save, stale.uid, deep).ok).toBe(true);
+    const up = inBag(save, stale.uid);
+    expect(up, 'в сумке лежит НОВЫЙ объект').not.toBe(stale);
+    expect('damageMult' in up, 'устаревший множитель урона ушёл вместе со старым объектом').toBe(false);
+    expect(up).toEqual(expected);
+    expect(save.inventory.filter((i) => i.uid === stale.uid), 'вещь одна, не задвоилась').toHaveLength(1);
   });
 
   it('нет предмета → отказ', () => {
@@ -371,7 +419,7 @@ describe('разбор вещи на материалы (Ч3)', () => {
 
   it('кузница: вещь исчезает, а на её месте в СУМКЕ появляется сырьё', () => {
     const s = save(axe());
-    expect(forgeSalvage(reg, s, 'a', createRng(1)).ok).toBe(true);
+    expect(forgeSalvage(reg, s, emptyStash(reg), 'a', createRng(1)).ok).toBe(true);
     expect(s.inventory.some((i) => i.uid === 'a')).toBe(false);       // сама вещь ушла
     const got = carriedMaterials(s.inventory);
     expect(Object.values(got).reduce((x, y) => x + y, 0)).toBeGreaterThan(0);
@@ -385,7 +433,7 @@ describe('разбор вещи на материалы (Ч3)', () => {
     let field = 0;
     for (let seed = 1; seed <= 200; seed++) {
       const f = save(axe());
-      forgeSalvage(reg, f, 'a', createRng(seed));
+      forgeSalvage(reg, f, emptyStash(reg), 'a', createRng(seed));
       forge += sum(carriedMaterials(f.inventory));
       const g = save(axe());
       fieldSalvage(reg, g, 'a', createRng(seed));
@@ -397,14 +445,14 @@ describe('разбор вещи на материалы (Ч3)', () => {
 
   it('⚠ отказ НЕ съедает вещь: уник остаётся в сумке', () => {
     const s = save(axe('u', 'unique'));
-    const r = forgeSalvage(reg, s, 'u', createRng(1));
+    const r = forgeSalvage(reg, s, emptyStash(reg), 'u', createRng(1));
     expect(r.ok).toBe(false);
     expect(s.inventory).toHaveLength(1);
     expect(s.materials).toEqual({});
   });
 
   it('чужой uid — отказ', () => {
-    expect(forgeSalvage(reg, save(axe()), 'нет', createRng(1)).ok).toBe(false);
+    expect(forgeSalvage(reg, save(axe()), emptyStash(reg), 'нет', createRng(1)).ok).toBe(false);
     expect(fieldSalvage(reg, save(axe()), 'нет', createRng(1)).ok).toBe(false);
   });
 });
@@ -467,7 +515,7 @@ describe('сломанные трофеи и починка (Ч4)', () => {
 
   it('⭐ но РАЗОБРАТЬ сломанное можно — в этом и выбор', () => {
     const s = save(broken());
-    expect(forgeSalvage(reg, s, 'b', createRng(1)).ok).toBe(true);
+    expect(forgeSalvage(reg, s, emptyStash(reg), 'b', createRng(1)).ok).toBe(true);
     expect(s.inventory.some((i) => i.uid === 'b')).toBe(false);
     expect(Object.keys(carriedMaterials(s.inventory)).length).toBeGreaterThan(0);
   });
@@ -561,5 +609,298 @@ describe('⭐ forgeGold — цена привязана к СТУПЕНИ и Р�
     for (const op of ['upgrade', 'repair', 'reroll'] as const) {
       expect(forgeGold(reg, at(lowId, 'normal'), op)).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe('⚠ R1-02: снятое при экипировке — место под ВСЁ сразу, а не под каждую вещь поодиночке', () => {
+  const dims = reg.get('balance').inventory;
+  /** Вещь по базе, с «нулевыми» требованиями: проверяем место, а не атрибуты. */
+  const mk = (baseId: string): Item => {
+    const it = itemFromBaseId(reg.get('items.base'), baseId, reg.get('item-tiers'), 'drop')!;
+    it.requirements = {};
+    return it;
+  };
+  /** Сейв героя с пустой сумкой: снаряжение и пояс задаёт тест. */
+  const hero = (): SaveState => {
+    const s = newCharacterSave(reg, 'warrior', 'Герой', 'r102');
+    s.attributes = { strength: 999, dexterity: 999, intelligence: 999, vitality: 999 } as SaveState['attributes'];
+    s.equipment = {};
+    s.belt = [];
+    s.inventory = [];
+    return s;
+  };
+  /** Всё, кроме клеток `keep`, забито хламом 1×1: свободно ровно то, что оставил тест. */
+  const fillExcept = (s: SaveState, keep: (x: number, y: number) => boolean): void => {
+    const used = new Set<string>();
+    for (const it of s.inventory) if (it.pos) for (let y = 0; y < it.gridH; y++) for (let x = 0; x < it.gridW; x++) used.add(`${it.pos.x + x},${it.pos.y + y}`);
+    for (let y = 0; y < dims.rows; y++) for (let x = 0; x < dims.cols; x++) {
+      if (!keep(x, y) && !used.has(`${x},${y}`)) s.inventory.push(mkItem(`j${x}-${y}`, 1, 1, x, y));
+    }
+  };
+  /** Все uid героя: сумка + надетое + пояс. Вещь не может ни пропасть, ни задвоиться. */
+  const uids = (s: SaveState): string[] => [
+    ...s.inventory.map((i) => i.uid),
+    ...Object.values(s.equipment).filter((i): i is Item => !!i).map((i) => i.uid),
+    ...s.belt.filter((i): i is Item => !!i).map((i) => i.uid),
+  ].sort();
+  /** Никакие две вещи сумки не лежат друг на друге и все в сетке. */
+  const noOverlap = (s: SaveState): void => {
+    const cells = new Set<string>();
+    for (const it of s.inventory) {
+      expect(it.pos, it.uid).toBeTruthy();
+      for (let y = 0; y < it.gridH; y++) for (let x = 0; x < it.gridW; x++) {
+        const k = `${it.pos!.x + x},${it.pos!.y + y}`;
+        expect(cells.has(k), `${it.uid} на занятой клетке ${k}`).toBe(false);
+        expect(it.pos!.x + x < dims.cols && it.pos!.y + y < dims.rows, it.uid).toBe(true);
+        cells.add(k);
+      }
+    }
+  };
+
+  /** Одноручник 1×3 и щит 2×2 надеты, в сумке двуручник 2×3 в углу. */
+  const twoHander = (): { s: SaveState; claymore: Item } => {
+    const s = hero();
+    s.equipment.weapon = { ...mk('short-sword'), pos: null };
+    s.equipment.offhand = { ...mk('wooden-shield'), pos: null };
+    const claymore = { ...mk('claymore'), pos: { x: 0, y: 0 } };
+    s.inventory.push(claymore);
+    return { s, claymore };
+  };
+
+  it('двуручник вместо одноручника со щитом: каждое снятое влезает поодиночке, вместе — нет → отказ, сейв байт в байт', () => {
+    const { s, claymore } = twoHander();
+    fillExcept(s, (x, y) => x < 2 && y < 3);             // свободны только клетки под двуручником
+    const before = JSON.stringify(s);
+    const r = equip(reg, s, claymore.uid);
+    expect(r.ok, 'щит пропал бы молча').toBe(false);
+    expect(r.reason).toBe('Нет места для снятого');
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('⭐ хватает места на всё снятое — надевается, ни одна вещь не пропала и не задвоилась', () => {
+    const { s, claymore } = twoHander();
+    fillExcept(s, (x, y) => (x < 2 && y < 3) || (x >= 8 && y >= 4));   // + свободный угол 2×2 под щит
+    const before = uids(s);
+    const r = equip(reg, s, claymore.uid);
+    expect(r.ok, r.reason).toBe(true);
+    expect(s.equipment.weapon?.uid).toBe(claymore.uid);
+    expect(s.equipment.offhand).toBeUndefined();
+    expect(uids(s)).toEqual(before);
+    noOverlap(s);
+  });
+
+  it('снять пояс с двумя колбами: пояс и колбы влезают поодиночке, вместе — нет → отказ, сейв байт в байт', () => {
+    const s = hero();
+    s.equipment.belt = { ...mk('cloth-sash'), pos: null };
+    s.belt = [mk('minor-healing-potion'), mk('minor-healing-potion')];
+    fillExcept(s, (x, y) => x < 2 && y === 0);           // свободно ровно 2×1 — место самого пояса
+    const before = JSON.stringify(s);
+    const r = unequip(reg, s, 'belt');
+    expect(r.ok, 'колбы пропали бы молча').toBe(false);
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('снять пояс, когда места хватает на всё: пояс и колбы в сумке, ничего не потеряно', () => {
+    const s = hero();
+    s.equipment.belt = { ...mk('cloth-sash'), pos: null };
+    s.belt = [mk('minor-healing-potion'), mk('minor-healing-potion')];
+    fillExcept(s, (x, y) => y === 0 && x < 4);           // 2×1 под пояс + две клетки под колбы
+    const before = uids(s);
+    expect(unequip(reg, s, 'belt').ok).toBe(true);
+    expect(s.belt).toEqual([]);
+    expect(uids(s)).toEqual(before);
+    noOverlap(s);
+  });
+
+  it('смена пояса на меньший: лишние колбы и старый пояс не влезают вместе → отказ, сейв байт в байт', () => {
+    const s = hero();
+    s.equipment.belt = { ...mk('leather-belt'), pos: null };            // 4 слота
+    s.belt = [mk('minor-healing-potion'), mk('minor-healing-potion'), mk('minor-healing-potion'), mk('minor-healing-potion')];
+    const sash = { ...mk('cloth-sash'), pos: { x: 0, y: 0 } };           // 2 слота
+    s.inventory.push(sash);
+    fillExcept(s, (x, y) => x < 2 && y === 0);
+    const before = JSON.stringify(s);
+    const r = equip(reg, s, sash.uid);
+    expect(r.ok, 'две колбы пропали бы молча').toBe(false);
+    expect(JSON.stringify(s)).toBe(before);
+  });
+});
+
+describe('⚠ R2-15: очки атрибутов — ПАЧКОЙ одной командой', () => {
+  const fresh = (unspent: number): SaveState => {
+    const s = newCharacterSave(reg, reg.get('classes')[0]!.id, 'Тест', 'c-r215');
+    s.unspentAttributePoints = unspent;
+    return s;
+  };
+
+  it('n очков одной командой: атрибут +n, нераспределённых −n (после сброса у 40-го уровня ≈ 195)', () => {
+    const s = fresh(300);
+    const str0 = s.attributes.strength;
+    expect(allocAttr(s, 'strength', 300).ok).toBe(true);
+    expect(s.attributes.strength).toBe(str0 + 300);
+    expect(s.unspentAttributePoints).toBe(0);
+  });
+
+  it('без числа — одно очко, как раньше (Unity и «+» шлют так)', () => {
+    const s = fresh(2);
+    expect(allocAttr(s, 'vitality').ok).toBe(true);
+    expect(s.unspentAttributePoints).toBe(1);
+  });
+
+  it('⚠ всё или ничего: очков меньше n, кривое n — отказ, сейв байт в байт', () => {
+    const s = fresh(5);
+    const before = JSON.stringify(s);
+    for (const n of [6, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = allocAttr(s, 'strength', n);
+      expect(r.ok, String(n)).toBe(false);
+      expect(r.reason, String(n)).toBeTruthy();
+      expect(JSON.stringify(s), String(n)).toBe(before);
+    }
+    expect(allocAttr(s, 'luck', 1).ok).toBe(false);
+  });
+});
+
+describe('⚠ R4-08: требования держатся ВСЁ время ношения, а не только на входе в слот', () => {
+  /** Вещь слота `slot`: +`str` Силы (плоско) и требование Силы `req` (0 — без требований). */
+  const gear = (uid: string, slot: Item['slot'], str: number, req = 0, name = uid): Item => ({
+    uid, baseId: 'b', name, slot, rarity: 'normal', itemLevel: 1,
+    requirements: req ? { strength: req } : {}, affixes: [],
+    baseStats: str ? [{ stat: 'strength', kind: 'flat', value: str }] : [],
+    gridW: 1, gridH: 1, pos: null,
+  });
+  /** Воин (Сила 20) с пустыми слотами и сумкой из `bag`. */
+  const hero = (...bag: Item[]): SaveState => {
+    const s = newCharacterSave(reg, 'warrior', 'Герой', 'r408');
+    s.equipment = {};
+    s.belt = [];
+    s.inventory = bag.map((it, i) => ({ ...it, pos: { x: i, y: 0 } }));
+    s.gold = 100_000;
+    return s;
+  };
+  const wear = (s: SaveState, uid: string): void => { const r = equip(reg, s, uid); expect(r.ok, `${uid}: ${r.reason}`).toBe(true); };
+
+  it('⭐ смена амулета: уходящий +15 Силы больше не считается — амулет «Сила 30» при базе 20 не надевается', () => {
+    const s = hero(gear('a1', 'amulet', 15), gear('a2', 'amulet', 0, 30));
+    wear(s, 'a1');
+    const before = JSON.stringify(s);
+    const r = equip(reg, s, 'a2');
+    expect(r.ok, 'надел бы на 20 Силы при требовании 30').toBe(false);
+    expect(r.reason).toBe('Недостаточно атрибутов');
+    expect(JSON.stringify(s), 'сейв байт в байт').toBe(before);
+  });
+
+  it('⭐ снять вещь, на которой держится чужое требование, — отказ; сперва снимается тяжёлое', () => {
+    const s = hero(gear('h', 'helm', 15), gear('w', 'weapon', 0, 30, 'Двуручник'));
+    wear(s, 'h');
+    wear(s, 'w');
+    const before = JSON.stringify(s);
+    const r = unequip(reg, s, 'helm');
+    expect(r.ok, 'меч остался бы надетым при 20 Силы из 30').toBe(false);
+    expect(r.reason).toContain('Двуручник');
+    expect(JSON.stringify(s)).toBe(before);
+    expect(unequip(reg, s, 'weapon').ok).toBe(true);
+    expect(unequip(reg, s, 'helm').ok).toBe(true);
+  });
+
+  it('⭐ смена шлема на шлем без Силы — тот же отказ: уходящий держал меч', () => {
+    const s = hero(gear('h', 'helm', 15), gear('w', 'weapon', 0, 30, 'Двуручник'), gear('h2', 'helm', 0));
+    wear(s, 'h');
+    wear(s, 'w');
+    const before = JSON.stringify(s);
+    const r = equip(reg, s, 'h2');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('Двуручник');
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('⭐ сброс атрибутов, пока надето то, что держится на вложенной Силе, — отказ; снял — сброс идёт', () => {
+    const s = hero(gear('w', 'weapon', 0, 30, 'Двуручник'));
+    s.unspentAttributePoints = 10;
+    expect(allocAttr(s, 'strength', 10).ok).toBe(true);
+    wear(s, 'w');
+    const before = JSON.stringify(s);
+    const r = respec(reg, s);
+    expect(r.ok, 'меч висел бы на 20 Силы, очки ушли бы в Ловкость').toBe(false);
+    expect(r.reason).toContain('Двуручник');
+    expect(JSON.stringify(s), 'ни золота, ни очков').toBe(before);
+    expect(unequip(reg, s, 'weapon').ok).toBe(true);
+    expect(respec(reg, s).ok).toBe(true);
+  });
+
+  it('⭐ две вещи, подпирающие только друг друга, не держатся: снять третью, на которой стояли обе, — отказ', () => {
+    // База 20. Шлем +10 без требований → амулет (+15, нужно 25) → кольцо (+10, нужно 30). Без шлема: амулету
+    // хватает с кольцом (30), кольцу — с амулетом (35), а по порядку от базы не встаёт ни одно.
+    const s = hero(gear('h', 'helm', 10), gear('a', 'amulet', 15, 25, 'Амулет'), gear('r', 'ring', 10, 30, 'Кольцо'));
+    wear(s, 'h');
+    wear(s, 'a');
+    wear(s, 'r');
+    const before = JSON.stringify(s);
+    expect(unequip(reg, s, 'helm').ok).toBe(false);
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('честная смена и сейв старше правки (уже не держится) — не запираются', () => {
+    const s = hero(gear('a1', 'amulet', 15), gear('a2', 'amulet', 5, 20), gear('ring', 'ring', 0));
+    wear(s, 'a1');
+    wear(s, 'a2');                                   // 20 из 20 — своей базой
+    expect(s.equipment.amulet?.uid).toBe('a2');
+    const legacy = hero(gear('ring', 'ring', 0));
+    legacy.equipment.weapon = gear('w', 'weapon', 0, 99);   // надето до правки при 20 Силы
+    wear(legacy, 'ring');                            // не ломает ничего нового — можно
+    expect(unequip(reg, legacy, 'weapon').ok, 'и снять не державшееся — можно').toBe(true);
+  });
+});
+
+/**
+ * ⚠ R6-11: СБРОС АТРИБУТОВ БЕРЁТ ЗОЛОТО ТОЛЬКО ЗА СБРОС. Ядро считало возврат очков, но не отказывало на нуле и списывало
+ * `respecCost` всегда: двойной клик по кнопке (она перерисовывается лишь по `saveUpdate`) платил дважды — второй раз за
+ * ничто, а свежий герой платил 500 за пустое место. Сбросы скилов и мастерств на нуле отказывают давно.
+ */
+describe('⚠ R6-11: сброс атрибутов — отказ, когда сбрасывать нечего', () => {
+  const cost = reg.get('balance').respecCost;
+  it('⭐ новый герой: отказ «Атрибуты не вложены», золото и атрибуты не тронуты', () => {
+    const s = newCharacterSave(reg, 'warrior', 'Новичок', 'r611-a');
+    s.gold = cost + 100;
+    expect(attrRespecRefund(reg, s)).toBe(0);
+    const before = JSON.stringify(s);
+    expect(respec(reg, s)).toEqual({ ok: false, reason: 'Атрибуты не вложены' });
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('⭐ два сброса подряд (двойной клик): золото списано ОДИН раз, второй — отказ без траты', () => {
+    const s = newCharacterSave(reg, 'warrior', 'Двойной', 'r611-b');
+    s.gold = 5000;
+    s.unspentAttributePoints = 10;
+    expect(allocAttr(s, 'strength', 10).ok).toBe(true);
+    expect(attrRespecRefund(reg, s)).toBe(10);
+    expect(respec(reg, s, cost).ok).toBe(true);
+    expect(s.gold).toBe(5000 - cost);
+    expect(s.unspentAttributePoints).toBe(10);
+    const before = JSON.stringify(s);
+    expect(respec(reg, s, cost)).toEqual({ ok: false, reason: 'Атрибуты не вложены' });
+    expect(JSON.stringify(s), 'второй клик — ни золота, ни очков').toBe(before);
+  });
+});
+
+/** ⚠ R6-17: вложил — сбросил — очков скилов ровно столько же, сколько было до вложения (не больше и не меньше). */
+describe('⚠ R6-17: сброс дерева скилов возвращает ровно вложенное', () => {
+  it('⭐ каждый вход ветки без класса: вложить до потолка ранга, сбросить — очки как до вложения, золото — только пошлина', () => {
+    const tree = reg.get('skill-tree');
+    let n = 0;
+    for (const br of tree.branches.filter((b) => !b.classId)) {
+      const s = newCharacterSave(reg, 'warrior', 'Сброс', `r617-${br.id}`);
+      s.level = 99; s.gold = 10_000_000; s.unspentSkillPoints = 50;
+      const before = s.unspentSkillPoints;
+      let ranks = 0;
+      while (allocActive(reg, s, br.entryNode).ok) ranks++;
+      expect(ranks, br.id).toBeGreaterThan(0);
+      const fee = skillRespecFee(reg, s);
+      const g0 = s.gold;
+      expect(respecSkills(reg, s).ok).toBe(true);
+      expect(s.unspentSkillPoints, `${br.id}: вернулось ровно вложенное`).toBe(before);
+      expect(g0 - s.gold).toBe(fee);
+      n++;
+    }
+    expect(n).toBeGreaterThan(3);
   });
 });

@@ -142,3 +142,53 @@ describe('moveWithCollision — суб-тайловые препятствия',
     expect(lx >= (ob.hw ?? 0) + R - 0.5 || ly >= (ob.hh ?? 0) + R - 0.5).toBe(true);
   });
 });
+
+describe('⚠ R4-07: шаг длиннее клетки не проскакивает стену и закрытую дверь', () => {
+  /** Пол 20×12 с бордюром и перегородкой из `cell` в столбцах [c0..c1] (во всю высоту). */
+  function walled(c0: number, c1: number, cell: Cell = Cell.Wall): Grid {
+    const g = makeGrid(20, 12, Cell.Floor);
+    for (let x = 0; x < 20; x++) { g[0]![x] = Cell.Wall; g[11]![x] = Cell.Wall; }
+    for (let y = 0; y < 12; y++) { g[y]![0] = Cell.Wall; g[y]![19] = Cell.Wall; for (let x = c0; x <= c1; x++) g[y]![x] = cell; }
+    return g;
+  }
+
+  it('⭐ 150 px одним кадром (отброс, `to` рывка) в стену толщиной 2 клетки — встаёт у грани, а не за стеной', () => {
+    const g = walled(10, 11);
+    const p = moveWithCollision({ x: 300, y: 200 }, { x: 150, y: 0 }, R, g, 1);
+    expect(p.x).toBe(10 * TILE - R);
+    expect(p.y).toBe(200);
+    const back = moveWithCollision({ x: 13 * TILE + 20, y: 200 }, { x: -150, y: 0 }, R, g, 1);
+    expect(back.x, 'и справа налево').toBe(12 * TILE + R);
+  });
+
+  it('⭐ однотайловая закрытая дверь держит 190 px за кадр; по диагонали — свободная ось доезжает', () => {
+    const g = walled(10, 10, Cell.Door);
+    expect(moveWithCollision({ x: 300, y: 200 }, { x: 190, y: 0 }, R, g, 1).x).toBe(10 * TILE - R);
+    const d = moveWithCollision({ x: 300, y: 100 }, { x: 190, y: 120 }, R, g, 1);
+    expect(d.x).toBe(10 * TILE - R);
+    expect(d.y).toBeCloseTo(220, 6);
+  });
+
+  it('⭐ скорость рывка 5-го ранга и выше (больше клетки за тик 1/30) — дверь не пропускает', () => {
+    const g = walled(10, 10, Cell.Door);
+    for (const speed of [700 * 1.48, 700 * 3.28, 5000]) {
+      const p = run({ x: 250, y: 200 }, { x: speed, y: 0 }, R, g, 30);
+      expect(p.x, `скорость ${speed}`).toBe(10 * TILE - R);
+    }
+  });
+
+  it('по открытому полю развёртка не меняет итог: 150 px — ровно 150 px', () => {
+    const g = walled(18, 18);
+    const p = moveWithCollision({ x: 100, y: 200 }, { x: 150, y: -40 }, R, g, 1);
+    expect(p.x).toBeCloseTo(250, 6);
+    expect(p.y).toBeCloseTo(160, 6);
+  });
+
+  it('мусор в скорости (NaN/∞) — стоим на месте, а не зависаем и не улетаем в NaN', () => {
+    const g = walled(10, 10);
+    for (const v of [NaN, Infinity, -Infinity]) {
+      expect(moveWithCollision({ x: 100, y: 200 }, { x: v, y: 0 }, R, g, 1), String(v)).toEqual({ x: 100, y: 200 });
+      expect(moveWithCollision({ x: 100, y: 200 }, { x: 0, y: v }, R, g, 1), String(v)).toEqual({ x: 100, y: 200 });
+    }
+  });
+});

@@ -19,6 +19,8 @@
  * числами делает — дело Ф3.3, и там правило прямое: автоматика помечает, а не банит.
  */
 
+import { counters } from './metrics.js';
+
 /** Накопитель по одной игровой сессии (вход в комнату → выход). */
 export class SessionTelemetry {
   readonly startedAt = Date.now();
@@ -28,6 +30,15 @@ export class SessionTelemetry {
   items = 0;
   deaths = 0;
   floors = 0;
+  /**
+   * Кузница (K7, docs/CRAFT_WEAPONS.md §22): скованно, переплавлено скованных, разобрано найденных
+   * (у кузнеца и на месте), зачаровано. Рядом с убийствами — иначе «цена ковки ≈ времени фарма»
+   * после запуска проверить будет нечем. Считаются только УСПЕШНЫЕ действия, записанные в базу.
+   */
+  crafted = 0;
+  melted = 0;
+  salvaged = 0;
+  enchanted = 0;
   /** Действий всего: атаки и команды — всё, что игрок делает НАМЕРЕННО. */
   actions = 0;
 
@@ -70,9 +81,55 @@ export class SessionTelemetry {
     return (now - this.startedAt) / 60_000;
   }
 
-  /** Ценность в час: золото + опыт. Грубая мера «выхлопа» — для сравнения с популяцией. */
-  perHour(now = Date.now()): { goldPerHour: number; xpPerHour: number; killsPerHour: number } {
-    const h = Math.max(1 / 60, this.minutes(now) / 60);   // не делим на ноль на первой минуте
-    return { goldPerHour: this.gold / h, xpPerHour: this.xp / h, killsPerHour: this.kills / h };
+  /** Отметить успешное действие кузницы по причине записи (D9). Прочие причины — не кузница, мимо. */
+  forge(reason: string): ForgeOp | null {
+    const op = forgeOpOf(reason);
+    if (op) this[op]++;
+    return op;
   }
+
+  /** Ценность в час: золото + опыт. Грубая мера «выхлопа» — для сравнения с популяцией. Рядом — кузница. */
+  perHour(now = Date.now()): {
+    goldPerHour: number; xpPerHour: number; killsPerHour: number;
+    craftedPerHour: number; meltedPerHour: number; salvagedPerHour: number; enchantedPerHour: number;
+  } {
+    const h = Math.max(1 / 60, this.minutes(now) / 60);   // не делим на ноль на первой минуте
+    return {
+      goldPerHour: this.gold / h, xpPerHour: this.xp / h, killsPerHour: this.kills / h,
+      craftedPerHour: this.crafted / h, meltedPerHour: this.melted / h,
+      salvagedPerHour: this.salvaged / h, enchantedPerHour: this.enchanted / h,
+    };
+  }
+}
+
+/** Действие кузницы в телеметрии — имя счётчика сессии. */
+export type ForgeOp = 'crafted' | 'melted' | 'salvaged' | 'enchanted';
+
+/**
+ * Причина записи (D9) → действие кузницы. Одна таблица на сессию и на `/metrics`: причина уже различает
+ * переплавку скованного (`melt`) и разбор найденного (`salvage`) — второй раз решать это по вещи незачем,
+ * да и вещи после разбора уже нет. `forge` (подъём тира, починка, перекатка) и `stash` — не сюда.
+ */
+export function forgeOpOf(reason: string): ForgeOp | null {
+  switch (reason) {
+    case 'craft': return 'crafted';
+    case 'melt': return 'melted';
+    case 'salvage': return 'salvaged';
+    case 'enchant': return 'enchanted';
+    default: return null;
+  }
+}
+
+/** Счётчик `/metrics` для действия кузницы. */
+const FORGE_COUNTER = {
+  crafted: 'forgeCrafted', melted: 'forgeMelted', salvaged: 'forgeSalvaged', enchanted: 'forgeEnchanted',
+} as const satisfies Record<ForgeOp, keyof typeof counters>;
+
+/**
+ * Успешное действие кузницы — в телеметрию сессии и в `/metrics` разом. Зовётся ПОСЛЕ удачной записи
+ * (или удачного действия, которое запись не откатывает): отказ, откат и повтор ключа ковки не считаются.
+ */
+export function tallyForge(tm: SessionTelemetry, reason: string): void {
+  const op = tm.forge(reason);
+  if (op) counters[FORGE_COUNTER[op]]++;
 }

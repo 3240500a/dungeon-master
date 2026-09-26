@@ -153,6 +153,50 @@ function position(tt: HTMLElement, e: MouseEvent): void {
   tt.style.top = `${Math.max(4, y)}px`;
 }
 
+// ── Вопрос «да/нет» поверх игры (не модальный) ──────────────────────────────
+/** Открытый вопрос: ответить «нет», когда его снимает следующий. */
+let askClose: ((yes: boolean) => void) | null = null;
+
+/**
+ * Вопрос «да/нет» ПОВЕРХ ИГРЫ, не останавливая её; ответ — промисом.
+ *
+ * ⚠ `window.confirm` замораживает страницу: ни кадров, ни кадров ввода серверу. А сервер всё это время гоняет
+ * бой с последним полученным вводом — зажатый W идёт, монстры бьют, пока игрок читает вопрос (R1-14). Поэтому
+ * вне города — только этот вопрос; `window.confirm` остаётся там, где боя нет (кузница, лавка).
+ *
+ * Плашка без подложки: мышь и клавиши остаются у игры. Фокус кнопкам не ставим — иначе пробел (рывок) или
+ * Enter ответили бы за игрока. Один вопрос за раз: новый снимает прежний с ответом «нет».
+ */
+export function askInGame(msg: string, labels: { yes?: string; no?: string } = {}): Promise<boolean> {
+  askClose?.(false);
+  return new Promise((resolve) => {
+    const box = mk('div',
+      `position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:10002;max-width:420px;` +
+      `background:${COLORS.panel2};border:1px solid ${COLORS.accent};border-radius:8px;padding:12px 14px;` +
+      `font-size:13px;color:${COLORS.text};box-shadow:0 8px 28px rgba(0,0,0,0.6)`);
+    const close = (yes: boolean): void => {
+      if (askClose !== close) return;   // уже отвечен (или снят следующим)
+      askClose = null;
+      box.remove();
+      resolve(yes);
+    };
+    const row = mk('div', 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px');
+    row.append(button(labels.yes ?? 'Да', () => close(true), 'danger'), button(labels.no ?? 'Нет', () => close(false)));
+    box.append(mk('div', 'white-space:pre-line;line-height:1.35', msg), row);
+    askClose = close;
+    document.body.appendChild(box);
+  });
+}
+
+/**
+ * ⭐ R3-23: снять открытый вопрос с ответом «нет» — при смене области, входе и выходе из игры. Плашка висит на
+ * `document.body` без срока: пати проголосовала в город или герой умер — вопрос оставался над городом, а «Да» потом
+ * не делало ничего. Вопроса нет — ничего.
+ */
+export function dismissAsk(): void {
+  askClose?.(false);
+}
+
 // ── Иконка/слот предмета ────────────────────────────────────────────────────
 const SLOT_GLYPH: Record<string, string> = {
   weapon: 'Ор', offhand: 'Оф', helm: 'Шл', chest: 'На', gloves: 'Пе', boots: 'Са', belt: 'По', ring: 'Ко', amulet: 'Ам',

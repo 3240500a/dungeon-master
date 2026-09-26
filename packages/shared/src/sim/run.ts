@@ -5,7 +5,7 @@ import { effectiveLevel, startChallenge, challengeAtFloor } from '../formulas/po
 import { newBotSave, levelUpBotTo, makePlayerModel } from './playerBot.js';
 import { allocateSkillsAndPassives, visitShop } from './economy.js';
 import { simulateFights } from './fight.js';
-import { simulateFloor } from './floor.js';
+import { monsterPicker, simulateFloor } from './floor.js';
 import { simulateProgression } from './progression.js';
 import type { SaveState } from '../types/save.js';
 import type { FightStats, ProgressionResult, ScenarioKind, SimSettings } from './types.js';
@@ -58,13 +58,14 @@ export function runSim(reg: ConfigRegistry, settings: SimSettings): SimOutput {
     const model = makePlayerModel(reg, save, { useSkills: settings.build.useSkills });
     const el = effectiveLevel(save, power).total;
     const cl = challengeAtFloor(startChallenge(el, diff), diff, settings.floor);
-    const pool = reg.get('biomes')[0]!.monsterPool;
     const monsters = reg.get('monsters');
     const affx = reg.get('monster-affixes');
     const gear = reg.get('monster-gear');
     const mderive = reg.get('monster-derive');
+    // Монстр — по весу спавна игры на этом этаже (`monsterPicker`), а не поштучно: двойники делят вес источника.
+    const picker = monsterPicker(reg, settings.floor);
     const make = (r: typeof rng) =>
-      Array.from({ length: 3 }, () => generateMonster(monsters, gear, affx, { baseId: r.pick(pool), depth: cl, mderive }, r));
+      Array.from({ length: 3 }, () => generateMonster(monsters, gear, affx, { baseId: picker.pick(r), depth: cl, mderive }, r));
     const stats = simulateFights(make, model, settings.iterations, rng);
     return { scenario: 'fight', fight: { ...stats, challengeLevel: cl, playerLevel: save.level, power: el } };
   }

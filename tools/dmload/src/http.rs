@@ -84,12 +84,25 @@ pub async fn get(base: &str, path: &str, token: Option<&str>) -> io::Result<Resp
 /// Стенд читает их сам и кладёт в свой же отчёт: на сервере не должно оставаться ничего,
 /// что нужно смотреть глазами. Работает и с кластером — гейтвей отдаёт сумму по узлам,
 /// имена там те же, что у одиночного процесса.
-pub async fn metrics(base: &str) -> std::collections::HashMap<String, f64> {
+///
+/// ⭐ R5-24: ОТВЕТ НЕ 200 — ОШИБКА, а не пустая карта. С R3-03 сервер отдаёт метрики только вызову с самой машины или по
+/// ключу чтения (`DM_METRICS_KEY` сервера → `key`), и стенд с ноутбука читал отказ 403 как «тик 0 Гц, CPU 0 %, RSS 0 МБ»:
+/// проверка слоу-мо молча выключалась, и перегруженный сервер проходил замер ёмкости с ✓.
+pub async fn metrics(base: &str, key: Option<&str>) -> Result<std::collections::HashMap<String, f64>, String> {
+    let r = get(base, "/metrics", key).await.map_err(|e| format!("/metrics недоступен: {e}"))?;
+    if r.status != 200 {
+        return Err(format!(
+            "/metrics ответил {} — стенд не с машины сервера: задай ключ чтения метрик (--metricsKey=… или DM_METRICS_KEY, тот же, что DM_METRICS_KEY сервера)",
+            r.status
+        ));
+    }
+    Ok(parse_metrics(&r.body))
+}
+
+/// Текст Prometheus → карта имя→значение (строки комментариев и нечисловые — мимо).
+fn parse_metrics(body: &str) -> std::collections::HashMap<String, f64> {
     let mut out = std::collections::HashMap::new();
-    let Ok(r) = get(base, "/metrics", None).await else {
-        return out;
-    };
-    for line in r.body.lines() {
+    for line in body.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.is_empty() {
             continue;
@@ -107,4 +120,39 @@ pub async fn metrics(base: &str) -> std::collections::HashMap<String, f64> {
 pub fn field(body: &str, key: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     v.get(key)?.as_str().map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Сервер на один ответ: читает запрос, отвечает `resp` и отдаёт текст запроса — проверить заголовки.
+    async fn one_shot(resp: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        let h = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = s.read(&mut buf).await.unwrap();
+            s.write_all(resp.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        (base, h)
+    }
+
+    /// R5-24: отказ сервера — ошибка стенда, а не «тик 0 Гц» с ✓.
+    #[tokio::test]
+    async fn metrics_refused_is_error_not_zero_tick() {
+        let (base, _h) = one_shot("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        assert!(metrics(&base, None).await.is_err());
+    }
+
+    /// R5-24: ключ чтения уходит заголовком, ответ разбирается.
+    #[tokio::test]
+    async fn metrics_sends_key_and_parses() {
+        let (base, h) = one_shot("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n# HELP x\ndm_tick_hz 29.5\n").await;
+        let m = metrics(&base, Some("k")).await.unwrap();
+        assert_eq!(m.get("dm_tick_hz"), Some(&29.5));
+        assert!(h.await.unwrap().contains("Authorization: Bearer k"));
+    }
 }

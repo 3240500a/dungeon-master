@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { stashMove, sanitizeStash, emptyStash, migrateWalletToStash } from './stashActions.js';
 import { availableMaterials, spendBoth } from './materials.js';
+import { emptyJournal } from '../formulas/craft.js';
 import type { AccountStash, Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // инв 10×6, сундук 2×(20×12)
@@ -29,6 +30,60 @@ describe('sanitizeStash', () => {
   });
   it('emptyStash даёт нужное число пустых вкладок', () => {
     expect(emptyStash(reg).tabs.length).toBe(2);
+  });
+
+  it('D1: новый и старый сундук получают ПУСТОЙ журнал кузнеца и пустой список ключей', () => {
+    for (const s of [emptyStash(reg), sanitizeStash(reg, stashWith())]) {
+      expect(s.forgeJournal).toEqual(emptyJournal());
+      expect(s.craftNonces).toEqual([]);
+    }
+  });
+
+  it('⚠ D1: мусор из базы в журнале и ключах чистится, а не доезжает до ковки', () => {
+    const raw = {
+      version: 1, tabs: [],
+      forgeJournal: {
+        bases: ['long-sword', 7, null, 'long-sword', { x: 1 }, ''], variants: 'sw-a-x', tierHi: 'max',
+        classSalvages: JSON.parse('{"sword":3,"axe":-2,"mace":"x","__proto__":1,"constructor":2,"a b":4,"bow":2.7}'), sketches: -1, mythic: Number.NaN,
+        typesSeen: [['nested']], typesForged: ['t1', 't1'], extra: 'кто-то дописал',
+      },
+      craftNonces: [
+        { n: 'nonce-aaaa', uid: 'u1' }, { n: 'bad', uid: 'u2' }, { n: 'nonce-bbbb', uid: 5 }, 'nonce-cccc', null,
+        { n: 'nonce-dddd', uid: 'u4', extra: 1 }, { n: 'nonce-aaaa', uid: 'u1-again' },
+        ...Array.from({ length: 40 }, (_, i) => ({ n: `bulk-${String(i).padStart(4, '0')}`, uid: `b${i}` })),
+      ],
+    } as unknown as AccountStash;
+    const s = sanitizeStash(reg, raw);
+    const j = s.forgeJournal!;
+    expect(j.bases).toEqual(['long-sword']);
+    expect(j.variants).toEqual([]);
+    expect(j.tierHi).toBe(-1);
+    expect(j.classSalvages).toEqual({ sword: 3, bow: 2 });
+    expect(j.sketches).toBe(0);
+    expect(j.mythic).toBe(0);
+    expect(j.typesSeen).toEqual([]);
+    expect(j.typesForged).toEqual(['t1']);
+    expect(Object.keys(j).sort()).toEqual(Object.keys(emptyJournal()).sort());
+    expect(s.craftNonces).toHaveLength(32);
+    expect(s.craftNonces!.every((e) => Object.keys(e).sort().join() === 'n,uid' && typeof e.uid === 'string')).toBe(true);
+    expect(s.craftNonces!.at(-1)).toEqual({ n: 'bulk-0039', uid: 'b39' });
+    expect(s.craftNonces!.some((e) => e.n === 'bad' || e.n === 'nonce-bbbb')).toBe(false);
+    // Журнал и ключи не того типа целиком — пустые, без исключения.
+    for (const junk of [null, 5, 'x', [], [1, 2]]) {
+      const t = sanitizeStash(reg, { version: 1, tabs: [], forgeJournal: junk, craftNonces: junk } as unknown as AccountStash);
+      expect(t.forgeJournal).toEqual(emptyJournal());
+      expect(t.craftNonces).toEqual([]);
+    }
+  });
+
+  it('⚠ кошелёк сырья: отрицательное, NaN, дробное и ключи-ловушки не переживают загрузку', () => {
+    const wallet = JSON.parse('{"iron-1": 5, "iron-2": -3, "iron-3": "7", "wood-1": 2.9, "wood-2": 0, "__proto__": 9}') as Record<string, number>;
+    wallet['hide-1'] = Number.NaN;
+    const keep = wallet;
+    const s = sanitizeStash(reg, { version: 1, tabs: [], materials: wallet });
+    expect(s.materials).toBe(keep);   // чистится на месте — ссылку могли держать
+    expect({ ...s.materials }).toEqual({ 'iron-1': 5, 'wood-1': 2 });
+    expect(sanitizeStash(reg, { version: 1, tabs: [], materials: [] as unknown as Record<string, number> }).materials).toEqual({});
   });
 });
 

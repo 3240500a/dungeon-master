@@ -13,7 +13,8 @@ export class NetClient {
   private ws?: WebSocket;
   private handlers = new Map<ServerFrame['t'], Handler[]>();
   private openCbs: (() => void)[] = [];
-  private closeCbs: (() => void)[] = [];
+  /** Обработчики закрытия получают код закрытия сокета (R3-25): 4009 — сессия устарела, 4001 — вход из другого окна. */
+  private closeCbs: ((code?: number) => void)[] = [];
   // Замер задержки: раз в секунду шлём ping с id, ловим pong → RTT. -1 = ещё нет замера.
   private pingTimer?: ReturnType<typeof setInterval>;
   private pingId = 0;
@@ -33,13 +34,29 @@ export class NetClient {
   /** Сглаженное время обработки серверного кадра (мс): парс снапшота + применение. Для DBG-профиля. */
   get netMs(): number { return this._netMs; }
 
+  /**
+   * Открыть соединение. ⭐ L2: живой — только ПОСЛЕДНИЙ сокет. Прежний (ещё соединяется, закрывается) закрываем и
+   * глушим: его позднее закрытие сносило бы уже новую сессию (плашка «соединение потеряно» и ещё одно переподключение),
+   * а его кадры шли бы в обработчики новой. Копия мира — тоже с чистого листа: первая дельта нового сокета до его
+   * полного кадра к миру прошлого не применяется.
+   */
   connect(url = wsUrl()): void {
+    const old = this.ws;
+    if (old) {
+      old.onopen = null; old.onclose = null; old.onmessage = null;
+      try { old.close(); } catch { /* уже закрыт */ }
+    }
+    this.stopPing();
+    this._rtt = -1;
+    this.world = undefined;
+    this.lastSum = 0;
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';   // Ф1.4: кадры мира приходят двоичными
     this.ws = ws;
-    ws.onopen = () => { this.startPing(); for (const cb of this.openCbs) cb(); };
-    ws.onclose = () => { this.stopPing(); this._rtt = -1; for (const cb of this.closeCbs) cb(); };
+    ws.onopen = () => { if (this.ws !== ws) return; this.startPing(); for (const cb of this.openCbs) cb(); };
+    ws.onclose = (ev) => { if (this.ws !== ws) return; this.stopPing(); this._rtt = -1; for (const cb of this.closeCbs) cb(ev?.code); };
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
       const _t = performance.now();
       let frame: ServerFrame;
       if (typeof ev.data !== 'string') {
@@ -81,13 +98,21 @@ export class NetClient {
     this.pingSentAt.clear();
   }
 
-  on<T extends ServerFrame['t']>(t: T, cb: (frame: Extract<ServerFrame, { t: T }>) => void): void {
+  /**
+   * Подписаться на кадр типа `t`. Возвращает отписку — ровно этого обработчика (R5-16): владелец, живущий меньше
+   * `NetClient` (драйвер сцены), снимает свои подписки сам, а не копит их до перезагрузки страницы.
+   */
+  on<T extends ServerFrame['t']>(t: T, cb: (frame: Extract<ServerFrame, { t: T }>) => void): () => void {
     const list = this.handlers.get(t) ?? [];
     list.push(cb as Handler);
     this.handlers.set(t, list);
+    return () => {
+      const cur = this.handlers.get(t);
+      if (cur) this.handlers.set(t, cur.filter((h) => h !== cb));
+    };
   }
   onOpen(cb: () => void): void { this.openCbs.push(cb); }
-  onClose(cb: () => void): void { this.closeCbs.push(cb); }
+  onClose(cb: (code?: number) => void): void { this.closeCbs.push(cb); }
   /** Сбросить копию мира (смена области/переподключение) — следующий полный кадр задаст новую. */
   resetWorld(): void { this.world = undefined; }
 
@@ -105,33 +130,71 @@ export class NetClient {
   close(): void { this.stopPing(); this.ws?.close(); this.ws = undefined; }
 }
 
+/** Адрес ноды, заданный сборкой (`VITE_WS_URL`): клиент прибит к нему, маршрут у гейтвея не спрашивает. */
+function pinnedWsUrl(): string | undefined {
+  return (import.meta as { env?: Record<string, string> }).env?.VITE_WS_URL || undefined;
+}
+
 /** Адрес WS: dev — тот же хост (Vite проксирует /ws на :3001); прод — VITE_WS_URL. */
 function wsUrl(): string {
-  const env = (import.meta as { env?: Record<string, string> }).env?.VITE_WS_URL;
+  const env = pinnedWsUrl();
   if (env) return env;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${location.host}/ws`;
 }
+
+/** Адрес на петле — достижим только с той машины, где открыт. */
+const isLoopback = (host: string): boolean =>
+  host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]' || host === '::1';
+
+/**
+ * ⭐ R4-13: АДРЕС НОДЫ ИЗ ОТВЕТА ГЕЙТВЕЯ — таким, каким до неё дойдёт БРАУЗЕР.
+ *  • Относительный путь (`/ws/0`) — от origin страницы, `wss:` на https.
+ *  • Адрес на петле (`ws://127.0.0.1:3001/ws` — умолчание одиночного процесса без `DM_NODE_URL`) достижим только с
+ *    машины сервера. Страница открыта не с неё — значит, между ними прокси (Caddy), и путь тот же, но на origin страницы:
+ *    иначе каждый игрок одиночного сервера за доменом стучался бы к себе на 127.0.0.1.
+ */
+export function nodeUrl(raw: string, page: Pick<Location, 'protocol' | 'host' | 'hostname'> = location): string {
+  const proto = page.protocol === 'https:' ? 'wss:' : 'ws:';
+  let u: URL;
+  try { u = new URL(raw, `${proto}//${page.host}`); } catch { return `${proto}//${page.host}/ws`; }
+  if (isLoopback(u.hostname) && !isLoopback(page.hostname)) return `${proto}//${page.host}${u.pathname}${u.search}`;
+  return u.toString();
+}
+
+/**
+ * Ответ гейтвея «куда подключаться» (Ф4.1): адрес ноды, место в очереди или отказ. `code` у отказа — чей вход
+ * недействителен: аккаунта (`auth`, 401) или героя (`forbidden`, 403) — клиент уводит на вход / выбор героя.
+ */
+export type RouteAnswer =
+  | { url: string }
+  | { queue: { ticket: string; position: number; total: number } }
+  | { error: string; code?: 'auth' | 'forbidden' };
 
 /**
  * Ф4.1: спросить у гейтвея, к какому узлу подключаться. Возвращает либо адрес, либо место
  * в очереди — очередь это НЕ ошибка, а штатный ответ на потолке кластера: держать людей
  * в очереди дешевле, чем принять всех и лечь.
  *
- * Если маршрутизации нет (старый сервер или одиночный режим без кластера) — возвращаем
- * обычный адрес, и клиент работает как раньше.
+ * ⭐ R4-13: зовёт поток входа (`entryFlow.ts`) перед КАЖДЫМ подключением — раньше не звал никто, и кластер из DEPLOY.md
+ * был недоступен веб-клиентам: сокет шёл на origin, то есть к гейтвею, у которого игрового сокета нет. Отказ гейтвея
+ * (4xx с причиной: «Комната не найдена: узел не отвечает», «Слишком часто», «Требуется вход») — строкой игроку. Если
+ * маршрутизации нет или она сломалась (старый сервер, сеть, 5xx) — обычный адрес, и клиент работает как раньше.
+ * Адрес задан сборкой (`VITE_WS_URL`) — к нему, без запроса.
  */
-export async function routeToNode(token: string, charId: string, ticket?: string, roomCode?: string)
-  : Promise<{ url: string } | { queue: { ticket: string; position: number; total: number } }> {
+export async function routeToNode(token: string, charId: string, ticket?: string, roomCode?: string): Promise<RouteAnswer> {
+  const pinned = pinnedWsUrl();
+  if (pinned) return { url: pinned };
   const qs = new URLSearchParams({ charId });
   if (ticket) qs.set('ticket', ticket);
   if (roomCode) qs.set('roomCode', roomCode);
   try {
     const r = await fetch(`/api/route?${qs.toString()}`, { headers: { authorization: `Bearer ${token}` } });
-    if (r.ok) return (await r.json()) as { url: string };
-    if (r.status === 503) {
-      const b = (await r.json()) as { queue?: { ticket: string; position: number; total: number } };
-      if (b.queue) return { queue: b.queue };
+    const b = (await r.json().catch(() => null)) as { url?: unknown; queue?: { ticket: string; position: number; total: number }; error?: unknown } | null;
+    if (r.ok && typeof b?.url === 'string') return { url: nodeUrl(b.url) };
+    if (r.status === 503 && b?.queue) return { queue: b.queue };
+    if (r.status >= 400 && r.status < 500 && typeof b?.error === 'string') {
+      return { error: b.error, ...(r.status === 401 ? { code: 'auth' as const } : r.status === 403 ? { code: 'forbidden' as const } : {}) };
     }
   } catch { /* сети нет — падём на общий адрес ниже */ }
   return { url: wsUrl() };

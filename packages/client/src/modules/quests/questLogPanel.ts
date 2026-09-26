@@ -1,4 +1,4 @@
-import type { QuestDef, QuestProgress } from '@dm/shared';
+import { questRival, type QuestDef, type QuestProgress } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { button } from '../../ui/kit.js';
@@ -37,6 +37,16 @@ function questBlock(def: QuestDef, prog: QuestProgress | undefined): HTMLElement
   return el;
 }
 
+/**
+ * ⭐ R6-13: «Взять» задание доски. Начатое задание того же вида (`questRival`) новым пропало бы — сперва спросить; согласие
+ * уходит флагом `replace`. Без флага сервер начатое не трогает и отказывает с его именем (так и у Unity, пока он флаг не шлёт).
+ */
+export function takeQuest(app: Pick<App, 'state' | 'sendCmd'>, def: QuestDef): void {
+  const rival = questRival(app.state!.save, def);
+  if (rival && !window.confirm(`У тебя уже есть «${rival.name}» (${rival.progress}).\nВзять новое — прежнее пропадёт вместе с прогрессом и наградой?`)) return;
+  app.sendCmd({ cmd: 'acceptQuest', questId: def.id, ...(rival ? { replace: true as const } : {}) });
+}
+
 export const questLogPanel: PanelFactory = (app: App) => ({
   title: 'Журнал квестов',
   render(body) {
@@ -69,7 +79,7 @@ export const questLogPanel: PanelFactory = (app: App) => ({
     }
     for (const def of app.questBoard) {
       const block = questBlock(def, undefined);
-      const btn = button('Взять', () => app.sendCmd({ cmd: 'acceptQuest', questId: def.id }));
+      const btn = button('Взять', () => takeQuest(app, def));
       btn.style.marginTop = '6px';
       block.appendChild(btn);
       body.appendChild(block);

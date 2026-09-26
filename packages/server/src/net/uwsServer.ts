@@ -1,9 +1,12 @@
 import { createRequire } from 'node:module';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
-import { installShutdown } from './wsServer.js';
-import { MAX_BACKPRESSURE, type GameConn } from './conn.js';
+import { installShutdown, frameFailed } from './wsServer.js';
+import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, type GameConn } from './conn.js';
+import { clientIp } from './rateLimit.js';
+import { isLoopback, PROXY_HEADERS } from './adminAccess.js';
+import { counters } from './metrics.js';
 
 /**
  * Транспорт на uWebSockets.js (Ф1.6) — включается `DM_WS=uws`.
@@ -25,7 +28,11 @@ import { MAX_BACKPRESSURE, type GameConn } from './conn.js';
 /** Минимальная типизация нужного нам куска uWS (пакет ставится опционально). */
 interface UwsSocket {
   getRemoteAddressAsText(): ArrayBuffer;
+  /** R4-29: то, что `upgrade` передал сокету, — адрес игрока. */
+  getUserData(): { ip?: string };
   send(data: string | ArrayBufferView, isBinary?: boolean): number;
+  /** Сколько байт ещё не ушло клиенту (исходящая очередь сокета). */
+  getBufferedAmount(): number;
   end(code?: number, reason?: string): void;
   close(): void;
 }
@@ -35,13 +42,15 @@ interface UwsRes {
   cork(cb: () => void): void;
   writeStatus(status: string): UwsRes;
   writeHeader(key: string, value: string): UwsRes;
-  end(body?: string | ArrayBufferView): void;
+  end(body?: string | ArrayBufferView, closeConnection?: boolean): void;
   getRemoteAddressAsText(): ArrayBuffer;
+  upgrade(userData: { ip: string }, key: string, protocol: string, extensions: string, context: unknown): void;
 }
 interface UwsReq {
   getUrl(): string;
   getQuery(): string;
   getMethod(): string;
+  getHeader(key: string): string;
   forEach(cb: (key: string, value: string) => void): void;
 }
 interface UwsApp {
@@ -56,6 +65,49 @@ interface Uws {
 
 const dec = new TextDecoder();
 const EMPTY = Buffer.alloc(0);
+/**
+ * ⭐ R4-11: ПОТОЛОК ТЕЛА ЗАПРОСА НА ПРОКСИ. Раньше прокси собирал тело целиком, а express отказывал уже после: анонимный POST
+ * на `/api/login` в несколько гигабайт (chunked, без Content-Length) раздувал память ноды до падения вместе со всеми
+ * комнатами. Больше потолка — 413 от самого прокси, тело дальше не копится.
+ * ⭐ R6-04: 16 КБ, а не 2 МБ — как у разбора тел аккаунтов (`accountRoutes.ts`, 8 КБ): 2 МБ вложенного JSON разбирались на
+ * главном потоке ~115 мс до любого лимита, и десяток анонимных запросов в секунду стоял тиками всех комнат.
+ */
+const BODY_MAX = 16 * 1024;
+/** Инструменты вне продакшена (`/api/dev/*`: конфиг, контент поз-редактора, `express.json` 2 МБ после проверки доступа). */
+const DEV_BODY_MAX = 2 * 1024 * 1024;
+const DEV_PATH = '/api/dev/';
+/** Загрузка моделей из редактора (`/api/dev/assets/:id`, `express.raw` 64 МБ) — только вне продакшена: там ручка закрыта. */
+const ASSET_BODY_MAX = 64 * 1024 * 1024;
+const ASSET_PATH = '/api/dev/assets/';
+
+/** R4-11: сколько тела прокси вообще готов принять на этот путь. В продакшене инструменты закрыты — им и тело не нужно. */
+export function bodyCapFor(path: string, production = process.env.NODE_ENV === 'production'): number {
+  if (production || !path.startsWith(DEV_PATH)) return BODY_MAX;
+  return path.startsWith(ASSET_PATH) ? ASSET_BODY_MAX : DEV_BODY_MAX;
+}
+
+/**
+ * ⭐ R5-01: ЧТО `http.request` ПРИМЕТ БЕЗ БРОСКА. Разборщик uWS пропускает шире: управляющий байт в значении заголовка
+ * (`Host`, `User-Agent`, любой), не-ASCII в пути, метод не из знаков токена. `http.request` на таком бросает СИНХРОННО
+ * (`ERR_INVALID_CHAR`, `ERR_UNESCAPED_CHARACTERS`, `ERR_INVALID_HTTP_TOKEN`), а бросок из нативного колбэка uWS — это
+ * выход процесса со всеми комнатами ноды от одного анонимного запроса. Кривое получает 400 от самого прокси.
+ */
+const METHOD_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;   // RFC 9110: метод — токен
+/** Путь с запросом — печатный ASCII без пробелов; честный клиент прочее экранирует `%XX`. */
+const PATH_RE = /^\/[\x21-\x7e]*$/;
+/** Годится ли запрос к пересылке: метод, путь и каждый заголовок — те, что `http.request` пропустит. */
+export function proxyableRequest(method: string, path: string, headers: Record<string, string>): boolean {
+  if (!METHOD_RE.test(method) || !PATH_RE.test(path)) return false;
+  try {
+    for (const [k, v] of Object.entries(headers)) { validateHeaderName(k); validateHeaderValue(k, v); }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/** `ws.send` uWS: кадр не отправлен — исходящая очередь клиента выше `maxBackpressure`. */
+const SEND_DROPPED = 2;
 
 /** Обёртка сокета uWS → `GameConn`. Живёт ровно одно соединение. */
 class UwsConn implements GameConn {
@@ -65,9 +117,24 @@ class UwsConn implements GameConn {
   constructor(private readonly ws: UwsSocket, readonly ip: string) {}
   send(data: string | Uint8Array): void {
     if (!this.open) return;
+    // ⭐ R6-07: ОЧЕРЕДЬ ПЕРЕПОЛНЯЕТСЯ — КЛИЕНТ ОТКЛЮЧАЕТСЯ, как на транспорте `ws` (1013). Раньше сверх `maxBackpressure` uWS
+    // молча не отправлял кадр (код 2), а сокет держал: кадры смены этажа, сейва, ответов на команды и голосований пропадали,
+    // а клиент (его ввод продлевал жизнь сокета) стоял на старой карте со старым сейвом и держал голосования пати.
+    // Закрываем ДО переполнения: сверх потолка uWS не отправит и закрывающий кадр — клиент узнал бы только обрыв. Пустую
+    // очередь кадр не переполняет по определению (как и у самого uWS): большой кадр честному клиенту уходит.
+    const size = typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
+    let status: number;
     // uWS бросает, если сокет уже закрыт «под нами» (клиент отвалился между тиком и отправкой).
-    try { this.ws.send(typeof data === 'string' ? data : data, typeof data !== 'string'); }
-    catch { this.open = false; }
+    try {
+      const queued = this.ws.getBufferedAmount();
+      status = queued > 0 && queued + size > MAX_BACKPRESSURE
+        ? SEND_DROPPED
+        : this.ws.send(typeof data === 'string' ? data : data, typeof data !== 'string');
+    } catch { this.open = false; return; }
+    if (status === SEND_DROPPED) {
+      counters.slowClientsDropped++;
+      this.close(1013, 'slow-client');
+    }
   }
   close(code?: number, reason?: string): void {
     if (!this.open) return;
@@ -94,35 +161,7 @@ export function startUwsServer(cfg: ConfigRegistry, port: number, httpPort: numb
   }
 
   const rooms = new RoomManager(cfg);
-  const conns = new Map<UwsSocket, UwsConn>();
-
-  const app = uWS.App().ws('/ws', {
-    // Сжатие выключено по той же причине, что и на `ws` — см. комментарий в wsServer.ts.
-    compression: uWS.DISABLED,
-    // Клиент шлёт только маленькие JSON-кадры ввода; всё крупное — повод закрыть соединение.
-    maxPayloadLength: 64 * 1024,
-    // Молчащего клиента (обрыв интернета, TCP ещё висит) закрываем сами — иначе в комнате
-    // копится «призрак» игрока. uWS шлёт ping автоматически, свой heartbeat не нужен.
-    idleTimeout: 32,
-    // Потолок неотправленного на клиента: кто не успевает читать — отключается, а не съедает
-    // память сервера. На `ws` эту роль играет рост bufferedAmount, но там его никто не рубит.
-    maxBackpressure: MAX_BACKPRESSURE,
-    open: (ws: UwsSocket) => {
-      const conn = new UwsConn(ws, dec.decode(ws.getRemoteAddressAsText()));
-      conns.set(ws, conn);
-      rooms.handleConnection(conn);
-    },
-    message: (ws: UwsSocket, msg: ArrayBuffer, isBinary: boolean) => {
-      // От клиента приходит только текст (JSON). Двоичный кадр вверх — не наш протокол.
-      if (isBinary) return;
-      conns.get(ws)?.onMsg?.(dec.decode(msg));
-    },
-    close: (ws: UwsSocket) => {
-      const conn = conns.get(ws);
-      conns.delete(ws);
-      if (conn) { conn.open = false; conn.onEnd?.(); }
-    },
-  });
+  const app = mountGameWs(uWS.App(), gameWsBehavior(uWS, (conn) => rooms.handleConnection(conn)));
 
   app.any('/*', (res, req) => proxyToExpress(res, req, httpPort));
 
@@ -138,24 +177,120 @@ export function startUwsServer(cfg: ConfigRegistry, port: number, httpPort: numb
   return true;
 }
 
-/** Переправить один HTTP-запрос express-серверу на петле и вернуть его ответ дословно. */
-function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void {
+/**
+ * ⭐ R4-13: игровой сокет на `/ws` и `/ws/<i>` — путь за прокси по путям (DEPLOY.md §3a, вариант А): гейтвей отдаёт
+ * `wss://домен/ws/<i>`, прокси пересылает путь как есть, а нода слушала только ровно `/ws` (`/ws/0` → 404). Шаблон uWS
+ * `/ws/*` шире — лишнее под ним отсекает `upgrade` (`isGameWsPath`). Экспорт — для теста.
+ */
+export function mountGameWs<A extends Pick<UwsApp, 'ws'>>(app: A, behavior: Record<string, unknown>): A {
+  app.ws('/ws', behavior);
+  app.ws('/ws/*', behavior);
+  return app;
+}
+
+/**
+ * Поведение игрового сокета `/ws`: каждое новое соединение уходит в `onConn` обёрткой `GameConn`. Экспорт — для теста
+ * адреса (R4-29).
+ *
+ * ⭐ R4-29: АДРЕС ИГРОКА — ИЗ АПГРЕЙДА. За обратным прокси (Caddy, DEPLOY §3a/§4) собеседник сокета — сам прокси на петле,
+ * и `open` видел 127.0.0.1 у каждого: `play_sessions.ip` одинаков у всех, а сигнал «рой с одного адреса» срабатывал на
+ * любого, кто играл одновременно с тремя другими. Заголовки у uWS есть только в `upgrade` — там адрес и решается, тем же
+ * правилом, что у HTTP (`clientIp`: `X-Forwarded-For` читается, только если собеседник — доверенный прокси, и справа).
+ */
+export function gameWsBehavior(uWS: Pick<Uws, 'DISABLED'>, onConn: (conn: GameConn) => void): Record<string, unknown> {
+  const conns = new Map<UwsSocket, UwsConn>();
+  return {
+    // Сжатие выключено по той же причине, что и на `ws` — см. комментарий в wsServer.ts.
+    compression: uWS.DISABLED,
+    // Клиент шлёт только маленькие JSON-кадры ввода; всё крупное — повод закрыть соединение (общий потолок, R2-18).
+    maxPayloadLength: MAX_FRAME_BYTES,
+    // Молчащего клиента (обрыв интернета, TCP ещё висит) закрываем сами — иначе в комнате
+    // копится «призрак» игрока. uWS шлёт ping автоматически, свой heartbeat не нужен.
+    idleTimeout: 32,
+    // Потолок неотправленного на клиента: кто не успевает читать — отключается, а не съедает
+    // память сервера. На `ws` эту роль играет рост bufferedAmount (`WsConn.send`).
+    // ⭐ R6-07: и ОТКЛЮЧАЕТСЯ — сам uWS сверх потолка только отказывает в отправке (код 2), а сокет держит. Закрывает
+    // `UwsConn.send` — до переполнения, чтобы клиент получил 1013 (счётчик `dm_slow_clients_dropped_total`);
+    // `closeOnBackpressureLimit` — вторая линия для отправок мимо него (пинги uWS).
+    maxBackpressure: MAX_BACKPRESSURE,
+    closeOnBackpressureLimit: true,
+    upgrade: (res: UwsRes, req: UwsReq, context: unknown) => {
+      // R4-13: под шаблоном `/ws/*` игровой сокет — только `/ws/<номер>` (см. `mountGameWs`).
+      if (!isGameWsPath(req.getUrl())) { res.writeStatus('404 Not Found').end(); return; }
+      const headers: Record<string, string> = {};
+      req.forEach((k, v) => { headers[k] = v; });
+      const ip = clientIp(headers, dec.decode(res.getRemoteAddressAsText()));
+      res.upgrade({ ip }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'),
+        req.getHeader('sec-websocket-extensions'), context);
+    },
+    open: (ws: UwsSocket) => {
+      const conn = new UwsConn(ws, ws.getUserData().ip ?? dec.decode(ws.getRemoteAddressAsText()));
+      conns.set(ws, conn);
+      onConn(conn);
+    },
+    message: (ws: UwsSocket, msg: ArrayBuffer, isBinary: boolean) => {
+      // От клиента приходит только текст (JSON). Двоичный кадр вверх — не наш протокол.
+      if (isBinary) return;
+      // R2-01: бросок из обработчика внутри нативного колбэка uWS — это падение процесса. Гасим кадр.
+      try { conns.get(ws)?.onMsg?.(dec.decode(msg)); } catch (e) { frameFailed(e); }
+    },
+    close: (ws: UwsSocket) => {
+      const conn = conns.get(ws);
+      conns.delete(ws);
+      if (conn) { conn.open = false; conn.onEnd?.(); }
+    },
+  };
+}
+
+/**
+ * Переправить один HTTP-запрос express-серверу на петле и вернуть его ответ дословно. Экспорт — для теста доступа.
+ *
+ * ⭐ R5-01: НЕ БРОСАЕТ НИКОГДА — зовётся из нативного колбэка uWS, и бросок здесь был бы выходом процесса. Кривой запрос
+ * (`proxyableRequest`) — 400 до пересылки; любой бросок, что всё же случился (в том числе в колбэке тела), — 400 и строка
+ * в лог (через общий глушитель: поток таких запросов лог не топит).
+ */
+export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void {
   // onAborted ОБЯЗАТЕЛЕН до первого await/асинхронного шага: без него uWS роняет процесс,
   // если клиент отвалился раньше ответа.
   let aborted = false;
   res.onAborted(() => { aborted = true; });
+  /** Отказ от самого прокси (ответ ровно один: дальше `res` не трогаем); `close` — закрыть и соединение. */
+  const refuse = (status: string, body: string, close = false): void => {
+    if (aborted) return;
+    aborted = true;
+    try { res.cork(() => { res.writeStatus(status).writeHeader('content-type', 'application/json').end(body, close); }); } catch { /* сокет уже закрыт */ }
+  };
+  const badRequest = (e?: unknown): void => {
+    if (e !== undefined) frameFailed(e);
+    refuse('400 Bad Request', '{"error":"Неверный запрос"}', true);
+  };
+  try {
+    forwardRequest(res, req, httpPort, () => aborted, refuse, badRequest);
+  } catch (e) {
+    badRequest(e);
+  }
+}
 
+/** Тело `proxyToExpress`: разбор, проверка и пересылка. Бросок отсюда ловит вызывающий. */
+function forwardRequest(
+  res: UwsRes, req: UwsReq, httpPort: number, isAborted: () => boolean,
+  refuse: (status: string, body: string, close?: boolean) => void, badRequest: (e?: unknown) => void,
+): void {
   const method = req.getMethod().toUpperCase();
   const query = req.getQuery();
   const path = req.getUrl() + (query ? `?${query}` : '');
   const headers: Record<string, string> = {};
   req.forEach((k, v) => { headers[k] = v; });
-  // Настоящий адрес клиента. Если заголовок уже есть (мы за nginx) — не трогаем: первым в нём
-  // стоит адрес игрока, и именно по нему считают лимиты частоты (Ф0.5).
-  if (!headers['x-forwarded-for']) {
-    const addr = dec.decode(res.getRemoteAddressAsText());
-    if (addr) headers['x-forwarded-for'] = addr;
-  }
+  if (!proxyableRequest(method, path, headers)) { badRequest(); return; }
+  // ⭐ R3-03, R3-07: АДРЕС КЛИЕНТА РЕШАЕТ ЭТОТ ПРОКСИ, а express получает его готовым. Раньше заголовок клиента
+  // проходил насквозь (его «первый адрес» и был ключом лимитов входа — подменяй на каждую попытку), а без заголовка
+  // express видел петлю у КАЖДОГО запроса — служебные ручки «только с самой машины» были открыты всем.
+  //  • Собеседник с петли и без заголовков прокси — это сама машина (стенд, мониторинг): переправляем как есть, и
+  //    express видит ровно то, что есть, — прямой локальный вызов.
+  //  • Иначе `X-Forwarded-For` ПЕРЕЗАПИСЫВАЕТСЯ одним адресом клиента (`clientIp`: заголовок читается, только если
+  //    собеседник — доверенный прокси, и справа). Заголовок есть — служебные ручки закрыты (`localCaller`).
+  const peer = dec.decode(res.getRemoteAddressAsText());
+  if (!isLoopback(peer) || PROXY_HEADERS.some((h) => headers[h] !== undefined)) headers['x-forwarded-for'] = clientIp(headers, peer);
   // Тело собираем целиком: через прокси идут только запросы аккаунтов/конфига и загрузка
   // моделей из редактора — редкие и обозримые. Игровой трафик сюда не попадает.
   const forward = (body: Buffer): void => {
@@ -165,25 +300,25 @@ function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void {
         const out: Buffer[] = [];
         up.on('data', (d: Buffer) => out.push(d));
         up.on('end', () => {
-          if (aborted) return;
+          if (isAborted()) return;
           const payload = Buffer.concat(out);
-          res.cork(() => {
-            res.writeStatus(`${up.statusCode ?? 500} ${up.statusMessage ?? ''}`.trim());
-            for (const [k, v] of Object.entries(up.headers)) {
-              // Длину и кодирование считает сам uWS — свои значения тут только всё сломают.
-              if (k === 'content-length' || k === 'transfer-encoding' || k === 'connection') continue;
-              if (Array.isArray(v)) for (const one of v) res.writeHeader(k, one);
-              else if (v != null) res.writeHeader(k, String(v));
-            }
-            res.end(payload);
-          });
+          // R5-01: колбэк события — бросок и отсюда был бы необработанным исключением процесса.
+          try {
+            res.cork(() => {
+              res.writeStatus(`${up.statusCode ?? 500} ${up.statusMessage ?? ''}`.trim());
+              for (const [k, v] of Object.entries(up.headers)) {
+                // Длину и кодирование считает сам uWS — свои значения тут только всё сломают.
+                if (k === 'content-length' || k === 'transfer-encoding' || k === 'connection') continue;
+                if (Array.isArray(v)) for (const one of v) res.writeHeader(k, one);
+                else if (v != null) res.writeHeader(k, String(v));
+              }
+              res.end(payload);
+            });
+          } catch (e) { frameFailed(e); }
         });
       },
     );
-    upstream.on('error', (e) => {
-      if (aborted) return;
-      res.cork(() => { res.writeStatus('502 Bad Gateway').end(`прокси не достучался до express: ${e.message}`); });
-    });
+    upstream.on('error', (e) => { refuse('502 Bad Gateway', JSON.stringify({ error: `прокси не достучался до express: ${e.message}` })); });
     if (body.length) upstream.write(body);
     upstream.end();
   };
@@ -191,10 +326,23 @@ function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void {
   // У запросов без тела ждать `onData` нельзя — переправляем сразу.
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') { forward(EMPTY); return; }
 
+  // ⭐ R4-11: тело — под потолком пути. Заявлено больше — отказ сразу, до тела; пришло больше (chunked, без длины) — отказ
+  // на первом лишнем байте, накопленное выбрасывается, соединение закрывается (иначе клиент продолжал бы слать).
+  const cap = bodyCapFor(req.getUrl());
+  const tooLarge = (): void => { refuse('413 Payload Too Large', '{"error":"Слишком большое тело запроса"}'); };
+  const declared = Number(headers['content-length']);
+  if (Number.isFinite(declared) && declared > cap) { tooLarge(); return; }
   const chunks: Buffer[] = [];
+  let size = 0;
   res.onData((chunk, isLast) => {
-    // Буфер uWS переиспользуется между вызовами — копия обязательна, иначе тело затрётся.
-    if (chunk.byteLength) chunks.push(Buffer.from(new Uint8Array(chunk).slice()));
-    if (isLast) forward(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks));
+    if (isAborted()) return;
+    // R5-01: колбэк тела — тоже нативный: пересылка из него не бросает наружу.
+    try {
+      size += chunk.byteLength;
+      if (size > cap) { chunks.length = 0; tooLarge(); return; }
+      // Буфер uWS переиспользуется между вызовами — копия обязательна, иначе тело затрётся.
+      if (chunk.byteLength) chunks.push(Buffer.from(new Uint8Array(chunk).slice()));
+      if (isLast) forward(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks));
+    } catch (e) { badRequest(e); }
   });
 }

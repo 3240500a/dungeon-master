@@ -1,27 +1,35 @@
 import * as THREE from 'three';
 import { CRAFT_SLOT_LIST, anatomyOf, partById, slotName, stepLabel, type ConfigRegistry, type CraftSlot } from '@dm/shared';
-import { buildCraftMesh, type CraftMeshResult } from '@dm/client/modules/town/craftMesh/index.js';
-import type { CraftWindowState } from '@dm/client/modules/town/craftPanel.js';
+import { buildCraftMesh, type CraftMeshResult } from './craftMesh/index.js';
+import type { CraftWindowState } from './craftPanel.js';
 
 /**
  * 3D-ПРЕВЬЮ СБОРКИ (docs/CRAFT_WEAPONS.md §18, визуал Ф1): модель собирается из ТЕХ ЖЕ деталей,
- * что и вещь (`client/modules/town/craftMesh`): форма клинка по типу, своя гарда и навершие,
- * полотно и обух топора, рога и концы лука; цвет — материал каждой детали. Модель та же, что
- * потом встанет в окно кузницы игры, — песочница лишь показывает её.
+ * что и вещь (`craftMesh`): форма клинка по типу, своя гарда и навершие, полотно и обух топора,
+ * рога и концы лука; цвет — материал каждой детали. Один стенд на песочницу редактора и окно ковки
+ * в кузнице города: редактор берёт его отсюда, как и саму панель (`craftPanel.ts`).
+ *
+ * ⚠ Модуль тяжёлый (three + `craftMesh`), поэтому игра грузит его ДИНАМИЧЕСКИ — вместе с окном ковки
+ * (`forgeCraftTab.ts`), а не на старте.
  *
  * Управление: тянуть мышью — повернуть, колесо — приблизить, двойной клик — снова крутить самой.
  */
 
+/** Размер холста по умолчанию — колонка песочницы редактора. Окно кузницы уже — передаёт свой. */
 const W = 260, H = 440;
 
 let renderer: THREE.WebGLRenderer | null = null;
 let raf = 0;
 let scene: THREE.Scene | null = null;
 let current: CraftMeshResult | null = null;
+/** Кадр текущей сцены. Цикл гаснет, когда холст убран со страницы; `resumePreview3d` зажигает его снова. */
+let frame: (() => void) | null = null;
+let running = false;
 /** Ракурс переживает перерисовку окна: крутишь модель — выбор детали её не сбрасывает. */
 const view = { yaw: 0.6, pitch: 0.12, zoom: 1, auto: true };
 
-export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTMLElement {
+export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState, size: { width?: number; height?: number } = {}): HTMLElement {
+  const w = size.width ?? W, h = size.height ?? H;
   const box = document.createElement('div');
   box.style.cssText = 'background:#0e1117;border:1px solid #2b323f;border-radius:8px;padding:8px';
   const title = document.createElement('div');
@@ -31,6 +39,7 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
 
   const anat = anatomyOf(reg, st.weaponClass);
   cancelAnimationFrame(raf);
+  running = false; frame = null;
   if (current) { current.dispose(); current = null; }
   scene = null;
   const built = anat ? buildCraftMesh(reg, st.weaponClass, st.hands, st.parts) : null;
@@ -40,11 +49,11 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
   if (!renderer) {
     try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); } catch { box.append(document.createTextNode('WebGL недоступен')); return box; }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    renderer.setSize(W, H);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.domElement.style.cssText = 'display:block;cursor:grab;border-radius:6px;background:radial-gradient(ellipse at 50% 40%, #1d2330 0%, #0e1117 70%)';
     bindControls(renderer.domElement);
   }
+  renderer.setSize(w, h);
   box.append(renderer.domElement);
 
   const s = new THREE.Scene();
@@ -58,16 +67,16 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
   const g = built.group;
   g.rotation.z = Math.PI;
   const bb = new THREE.Box3().setFromObject(g);
-  const size = bb.getSize(new THREE.Vector3());
+  const dims = bb.getSize(new THREE.Vector3());
   const center = bb.getCenter(new THREE.Vector3());
   const holder = new THREE.Group(); holder.add(g); g.position.sub(center);
   const pivot = new THREE.Group(); pivot.add(holder); s.add(pivot);
-  const cam = new THREE.PerspectiveCamera(28, W / H, 0.5, 5000);
-  const fitDist = Math.max(size.y / (2 * Math.tan((28 * Math.PI) / 360)), size.x * 1.4, 30) * 1.12;
+  const cam = new THREE.PerspectiveCamera(28, w / h, 0.5, 5000);
+  const fitDist = Math.max(dims.y / (2 * Math.tan((28 * Math.PI) / 360)), dims.x * 1.4, 30) * 1.12;
 
   const loop = (): void => {
     // Холст убран со страницы (переключили вкладку) — цикл гаснет, а не рисует в пустоту.
-    if (scene !== s || !renderer || !renderer.domElement.isConnected) return;
+    if (scene !== s || !renderer || !renderer.domElement.isConnected) { running = false; return; }
     if (view.auto) view.yaw += 0.01;
     pivot.rotation.set(view.pitch, view.yaw, 0);
     const d = fitDist / view.zoom;
@@ -75,7 +84,9 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
     renderer.render(s, cam);
     raf = requestAnimationFrame(loop);
   };
-  requestAnimationFrame(loop);
+  frame = loop;
+  running = true;
+  raf = requestAnimationFrame(loop);
 
   const caption = document.createElement('div');
   caption.style.cssText = 'color:#8f897c;font-size:11px;margin-top:6px;line-height:1.5';
@@ -83,9 +94,19 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
     const p = partById(reg, st.parts[slot].id);
     return p ? `<b style="color:#c9bfae">${slotName(anat, slot, st.hands)}</b>: ${p.name} · ${stepLabel(reg, anat, slot, p, st.parts[slot].step)}` : '';
   };
-  caption.innerHTML = `${CRAFT_SLOT_LIST.map(line).join('<br>')}<br><span style="color:#6b665c">${Math.round(size.y)} см · тянуть — повернуть, колесо — ближе, двойной клик — крутить</span>`;
+  caption.innerHTML = `${CRAFT_SLOT_LIST.map(line).join('<br>')}<br><span style="color:#6b665c">${Math.round(dims.y)} см · тянуть — повернуть, колесо — ближе, двойной клик — крутить</span>`;
   box.append(caption);
   return box;
+}
+
+/**
+ * Снова зажечь цикл последней сборки — когда тот же стенд вернули на страницу (окно кузницы держит его
+ * между перерисовками и вкладками и не строит модель заново). Цикл жив — ничего не делает.
+ */
+export function resumePreview3d(): void {
+  if (running || !frame || !renderer?.domElement.isConnected) return;
+  running = true;
+  raf = requestAnimationFrame(frame);
 }
 
 /** Мышь: повернуть, приблизить, вернуть авто-вращение. Вешается один раз на общий холст. */

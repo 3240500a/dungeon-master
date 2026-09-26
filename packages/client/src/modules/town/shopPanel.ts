@@ -1,9 +1,10 @@
-import { shopBuyPrice, shopSellPrice, type Item } from '@dm/shared';
+import { shopSellPrice, type Item } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, itemSlot, attachTooltip } from '../../ui/kit.js';
 import { shopCategory } from './shopCats.js';
 import { renderShopGrid } from './shopGrid.js';
+import { confirmAll, disposePrompts } from '../inventory/disposeConfirm.js';
 
 /**
  * Лавка зелий: ассортимент авторитетный (с сервера, `app.shopStock`) — здесь только расходники (зелья/свитки).
@@ -24,7 +25,6 @@ export const shopPanel: PanelFactory = (app) => ({
   title: 'Лавка зелий',
   render(body) {
     const state = app.state!;
-    const rarities = app.config.get('rarities');
 
     const head = mk('div', 'margin-bottom:10px');
     head.innerHTML = `Золото: <b style="color:${COLORS.gold}">${state.save.gold}</b>`;
@@ -39,9 +39,11 @@ export const shopPanel: PanelFactory = (app) => ({
     if (potions.length === 0) left.append(mk('div', 'color:#666', 'Нет зелий в продаже'));
     else left.append(renderShopGrid(potions, {
       cols: 6, minRows: 3,
-      price: (it) => shopBuyPrice(it, rarities),
-      affordable: (it) => state.save.gold >= shopBuyPrice(it, rarities),
-      onBuy: (it) => app.sendCmd({ cmd: 'buy', uid: it.uid }),
+      // R4-37: цена — из кадра сервера (`app.shopPrice`): её и спишет `buy`; своя по конфигу могла разойтись с ней.
+      price: (it) => app.shopPrice(it),
+      affordable: (it) => state.save.gold >= app.shopPrice(it),
+      // R6-16: с ценой кадра — дороже сервер не возьмёт (отказ «Цена изменилась» и свежий кадр лавки).
+      onBuy: (it) => app.sendCmd({ cmd: 'buy', uid: it.uid, maxGold: app.shopPrice(it) }),
       tooltip: (it) => itemTooltipHtml(it),
     }));
 
@@ -51,8 +53,13 @@ export const shopPanel: PanelFactory = (app) => ({
     const sellCells = mk('div', 'display:flex;flex-wrap:wrap;gap:8px');
     if (state.save.inventory.length === 0) right.append(mk('div', 'color:#666', 'Инвентарь пуст'));
     for (const item of state.save.inventory) {
-      sellCells.appendChild(pricedSlot(item, `+${shopSellPrice(item, rarities)}`, COLORS.gold,
-        () => app.sendCmd({ cmd: 'sell', uid: item.uid })));
+      const price = shopSellPrice(app.config, item);
+      // Скованное продаётся только после двух вопросов (§17): назад его не выкупить. Найденное оружие, которое кузнец
+      // засчитал бы журналу (деталь, ступень, мифик…), — после одного (R2-07): продажа журнал не пополняет.
+      sellCells.appendChild(pricedSlot(item, `+${price}`, COLORS.gold, () => {
+        if (!confirmAll(disposePrompts(app.config, item, 'sell', app.stash?.forgeJournal, price))) return;
+        app.sendCmd({ cmd: 'sell', uid: item.uid, minGold: price });   // R6-16: меньше подписи «+N» лавка не даст
+      }));
     }
     right.appendChild(sellCells);
 

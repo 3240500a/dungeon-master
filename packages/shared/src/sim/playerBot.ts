@@ -5,6 +5,7 @@ import { passiveTreeModifiers, skillTreeModifiers } from '../formulas/skills.js'
 import { combatStatsOf, attackWeaponsOf, estimateAttack, WEAPON_ATTR } from '../formulas/playerCombat.js';
 import { abilityRankMult, abilityCooldown } from '../formulas/combat.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
+import { shapeFoundWeapon } from '../formulas/craft.js';
 import { xpForLevel } from '../formulas/xp.js';
 import type { Rng } from '../formulas/rng.js';
 import { DEFAULT_HP_MANA_SCALING, type Attributes, type DerivedStats, type StatModifier } from '../types/attributes.js';
@@ -15,10 +16,15 @@ import type { BuildPolicy } from './types.js';
 
 const ALL_ATTRS: (keyof Attributes)[] = ['strength', 'dexterity', 'intelligence', 'vitality'];
 
-/** Пустой сейв бота уровня 1 выбранного класса (со стартовым оружием). */
+/**
+ * Пустой сейв бота уровня 1 выбранного класса (со стартовым оружием). Оружие — как у нового героя игры
+ * (`newCharacterSave`): происхождение `start` (D16) и детали, записанные на вещь (D17, `shapeFoundWeapon`).
+ * Иначе разбор стартового оружия в симе открывал бы журналу не то, что открыл бы в игре.
+ */
 export function newBotSave(reg: ConfigRegistry, classId: string): SaveState {
   const cls = reg.get('classes').find((c) => c.id === classId) ?? reg.get('classes')[0]!;
-  const weapon = itemFromBaseId(reg.get('items.base'), cls.startWeaponId, reg.get('item-tiers'));
+  const raw = itemFromBaseId(reg.get('items.base'), cls.startWeaponId, reg.get('item-tiers'), 'start');
+  const weapon = raw ? shapeFoundWeapon(reg, raw) : undefined;
   const equipment: SaveState['equipment'] = {};
   if (weapon) equipment.weapon = weapon;
   return {

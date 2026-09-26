@@ -2,11 +2,12 @@ import type { CombatStats, DamagePacket } from '../types/combat.js';
 import type { Item } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
 import type { DropPayload, ScaledMonster } from '../types/world.js';
-import type { DebuffApply, DebuffState } from './debuffs.js';
+import type { DebuffApply, DebuffKind, DebuffState } from './debuffs.js';
 import { newDebuffState } from './debuffs.js';
 import type { PlayerHitOptions } from './combat.js';
 import { gridSize, TILE, type Grid, type Cell } from './grid.js';
 import type { Vec2 } from './movement.js';
+import type { ResolvedActive } from '../session/inserts.js';
 
 /**
  * Модель мира — чистые сериализуемые данные (никаких Phaser-объектов), пригодные
@@ -60,12 +61,17 @@ export interface PlayerEntity {
   toggles: string[];
   /** Временные баффы: id узла → остаток длительности, сек. */
   skillBuffs: Record<string, number>;
-  /** Идёт замах удара (базовой атаки ИЛИ скилла): сработает по завершении, прерывается станом. */
+  /**
+   * Идёт замах удара (базовой атаки ИЛИ скилла): сработает по завершении, прерывается станом.
+   * ⚠ R6-02: ЗАМАХ ПОМНИТ, ЧЕМ ОН НАЧАТ. `loadout` — подпись надетого и включённых аур/стоек на старте: сменилось за замах
+   * (команды экипировки ходят где угодно, между тиками; тогл — вводом) — удар пропадает, иначе темп был бы от кинжала или
+   * ауры скорости, а урон от молота или ауры урона. `res` у скилла —
+   * способность со вставками, ОПЛАЧЕННАЯ на касте (без неоплаченных — погасших); удар и каждый взмах серии берут её, а не
+   * гнёзда сейва: вставленное за замах не бьёт даром, вынутое — не отнимает заплаченного.
+   */
   windup: ({ kind: 'attack' }
-    // `omit` — пулы, вставки которых НЕ оплачены (не хватило маны). Замах пересобирает способность
-    // по завершении, и без этой памяти удар прилетел бы со стихией, за которую не заплатили.
-    | { kind: 'skill'; nodeId: string; rank: number; series?: AttackSeries; omit?: ('mana' | 'stamina')[] })
-    & { remaining: number } | null;
+    | { kind: 'skill'; nodeId: string; rank: number; series?: AttackSeries; res: ResolvedActive })
+    & { remaining: number; loadout: string } | null;
   /** Активный рывок (движение) — пока не null, ввод игнорируется, масса ×weightMult. */
   dash: DashState | null;
   /** Кулдаун уклонения (dodge-рывок на пробел), сек; >0 — рывок недоступен. */
@@ -77,6 +83,11 @@ export interface PlayerEntity {
   spawnImmuneUntil: number;
   /** Персистентный персонаж (уровень, атрибуты, экипировка, инвентарь...). */
   save: SaveState;
+  /**
+   * Аккаунт игрока (только на сервере, R2-02): выброшенное им помечается, и игрок другого аккаунта его не
+   * поднимет. В симе и офлайне пусто — подбор, как и прежде, свободный.
+   */
+  account?: string;
 }
 
 /**
@@ -148,6 +159,11 @@ export interface MonsterEntity {
   alive: boolean;
   /** Время смерти (w.timeMs) — труп держится в снапшоте ещё CORPSE_LINGER_MS, потом удаляется (иначе снапшот растёт весь этаж). */
   deadAt?: number;
+  /**
+   * ⚠ R5-06: кто последним повесил урон-по-времени каждого вида (id игрока). Добитое тиком статуса засчитывается ему:
+   * опыт, квест «убить», лечение за убийство. Раньше — первому в комнате. В сетевой кадр не уходит (`serializeWorld`).
+   */
+  dotBy?: Partial<Record<DebuffKind, string>>;
 }
 
 /** Лежащий на полу предмет. */
@@ -159,7 +175,12 @@ export interface WorldChest {
   opened: boolean;
 }
 
-export type DropEntity = { id: number; pos: Vec2 } & DropPayload;
+/**
+ * `owner` — аккаунт игрока, ВЫБРОСИВШЕГО вещь (R2-02). Торговли между аккаунтами нет, и леджер вещь чужого
+ * аккаунта не пустит: поднять её может только тот же аккаунт. Добыча с монстров и сундуков — без владельца.
+ * В сетевой кадр не уходит (`dropPayload`).
+ */
+export type DropEntity = { id: number; pos: Vec2; owner?: string } & DropPayload;
 
 /** Летящий снаряд (базовая атака дальнобойного оружия или скилл). */
 export interface ProjectileEntity {

@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
+import { WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN } from '@dm/shared';
 import { q, q1 } from '../db/pool.js';
 import { getSession, getCharacter } from '../db/db.js';
-import { liveNodes, claimChar, sweepNodes, type NodeRow } from './registry.js';
+import { limits } from '../net/rateLimit.js';
+import { localCaller } from '../net/adminAccess.js';
+import { cachedJson } from '../net/cachedJson.js';
+import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow } from './registry.js';
 
 /**
  * Гейтвей (Ф4.1, Ф4.4): раздаёт клиенту адрес игровой ноды и держит очередь на вход.
@@ -12,7 +16,8 @@ import { liveNodes, claimChar, sweepNodes, type NodeRow } from './registry.js';
  * отправки и приёмы, только дважды. Поэтому клиент спрашивает адрес один раз и дальше
  * говорит с нодой напрямую.
  *
- * КАК ВЫБИРАЕТСЯ НОДА:
+ * КАК ВЫБИРАЕТСЯ НОДА (после очереди на вход — R5-13: и для входа по коду; R6-08: вход по коду — в пределах запаса ноды
+ * сверх потолка, а герой с живым закреплением — сессия, грейс, прощальная запись — идёт к своей ноде мимо очереди):
  *  1. Заход по коду комнаты — по ПЕРВОЙ БУКВЕ кода. Код комнаты выдаёт нода и ставит в него
  *     свою букву, поэтому «зайти к другу» не требует ни одного запроса в базу.
  *  2. Возврат своего персонажа — на ноду, за которой он закреплён (`char_claims`). Это же
@@ -29,13 +34,30 @@ export function nodeLetter(nodeId: string): string {
 
 /** Потолок кластера. Сверх него — очередь, а не отказ и не «примем всех и ляжем». */
 const MAX_PLAYERS = Number(process.env.DM_MAX_PLAYERS ?? 0);   // 0 = без потолка
-/** Билет в очереди живёт недолго: ушедший из очереди не должен держать место. */
+/**
+ * Билет в очереди живёт недолго после ПОСЛЕДНЕГО ОПРОСА (`seen_at`, R6-08): ушедший из очереди не должен держать место, а
+ * ждущий честно (клиент опрашивает каждые 3 с) не теряет его, сколько бы ни ждал.
+ */
 const TICKET_TTL_SEC = 60;
+/**
+ * ⭐ R6-08: запас сверх потолка для входа к другу по коду — тот же, что держит нода (`RoomManager.admits`: потолок +
+ * max(размер пати, четверть потолка)): пати на потолке не разрывается, а вход без кода на ноде всё равно упирается в
+ * её потолок (R5-13), так что код-«пропуск» ничего не открывает.
+ */
+const PARTY_HEADROOM_MIN = 4;
+const partyHeadroom = (cap: number): number => Math.max(PARTY_HEADROOM_MIN, Math.ceil(cap / 4));
+/** R6-20: как долго состояние кластера (`/api/cluster`) отдаётся из кэша, мс. */
+const CLUSTER_CACHE_MS = 1_000;
 
 function bearer(req: Request): string | null {
   const m = /^Bearer\s+(.+)$/i.exec(req.header('authorization') ?? '');
   return m ? m[1]! : null;
 }
+
+/** R4-21: билет очереди — ровно тот вид, что выдаёт `admit` (`randomUUID`). */
+const TICKET_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** R4-21: код комнаты (без учёта регистра) — буквы и цифры, не длиннее кода ноды (R4-18). */
+const ROOM_CODE_RE = new RegExp(`^[A-Z0-9]{1,${ROOM_CODE_LEN}}$`);
 
 /**
  * Сколько игроков мы отправили на узел с прошлого обновления его показателей.
@@ -64,44 +86,84 @@ function leastLoaded(nodes: NodeRow[]): NodeRow | undefined {
   return best;
 }
 
-export function installGatewayRoutes(app: Express): void {
+/**
+ * `canRead` — кто может читать служебное состояние кластера (R6-20): по умолчанию — только прямой вызов с самой машины;
+ * `index.ts` передаёт правило `/metrics` (и ключ чтения метрик, `internalReader`).
+ */
+export function installGatewayRoutes(
+  app: Express,
+  o: { canRead?: (req: Request) => boolean } = {},
+): void {
+  const canRead = o.canRead ?? ((req: Request): boolean => localCaller(req.headers, req.socket.remoteAddress));
   /**
    * Куда подключаться. Возвращает либо адрес ноды, либо место в очереди.
    * Клиент зовёт это ПЕРЕД открытием сокета и после каждого разрыва.
    */
   app.get('/api/route', (req: Request, res: Response) => {
     void (async () => {
+      // ⭐ R4-21: СТРОКИ ЗАПРОСА — ДО БАЗЫ. Раньше `?charId=%00` (и такой же билет очереди) уходил в Postgres, тот отвергал
+      // байт 0x00, и КАЖДЫЙ такой запрос любого вошедшего игрока давал 500 со стеком в логе — без лимита. Кривое — 4xx, базе
+      // его не видать: токен — вид сессии, id героя — правило провода, билет — вид `randomUUID`, код комнаты — вид кода.
       const token = bearer(req);
-      const userId = token ? await getSession(token) : null;
-      if (!userId) return res.status(401).json({ error: 'Требуется вход' });
-
+      if (!token || !WIRE_TOKEN_RE.test(token)) return res.status(401).json({ error: 'Требуется вход' });
       const charId = String(req.query.charId ?? '');
-      const owned = charId ? await getCharacter(charId) : null;
+      if (!WIRE_CHAR_ID_RE.test(charId)) return res.status(400).json({ error: 'Неверный id персонажа' });
+      const ticket = String(req.query.ticket ?? '');
+      if (ticket && !TICKET_RE.test(ticket)) return res.status(400).json({ error: 'Неверный билет очереди' });
+      const code = String(req.query.roomCode ?? '').toUpperCase();
+      if (code && !ROOM_CODE_RE.test(code)) return res.status(400).json({ error: 'Неверный код комнаты' });
+
+      const userId = await getSession(token);
+      if (!userId) return res.status(401).json({ error: 'Требуется вход' });
+      // R4-21: каждый маршрут пишет закрепление героя в базу — не чаще потолка аккаунта.
+      if (!limits.route.take(userId)) {
+        res.setHeader('Retry-After', String(limits.route.retryAfterSec(userId)));
+        return res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
+      }
+
+      const owned = await getCharacter(charId);
       if (!owned || owned.userId !== userId) return res.status(403).json({ error: 'Персонаж недоступен' });
 
       const nodes = await liveNodes();
       if (!nodes.length) return res.status(503).json({ error: 'Игровые узлы недоступны' });
 
-      // 1. По коду комнаты — к другу.
-      const code = String(req.query.roomCode ?? '').toUpperCase();
-      if (code) {
-        const byLetter = nodes.find((n) => nodeLetter(n.id) === code[0]);
-        if (byLetter) return res.json({ url: byLetter.url, node: byLetter.id, reason: 'по коду комнаты' });
-        return res.status(404).json({ error: 'Комната не найдена: узел не отвечает' });
-      }
+      // ⭐ R5-13: код комнаты — только полный (буква ноды + знаки, R4-18). Раньше хватало одной буквы: `?roomCode=A` отдавал
+      // адрес первой ноды мимо очереди, а дальше вход без кода туда же.
+      if (code && code.length !== ROOM_CODE_LEN) return res.status(404).json({ error: 'Комната не найдена' });
 
-      // 2. Очередь: считаем ПЕРЕД закреплением, иначе место занимает тот, кого не пустили.
+      // 1. Очередь: считаем ПЕРЕД закреплением, иначе место занимает тот, кого не пустили. ⭐ R5-13: и ПЕРЕД маршрутом по коду
+      // — раньше он отдавал адрес ноды до проверки потолка, и очередь обходилась входом «к другу».
       //
       // К числу игроков из реестра ОБЯЗАТЕЛЬНО прибавляем уже выданные направления: показатели
       // приходят раз в две секунды, а полсотни человек заходят за доли секунды. Без этой
       // поправки потолок не срабатывает вовсе — проверено, пропустило всех 50 при потолке 30.
-      const total = nodes.reduce((a, n) => a + n.players, 0) + pendingIssued();
-      const ticket = String(req.query.ticket ?? '');
-      if (MAX_PLAYERS > 0 && total >= MAX_PLAYERS) {
-        const q1r = await admit(ticket, userId, MAX_PLAYERS - total);
-        if (!q1r.admitted) return res.status(503).json(q1r.body);
+      if (MAX_PLAYERS > 0) {
+        // ⭐ R6-08: ВОЗВРАЩЕНИЕ — НЕ НОВЫЙ ВХОД. Клиенты спрашивают маршрут перед каждым подключением и реконнектом (R4-13), и
+        // на потолке герой, чья связь моргнула посреди забега, вставал в очередь вместо своей грейс-комнаты (а пати тем
+        // временем могла уйти с этажа, R4-14). Живое закрепление (сессия, грейс, прощальная запись) ведёт к своей ноде.
+        const liveAt = await liveClaim(charId);
+        const home = liveAt ? nodes.find((n) => n.id === liveAt) : undefined;
+        if (home) {
+          if (ticket) await dropTicket(ticket, userId);
+          return res.json({ url: home.url, node: home.id, reason: 'закреплён за узлом' });
+        }
+        const total = nodes.reduce((a, n) => a + n.players, 0) + pendingIssued();
+        // ⭐ R6-08: к другу по коду — в пределах запаса ноды, а не в общей очереди (см. `partyHeadroom`).
+        if (code && total < MAX_PLAYERS + partyHeadroom(MAX_PLAYERS)) {
+          if (ticket) await dropTicket(ticket, userId);
+        } else {
+          const q1r = await admit(ticket, userId, MAX_PLAYERS - total);
+          if (!q1r.admitted) return res.status(503).json(q1r.body);
+        }
       } else if (ticket) {
-        await q('DELETE FROM login_queue WHERE ticket = $1', [ticket]);   // место есть — билет не нужен
+        await q('DELETE FROM login_queue WHERE ticket = $1', [ticket]);   // потолка нет — билет не нужен
+      }
+
+      // 2. По коду комнаты — к другу.
+      if (code) {
+        const byLetter = nodes.find((n) => nodeLetter(n.id) === code[0]);
+        if (byLetter) return res.json({ url: byLetter.url, node: byLetter.id, reason: 'по коду комнаты' });
+        return res.status(404).json({ error: 'Комната не найдена: узел не отвечает' });
       }
 
       // 3. Свой персонаж возвращается на свою ноду; новый — на самую свободную.
@@ -115,21 +177,30 @@ export function installGatewayRoutes(app: Express): void {
     });
   });
 
-  /** Состояние кластера — для мониторинга и стенда. */
-  app.get('/api/cluster', (_req: Request, res: Response) => {
-    void (async () => {
-      const nodes = await liveNodes();
-      res.json({
-        players: nodes.reduce((a, n) => a + n.players, 0),
-        rooms: nodes.reduce((a, n) => a + n.rooms, 0),
-        maxPlayers: MAX_PLAYERS || null,
-        nodes: nodes.map((n) => ({
-          id: n.id, url: n.url, players: n.players, rooms: n.rooms,
-          draining: n.draining, tickHz: n.tick_hz, loopP99: n.loop_p99_ms,
-          rssMb: Math.round(Number(n.rss_bytes) / 1048576),
-        })),
-      });
-    })().catch(() => res.status(500).json({ error: 'Внутренняя ошибка' }));
+  /**
+   * Состояние кластера — для мониторинга и стенда.
+   * ⭐ R6-20: ТОЛЬКО СЛУЖЕБНО (правило `/metrics`, R3-03: с самой машины или ключом чтения) и из кэша на секунду. Раньше
+   * ручка отвечала любому — игроки, комнаты, слив, частота тика, лаг цикла, память и адреса нод, — и каждый анонимный
+   * запрос шёл в базу за узлами.
+   */
+  const clusterBody = cachedJson(async () => {
+    const nodes = await liveNodes();
+    return {
+      players: nodes.reduce((a, n) => a + n.players, 0),
+      rooms: nodes.reduce((a, n) => a + n.rooms, 0),
+      maxPlayers: MAX_PLAYERS || null,
+      nodes: nodes.map((n) => ({
+        id: n.id, url: n.url, players: n.players, rooms: n.rooms,
+        draining: n.draining, tickHz: n.tick_hz, loopP99: n.loop_p99_ms,
+        rssMb: Math.round(Number(n.rss_bytes) / 1048576),
+      })),
+    };
+  }, CLUSTER_CACHE_MS);
+  app.get('/api/cluster', (req: Request, res: Response) => {
+    if (!canRead(req)) return res.status(403).end();
+    void clusterBody.get()
+      .then(({ body }) => { res.type('application/json').send(body); })
+      .catch(() => { if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' }); });
   });
 
   // Узлы, переставшие подавать признаки жизни, не должны копиться в реестре.
@@ -174,30 +245,49 @@ ${formatAudit(r)}`);
 /**
  * Очередь на вход. Билет выдаётся один раз, дальше клиент приходит с ним и получает своё
  * место. Пускаем столько, сколько освободилось мест, начиная с головы очереди.
+ *
+ * ⭐ R6-08: ПО МЕСТУ В ОЧЕРЕДИ. Раньше `admit` звался только на потолке и получал «свободных мест» ≤ 0 — по месту не пускали
+ * никого; освободившееся место брал первый пришедший (новый вход без билета обгонял всех, кто ждал), а продление билета
+ * `SET at = at` ничего не продлевало: через минуту честного ожидания билет исчезал, и клиент видел «1 из N» навсегда.
+ * Теперь:
+ *  • место — `at` (не меняется), срок — от последнего опроса (`seen_at`);
+ *  • билет — только своего аккаунта (местом в голове очереди не поделиться), а потерянный (перезагрузка страницы) —
+ *    находится по аккаунту: своё место не теряется и второе не занимается;
+ *  • очередь не пуста — входит лишь тот, перед кем меньше людей, чем свободных мест; новичок без билета — в хвост.
  */
 async function admit(ticket: string, userId: string, freeSlots: number)
   : Promise<{ admitted: boolean; body?: unknown }> {
-  await q(`DELETE FROM login_queue WHERE at < now() - ($1 || ' seconds')::interval`, [String(TICKET_TTL_SEC)]);
+  await q(`DELETE FROM login_queue WHERE seen_at < now() - ($1 || ' seconds')::interval`, [String(TICKET_TTL_SEC)]);
 
-  if (ticket) {
-    const pos = await q1<{ n: string }>(
-      `SELECT COUNT(*) n FROM login_queue
-       WHERE at < (SELECT at FROM login_queue WHERE ticket = $1)`, [ticket]);
-    const ahead = Number(pos?.n ?? 0);
-    if (ahead < Math.max(0, freeSlots)) {
-      await q('DELETE FROM login_queue WHERE ticket = $1', [ticket]);
-      return { admitted: true };
-    }
-    // Обновляем метку, чтобы билет не протух, пока человек честно ждёт.
-    await q('UPDATE login_queue SET at = at WHERE ticket = $1', [ticket]);
-    const total = await q1<{ n: string }>('SELECT COUNT(*) n FROM login_queue');
-    return { admitted: false, body: { queue: { ticket, position: ahead + 1, total: Number(total?.n ?? 0) } } };
+  let mine = ticket
+    ? (await q1<{ ticket: string }>(
+      'UPDATE login_queue SET seen_at = now() WHERE ticket = $1 AND user_id = $2 RETURNING ticket', [ticket, userId]))?.ticket
+    : undefined;
+  mine ??= (await q1<{ ticket: string }>(
+    `UPDATE login_queue SET seen_at = now()
+     WHERE ticket = (SELECT ticket FROM login_queue WHERE user_id = $1 ORDER BY at, ticket LIMIT 1)
+     RETURNING ticket`, [userId]))?.ticket;
+  if (!mine) {
+    // Очереди нет и место есть — билет не нужен.
+    if (freeSlots > 0 && !(await q1('SELECT 1 AS one FROM login_queue LIMIT 1'))) return { admitted: true };
+    mine = randomUUID();
+    await q('INSERT INTO login_queue (ticket, user_id) VALUES ($1, $2)', [mine, userId]);
   }
-
-  const fresh = randomUUID();
-  await q('INSERT INTO login_queue (ticket, user_id) VALUES ($1, $2)', [fresh, userId]);
+  const pos = await q1<{ n: string }>(
+    `SELECT COUNT(*) n FROM login_queue
+     WHERE (at, ticket) < (SELECT at, ticket FROM login_queue WHERE ticket = $1)`, [mine]);
+  const ahead = Number(pos?.n ?? 0);
+  if (ahead < freeSlots) {
+    await q('DELETE FROM login_queue WHERE ticket = $1', [mine]);
+    return { admitted: true };
+  }
   const total = await q1<{ n: string }>('SELECT COUNT(*) n FROM login_queue');
-  return { admitted: false, body: { queue: { ticket: fresh, position: Number(total?.n ?? 1), total: Number(total?.n ?? 1) } } };
+  return { admitted: false, body: { queue: { ticket: mine, position: ahead + 1, total: Number(total?.n ?? 0) } } };
+}
+
+/** R6-08: билет больше не нужен (вошёл мимо очереди — возвращение, вход к другу). Только свой. */
+async function dropTicket(ticket: string, userId: string): Promise<void> {
+  await q('DELETE FROM login_queue WHERE ticket = $1 AND user_id = $2', [ticket, userId]);
 }
 
 /**

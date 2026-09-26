@@ -24,6 +24,7 @@ import { runMapPanel } from './modules/run/runMapPanel.js';
 import { questLogPanel } from './modules/quests/questLogPanel.js';
 import { SfxController } from './modules/sfx/sfx.js';
 import { GameLog } from './ui/gameLog.js';
+import { guardTyping } from './ui/typingGuard.js';
 
 const app = new App();
 
@@ -57,6 +58,10 @@ const config: Phaser.Types.Core.GameConfig = {
 const game = new Phaser.Game(config);
 // Глобальные сервисы доступны сценам через App.from(scene).
 game.registry.set('app', app);
+
+// ⭐ R6-03: набор в полях ввода (код комнаты, ник/пароль, имя героя) — не игровые клавиши: до слушателя Phaser на
+// `window` он не доходит, и перехват клавиш игры его не глотает (см. `ui/typingGuard.ts`).
+guardTyping(document);
 
 // DOM-оверлей UI (модальные панели поверх canvas).
 const uiRoot = document.getElementById('ui-root')!;

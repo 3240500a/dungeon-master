@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_QUEST_TEMPLATE_ID_MAX,
+  WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, isWireText,
+} from '../session/wireLimits.js';
 
 /**
  * zod-схемы всех конфигов — единственный источник истины по ФОРМЕ данных.
@@ -27,6 +31,12 @@ const statModifierSchema = z.object({
 });
 
 const requirementsSchema = z.record(attributeEnum, z.number()).default({});
+
+/**
+ * id, который клиент шлёт обратно по проводу (узел древа, вставка, деталь, биом…): не длиннее потолка
+ * провода (R2-27, `session/wireLimits.ts`) — иначе редактор принял бы то, что сервер молча отвергнет.
+ */
+const wireId = z.string().max(WIRE_ID_MAX).refine(isWireText, 'управляющий символ или непарный суррогат — провод такой id не пропустит (R3-02)');
 
 // ── balance ───────────────────────────────────────────────────────────────
 export const balanceSchema = z.object({
@@ -390,15 +400,22 @@ export const balanceSchema = z.object({
   /** Сброс дерева скилов: золото за каждое вложенное очко скилла. */
   skillRespecCostPerPoint: z.number().int().min(0).default(100),
   /**
+   * Как часто (сек) у героя обновляются прилавок и доска квестов города. Сток держится за героем-хозяином
+   * комнаты: ни круги «город ↔ арена/подземелье», ни выход и новый вход его не перекатывают (R1-03).
+   * ⚠ 0 = «новый сток на каждый вход в город» — это бесплатный перебросок броска ступени на прилавке
+   * (D21): сорок кругов в секунду давали «лучшее из сорока». Не ставить 0 на боевом сервере.
+   */
+  townRestockSec: z.number().int().min(0).default(600),
+  /**
    * ГНЁЗДА АКТИВНОГО СКИЛА — на каких рангах открывается очередное. Длина массива = потолок гнёзд.
    * В конфиге, а не в коде: это главная ручка глубины сборки, её крутит дизайнер.
    */
-  skillSocketRanks: z.array(z.number().int().min(1)).default([1, 6, 12]),
+  skillSocketRanks: z.array(z.number().int().min(1)).max(WIRE_SOCKETS).default([1, 6, 12]),
   /** Размер сетки инвентаря в клетках. */
   inventory: z
     .object({
-      cols: z.number().int().min(4),
-      rows: z.number().int().min(4),
+      cols: z.number().int().min(4).max(WIRE_CELL_MAX + 1),
+      rows: z.number().int().min(4).max(WIRE_CELL_MAX + 1),
       /**
        * ⭐ РАЗМЕР СТЕКА МАТЕРИАЛА. Замер бота: в потоке 7 видов сырья, ~43 за этаж,
        * и «пол» в 7 клеток (по стеку на вид) от размера стека НЕ зависит вовсе: 50 против 500
@@ -411,9 +428,9 @@ export const balanceSchema = z.object({
   /** Городской сундук (ОБЩИЙ на аккаунт): число вкладок и размер каждой вкладки в клетках. */
   stash: z
     .object({
-      tabs: z.number().int().min(1).default(2),
-      cols: z.number().int().min(4).default(20),
-      rows: z.number().int().min(4).default(12),
+      tabs: z.number().int().min(1).max(WIRE_STASH_TABS).default(2),
+      cols: z.number().int().min(4).max(WIRE_CELL_MAX + 1).default(20),
+      rows: z.number().int().min(4).max(WIRE_CELL_MAX + 1).default(12),
     })
     .default({ tabs: 2, cols: 20, rows: 12 }),
   /** Расталкивание сущностей (по весу): вкл/выкл, число релаксаций за тик, множитель веса чемпиона. */
@@ -578,6 +595,14 @@ export const balanceSchema = z.object({
   craft: z
     .object({
       /**
+       * ⭐ КУЁТ ЛИ КУЗНЕЦ В ИГРЕ. Выключено — сервер отвечает на ковку и зачарование «Кузнец ещё не куёт»
+       * (разбор и переплавка работают всегда). Так код ковки выкатывался раньше, чем открылся игрокам.
+       * ВКЛЮЧЕНО (решение владельца, 26.09): ковка — выбор базы и деталей, а не лишняя сила; инварианты «не
+       * прачечная» и вилки под сторожами (docs/CRAFT_WEAPONS.md §21.1). Умолчание — тоже «включено»: оверрайд
+       * баланса из базы, сохранённый до появления ключа, иначе молча закрыл бы кузницу. Песочницу не трогает.
+       */
+      live: z.boolean().default(true),
+      /**
        * Гнездо 1 при axis = +1: урон оружия ×(1+damagePct), скорость оружия ×(1−attackSpeed); при −1 зеркально.
        * Оба — множители САМОГО оружия (урон в цифрах, скорость — в «скорости оружия»), поэтому ДПС формы
        * (1+0.1a)(1−0.08a) не зависит от билда: разброс 4.1 % у любой базы (§4).
@@ -653,6 +678,7 @@ export const balanceSchema = z.object({
             goldMult: z.number().min(1).default(1),
           }),
         )
+        .max(WIRE_FINISH_ROWS)
         .default([]),
       /** Переплавка скованного: доля возврата каждого материала (§16). Меньше 1 — иначе прачечная. */
       melt: z.object({ share: z.number().min(0).max(1).default(0.6) }).default({}),
@@ -683,6 +709,14 @@ export const balanceSchema = z.object({
         .default({}),
       /** Вес варианта в пуле найденных вещей по его редкости. */
       rarityWeight: z.object({ common: z.number().min(0).default(10), uncommon: z.number().min(0).default(4), rare: z.number().min(0).default(1) }).default({}),
+      /**
+       * ⭐ РОВНОСТЬ СТУПЕНЕЙ НАЙДЕННОГО ОРУЖИЯ (§10.9): вес четвёрки ступеней его деталей — `exp(−k · Σ|ступень − Q|)`,
+       * Q — её средняя по массе. Больше k — реже перекошенные сборки («булатный клинок при болотном прочем»).
+       * ⚠ Вес, который предпочитает ровную лишь ПОШТУЧНО, не работает: перекошенных четвёрок на ступень — сотни, и
+       * при `1/(1+Σ)` они вместе перевешивали ровную (ступень 5 у 26 % находок t2, R2-30). При 2 в пределах одной
+       * ступени материала собраны ≈ 85 % находок, ступень 5 до t3 — меньше 2 %.
+       */
+      foundEvenness: z.number().min(0).default(2),
       /**
        * ⭐ КЛИНОК ИЗ ГЕОМЕТРИИ (§26). У ударной части с измеренной моделью (`weapon-parts[].geom`) статы
        * выводятся из самой модели, а не из ручной оси: ДЛИНА ставит клинок на место внутри его вилки
@@ -934,7 +968,7 @@ const armorBaseSchema = z.object({
   /** id класса брони (из конфига armor-classes). */
   armorClass: z.string(),
   /** Кол-во быстрых слотов пояса (значимо только для slot='belt'; 0 — не пояс). */
-  beltSlots: z.number().int().min(0).default(0),
+  beltSlots: z.number().int().min(0).max(WIRE_BELT_SLOTS).default(0),
   /** id 3D-модели (конфиг models) для меша брони в этом слоте — ОБЩАЯ на все классы (дефолт). Нет → базовый меш слота. */
   modelId: z.string().optional(),
   /** 3D-модель брони ПО КЛАССУ (id класса → modelId submesh-варианта). Перекрывает общий modelId для этого класса —
@@ -1098,6 +1132,10 @@ export const monstersSchema = z.array(
     /** Ручная кривая веса спавна по тирам глубины (0 чисел = авто из силового тира; иначе по числу
      *  тиров в depth-tiers). Гибрид: авто-заполнение по тиру + ручной дотюн в редакторе (график). */
     spawnCurve: z.array(z.number().min(0)).default([]),
+    /** ДОЛЯ веса спавна (множитель к кривой). Нужна ДВОЙНИКАМ: заготовка та же, оружие другое — двойник
+     *  делит слот источника, и доли группы в сумме дают 1. Тогда состав пачек по роли и тиру НЕ меняется
+     *  (иначе каждый двойник удваивал бы свой тир в роли). 1 — обычный монстр. */
+    spawnShare: z.number().min(0).max(1).default(1),
     /** Переопределение коэффициентов деривации ДЛЯ ЭТОГО моба (пусто/null = берёт из общей `monster-derive`).
      *  z.lazy — monsterDeriveSchema объявлена ниже; резолвится при парсинге. nullable — редактор кладёт null
      *  для «не переопределено» (defaultValue не разворачивает lazy). В редакторе — кастом-рендер. */
@@ -1491,7 +1529,7 @@ export const weaponAnatomySchema = z.array(
  */
 export const weaponPartsSchema = z.array(
   z.object({
-    id: z.string(),
+    id: wireId,
     enabled: z.boolean().default(true),
     name: z.string(),
     slot: z.enum(CRAFT_SLOTS),
@@ -1748,7 +1786,11 @@ export const magicSubtypesSchema = z.array(
  * оружия (`weapon`) и прока монстра (`monster`). DoT (кровотечение/поджиг/яд) — `magPerDamage`
  * (доля от урона удара/сек); freeze/shock/wound/daze — `mag`/`mag2` флэт. */
 const procSchema = z.object({
-  chance: z.number().min(0),
+  /**
+   * Шанс за удар — ДОЛЯ [0, 1] (D19). Бой всё равно зажимает итог потолком `STATUS_CHANCE_CAP` (0.95,
+   * `world/debuffs.ts`), но число больше 1 в конфиге — всегда опечатка: не пускаем его ни из файла, ни из редактора.
+   */
+  chance: z.number().min(0).max(1),
   maxStacks: z.number().int().min(1),
   durationMs: z.number().min(0),
   mag: z.number().default(0),
@@ -1909,7 +1951,7 @@ export const subfactionsSchema = z.array(
 // ── difficulties ──────────────────────────────────────────────────────────────
 export const difficultiesSchema = z.array(
   z.object({
-    id: z.string(),
+    id: z.string().max(WIRE_DIFFICULTY_ID_MAX).refine(isWireText, 'управляющий символ или непарный суррогат (R3-02)'),
     name: z.string(),
     /** Активен ли тир сложности (выключенный не предлагается в алтаре и отвергается сервером). */
     enabled: z.boolean().default(true),
@@ -2090,7 +2132,7 @@ export const floorsSchema = z.array(
 /** Биом = ТЕМА локации (тайлсет/монстры/фракция/лор), выбирается на ВЕСЬ забег. Геометрия — в `floors`. */
 export const biomesSchema = z.array(
   z.object({
-    id: z.string(),
+    id: wireId,
     name: z.string(),
     /** Активен ли биом (выключенный не предлагается в алтаре забега). */
     enabled: z.boolean().default(true),
@@ -2136,7 +2178,7 @@ const modEffectSchema = z.object({
  */
 export const runModifiersSchema = z.array(
   z.object({
-    id: z.string(),
+    id: wireId,
     name: z.string(),
     /** Активен ли модификатор (выключенный не навешивается/не в алтаре). */
     enabled: z.boolean().default(true),
@@ -2150,7 +2192,7 @@ export const runModifiersSchema = z.array(
     desc: z.string().default(''),
     effects: z.array(modEffectSchema).default([]),
   }),
-);
+).max(WIRE_RUN_MODIFIERS_MAX);   // алтарь даёт отметить любые — выбор обязан влезть в кадр `descend` (R2-27)
 
 const runNodeTypeEnum = z.enum(['combat', 'elite', 'boss', 'treasure', 'event', 'shop', 'rest']);
 /**
@@ -2159,7 +2201,7 @@ const runNodeTypeEnum = z.enum(['combat', 'elite', 'boss', 'treasure', 'event', 
  */
 export const runTemplatesSchema = z.array(
   z.object({
-    id: z.string(),
+    id: wireId,
     name: z.string(),
     /** Активен ли шаблон (выключенный не предлагается в алтаре). */
     enabled: z.boolean().default(true),
@@ -2205,6 +2247,15 @@ export type RunNodeType = z.infer<typeof runNodeTypeEnum> | 'start' | 'finale';
 const skillCostSchema = z.object({
   type: z.enum(['points', 'gold']),
   amount: z.number().min(0),
+});
+/**
+ * ⚠ R6-17: УЗЕЛ ДРЕВА СКИЛОВ СТОИТ РОВНО ОДНО ОЧКО ЗА РАНГ. Вложение (`allocActive`) списывало `cost.amount`, а сброс
+ * (`respecSkills`) возвращает очко за ранг и пошлину берёт за ранг: узел за 0 очков превращал золото в очки скилов без
+ * предела (вложил даром — сбросил — получил очки), узел за 2 терял половину вложенного на сбросе. Ставка одна на весь граф —
+ * правило движка, а не данных. Понадобятся многоочковые узлы — сброс обязан возвращать ЗАПИСАННОЕ вложенное, не ранги.
+ */
+const skillPointCostSchema = skillCostSchema.refine((c) => c.type === 'points' && c.amount === 1, {
+  message: 'Узел древа скилов стоит ровно 1 очко за ранг: сброс возвращает очко за ранг',
 });
 
 /**
@@ -2513,7 +2564,7 @@ const insertPerRankSchema = z.object({
 
 export const skillInsertsSchema = z.array(
   z.object({
-    id: z.string(),
+    id: wireId,
     name: z.string(),
     description: z.string().default(''),
     /** id из `skill-insert-types`. Одна вставка каждого типа на скил. */
@@ -2572,7 +2623,7 @@ const skillEffectSchema = z.object({
 });
 
 const skillNodeBase = {
-  id: z.string(),
+  id: wireId,
   name: z.string(),
   description: z.string(),
   cost: skillCostSchema,
@@ -2649,6 +2700,7 @@ export const skillTreeSchema = z.object({
   nodes: z.array(
     z.object({
       ...skillNodeBase,
+      cost: skillPointCostSchema,   // R6-17: ровно очко за ранг — на этом стоит сброс
       /** Активный (биндится, effect.active) или пассивный (тематический %-стат ветки). */
       kind: z.enum(['active', 'passive']),
       branchId: z.string(),
@@ -2677,7 +2729,7 @@ const questRewardSchema = z.object({
 
 export const questsMainSchema = z.array(
   z.object({
-    id: z.string(),
+    id: wireId,
     name: z.string(),
     /** Активен ли квест (выключенный пропускается в цепочке основных квестов). */
     enabled: z.boolean().default(true),
@@ -2697,7 +2749,7 @@ export const questsMainSchema = z.array(
 
 export const questsRandomSchema = z.array(
   z.object({
-    id: z.string(),
+    id: z.string().max(WIRE_QUEST_TEMPLATE_ID_MAX).refine(isWireText, 'управляющий символ или непарный суррогат (R3-02)'),
     /** Активен ли шаблон случайного квеста (выключенный не попадает на доску). */
     enabled: z.boolean().default(true),
     objectiveType: objectiveTypeEnum,

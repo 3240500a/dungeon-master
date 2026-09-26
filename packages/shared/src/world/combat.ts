@@ -2,7 +2,7 @@ import { resolveAttack } from '../formulas/combat.js';
 import { emptyPacket } from '../types/combat.js';
 import type { CombatStats, DamagePacket } from '../types/combat.js';
 import type { Rng } from '../formulas/rng.js';
-import { addDebuffStack, debuffMods, type DebuffApply, type DebuffKind, type DebuffState, type DebuffTuning } from './debuffs.js';
+import { addDebuffStack, debuffMods, statusChance, type DebuffApply, type DebuffKind, type DebuffState, type DebuffTuning } from './debuffs.js';
 
 /**
  * Чистое разрешение удара игрока по цели (headless боевое ядро). Учитывает
@@ -74,7 +74,8 @@ export function resolvePlayerHit(
     const am = attacker.ailment;                  // per-kind бонусы (шанс/сила/длительность)
     for (const a of opts.onHit ?? []) {
       const cMul = ap + (am?.chance[a.kind] ?? 0);
-      if (!rng.chance(a.chance * cMul)) continue;
+      // ⚠ Шанс зажат потолком STATUS_CHANCE_CAP: без него бонусы деревьев вешали статус каждым ударом.
+      if (!rng.chance(statusChance(a.chance, cMul))) continue;
       const pMul = ap + (am?.power[a.kind] ?? 0);
       const dMul = 1 + (am?.dur[a.kind] ?? 0);
       // DoT: сила = доля от нанесённого урона; шанс/сила/длит. усилены глобальным+per-kind.

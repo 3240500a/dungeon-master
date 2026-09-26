@@ -1,6 +1,6 @@
 import type { SaveState, Item, AccountStash } from '@dm/shared';
 import { tx } from './pool.js';
-import { LOC_STASH, LOC_WORLD, LOC_REVOKED, locOfChar, itemsOfSave, itemsOfStash } from './items.js';
+import { LOC_STASH, LOC_WORLD, LOC_REVOKED, locOfChar, itemsOfSave, itemsOfStash, lockAccount } from './items.js';
 
 /**
  * Точечный откат аккаунта по журналу (Ф2.7).
@@ -15,6 +15,11 @@ import { LOC_STASH, LOC_WORLD, LOC_REVOKED, locOfChar, itemsOfSave, itemsOfStash
  * ЧЕГО ОТКАТ НЕ ДЕЛАЕТ, И ЭТО ВАЖНО ЗНАТЬ:
  *  • ЗОЛОТО И ОПЫТ не откатываются — журнала для них нет, есть только журнал предметов.
  *    Врать в этом месте опаснее, чем признать границу;
+ *  • ⚠ ВЫХОД КУЗНИЦЫ не откатывается (R2-32): разобранная или переплавленная после отсечки вещь ВОЗВРАЩАЕТСЯ,
+ *    а сырьё с неё (в сумке и в кошельке сундука, до 108 золота за единицу в лавке) и то, что разбор открыл в
+ *    журнале кузнеца (базы, детали, эскизы, счётчик мификов — ворота t6), остаются. Выход разбора катается и в
+ *    журнал вещей не пишется — вычесть его нечем. Поэтому план ПЕРЕЧИСЛЯЕТ такие разборы (`forge`) и счётчик
+ *    мификов журнала (`journalMythic`): дюп через разбор окупается, пока человек не сверит это руками;
  *  • ЭКИПИРОВКА не восстанавливается по слотам: журнал пишет место («у персонажа»), но не
  *    слот. Всё возвращённое кладётся в инвентарь, игрок надевает сам;
  *  • отозванные вещи (`revoked`) откат НЕ воскрешает: отзыв — это решение человека,
@@ -34,6 +39,13 @@ export interface RollbackPlan {
   untouched: number;
   /** Персонажи и сундук, которые придётся переписать. */
   touched: string[];
+  /**
+   * R2-32: разборы и переплавки ПОСЛЕ отсечки — их вещи откат вернёт, а выход (сырьё, открытия журнала кузнеца)
+   * останется. К ручной сверке: откат этого не вычитает.
+   */
+  forge: { id: string; reason: string; at: Date }[];
+  /** Счётчик мификов журнала кузнеца сейчас (ворота t6) — откат его не трогает. */
+  journalMythic: number;
 }
 
 interface EventRow { item_id: string; kind: string; to_loc: string | null; data: Item | null }
@@ -91,7 +103,16 @@ export async function planRollback(userId: string, at: Date): Promise<RollbackPl
       touched.add(isNow);
     }
 
-    return { userId, at, restore, remove, untouched, touched: [...touched] };
+    // R2-32: выход кузницы в журнал вещей не пишется — план хотя бы называет разборы, которые откат «вернёт».
+    const forge = await c.query<{ item_id: string; reason: string; at: Date }>(
+      `SELECT item_id, reason, at FROM item_events
+       WHERE user_id = $1 AND at > $2 AND kind = 'gone' AND reason IN ('salvage', 'melt') ORDER BY seq`, [userId, at]);
+    const journalMythic = Number(stash.rows[0]?.data.forgeJournal?.mythic ?? 0) || 0;
+
+    return {
+      userId, at, restore, remove, untouched, touched: [...touched],
+      forge: forge.rows.map((r) => ({ id: r.item_id, reason: r.reason, at: r.at })), journalMythic,
+    };
   });
 }
 
@@ -101,17 +122,17 @@ export async function planRollback(userId: string, at: Date): Promise<RollbackPl
  */
 export async function applyRollback(plan: RollbackPlan, reason: string): Promise<{ restored: number; removed: number }> {
   return tx(async (c) => {
-    const chars = await c.query<{ char_id: string; data: SaveState; version: number }>(
-      'SELECT char_id, data, version FROM characters WHERE user_id = $1', [plan.userId]);
-    const stashRow = await c.query<{ data: AccountStash }>(
-      'SELECT data FROM account_stash WHERE user_id = $1', [plan.userId]);
+    // R1-17: строки персонажей и сундука — `FOR UPDATE` и в порядке записи игры (см. `lockAccount`): чтение ждёт
+    // открытую запись живой сессии и видит её итог, а не затирает его старой копией.
+    const locked = await lockAccount(c, plan.userId);
+    const chars = locked.chars;
 
-    const saves = new Map(chars.rows.map((r) => [locOfChar(r.char_id), r]));
-    const stash = stashRow.rows[0]?.data;
+    const saves = new Map(chars.map((r) => [locOfChar(r.char_id), r]));
+    const stash = locked.stash;
 
     /** Вынуть вещь отовсюду, где она сейчас лежит. */
     const pull = (id: string): void => {
-      for (const r of chars.rows) {
+      for (const r of chars) {
         const s = r.data;
         s.inventory = s.inventory.filter((i) => i.uid !== id);
         s.belt = s.belt.map((i) => (i && i.uid === id ? null : i));
@@ -136,12 +157,13 @@ export async function applyRollback(plan: RollbackPlan, reason: string): Promise
       }
     }
 
-    for (const r of chars.rows) {
+    for (const r of chars) {
       await c.query('UPDATE characters SET data = $1, version = version + 1, updated_at = now() WHERE char_id = $2',
         [JSON.stringify(r.data), r.char_id]);
     }
     if (stash) {
-      await c.query('UPDATE account_stash SET data = $1, updated_at = now() WHERE user_id = $2',
+      // Версию поднимаем (D8): живая сессия со старой копией сундука получит отказ, а не затрёт откат.
+      await c.query('UPDATE account_stash SET data = $1, version = version + 1, updated_at = now() WHERE user_id = $2',
         [JSON.stringify(stash), plan.userId]);
     }
 

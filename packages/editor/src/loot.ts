@@ -253,7 +253,8 @@ function cardForge(reg: ConfigRegistry, p: FloorPay, k: Knobs): HTMLElement {
       `${t.name} · ур.${levelForTier(reg, t.id)}`,
       cell(t.id, 'normal', 'upgrade', inc), cell(t.id, 'rare', 'upgrade', inc),
       cell(t.id, 'normal', 'repair', inc), cell(t.id, 'rare', 'repair', inc),
-      cell(t.id, 'normal', 'reroll', inc),
+      // Обычную перекатить нельзя (R2-13: слотов ноль) — строка цены за отклоняемое действие врала бы.
+      cell(t.id, 'magic', 'reroll', inc),
     ];
   });
   const box = el('div', CSS.card);
@@ -262,7 +263,7 @@ function cardForge(reg: ConfigRegistry, p: FloorPay, k: Knobs): HTMLElement {
     'цена = база × reqMult(ступень) × priceMult(редкость) · в скобках — сколько таких работ оплачивает этаж'
     + ' ТАМ, где ступень уже в руках (уровень монстров указан в первой колонке)'));
   box.append(table(
-    ['ступень', 'улучшить об.', 'улучшить редк.', 'починить об.', 'починить редк.', 'перекатать об.'],
+    ['ступень', 'улучшить об.', 'улучшить редк.', 'починить об.', 'починить редк.', 'перекатать маг.'],
     rows));
   box.append(el('div', 'font-size:11px;color:#8a8a9a;margin-top:8px',
     '⭐ Смотреть надо на числа В СКОБКАХ: они должны быть примерно одинаковы по всей лестнице. '

@@ -2,6 +2,7 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
 import type { Attributes, StatModifier } from '../types/attributes.js';
 import type { Item } from '../types/items.js';
+import type { AccountStash } from '../types/stash.js';
 import { effectiveLevel } from '../formulas/power.js';
 import { estimateAttack } from '../formulas/playerCombat.js';
 import { playerSnapshot, equippedItems } from './derive.js';
@@ -90,6 +91,62 @@ export interface LootBreakdown {
   salvagedInField: number;
 }
 
+/**
+ * ⭐ КОВКА ЗА ПРОГОН (K7) — чем проверять «цена ≈ времени фарма» (docs/CRAFT_WEAPONS.md §22).
+ *
+ * Три вопроса, на которые отчёт обязан отвечать числами, а не впечатлением:
+ * - СЫРЬЁ: сколько пришло (монстры, разбор в поле, разбор у кузнеца, переплавка) и сколько ушло (ковка,
+ *   починка и подъём тира) — копится оно или кончается. `lost` — смерть (половина стека) и то, что не
+ *   поместилось; сходится как «пришло − ушло − потеряно = прирост запаса».
+ * - СИЛА ОРУЖИЯ ПО ИСТОЧНИКАМ: прирост ДПС надетого оружия, разнесённый по тому, откуда пришла новая вещь
+ *   (нашёл / купил / сковал / поднял тир у кузнеца). «Сковал против нашёл за то же время» — это оно.
+ * - ЗОЛОТО: сколько ушло на ковку и зачарование рядом с остальными стоками.
+ */
+export interface CraftReport {
+  /** Была ли ковка открыта в этом прогоне (`balance.craft.live` или явный флаг сима). */
+  enabled: boolean;
+  crafted: number;
+  enchanted: number;
+  /** Скованных переплавлено (у кузнеца и на месте). */
+  melted: number;
+  /** Найденных разобрано у кузнеца (открывает журнал) и на месте (не открывает). */
+  salvagedAtForge: number;
+  salvagedInField: number;
+  /** Строк открытий журнала за прогон. */
+  unlocked: number;
+  goldOnCraft: number;
+  goldOnEnchant: number;
+  materials: {
+    in: { monsters: number; field: number; forge: number; melt: number; total: number };
+    out: { craft: number; forge: number; total: number };
+    /** Потеряно смертью (половина стека) и не влезшее — остаток сверки. */
+    lost: number;
+    /** Запас на конец (сумка + сундук), всего и по ступеням. */
+    end: number;
+    endByTier: Record<string, number>;
+    inPerHour: number;
+    outPerHour: number;
+    /**
+     * ⚠ СЫРЬЁ В ЗОЛОТЕ (R3-20) — цена лавки, поштучно (`shopSellPrice`): всё, что пришло с тел, и запас на конец.
+     * Бот сырьё не продаёт — копит на кузницу, — а игрок может сдать стек, и с врезки ковки это настоящий доход
+     * (на 10-й мощи ≈ четверть золота с убийств, сторож — `materialsLive.test.ts`). `end` — сколько золота сверх
+     * `goldEnd` взял бы тот, кто сдал ровно то, что бот так и не потратил: калибровка «в кармане 2–3 тысячи»
+     * (docs/ECONOMY.md) этого крана не видит.
+     */
+    sellWorth: { monsters: number; end: number };
+  };
+  /** Прирост ДПС надетого оружия по источнику новой вещи — всего и в час. */
+  power: {
+    found: number; shop: number; craft: number; upgrade: number;
+    perHour: { found: number; shop: number; craft: number; upgrade: number };
+    /** ДПС надетого оружия на конец и откуда оно. */
+    weaponDps: number;
+    weaponSource: string;
+  };
+  /** Журнал аккаунта на конец: открытые базы, детали, потолок ступени, мифики. */
+  journal: { bases: number; variants: number; tierHi: number; mythic: number };
+}
+
 export interface RunReport {
   classId: string;
   difficultyId: string;
@@ -112,13 +169,23 @@ export interface RunReport {
   goldOnPassives: number;
   xpEarned: number;
   killsPerHour: number;
+  /** Телеметрия кузницы рядом с темпом боя (§22): скованно, переплавлено, разобрано, зачаровано в час. */
+  craftedPerHour: number;
+  meltedPerHour: number;
+  salvagedPerHour: number;
+  enchantedPerHour: number;
   xpPerHour: number;
   lootPerHour: number;
+  /** Золото на конец прогона: сальдо всех приходов и стоков. */
+  goldEnd: number;
   loot: LootBreakdown;
+  craft: CraftReport;
   levelCurve: CurvePoint[];
   finalBuild: BuildSnapshot;
   /** Полный финальный сейв бота — для загрузки в калькулятор (карточка персонажа 1:1). */
   finalSave: SaveState;
+  /** Сундук аккаунта на конец (сырьё и журнал кузнеца) — пара к `finalSave`: без него не повторить ковку. */
+  finalStash: AccountStash;
 }
 
 function modLabel(m: StatModifier): string {

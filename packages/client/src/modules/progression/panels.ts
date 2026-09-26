@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, statusChance, STATUS_CHANCE_CAP, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -7,6 +7,8 @@ import { STAT_LABEL } from '../inventory/itemView.js';
 import { dmgColor, dmgName } from '../../core/damageTypes.js';
 import { renderPassiveTree } from '../skills-passive/treeView.js';
 import { tabsBar, button, COLORS, mk, attachTooltip } from '../../ui/kit.js';
+import { attrAllocCommands } from './allocAttrs.js';
+import { respecAttrsButton } from './respecAttrs.js';
 
 function commit(app: App): void {
   // Онлайн: сейв авторитетен на сервере; локально только перерисовать открытые окна.
@@ -281,10 +283,9 @@ export const characterPanel: PanelFactory = (app, ui) => {
       if (staged > 0) {
         const actions = mk('div', 'display:flex;gap:8px;margin-top:10px');
         actions.append(button(`OK — применить (${staged})`, () => {
-          // Онлайн: по команде на каждое очко; сервер исполнит и вернёт SaveUpdate.
-          for (const a of ATTRIBUTES as Attribute[]) {
-            for (let k = 0; k < pending[a]; k++) app.sendCmd({ cmd: 'allocAttr', attr: a });
-          }
+          // Онлайн: команда на АТРИБУТ с числом очков (R2-15) — по команде на очко 195 очков после сброса
+          // рвали соединение потолком кадров. Сервер исполнит и вернёт SaveUpdate.
+          for (const cmd of attrAllocCommands(pending)) app.sendCmd(cmd);
           resetPending();
         }, 'primary'));
         actions.append(button('Отмена', () => { resetPending(); ui.refresh(); }, 'default'));
@@ -394,10 +395,13 @@ export const characterPanel: PanelFactory = (app, ui) => {
       };
       const ailmentTip = (binding: string | null): string => {
         const lines = attackAilments(binding).map((b) => {
-          const chance = Math.min(1, b.chance * (1 + d.ailmentPct + kNum(b.kind, 'ChancePct')));
+          // Шанс — той же функцией, что катает бой (`resolvePlayerHit`): с потолком STATUS_CHANCE_CAP.
+          const cMul = 1 + d.ailmentPct + kNum(b.kind, 'ChancePct');
+          const chance = statusChance(b.chance, cMul);
+          const capTag = b.chance * cMul > STATUS_CHANCE_CAP ? ' (потолок)' : '';
           const durS = (b.durationMs * (1 + d.ailmentDurPct + kNum(b.kind, 'DurPct'))) / 1000;
           const pMul = 1 + d.ailmentPct + kNum(b.kind, 'PowerPct');
-          return `${debuffIcon(debuffsCfg, b.kind)} <b>${debuffLabel(debuffsCfg, b.kind)}</b> — шанс ${Math.round(chance * 100)}% · ${durS.toFixed(1)}с · ${strengthStr(b, pMul)}${b.maxStacks > 1 ? ` (до ${b.maxStacks} стак.)` : ''}`;
+          return `${debuffIcon(debuffsCfg, b.kind)} <b>${debuffLabel(debuffsCfg, b.kind)}</b> — шанс ${Math.round(chance * 100)}%${capTag} · ${durS.toFixed(1)}с · ${strengthStr(b, pMul)}${b.maxStacks > 1 ? ` (до ${b.maxStacks} стак.)` : ''}`;
         });
         const wsc = state.save.equipment.weapon?.stunChance;
         if (wsc) lines.push(`💥 <b>Стан</b> — ${Math.round(wsc * 100)}%`);
@@ -621,14 +625,8 @@ function attributesTab(app: App, body: HTMLElement): void {
   body.appendChild(attributesBlock(app));
   body.appendChild(derivedBlock(app));
 
-  const respecCost = app.config.get('balance').respecCost;
-  const state = app.state!;
-  const respec = button(
-    `Сбросить атрибуты (${respecCost} золота)`,
-    () => { if (state.save.gold >= respecCost) app.sendCmd({ cmd: 'respec' }); },
-    'default',
-    state.save.gold < respecCost,
-  );
+  // R6-11: гаснет, когда сбрасывать нечего; подтверждение; погашена, пока команда в полёте (`respecAttrs.ts`).
+  const respec = respecAttrsButton(app);
   respec.style.marginTop = '14px';
   body.appendChild(respec);
 }

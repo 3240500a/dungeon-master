@@ -14,7 +14,8 @@
 param(
   [ValidateSet('single', 'cluster')]
   [string]$Mode = 'single',
-  # Нод по умолчанию — ядра минус два (одно гейтвею, одно базе). На 9950X это 14.
+  # Нод по умолчанию — ядра минус два (одно гейтвею, одно базе), но не больше 26: первая буква кода комнаты называет
+  # ноду (A–Z), и нода 27-я делила бы букву с первой (R5-14 — супервизор больше 26 не поднимет).
   [int]$Nodes = 0,
   [int]$Port = 0,
   # Адрес этой машины в локальной сети. Пусто — определим сами.
@@ -63,17 +64,21 @@ $env:NODE_ENV = 'production'          # как в бою: dev-роуты зак�
 $env:DM_RATELIMIT = 'off'             # сотни ботов с одного адреса иначе упрутся в лимит Ф0.5
 $env:DM_TELEMETRY_FLUSH_MS = '5000'
 $env:DM_WS = $Ws
+# R5-24: /metrics отвечает только самой машине — или по ключу чтения. Стенд с ноутбука без ключа получал 403 и раньше
+# молча читал «тик 0 Гц» (✓ у перегруженного сервера); теперь `dmload` без метрик останавливается с объяснением.
+if (-not $env:DM_METRICS_KEY) { $env:DM_METRICS_KEY = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N') }
+$mk = $env:DM_METRICS_KEY
 
 if ($Mode -eq 'single') {
   if ($Port -eq 0) { $Port = 3999 }
   $env:PORT = "$Port"
   Write-Host "`nОдин процесс на http://${Host_}:$Port (база $Db, транспорт $Ws)" -ForegroundColor Cyan
-  Write-Host "С ноутбука:  dmload --base=http://${Host_}:$Port --from=100 --step=100 --max=1000`n"
+  Write-Host "С ноутбука:  dmload --base=http://${Host_}:$Port --metricsKey=$mk --from=100 --step=100 --max=1000`n"
   # probe.ts — тот же index.ts плюс печать CPU/RSS/лага цикла раз в три секунды.
   npx tsx packages/server/src/loadtest/probe.ts
 } else {
   if ($Port -eq 0) { $Port = 3001 }
-  if ($Nodes -eq 0) { $Nodes = [Math]::Max(1, [Environment]::ProcessorCount - 2) }
+  if ($Nodes -eq 0) { $Nodes = [Math]::Min(26, [Math]::Max(1, [Environment]::ProcessorCount - 2)) }
   $env:PORT = "$Port"
   $env:DM_ROLE = 'supervisor'
   $env:DM_NODES = "$Nodes"
@@ -81,6 +86,6 @@ if ($Mode -eq 'single') {
   $env:DM_NODE_HOST = $Host_
   Write-Host "`nКластер: гейтвей http://${Host_}:$Port, нод $Nodes (порты $($Port+1)–$($Port+$Nodes))" -ForegroundColor Cyan
   Write-Host "Проверь, что фаервол пропускает весь диапазон — иначе боты войдут только на первую ноду."
-  Write-Host "С ноутбука:  dmload --base=http://${Host_}:$Port --from=200 --step=200 --max=3000 --group=4`n"
+  Write-Host "С ноутбука:  dmload --base=http://${Host_}:$Port --metricsKey=$mk --from=200 --step=200 --max=3000 --group=4`n"
   npx tsx packages/server/src/index.ts
 }

@@ -35,3 +35,4 @@
   «Дерево мастерства» панели Мастера (`progression/panels.ts`). В окне «Скиллы» (K) мастерств нет.
 - **Тесты:** `modules/skills/skills.test.ts` (за золото, смежность, статы),
   `economy/townActions.test.ts` (сброс + все входы открыты).
+- **Цена ранга (R6-16):** `allocPassive` несёт `maxGold` — цену «след. ранг: N зол.» карточки (`passiveNodeCost`); сервер по новой цене дороже не возьмёт (правка `passiveRankCostMult` живьём). Тесты — `shared/economy/priceConsent.test.ts`.

@@ -1,24 +1,26 @@
 import {
   ConfigRegistry, newBotSave, xpForLevel, generateItem, generateMonster, createRng, simulateMicroFight,
-  craftWeapon, craftMissing, enchantCost, enchantItem, fullJournal, emptyJournal, shapeFoundWeapon,
+  emptyJournal, shapeFoundWeapon,
   type CraftJournal, type Item, type SaveState, type StatModifier,
 } from '@dm/shared';
 import type { App } from '@dm/client/core/app.js';
-import { craftWindow, cardWith, type CraftHost, type CraftWindowState, initialCraftState } from '@dm/client/modules/town/craftPanel.js';
+import { craftWindow, cardWith, type CraftWindowState, initialCraftState } from '@dm/client/modules/town/craftPanel.js';
+import { sandboxHost } from './craftSandboxHost.js';
 import { makeHarness } from './gameHarness.js';
 import { renderCraftGrid } from './craftGrid.js';
 import { renderCraftCatalog } from './craftCatalog.js';
 import { renderCraftBlades } from './craftBlades.js';
-import { weaponPreview3d } from './craftPreview3d.js';
+import { weaponPreview3d } from '@dm/client/modules/town/craftPreview3d.js';
 
 /**
  * Вкладка «🔨 Ковка» — ПРОТОТИП ковки оружия из деталей (docs/CRAFT_WEAPONS.md) на настоящих данных.
  *
- * ⭐ В центре — ИГРОВАЯ панель `craftWindow` (client/modules/town/craftPanel.ts), та же, что встанет
- * в кузницу города. Вокруг неё — песочница: герой, сырьё, журнал и проверки, которых в игре не будет:
- * настоящий бой (`simulateMicroFight`), сравнение с найденными вещами, сетка баланса, каталог.
- * Ядро одно (`@dm/shared` — craft.ts / craftCard.ts), поэтому «врезать в игру» значит сменить
- * хозяина окна, а не переписать логику.
+ * ⭐ В центре — ИГРОВАЯ панель `craftWindow` (client/modules/town/craftPanel.ts), та же, что во вкладке
+ * «Ковка» кузницы города, и тот же 3D-стенд (client/modules/town/craftPreview3d.ts). Вокруг неё —
+ * песочница: герой, сырьё, журнал и проверки, которых в игре не будет: настоящий бой
+ * (`simulateMicroFight`), сравнение с найденными вещами, сетка баланса, каталог. Ядро одно
+ * (`@dm/shared` — craft.ts / craftCard.ts / townActions.ts), разные только хозяева окна: здесь
+ * `sandboxHost` отвечает сразу, в игре `craftHost.ts` — промисом ответа сервера.
  *
  * ⚠ Скованные вещи живут только здесь, в памяти страницы. Игру вкладка не трогает ни строкой — кроме
  * «🗡 Клинков» (`craftBlades.ts`): там правят сами данные (ручки клинка, форма и замер деталей), и они
@@ -123,53 +125,9 @@ export function sandboxHero(reg: ConfigRegistry, sb: CraftSandbox): SaveState {
   return s;
 }
 
-const INF = 99999;
-function infiniteWallet(reg: ConfigRegistry): Record<string, number> {
-  return Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, INF]));
-}
-
 let harness: App | null = null;
 let hkey = '';
 let heroSave: SaveState | null = null;
-
-/** Хозяин окна ковки в песочнице: ковка локально ТЕМ ЖЕ ядром, что потом позовёт сервер. */
-function sandboxHost(reg: ConfigRegistry, sb: CraftSandbox, save: SaveState): CraftHost {
-  const host: CraftHost = {
-    wallet: () => (sb.infinite ? infiniteWallet(reg) : sb.wallet),
-    gold: () => (sb.infinite ? 9_999_999 : sb.gold),
-    journal: () => (sb.fullJournal ? fullJournal(reg) : sb.journal),
-    save: () => save,
-    allowDisabledMaterials: sb.showDisabled,
-    craft: (input) => {
-      // Ковка = тот же расчёт, что предпросмотр, плюс бросок базы (`rng`): до ковки окно видит вилку.
-      const pv = craftWeapon(reg, input, { journal: host.journal(), materialsOn: !sb.showDisabled, rng: createRng(sb.seed++) });
-      if (!pv.ok || !pv.item || !pv.cost) return { ok: false, reason: pv.reason };
-      const lack = craftMissing(host.wallet(), host.gold(), pv.cost);
-      const lackIds = Object.keys(lack.materials);
-      if (lackIds.length || lack.gold > 0) {
-        const name = (id: string): string => reg.get('craft-materials').find((m) => m.id === id)?.name ?? id;
-        return { ok: false, reason: `не хватает: ${[...lackIds.map((id) => `${name(id)} ×${lack.materials[id]}`), ...(lack.gold ? [`${lack.gold} золота`] : [])].join(', ')}` };
-      }
-      if (!sb.infinite) {
-        for (const [id, n] of Object.entries(pv.cost.materials)) sb.wallet[id] = (sb.wallet[id] ?? 0) - n;
-        sb.gold -= pv.cost.gold;
-      }
-      // Кодекс: скованный исторический тип отмечается в журнале песочницы.
-      if (pv.type?.typeId && !sb.journal.typesForged.includes(pv.type.typeId)) sb.journal.typesForged.push(pv.type.typeId);
-      sb.drop = null; sb.fight = null;
-      return { ok: true, item: pv.item };
-    },
-    enchant: (item, rarity) => {
-      const cost = enchantCost(reg, item, rarity);
-      if (host.gold() < cost) return { ok: false, reason: `не хватает ${cost - host.gold()} золота` };
-      if (!sb.infinite) sb.gold -= cost;
-      sb.drop = null; sb.fight = null;
-      return { ok: true, item: enchantItem(reg, item, rarity, createRng(sb.seed++)) };
-    },
-    equip: (item) => { save.equipment.weapon = item; sb.fight = null; },
-  };
-  return host;
-}
 
 // ── Настоящий бой ────────────────────────────────────────────────────────────────────────────────
 
@@ -368,7 +326,7 @@ function sandboxPanel(reg: ConfigRegistry, sb: CraftSandbox, save: SaveState, re
     row.append(give, clr); res.append(row);
   }
   check(res, 'Журнал: всё открыто', sb.fullJournal, (v) => { sb.fullJournal = v; }, 'выключи — и открывать типы и детали придётся разбором (вкладка «Каталог»)');
-  check(res, 'Материалы, которых ещё нет в игре', sb.showDisabled, (v) => { sb.showDisabled = v; }, 'ступени 4–5 и семьи stave/trim/focus выключены в конфиге до разбора по тиру (§10.9)');
+  check(res, 'Материалы, выключенные в конфиге', sb.showDisabled, (v) => { sb.showDisabled = v; }, 'все 40 материалов в игре включены (craft-materials); галка пускает в песочницу те, что выключишь в редакторе, — сервер такие не берёт');
 
   const ov = sec('Песочные правки данных');
   check(ov, 'Лестница блока по классам', sb.blockLadder, (v) => { sb.blockLadder = v; }, 'предложение §7.2: блок у всех ближних баз. В игре его нет — сегодня блок у 6 баз из 50');

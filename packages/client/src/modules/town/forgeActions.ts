@@ -1,6 +1,6 @@
 import {
-  upgradeCost, repairCost, upgradedItem, salvageRange, canSalvageItem, canAffordBoth,
-  availableMaterials, nextTierOf, forgeGold, type ConfigRegistry, type Item,
+  upgradeCost, repairCost, upgradedItem, salvageRange, canSalvageItem, canRerollItem, canUpgradeItem, canEnchantItem, canAffordBoth,
+  availableMaterials, nextTierOf, forgeGold, enchantCost, type ConfigRegistry, type Item,
 } from '@dm/shared';
 
 /**
@@ -16,8 +16,10 @@ export type LineState = 'ok' | 'miss' | 'gain' | 'dim';
 export interface CostLine { text: string; state: LineState }
 
 export interface BenchAction {
-  id: 'repair' | 'upgrade' | 'reroll' | 'salvage';
-  cmd: 'forgeRepair' | 'forgeUpgrade' | 'forgeReroll' | 'forgeSalvage';
+  id: 'repair' | 'upgrade' | 'reroll' | 'enchant' | 'salvage';
+  cmd: 'forgeRepair' | 'forgeUpgrade' | 'forgeReroll' | 'forgeEnchant' | 'forgeSalvage';
+  /** Зачарование (R3-09): до какой редкости. У остальных действий нет. */
+  rarity?: 'magic' | 'rare';
   title: string;
   sub: string;
   lines: CostLine[];
@@ -25,6 +27,11 @@ export interface BenchAction {
   /** Главное действие для ЭТОГО состояния вещи — всегда первое в списке. */
   primary: boolean;
   tip?: string;
+  /**
+   * ⭐ R5-15: цена в золоте, которую показывает карточка, — уходит в команду `maxGold`: дороже сервер не возьмёт (его
+   * конфиг мог уйти вперёд клиентского). Нет — действие бесплатно (разбор) или недоступно.
+   */
+  gold?: number;
 }
 
 /**
@@ -87,11 +94,13 @@ function costLines(
 }
 
 /**
- * Три карточки в ФИКСИРОВАННОМ порядке: главное действие, реролл, разбор.
+ * Карточки в ФИКСИРОВАННОМ порядке: главное действие, реролл, [зачарование — у скованной], разбор.
  *
  * ⚠ Первая карточка не меняет МЕСТА, только смысл: целой вещи «Улучшить», сломанной «Починить».
  * Кнопки не прыгают под курсором, а какое действие сейчас главное — решает сама вещь.
  * ⚠ Разбор всегда последний: он уничтожает вещь, и ему нечего делать рядом с главным действием.
+ * ⚠ R3-09: у СКОВАННОЙ вещи — ещё две карточки зачарования, и у зачарованной тоже (погашены): иначе после
+ * зачарования разбор встал бы под курсор на место «✦ Магический».
  */
 export function benchActions(
   reg: ConfigRegistry,
@@ -115,42 +124,66 @@ export function benchActions(
     const matsOk = !Object.keys(cost).length || canAffordBoth(inventory, stashWallet, cost);
     out.push({
       id: 'repair', cmd: 'forgeRepair', title: '🔧 Починить', sub: 'снимет «сломано»',
-      primary: true, enabled: goldOk && matsOk,
+      primary: true, enabled: goldOk && matsOk, gold: price,
       lines: [
         { text: `${price} золота`, state: goldOk ? 'ok' : 'miss' },
         ...costLines(cost, have, nameOf),
       ],
     });
   } else {
-    const cost = upgradeCost(reg, item);
+    // ⚠ R2-12: гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canUpgradeItem`). Своя проверка (`nextTierOf` +
+    // `upgradeCost`) скованной вещи не видела: карточка горела «до «Отличный»» с ценой, а сервер всегда отказывал.
+    const can = canUpgradeItem(reg, item);
+    const cost = can.ok ? upgradeCost(reg, item) : {};
     const nt = nextTierOf(reg, item);
     const price = forgeGold(reg, item, 'upgrade');
     const goldOk = gold >= price;
-    const known = Object.keys(cost).length > 0;
     out.push({
       id: 'upgrade', cmd: 'forgeUpgrade', title: '🔨 Улучшить',
-      sub: nt ? `до «${nt.name}»` : 'вещь на потолке',
+      sub: item.parts ? 'скованная вещь' : nt ? `до «${nt.name}»` : 'вещь на потолке',
       primary: true,
-      enabled: !!nt && known && goldOk && canAffordBoth(inventory, stashWallet, cost),
-      tip: nt && known ? 'Кузнечная вещь требует меньше атрибутов, чем найденная того же тира' : undefined,
-      lines: !nt ? [{ text: 'лучше уже не сделать', state: 'dim' }]
-        : !known ? [{ text: 'эту вещь кузнец не улучшает', state: 'dim' }]
+      enabled: can.ok && goldOk && canAffordBoth(inventory, stashWallet, cost),
+      gold: can.ok ? price : undefined,
+      tip: can.ok ? 'Кузнечная вещь требует меньше атрибутов, чем найденная того же тира' : undefined,
+      lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }]
         : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(cost, have, nameOf)],
     });
   }
 
-  // Реролл: сервер отказывает сломанному — карточка говорит ПОЧЕМУ, а не просто гаснет.
+  // Реролл: гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canRerollItem`: сломана, перекатки кончились,
+  // обычной и уникальной перекатывать нечего — R2-13), и говорит ПОЧЕМУ, а не просто серый. Цена — `forgeGold`
+  // сервера: у скованной она уже с множителем формы (R2-10).
   const left = Math.max(0, prices.rerollLimit - (item.rerolls ?? 0));
+  const rr = canRerollItem(reg, item);
   const rrPrice = forgeGold(reg, item, 'reroll');
   const rrGold = gold >= rrPrice;
   out.push({
     id: 'reroll', cmd: 'forgeReroll', title: '🎲 Реролл', sub: `осталось ${left} из ${prices.rerollLimit}`,
-    primary: false, enabled: !item.broken && left > 0 && rrGold,
-    lines: item.broken ? [{ text: 'сперва почини', state: 'dim' }]
-      : left <= 0 ? [{ text: 'перекаток больше нет', state: 'dim' }]
+    primary: false, enabled: rr.ok && rrGold, gold: rr.ok ? rrPrice : undefined,
+    lines: !rr.ok ? [{ text: rr.reason ?? 'нельзя', state: 'dim' }]
       : [{ text: `${rrPrice} золота`, state: rrGold ? 'ok' : 'miss' },
          { text: 'перекатит аффиксы', state: 'dim' }],
   });
+
+  // ⭐ R3-09: ЗАЧАРОВАНИЕ СКОВАННОЙ. Раньше оно жило только в окне ковки и только для вещи, скованной в том же
+  // состоянии окна: перезагрузка, другой герой или клик по детали — и зачаровать меч было негде. Гаснет ТЕМ ЖЕ
+  // правилом, что отказ сервера: `canEnchantItem`, золото и `balance.craft.live` (закрытый кузнец не зачаровывает).
+  if (item.parts) {
+    const live = reg.get('balance').craft.live;
+    for (const rarity of ['magic', 'rare'] as const) {
+      const can = canEnchantItem(reg, item, rarity);
+      const price = enchantCost(reg, item, rarity);
+      const goldOk = gold >= price;
+      const why = !live ? 'Кузнец ещё не зачаровывает' : can.ok ? undefined : can.reason ?? 'нельзя';
+      out.push({
+        id: 'enchant', cmd: 'forgeEnchant', rarity, title: rarity === 'magic' ? '✦ Магический' : '✦ Редкий',
+        sub: rarity === 'magic' ? 'зачаровать до магической' : 'зачаровать до редкой',
+        primary: false, enabled: !why && goldOk, gold: why ? undefined : price,
+        lines: why ? [{ text: why, state: 'dim' }]
+          : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, { text: 'свойства по форме вещи', state: 'dim' }],
+      });
+    }
+  }
 
   // ⚠ Гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canSalvageItem`), — иначе кнопка
   // предлагала бы то, что сервер отклонит. Выход показываем вилкой: он случаен.

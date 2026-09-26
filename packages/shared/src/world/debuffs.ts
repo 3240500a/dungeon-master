@@ -98,6 +98,25 @@ export interface DebuffApply {
   magPerDamage?: number;
 }
 
+/**
+ * ПОТОЛОК ШАНСА СТАТУСА за одно попадание (docs/CRAFT_WEAPONS.md §20, долг «шанс не клампится»).
+ * Деревья дают `ailmentPct` до ~1.8, и ошеломление с базой 0.60 уходило за 1.0 — статус вешался
+ * КАЖДЫМ ударом. Потолок оставляет 5 % промаха при любых бонусах.
+ * ⭐ Один источник на бой (`resolvePlayerHit`) и на все окна (карточка ковки, панель героя):
+ * показ обязан совпадать с сервером, поэтому своих `Math.min` по месту не заводим.
+ */
+export const STATUS_CHANCE_CAP = 0.95;
+
+/**
+ * Итоговый шанс наложить статус за удар: `база × множитель бонусов`, зажатый в [0, STATUS_CHANCE_CAP].
+ * Мусор на входе (NaN, ±∞, отрицательное) даёт 0 — кривой конфиг не должен вешать статус всегда.
+ */
+export function statusChance(base: number, mult = 1): number {
+  const v = base * mult;
+  if (!(v > 0)) return 0;                     // NaN/отрицательный/ноль → не вешаем
+  return v < STATUS_CHANCE_CAP ? v : STATUS_CHANCE_CAP;   // +∞ тоже упирается в потолок
+}
+
 export function newDebuffState(): DebuffState {
   return {};
 }

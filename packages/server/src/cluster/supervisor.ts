@@ -25,11 +25,64 @@ import { fileURLToPath } from 'node:url';
 
 const entry = fileURLToPath(new URL('../index.ts', import.meta.url));
 
-/** Сколько игровых нод поднимать. По умолчанию — ядра минус одно под гейтвей и базу. */
-function nodeCount(): number {
-  const env = Number(process.env.DM_NODES ?? 0);
-  if (env > 0) return env;
-  return Math.max(1, Math.min(32, cpus().length - 2));
+/**
+ * ⭐ R5-14: НОД НЕ БОЛЬШЕ, ЧЕМ БУКВ В КОДЕ КОМНАТЫ. Первая буква кода — нода (`A` + номер), букв 26. Раньше по умолчанию
+ * поднималось до 32 нод: node-26…29 выдавали коды на A…D — те же, что node-0…3, гейтвей вёл вход к другу на первую ноду
+ * с этой буквой, и там «Комната не найдена» (каждый промах ещё и платил лимит промахов, R4-18).
+ */
+export const MAX_NODES = 26;
+
+/**
+ * Сколько игровых нод поднимать. По умолчанию — ядра минус два (гейтвею и базе тоже надо жить), но не больше `MAX_NODES`.
+ * R5-14: `DM_NODES` больше `MAX_NODES` — запуск падает с объяснением, а не делит буквы между нодами.
+ */
+export function nodeCount(env = process.env.DM_NODES, cores = cpus().length): number {
+  const n = Math.floor(Number(env ?? 0));
+  if (n > MAX_NODES) throw new Error(`DM_NODES=${n}: игровых нод не больше ${MAX_NODES} — первая буква кода комнаты называет ноду (A–Z)`);
+  if (n > 0) return n;
+  return Math.max(1, Math.min(MAX_NODES, cores - 2));
+}
+
+/** Что нужно остановке от процесса ребёнка (`ChildProcess`) — и тесту. */
+interface ChildLike {
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  kill(signal?: NodeJS.Signals): boolean;
+  once(event: 'exit', cb: () => void): unknown;
+}
+
+/**
+ * ⭐ R5-08: ребёнок ВЫШЕЛ — у него есть код выхода или сигнал, от которого он умер. `killed` — лишь «сигнал ОТПРАВЛЕН»: по
+ * нему супервизор считал ноды вышедшими через 200 мс после SIGTERM и выходил сам, а systemd добивал ноды, ещё
+ * дописывавшие сейвы.
+ */
+export function childGone(p: ChildLike | undefined): boolean {
+  return !p || p.exitCode !== null || p.signalCode !== null;
+}
+
+/**
+ * Остановить детей: SIGTERM каждому и ждать, пока ВЫЙДУТ все (событие `exit`), — не дольше `deadlineMs`; дольше — SIGKILL
+ * оставшимся. `done` зовётся ровно один раз.
+ */
+export function stopChildren(procs: readonly (ChildLike | undefined)[], done: () => void, deadlineMs = 12_000): void {
+  let finished = false;
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(deadline);
+    done();
+  };
+  const deadline = setTimeout(() => {
+    for (const p of procs) if (!childGone(p)) p!.kill('SIGKILL');
+    finish();
+  }, deadlineMs);
+  const check = (): void => { if (procs.every(childGone)) finish(); };
+  for (const p of procs) {
+    if (childGone(p)) continue;
+    p!.once('exit', check);
+    p!.kill('SIGTERM');
+  }
+  check();
 }
 
 interface Child { name: string; env: NodeJS.ProcessEnv; proc?: ChildProcess; restarts: number }
@@ -42,6 +95,10 @@ export function runSupervisor(): void {
   const kids: Child[] = [
     { name: 'gateway', env: { DM_ROLE: 'gateway', PORT: String(port) }, restarts: 0 },
   ];
+  // ⭐ R5-13: доля потолка кластера на ноду — с запасом на перекос раскладки (гейтвей раздаёт по нодам не идеально ровно).
+  // Нода сверх неё новых комнат не заводит: очередь гейтвея не обойти прямым подключением к ноде.
+  const maxPlayers = Number(process.env.DM_MAX_PLAYERS ?? 0);
+  const perNode = maxPlayers > 0 ? Math.ceil((maxPlayers / n) * 1.25) : 0;
   for (let i = 0; i < n; i++) {
     const p = port + 1 + i;
     kids.push({
@@ -60,6 +117,7 @@ export function runSupervisor(): void {
         DM_NODE_URL: process.env.DM_NODE_URL_TEMPLATE
           ? process.env.DM_NODE_URL_TEMPLATE.replace('{port}', String(p)).replace('{i}', String(i))
           : `ws://${host}:${p}/ws`,
+        ...(perNode > 0 ? { DM_NODE_MAX_PLAYERS: String(perNode) } : {}),
       },
       restarts: 0,
     });
@@ -90,20 +148,13 @@ export function runSupervisor(): void {
    * Убивать их сразу нельзя — у людей внутри идут забеги (Ф4.5).
    */
   const stop = (): void => {
-    if (stopping) return;
+    if (stopping) { console.log('[кластер] повторный сигнал остановки — уже жду нод'); return; }
     stopping = true;
     console.log('[кластер] останавливаю: жду, пока ноды допишут прогресс…');
-    for (const k of kids) k.proc?.kill('SIGTERM');
-    const deadline = setTimeout(() => {
-      for (const k of kids) k.proc?.kill('SIGKILL');
-      process.exit(0);
-    }, 12_000);
-    const check = setInterval(() => {
-      if (kids.every((k) => !k.proc || k.proc.exitCode !== null || k.proc.killed)) {
-        clearTimeout(deadline); clearInterval(check); process.exit(0);
-      }
-    }, 200);
+    // ⭐ R5-08: ждём ВЫХОДА нод (`childGone`), а не отправки сигнала (`killed`).
+    stopChildren(kids.map((k) => k.proc), () => process.exit(0));
   };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  // R5-08: `on`, а не `once` — повторный сигнал (systemd шлёт его всей группе) не должен убить супервизор, пока ноды пишут.
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
 }

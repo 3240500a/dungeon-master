@@ -3,11 +3,15 @@ import { ConfigRegistry } from '../config/registry.js';
 import { trophyBaseFor, trophyScore, trophyProfile, monsterTrophyBase, type TrophyCandidate } from './trophy.js';
 import { createRng } from './rng.js';
 import type { MonsterGearRoll } from '../types/world.js';
+import { spawnPacksEl } from '../dungeon/floor.js';
+import { resolveMonsterPool } from '../dungeon/floorSpec.js';
+import type { DungeonLayout } from '../dungeon/floorCommon.js';
+import { Cell, makeGrid } from '../world/grid.js';
 
 /**
  * ⭐ Смысл всей затеи: у монстров свой маленький пул снаряжения, у игрока свой большой, и падать
  * с трупа обязана вещь, которую игрок МОЖЕТ НАДЕТЬ. Тесты стерегут именно это — что для каждой
- * из 22 записей снаряжения находится осмысленная замена, а не «что-нибудь».
+ * записи снаряжения находится осмысленная замена, а не «что-нибудь».
  */
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
@@ -90,6 +94,63 @@ describe('трофей: снаряжение монстра → база игр�
       expect(b.kind, `${g.id} → вид не совпал`).toBe(g.kind);
       expect('slot' in b && b.slot, `${g.id} → вещь без слота, надеть нельзя`).toBeTruthy();
     }
+  });
+
+  it('⭐ у КАЖДОГО включённого класса оружия есть носитель в снаряжении монстров', () => {
+    // `trophyChance` = 1: вещь с трупа — всегда трофей по носимому. Класса, которого не носит никто,
+    // с тел не бывает вовсе — и его детали не откроются в журнале ковки (docs/CRAFT_WEAPONS.md §20).
+    const bases = reg.get('items.base');
+    const classes = new Set<string>();
+    for (const b of bases) if (b.kind === 'weapon' && b.enabled !== false && b.weaponClass) classes.add(b.weaponClass);
+    for (const a of reg.get('weapon-anatomy')) if (a.enabled !== false) classes.add(a.id);
+    expect(classes.size).toBeGreaterThanOrEqual(10);
+    const gear = reg.get('monster-gear').filter((g) => g.kind === 'weapon' && g.enabled !== false);
+    for (const c of classes) {
+      const carriers = gear.filter((g) => g.kind === 'weapon' && g.weaponClass === c);
+      expect(carriers.length, `класс «${c}» не носит ни один монстр`).toBeGreaterThan(0);
+      // …и носимое переводится в базу ТОГО ЖЕ класса, а не в «похожее по рукам».
+      for (const g of carriers) {
+        const id = trophyBaseFor(g, bases, first);
+        const b = bases.find((x) => x.id === id);
+        expect(b && b.kind === 'weapon' ? b.weaponClass : undefined, `${g.id} → трофей чужого класса`).toBe(c);
+      }
+    }
+  });
+
+  it('⭐⭐ КАЖДЫЙ класс оружия ПАДАЕТ с монстра, который реально спавнится в каком-то включённом биоме', () => {
+    // ⚠ Запись в `monster-gear` — ещё не носитель, и монстр в `monsterPool` — ещё не спавн: пачки берут
+    // монстров ПО РОЛЯМ (`packs.json`), и роль, которой нет ни в одной пачке, не выходит никогда. Замер
+    // до F2: в крипте спавнились только scout/warrior/thrower — булава (охранник), посох (колдун, шаман)
+    // и арбалет (арбалетчик) лежали в пуле и не падали вовсе, как и копьё, алебарда и жезл без носителей.
+    // Поэтому здесь НАСТОЯЩИЙ спавн (`spawnPacksEl` — тот же, что у сервера), по всем включённым биомам,
+    // их этажам и тирам глубины, а не чтение пулов.
+    const bases = reg.get('items.base');
+    const gear = reg.get('monster-gear');
+    const classes = new Set<string>();
+    for (const b of bases) if (b.kind === 'weapon' && b.enabled !== false && b.weaponClass) classes.add(b.weaponClass);
+    for (const a of reg.get('weapon-anatomy')) if (a.enabled !== false) classes.add(a.id);
+    const rooms = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 2 + (i % 4) * 16, y: 2 + Math.floor(i / 4) * 16, w: 12, h: 12, type: i % 2 ? 'large' : 'small' }));
+    const layout = { grid: makeGrid(68, 36, Cell.Floor), rooms } as unknown as DungeonLayout;
+    const dropped = new Map<string, string>();   // класс трофея → кто его уронил (для сообщения)
+    for (const biome of reg.get('biomes').filter((b) => b.enabled !== false)) {
+      const floorIds = ['', ...reg.get('floors').filter((f) => f.biomeId === biome.id && f.enabled !== false).map((f) => f.id)];
+      for (const depth of [1, 4, 7, 11, 16, 23]) {
+        for (const floorId of floorIds) {
+          for (let seed = 1; seed <= 4; seed++) {
+            const spawns = spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + depth), depth,
+              resolveMonsterPool(biome, depth), 1, floorId);
+            for (const s of spawns) {
+              const worn = s.def.gearRolls?.find((r) => r.slot === 'weapon')?.gearId;
+              const g = worn ? gear.find((x) => x.id === worn) : undefined;
+              if (!g) continue;
+              const b = bases.find((x) => x.id === trophyBaseFor(g, bases, first));
+              if (b?.kind === 'weapon' && !dropped.has(b.weaponClass)) dropped.set(b.weaponClass, `${biome.id}/${s.def.id}`);
+            }
+          }
+        }
+      }
+    }
+    for (const c of classes) expect(dropped.has(c), `класс «${c}» не падает ни с одного монстра, который спавнится`).toBe(true);
   });
 
   it('счёт сходства: одинаковый класс важнее одинакового числа рук', () => {

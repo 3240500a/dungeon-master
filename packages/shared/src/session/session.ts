@@ -23,7 +23,7 @@ import { giveMaterials } from '../economy/materials.js';
 import { uuidv7 } from '../formulas/uuid.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
-import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, type DebuffApply, type DebuffState } from '../world/debuffs.js';
+import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, statusChance, type DebuffApply, type DebuffKind, type DebuffState } from '../world/debuffs.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import { moveWithCollision, type Vec2 } from '../world/movement.js';
 import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
@@ -101,11 +101,19 @@ export interface FloorLayout {
   /** id биома этажа (v2) — клиент выбирает по нему набор окружения. */
   biomeId?: string;
   monsters: MonsterSpawn[];
-  /** Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). */
+  /**
+   * Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). `used` — рычаг уже дёрнут (продолжение узла, R4-01):
+   * его дверь открывается сразу.
+   */
   doors?: { id: number; cells: { cx: number; cy: number }[] }[];
-  levers?: { id: number; x: number; y: number; doorId: number }[];
-  /** Сундуки этажа (Ч6). */
-  chests?: { id: number; x: number; y: number; tier: string }[];
+  levers?: { id: number; x: number; y: number; doorId: number; used?: boolean }[];
+  /** Сундуки этажа (Ч6). `opened` — уже открыт (продолжение узла, R4-01): второй раз не открывается. */
+  chests?: { id: number; x: number; y: number; tier: string; opened?: boolean }[];
+  /**
+   * Уровень этажа, если монстры переданы не все (продолжение узла без убитых, R4-01): сундук берёт ступень от
+   * ПОЛНОГО заселения, а не от оставшихся — иначе убитый босс опускал бы добычу нетронутых сундуков.
+   */
+  floorLevel?: number;
   /** Суб-тайловые препятствия напольного декора (круг/бокс) — коллизия по форме меша. */
   obstacles?: Obstacle[];
   /** PvP-арена: атаки игроков бьют друг друга (иначе — обычный этаж/город). */
@@ -117,6 +125,19 @@ const monsterMat = (m: MonsterEntity): HitMaterial => hitMaterialOf(m.def.armorC
 /** …игрок — по своему нагруднику, иначе шлему. */
 const playerMat = (p: PlayerEntity): HitMaterial =>
   hitMaterialOf(p.save.equipment.chest?.armorClass, p.save.equipment.helm?.armorClass);
+/** Дроп выбросил игрок ДРУГОГО аккаунта (R2-02) — этому игроку его не поднять. Без владельца — общий. */
+const foreignDrop = (p: PlayerEntity, d: { owner?: string }): boolean => d.owner !== undefined && d.owner !== p.account;
+/**
+ * ⚠ R6-02: С ЧЕМ НАЧАТ ЗАМАХ — надетое (uid по слотам) и включённые ауры/стойки. Замах запоминает подпись на старте; на ударе
+ * она другая — удар пропадает. Иначе темп брался бы от одного (кинжал, кольцо или аура на скорость), а урон, дальность, вес
+ * и проки — от другого: команды экипировки ходят где угодно и приходят между тиками, а тогл ауры — вводом в любой кадр.
+ */
+const loadoutSig = (p: PlayerEntity): string =>
+  Object.entries(p.save.equipment).filter(([, it]) => it).map(([slot, it]) => `${slot}:${it!.uid}`).sort().join('|')
+  + '#' + [...p.toggles].sort().join('|');
+/** Событие подбора вещи; выброшенное игроком — с пометкой `thrown` (R4-26). */
+const pickedEvent = (playerId: string, t: { item?: Item; x: number; y: number; thrown?: true }): SessionEvent =>
+  ({ type: 'item-picked', playerId, item: t.item!, x: t.x, y: t.y, ...(t.thrown ? { thrown: true as const } : {}) });
 
 /** События тика — для вью (числа/эффекты) и статистики. */
 export type SessionEvent =
@@ -129,7 +150,11 @@ export type SessionEvent =
   | { type: 'item-dropped'; item: Item; x: number; y: number; from: 'monster' | 'chest' }
   /** Сундук открыт — клиент гасит меш (состояние живёт в мире, а FloorInit шлётся один раз). */
   | { type: 'chest-opened'; id: number; x: number; y: number }
-  | { type: 'item-picked'; playerId: string; item: Item; x: number; y: number }
+  /**
+   * `thrown` (R4-26) — вещь выбросил игрок (у дропа есть владелец): «собрать предмет» такую не засчитывает, иначе «собрать N»
+   * закрывался одной вещью — выбросил, поднял, и так N раз. Добыча с монстров и из сундуков — без пометки.
+   */
+  | { type: 'item-picked'; playerId: string; item: Item; x: number; y: number; thrown?: true }
   | { type: 'gold'; playerId: string; amount: number; total: number }
   /** Материалы с убитого монстра: id → количество. `x`/`y` — место смерти, чтобы клиент показал их там. */
   | { type: 'materials'; playerId: string; gains: Record<string, number>; x: number; y: number }
@@ -203,7 +228,6 @@ export class GameSession {
   readonly world: WorldState;
   private cfg: ConfigRegistry;
   private rng: Rng;
-  private primaryPlayerId?: string;
   private events: SessionEvent[] = [];
   /** Кэш боевого снимка каждого игрока на текущий тик. */
   private snaps = new Map<string, PlayerSnapshot>();
@@ -224,6 +248,14 @@ export class GameSession {
   private rewards: boolean;
   private sustain: boolean;
   private economy: boolean;
+  /**
+   * ⭐ СЕЙВ ПОД ТРАНЗАКЦИЕЙ СЕРВЕРА (R1-05): id игроков, чья запись «сейв + сундук» сейчас ждёт базу.
+   * Тик их сейв НЕ трогает — ни автоподбора, ни подбора по [E], ни зелий пояса. Неудачная запись
+   * откатывает сейв к снимку, и всё, что тик успел бы в него положить за время ожидания, пропало бы
+   * (поднятая с земли вещь — ни на земле, ни в сумке) или вернулось бы вторым разом (выпитое зелье).
+   * Окно — одна запись в базу; клиенты сюда не пишут, набор ведёт только сервер.
+   */
+  readonly saveHeld = new Set<string>();
 
   constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean } = {}) {
     this.cfg = cfg;
@@ -239,22 +271,21 @@ export class GameSession {
     return debuffMods(state, this.cfg.get('debuffs'));
   }
 
-  /** Добавляет игрока (один раз за забег); HP/мана — полные. */
-  addPlayer(id: string, save: SaveState, spawnAt?: Vec2): PlayerEntity {
+  /** Добавляет игрока (один раз за забег); HP/мана — полные. `account` — аккаунт игрока на сервере (R2-02). */
+  addPlayer(id: string, save: SaveState, spawnAt?: Vec2, account?: string): PlayerEntity {
     const snap = playerSnapshot(save, this.cfg);
     // Обычно спавним в точке входа мира (центр города/этажа); при реконнекте — в заданной
     // точке (та же позиция). Кооп-присоединение происходит ПОСЛЕ enterFloor.
     const p = makePlayerEntity(id, save, spawnAt ? { ...spawnAt } : { ...this.world.spawn }, snap.derived.maxHp, snap.derived.maxMana, snap.derived.maxStamina);
+    if (account !== undefined) p.account = account;
     this.world.players[id] = p;
-    if (!this.primaryPlayerId) this.primaryPlayerId = id;
     return p;
   }
 
-  /** Удаляет игрока (выход/дисконнект в кооп). Переназначает primary, если ушёл он. */
+  /** Удаляет игрока (выход/дисконнект в кооп). */
   removePlayer(id: string): void {
     delete this.world.players[id];
     this.snaps.delete(id);
-    if (this.primaryPlayerId === id) this.primaryPlayerId = Object.keys(this.world.players)[0];
   }
 
   /** Загружает новый этаж: сетка + монстры + сброс снарядов/дропа; игроки — на вход. */
@@ -271,7 +302,9 @@ export class GameSession {
     w.biomeId = layout.biomeId;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
-    w.chests = (layout.chests ?? []).map((c) => ({ id: c.id, pos: { x: c.x, y: c.y }, tier: c.tier, opened: false }));
+    // R4-01: рычаг, дёрнутый до продолжения узла, — его дверь открыта сразу (тем же путём, что рычагом).
+    for (const l of layout.levers ?? []) if (l.used) { const lv = w.levers.find((x) => x.id === l.id); if (lv) this.openDoorOf(lv); }
+    w.chests = (layout.chests ?? []).map((c) => ({ id: c.id, pos: { x: c.x, y: c.y }, tier: c.tier, opened: c.opened === true }));
     w.obstacles = (layout.obstacles ?? []).map((o) => ({ ...o }));   // суб-тайл-препятствия декора (коллизия/LoS)
     w.pvp = layout.pvp ?? false;   // арена включает урон игрок↔игрок; обычный этаж/город — сбрасывает
     w.monsters = [];
@@ -282,7 +315,7 @@ export class GameSession {
     // ⭐ Уровень ЭТАЖА = уровень самого сильного монстра на нём. Нужен сундуку: он стоит на
     // этаже, а не «на глубине», и брать сырую глубину значило выдавать ступень ниже соседнего
     // зомби. Считается ЗДЕСЬ, потому что дальше монстров убьют и спросить будет некого.
-    w.floorLevel = 0;
+    w.floorLevel = Math.max(0, layout.floorLevel ?? 0);
     for (const s of layout.monsters) {
       w.floorLevel = Math.max(w.floorLevel, s.def.level);
       w.monsters.push(makeMonsterEntity(w.nextId++, s.def, { x: s.x, y: s.y }, this.rng.float(0, Math.PI * 2)));
@@ -292,7 +325,21 @@ export class GameSession {
       if (!p.alive) { this.respawnPlayer(id); continue; } // мёртвые оживают на новом этаже (кооп-возврат)
       p.pos = { ...layout.spawn };
       p.vel = { x: 0, y: 0 };
+      if (depth === 0) this.cleanse(p);
     }
+  }
+
+  /**
+   * ⚠ R4-09: ГОРОД (глубина 0; арену сверх того оживляет сама комната) — БЕЗОПАСЕН. Живые переходили этаж со своими
+   * дебаффами, и кровотечение, повешенное на арене (выход оттуда — голосованием из любого места), или яд монстра при
+   * возврате порталом добивали героя уже в городе: комната тогда не арена — полный штраф смерти, а гибель всех разом
+   * (`allDead` → `endRun`) стирала припаркованный забег. Снимаются дебаффы, стан, замах и рывок; ауры и баффы — нет.
+   */
+  private cleanse(p: PlayerEntity): void {
+    p.debuffs = newDebuffState();
+    p.stunTimer = 0;
+    p.windup = null;
+    p.dash = null;
   }
 
   /** Число живых монстров на этаже. */
@@ -316,10 +363,19 @@ export class GameSession {
     const now = w.timeMs;
 
     // Снимки игроков на тик (derived/attrs/combat) — один расчёт на игрока.
+    // ⚠ R5-02: максимум упал (снял +жизнь, выключил стойку, сбросил Живучесть) — здоровье подрезается СРАЗУ, до боя этого
+    // тика. Раньше максимум пересчитывался, а текущее только росло: надел, налился, снял — и «танковое» здоровье жило на
+    // стеклянной пушке весь бой, через этажи и город. Мана и выносливость подрезаются ниже, в регене.
     this.snaps.clear();
     for (const id of Object.keys(w.players)) {
       const p = w.players[id]!;
-      if (p.alive) { const s = playerSnapshot(p.save, this.cfg, this.runtimeMods(p)); this.snaps.set(id, s); p.maxHp = s.derived.maxHp; }
+      if (p.alive) {
+        this.dropUnlearned(p);
+        const s = playerSnapshot(p.save, this.cfg, this.runtimeMods(p));
+        this.snaps.set(id, s);
+        p.maxHp = s.derived.maxHp;
+        if (p.hp > p.maxHp) p.hp = p.maxHp;
+      }
     }
 
     // 1) Ввод игроков: движение + взгляд + атака/каст.
@@ -375,7 +431,14 @@ export class GameSession {
     }
 
     // 3) Монстры: тик статуса, ИИ, движение, атака/выстрел.
-    const noiseMult = armorNoise(this.primaryEquipped(), this.cfg.get('armor-classes'));
+    // ⚠ R5-06: шум брони — ЦЕЛИ монстра (ближайшего игрока), а не первого в комнате: латы хозяина у входа делали слышным
+    // тихого соседа в другом конце этажа, а тихий хозяин прятал латника. Считается раз на игрока за тик.
+    const noise = new Map<string, number>();
+    const noiseOf = (t: PlayerEntity): number => {
+      let n = noise.get(t.id);
+      if (n === undefined) { n = armorNoise(equippedItems(t.save), this.cfg.get('armor-classes')); noise.set(t.id, n); }
+      return n;
+    };
     const behaviors = this.cfg.get('monster-behaviors');
     for (const m of w.monsters) {
       if (!m.alive) continue;
@@ -384,7 +447,7 @@ export class GameSession {
       const dot = tickDebuffs(m.debuffs, dt, now);
       if (dot > 0) {
         m.hp -= dot;
-        if (m.hp <= 0) { this.killMonster(m, this.primaryPlayer()); continue; }
+        if (m.hp <= 0) { this.killMonster(m, this.dotOwner(m)); continue; }   // R5-06: тому, кто повесил статус
       }
       // Нокдаун (сбит с ног): полностью беспомощен — не ходит/не атакует/не регенит, пока лежит и встаёт. DoT выше
       // всё равно тикает (лежачий уязвим). Флаг едет в снапшот (клиент проигрывает рагдолл-падение и подъём).
@@ -431,7 +494,7 @@ export class GameSession {
 
       const behavior = behaviorFor(m.def.faction, behaviors);
       const losClear = this.hasLos(m.pos, target.pos);
-      const action = stepMonsterAi(m, target.pos, behavior, losClear, noiseMult, dt);
+      const action = stepMonsterAi(m, target.pos, behavior, losClear, noiseOf(target), dt);
       if (behavior.repositionMode === 'blink') this.tryBlink(m, target.pos, behavior, dt); // джинн-уклонение
       this.navChase(m, target.pos, w.grid, losClear, dt); // обход стен по BFS, когда не видит цель
       m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt, w.obstacles);
@@ -503,15 +566,16 @@ export class GameSession {
       p.vel = d <= step || d < 1e-6 ? want : { x: p.vel.x + (dx / d) * step, y: p.vel.y + (dy / d) * step };
     }
     p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt, this.world.obstacles);
-    if (this.economy) this.autoPickup(p); // прошёл над золотом — подобрал, клик не нужен
+    const held = this.saveHeld.has(p.id);   // сейв в транзакции сервера — не трогаем (R1-05)
+    if (this.economy && !held) this.autoPickup(p); // прошёл над золотом — подобрал, клик не нужен
 
     if (stunned) return; // оглушён — ни атаки, ни каста, ни зелий
-    if (input?.useBelt != null) this.useBeltSlot(p, snap, input.useBelt);
+    if (input?.useBelt != null && !held) this.useBeltSlot(p, snap, input.useBelt);
     if (input?.attack) this.tryPlayerAttack(p, snap);
     if (input?.cast != null) this.castSkill(p, snap, input.cast);
     // [E] сперва открывает сундук, и только потом подбирает: иначе, стоя над только что
     // высыпавшимся содержимым, второе нажатие открывало бы сундук, а не собирало добычу.
-    if (input?.interact && !this.openChest(p.id)) this.tryPickup(p);
+    if (input?.interact && !held && !this.openChest(p.id)) this.tryPickup(p);
   }
 
   /** Выпить расходник из слота пояса: единый эффект `applyConsumable`; расход ТОЛЬКО если сработал
@@ -551,7 +615,7 @@ export class GameSession {
     this.makeNoise(p, 220);
     const windup = this.windupSec(p.attackCd, 0);
     this.emitSwing(p, 'attack', windup, p.attackCd, p.attackCd);
-    if (windup > 0) { p.windup = { kind: 'attack', remaining: windup }; return; }
+    if (windup > 0) { p.windup = { kind: 'attack', remaining: windup, loadout: loadoutSig(p) }; return; }
     this.executeBasicAttack(p, snap);
   }
 
@@ -587,12 +651,13 @@ export class GameSession {
       if (vecLen(dx, dy) > range) continue;
       const ang = Math.atan2(dy, dx);
       if (Math.abs(this.wrap(ang - p.facing)) > arc) continue;
+      if (!this.hasLos(p.pos, m.pos)) continue;   // R5-05: пика (×1.8) доставала сквозь стену в клетку
       this.hitMonster(p, m, packet, attacker, hitOpts);
     }
     this.hitEnemyPlayers(p, packet, attacker, hitOpts, (t) => {
       const dx = t.pos.x - p.pos.x, dy = t.pos.y - p.pos.y;
       if (vecLen(dx, dy) > range) return false;
-      return Math.abs(this.wrap(Math.atan2(dy, dx) - p.facing)) <= arc;
+      return Math.abs(this.wrap(Math.atan2(dy, dx) - p.facing)) <= arc && this.hasLos(p.pos, t.pos);
     });
   }
 
@@ -700,20 +765,23 @@ export class GameSession {
   }
 
   private castSkill(p: PlayerEntity, snap: PlayerSnapshot, nodeId: string): void {
+    // ⚠ R4-05: КАСТУЕТСЯ ТОЛЬКО ВЫУЧЕННОЕ. `cast` приходит с провода как есть (сетевая схема проверяет лишь тип и
+    // длину), а бинды к нему отношения не имеют. Прежнее `?? 1` исполняло ЛЮБОЙ узел своей ветки рангом 1 — без
+    // уровня, смежности и очков: воин 1-го уровня бил, баффал и включал ауры 25-го и 40-го одним кадром с devtools.
+    const rank = p.save.skills[nodeId] ?? 0;
+    if (!(rank > 0) || !this.nodeUsable(p.save, nodeId)) return;   // не выучен / класс-ветка чужого класса
     // СО ВСТАВКАМИ: дальше всё (ресурс, КД, оружие, замах, исполнение) работает на ЭФФЕКТИВНОЙ
     // способности — именно поэтому вся система стоит на одном шве, а не на десятке правок.
     const full = resolveActive(this.cfg, p.save, nodeId);
     if (!full) return;
     const res = this.affordableRes(p, nodeId, full);
-    // Что не оплачено — помнит замах: способность пересобирается в момент удара (`stepWindup`).
-    const omit = res === full ? undefined : [full.extraCost!.pool];
+    // ⚠ R6-02: `res` — то, что ОПЛАЧИВАЕТСЯ здесь; замах уносит его с собой (`p.windup.res`), и удар бьёт именно им, а не
+    // гнёздами сейва на момент удара: вставку, вставленную за замах, никто не оплатил, вынутую — уже оплатили.
     // Условная часть нужна УЖЕ ЗДЕСЬ: `active.speed` у атаки потребляется прямо в этом кадре —
     // из него считается `attackCd` (ниже). Надбавка к скорости, применённая только на ударе,
     // не доехала бы никуда. Поэтому правило такое: СКОРОСТЬ решается в начале замаха, а УРОН —
     // в момент попадания (`executeResolved` пересчитывает условие ещё раз, уже по свежему миру).
     const active = this.withConditional(p, res);
-    if (!this.nodeUsable(p.save, nodeId)) return;      // класс-ветка чужого класса — недоступна
-    const rank = p.save.skills[nodeId] ?? 1;     // выученный ранг (клиент биндит только выученное)
 
     switch (active.category) {
       // Ауры/стойки: вкл/выкл, эксклюзив-группа, резерв пула (мана/выносливость).
@@ -722,11 +790,16 @@ export class GameSession {
         this.toggleStance(p, snap, nodeId, active);
         return;
       // Временный бафф: стат-моды за ресурс на durationSec; не рефрешим, пока активен.
+      // ⚠ R6-15: и свой ОТКАТ, как у прочих активок: у всех баффов игры он длиннее действия, и без него повтор в кадр
+      // истечения держал бафф 100 % времени. Свинг без замаха и без лока — клиенту залить откат слота.
       case 'buff': {
         if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
+        if ((p.skillCd[nodeId] ?? 0) > 0) return;
         if (!this.canSpend(p, active, res.extraCost)) return;
         this.spend(p, active, res.extraCost);
         p.skillBuffs[nodeId] = active.durationSec;
+        if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
+        this.emitSwing(p, nodeId, 0, p.skillCd[nodeId] ?? 0, 0);
         return;
       }
       // Атака: делит ОБЩИЙ attack-таймер (лок), тайминг от скорости атаки.
@@ -750,7 +823,7 @@ export class GameSession {
         // Окно свинга = ОДИН взмах: клиент ужимает клип под него, и каждый удар получает свою анимацию.
         this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0), stepSec);
         const series: AttackSeries = { hits, struck: 0, stepSec, windupSec: windup, recover: false };
-        p.windup = { kind: 'skill', nodeId, rank, remaining: windup, series, ...(omit ? { omit } : {}) };
+        p.windup = { kind: 'skill', nodeId, rank, remaining: windup, series, res, loadout: loadoutSig(p) };
         if (windup <= 0) this.stepWindup(p, snap, 0);   // мгновенный замах: первый удар прямо сейчас, остаток серии — по таймеру
         return;
       }
@@ -765,7 +838,7 @@ export class GameSession {
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
         const castTime = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
         this.emitSwing(p, nodeId, castTime, Math.max(castTime, p.skillCd[nodeId] ?? 0), 0);
-        if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime, ...(omit ? { omit } : {}) }; return; }
+        if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime, res, loadout: loadoutSig(p) }; return; }
         this.executeResolved(p, snap, res, rank);
         return;
       }
@@ -788,6 +861,9 @@ export class GameSession {
     }
     wu.remaining -= dt;
     if (wu.remaining > 0) return;
+    // ⚠ R6-02: снаряжение сменилось за замах (или между взмахами серии) — удар пропал, серия оборвана; цена и откат уже
+    // списаны, как у сбитого станом. Скорость замаха бралась от прежнего, и урон нового к ней не приклеится.
+    if (loadoutSig(p) !== wu.loadout) { p.windup = null; return; }
     if (wu.kind === 'attack') { p.windup = null; this.executeBasicAttack(p, snap); return; }
     const s = wu.series;
     // ДОБОЙ ЦИКЛА КОНЧИЛСЯ → НАЧИНАЕТСЯ СЛЕДУЮЩИЙ ВЗМАХ СЕРИИ: свой свинг (а значит своя анимация
@@ -801,10 +877,14 @@ export class GameSession {
       this.emitSwing(p, wu.nodeId, s.windupSec, Math.max(p.attackCd, p.skillCd[wu.nodeId] ?? 0), s.stepSec, true);
       return;
     }
-    const r = resolveActive(this.cfg, p.save, wu.nodeId, wu.omit ? { omitPools: wu.omit } : {});
+    // Способность — оплаченная на касте (R6-02), а не пересобранная по гнёздам сейва. Правило оружия скила — ещё раз на
+    // КАЖДОМ взмахе: подпись снаряжения та же, но проверка не должна держаться на одной лишь подписи.
+    const r = wu.res;
+    const a = r.active;
+    if ((a.category === 'attack' || a.category === 'cast' || a.category === 'curse') && !this.weaponAllowed(p, a)) { p.windup = null; return; }
     // ⚠ ПРОКИ ВСТАВОК — РОВНО ОДИН РАЗ ЗА ПРИМЕНЕНИЕ (на первом взмахе): цена и откат тоже списываются
     // один раз, и печать «при касте», сработавшая трижды за один каст, была бы скрытым ×3.
-    if (r) this.executeResolved(p, snap, r, wu.rank, !s || s.struck === 0);
+    this.executeResolved(p, snap, r, wu.rank, !s || s.struck === 0);
     if (!s) { p.windup = null; return; }
     s.struck++;
     if (s.struck >= s.hits) { p.windup = null; return; }
@@ -837,6 +917,17 @@ export class GameSession {
   /** Доля зарезервированного пула (мана/выносливость) активными тоглами (кап 0.9). */
   private reservedFrac(p: PlayerEntity, pool: 'mana' | 'stamina'): number {
     return reservedFrac(this.cfg, p.toggles, pool);
+  }
+
+  /**
+   * ⚠ R4-05: ТОГЛЫ И БАФФЫ ДЕРЖАТСЯ НА ВЫУЧЕННОМ. Сброс скилов (`respecSkills`) — команда города между тиками, сессию
+   * она не зовёт: включённая до него аура жила бы в `toggles` дальше — с бонусами и резервом за возвращённые очки.
+   * Баффы вставок (`ins:`) узла в дереве не имеют: они оплачены на касте и доживают свой срок.
+   */
+  private dropUnlearned(p: PlayerEntity): void {
+    const learned = (id: string): boolean => (p.save.skills[id] ?? 0) > 0;
+    if (!p.toggles.every(learned)) p.toggles = p.toggles.filter(learned);
+    for (const k of Object.keys(p.skillBuffs)) if (!k.startsWith('ins:') && !learned(k)) delete p.skillBuffs[k];
   }
 
   /** Рантайм-стат-моды поверх сейва: buffMods активных тоглов + временных баффов. */
@@ -1005,11 +1096,13 @@ export class GameSession {
     const halfW = swingHalfWidth(mel.baseRange * (weapon?.reachMult ?? 1), mel.baseArc * (weapon?.arcMult ?? 1));
     const from = { ...p.pos };
     const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1, this.world.obstacles);
+    // R5-05: коридор рывка шире стены в клетку — цель достаётся, только если видна с ближней точки пути.
+    const reach = (at: Vec2): boolean => this.distToSegment(at, from, to) <= halfW && this.hasLos(this.closestOnSegment(at, from, to), at);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (this.distToSegment(m.pos, from, to) <= halfW) this.hitMonster(p, m, packet, attacker, opts);
+      if (reach(m.pos)) this.hitMonster(p, m, packet, attacker, opts);
     }
-    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => this.distToSegment(t.pos, from, to) <= halfW);
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => reach(t.pos));
     this.launchDash(p, dir, from, to, active, rank);
   }
 
@@ -1020,11 +1113,13 @@ export class GameSession {
     const from = { ...p.pos };
     const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1, this.world.obstacles);
     const r = active.radius > 0 ? active.radius : 60;
+    // R5-05: удар приземления — от точки приземления и только по видимым из неё (прыжок в стену не бьёт за неё).
+    const reach = (at: Vec2): boolean => vecLen(at.x - to.x, at.y - to.y) <= r && this.hasLos(to, at);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (vecLen(m.pos.x - to.x, m.pos.y - to.y) <= r) this.hitMonster(p, m, packet, attacker, opts);
+      if (reach(m.pos)) this.hitMonster(p, m, packet, attacker, opts);
     }
-    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => vecLen(t.pos.x - to.x, t.pos.y - to.y) <= r);
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => reach(t.pos));
     this.launchDash(p, dir, from, to, active, rank);
   }
 
@@ -1084,14 +1179,19 @@ export class GameSession {
     return opts;
   }
 
-  /** Нова/AoE (cast shape nova/ground/meteor): по всем в радиусе вокруг игрока. */
+  /**
+   * Нова/AoE (cast shape nova/ground/meteor): по всем в радиусе вокруг игрока, КОГО ОН ВИДИТ.
+   * ⚠ R5-05: только радиус — и маг из коридора выжигал комнату босса за запертой дверью (радиус 150 — почти пять клеток):
+   * монстр отвечает лишь по прямой видимости, дверь не даёт ему и пути. Видимость — та же, что у монстра (`hasLos`).
+   */
   private skillNova(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, opts: HitOpts): void {
     const radius = active.radius || ABILITY_AOE_RADIUS;
+    const reach = (at: Vec2): boolean => vecLen(at.x - p.pos.x, at.y - p.pos.y) <= radius && this.hasLos(p.pos, at);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (vecLen(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= radius) this.hitMonster(p, m, packet, attacker, opts);
+      if (reach(m.pos)) this.hitMonster(p, m, packet, attacker, opts);
     }
-    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => vecLen(t.pos.x - p.pos.x, t.pos.y - p.pos.y) <= radius);
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => reach(t.pos));
   }
 
   /** Бумеранг (cast boomerang): летит вперёд, разворачивается к владельцу, бьёт на лету в обе стороны. */
@@ -1178,15 +1278,17 @@ export class GameSession {
     resolveEntityCollisions(bodies, this.world.grid, bal.collision.iterations, this.world.obstacles);
   }
 
-  /** Проклятие (curse): врагам в радиусе — статус-дебаф (по стихии) и/или притягивание агро (taunt). */
+  /** Проклятие (curse): врагам в радиусе, КОГО ВИДНО (R5-05, как нова), — статус-дебаф (по стихии) и/или притягивание агро (taunt). */
   private applyCurse(p: PlayerEntity, active: CurseAbility): void {
     const kind = active.ailment ? (active.ailment.kind ?? this.cfg.get('magic-subtypes').find((d) => d.id === (active.element ?? 'physical'))?.ailment) : undefined;
+    const reach = (at: Vec2): boolean => vecLen(at.x - p.pos.x, at.y - p.pos.y) <= active.radius && this.hasLos(p.pos, at);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (vecLen(m.pos.x - p.pos.x, m.pos.y - p.pos.y) > active.radius) continue;
+      if (!reach(m.pos)) continue;
       if (active.taunt) m.alertTimer = ALERT_TIME;
       if (kind && active.ailment) {
         addDebuffStack(m.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
+        this.noteDot(m, kind, p);
       }
     }
     // PvP: проклятие вешает статус на вражеских игроков в радиусе (taunt для игроков смысла не имеет).
@@ -1194,17 +1296,23 @@ export class GameSession {
       for (const id of Object.keys(this.world.players)) {
         const t = this.world.players[id]!;
         if (t === p || !t.alive || t.spawnImmuneUntil > this.world.timeMs) continue;
-        if (vecLen(t.pos.x - p.pos.x, t.pos.y - p.pos.y) > active.radius) continue;
+        if (!reach(t.pos)) continue;
         addDebuffStack(t.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
       }
     }
   }
 
   private distToSegment(pt: Vec2, a: Vec2, b: Vec2): number {
+    const c = this.closestOnSegment(pt, a, b);
+    return vecLen(pt.x - c.x, pt.y - c.y);
+  }
+
+  /** Ближайшая к `pt` точка отрезка a→b. */
+  private closestOnSegment(pt: Vec2, a: Vec2, b: Vec2): Vec2 {
     const abx = b.x - a.x, aby = b.y - a.y;
     const len2 = abx * abx + aby * aby || 1;
     const t = Math.max(0, Math.min(1, ((pt.x - a.x) * abx + (pt.y - a.y) * aby) / len2));
-    return vecLen(pt.x - (a.x + abx * t), pt.y - (a.y + aby * t));
+    return { x: a.x + abx * t, y: a.y + aby * t };
   }
 
   // ── Применение урона ──────────────────────────────────────
@@ -1273,6 +1381,7 @@ export class GameSession {
     if (!res.hit || res.blocked) return;
 
     m.hp = target.hp;
+    for (const k of res.appliedDebuffs) this.noteDot(m, k, killer);   // R5-06: чей статус — тому и добивание
     // Вампиризм: доля нанесённого урона → HP/мана атакующего (боевой сустейн, кламп по максимуму).
     if (this.sustain && res.damage > 0) {
       const d = this.snaps.get(killer.id)?.derived;
@@ -1342,7 +1451,9 @@ export class GameSession {
       const equipped = equippedItems(p.save);
       for (const a of onHit) {
         const poise = armorPoise(equipped, a.kind, this.cfg.get('armor-classes'));
-        if (this.rng.chance(a.chance * (1 - poise))) {
+        // ⚠ D19: шанс зажат тем же потолком STATUS_CHANCE_CAP, что и удар игрока (`resolvePlayerHit`):
+        // без него прок монстра или оружия соперника с шансом ≥ 1 вешал статус КАЖДЫМ ударом.
+        if (this.rng.chance(statusChance(a.chance, 1 - poise))) {
           addDebuffStack(p.debuffs, { ...a, mag: a.mag + (a.magPerDamage ?? 0) * dmg, durationMs: a.durationMs * (1 - poise) }, this.world.timeMs);
         }
       }
@@ -1430,21 +1541,37 @@ export class GameSession {
           if (proj.returning) {
             const owner = w.players[proj.ownerId as string];
             if (owner) {
-              const a = Math.atan2(owner.pos.y - proj.pos.y, owner.pos.x - proj.pos.x);
-              const sp = vecLen(proj.vel.x, proj.vel.y);
-              proj.vel = { x: Math.cos(a) * sp, y: Math.sin(a) * sp };
+              this.aimAt(proj, owner.pos);
               if (vecLen(proj.pos.x - owner.pos.x, proj.pos.y - owner.pos.y) < 24) { gone = true; break; }
             }
           }
         }
         const cell = worldToCell(proj.pos.x, proj.pos.y);
-        // Обычный снаряд гаснет о стену; бумеранг летит поверх препятствий.
-        if (!proj.boomerang && isBlockedCell(w.grid, cell.cx, cell.cy)) { gone = true; break; }
+        if (isBlockedCell(w.grid, cell.cx, cell.cy)) {
+          // Обычный снаряд гаснет о стену. ⚠ R5-05: бумеранг летал «поверх препятствий» — и бил на лету монстров за
+          // стеной и закрытой дверью, туда и обратно, а те ответить не могли. Теперь туда он от стены РАЗВОРАЧИВАЕТСЯ
+          // к владельцу (шаг назад, в свою клетку, — как у дальности), обратно — гаснет о неё, как любой снаряд.
+          const owner = proj.boomerang && !proj.returning ? w.players[proj.ownerId as string] : undefined;
+          if (!owner) { gone = true; break; }
+          proj.pos.x -= proj.vel.x * sub;
+          proj.pos.y -= proj.vel.y * sub;
+          proj.returning = true;
+          proj.hitIds = [];
+          this.aimAt(proj, owner.pos);
+          continue;
+        }
         if (this.projectileHit(proj)) { gone = true; break; } // попал (true только у непробивающих)
       }
       if (!gone && proj.ttl > 0) keep.push(proj);
     }
     w.projectiles = keep;
+  }
+
+  /** Повернуть снаряд к точке, сохранив скорость (бумеранг на обратном пути). */
+  private aimAt(proj: ProjectileEntity, at: Vec2): void {
+    const a = Math.atan2(at.y - proj.pos.y, at.x - proj.pos.x);
+    const sp = vecLen(proj.vel.x, proj.vel.y);
+    proj.vel = { x: Math.cos(a) * sp, y: Math.sin(a) * sp };
   }
 
   /** Проверяет попадание снаряда в цель на текущей позиции; применяет урон. */
@@ -1486,14 +1613,37 @@ export class GameSession {
     return false;
   }
 
+  /** R5-06: запомнить, кто повесил урон-по-времени вида `kind` (прочие статусы не убивают — их не помним). */
+  private noteDot(m: MonsterEntity, kind: DebuffKind, by: PlayerEntity): void {
+    if (isDotKind(kind)) (m.dotBy ??= {})[kind] = by.id;
+  }
+
+  /**
+   * ⚠ R5-06: КОМУ ДОБИТОЕ СТАТУСОМ. Хозяин статуса, чей вклад в смертельный тик больше (стаки × сила), а если он ушёл из
+   * комнаты — следующий по вкладу, кто ещё здесь. Никого — никому: убийство без награды честнее, чем подарок первому в
+   * комнате (раньше так и было — опыт, «Уничтожить N» и лечение за убийство уходили простаивающему или мёртвому альту).
+   */
+  private dotOwner(m: MonsterEntity): PlayerEntity | undefined {
+    const kinds = (Object.keys(m.debuffs) as DebuffKind[]).filter(isDotKind);
+    const part = (k: DebuffKind): number => (m.debuffs[k]?.stacks ?? 0) * (m.debuffs[k]?.mag ?? 0);
+    kinds.sort((a, b) => part(b) - part(a));
+    for (const k of kinds) {
+      const id = m.dotBy?.[k];
+      const p = id !== undefined ? this.world.players[id] : undefined;
+      if (p) return p;
+    }
+    return undefined;
+  }
+
   // ── Смерть монстра: события + золото + дроп + XP ───────────
+  /** `killer` нет (статус того, кто ушёл из комнаты) — смерть без наград: ни опыта, ни дропа, ни лечения. */
   private killMonster(m: MonsterEntity, killer: PlayerEntity | undefined): void {
     if (!m.alive) return;
     m.alive = false;
     m.deadAt = this.world.timeMs;   // отметка времени смерти → труп чистится из w.monsters через CORPSE_LINGER_MS (см. tick)
     this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: killer?.id });
     this.overloadOnDeath(m); // сигнатура конструктов: взрыв при смерти
-    const reward = killer ?? this.primaryPlayer();
+    const reward = killer;
     // Восстановление за убийство (лич-за-килл): плоско HP/мана убийце — боевой сустейн, ДО наград.
     if (this.sustain && reward) {
       const kd = this.snaps.get(reward.id)?.derived;
@@ -1556,7 +1706,7 @@ export class GameSession {
     if (this.rng.chance(loot.potions.chance)) {
       const pots = this.cfg.get('items.base').filter((b) => b.kind === 'consumable' && b.enabled !== false);
       if (pots.length) {
-        const item = itemFromBase(this.rng.pick(pots));
+        const item = itemFromBase(this.rng.pick(pots), undefined, 'drop');
         const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, reward.pos);
         this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
       }
@@ -1601,6 +1751,9 @@ export class GameSession {
           categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'),
           maxReqTotal: this.cfg.get('balance').maxTotalRequirement,
           baseRoll: loot.baseRoll,
+          // Откуда (§12.4): с монстра уникальной редкости — «босс» (её форсят комнаты босса и уника), иначе дроп.
+          // Для ворот t6 равноценны; лавка и награды туда не идут.
+          origin: m.def.rarity === 'unique' ? 'boss' : 'drop',
         },
         this.rng,
       ));
@@ -1624,7 +1777,9 @@ export class GameSession {
    * и ПРОЧЬ от того, кто убил, — награда успевает полежать на виду.
    *
    * ⚠ Клетку проверяем: без этого половина добычи улетала бы в стену, где её не поднять.
-   * Не нашли проходимого направления за несколько проб — кладём вплотную, как раньше.
+   * ⚠ R6-26: и ПУТЬ ПОЛЁТА — прямая видимость от трупа (та же, что у удара и монстра): бросок до 84 px перемахивал стену в
+   * клетку и закрытую дверь, и добыча убитого у стены ложилась в соседнюю комнату, а то и в запечатанную область.
+   * Не нашли годного направления за несколько проб — кладём вплотную, как раньше.
    */
   private spawnDrop(at: Vec2, payload: DropPayload, awayFrom?: Vec2): { x: number; y: number } {
     const sc = this.cfg.get('balance').loot.scatter;
@@ -1642,7 +1797,7 @@ export class GameSession {
       const nx = at.x + Math.cos(ang) * dist;
       const ny = at.y + Math.sin(ang) * dist;
       const c = worldToCell(nx, ny);
-      if (!isBlockedCell(this.world.grid, c.cx, c.cy)) { x = nx; y = ny; break; }
+      if (!isBlockedCell(this.world.grid, c.cx, c.cy) && this.hasLos(at, { x: nx, y: ny })) { x = nx; y = ny; break; }
     }
     this.world.drops.push({ id: this.world.nextId++, pos: { x, y }, ...payload });
     return { x, y };
@@ -1661,9 +1816,9 @@ export class GameSession {
       const d = this.world.drops[i]!;
       if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) > f.radius) continue;
       const want = d.kind === 'gold' ? f.gold : d.kind === 'materials' ? f.materials : f.rarities.includes(d.item.rarity);
-      if (!want) continue;
+      if (!want || !this.hasLos(p.pos, d.pos)) continue;   // R6-26: не сквозь стену и закрытую дверь
       const took = this.takeDrop(p, i);
-      if (took?.item) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
+      if (took?.item) this.events.push(pickedEvent(p.id, took));
     }
   }
 
@@ -1680,8 +1835,8 @@ export class GameSession {
     const p = this.world.players[playerId];
     if (!p || !p.alive || !this.economy) return false;
     // Без id — ближайший (клавиша [E] у 2D-клиента и бота), с id — конкретный (команда веб-3D).
-    // Проксимити проверяется В ОБОИХ случаях — анти-чит, как у рычага.
-    const near = (c: { pos: Vec2 }): boolean => vecLen(c.pos.x - p.pos.x, c.pos.y - p.pos.y) <= 56;
+    // Проксимити проверяется В ОБОИХ случаях — анти-чит, как у рычага. R6-26: и видимость — сквозь стену не открыть.
+    const near = (c: { pos: Vec2 }): boolean => this.within(p, c.pos, 56);
     const ch = this.world.chests.find((c) => !c.opened && near(c) && (chestId == null || c.id === chestId));
     if (!ch) return false;
     ch.opened = true;
@@ -1712,6 +1867,7 @@ export class GameSession {
           rareNames: this.cfg.get('rare-names'),
           maxReqTotal: bal.maxTotalRequirement,
           baseRoll: bal.loot.baseRoll,
+          origin: 'chest',
         },
         this.rng,
       ));
@@ -1746,9 +1902,10 @@ export class GameSession {
     // Подбор ближайшего дропа в радиусе (E-ключ/бот). Клик по предмету — точечно, см. pickupDropById.
     for (let i = 0; i < this.world.drops.length; i++) {
       const d = this.world.drops[i]!;
-      if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) <= 48) {
+      if (foreignDrop(p, d)) continue;   // R2-02: выброшенное другим аккаунтом не берётся — и не заслоняет своё
+      if (this.within(p, d.pos, 48)) {   // R6-26: за стеной — не «рядом», и не заслоняет доступное
         const took = this.takeDrop(p, i);
-        if (took?.item) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
+        if (took?.item) this.events.push(pickedEvent(p.id, took));
         return; // полон — не поднимаем (took === null), но и других в этот тик не берём
       }
     }
@@ -1757,15 +1914,15 @@ export class GameSession {
   /**
    * Точечный подбор дропа по id (клиентская команда «клик по предмету» — надёжно, без гонки
    * сэмплирования ввода). Возвращает поднятое (item+координаты для лога/сейва) или null, если
-   * дропа нет / далеко (>48) / полный инвентарь. Сервер по результату шлёт SaveUpdate + событие.
+   * дропа нет / далеко (>48) / за стеной (R6-26) / полный инвентарь. Сервер по результату шлёт SaveUpdate + событие.
    */
-  pickupDropById(playerId: string, dropId: number): { item?: Item; x: number; y: number } | null {
+  pickupDropById(playerId: string, dropId: number): { item?: Item; x: number; y: number; thrown?: true } | null {
     const p = this.world.players[playerId];
     if (!p || !p.alive) return null;
     const i = this.world.drops.findIndex((d) => d.id === dropId);
     if (i < 0) return null;
     const d = this.world.drops[i]!;
-    if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) > 48) return null;
+    if (!this.within(p, d.pos, 48)) return null;
     return this.takeDrop(p, i);
   }
 
@@ -1802,12 +1959,33 @@ export class GameSession {
     const p = this.world.players[playerId];
     const lv = this.world.levers.find((l) => l.id === leverId);
     if (!p || !lv || lv.used) return null;
-    if (vecLen(lv.pos.x - p.pos.x, lv.pos.y - p.pos.y) > 56) return null; // проксимити (анти-чит)
+    if (!this.within(p, lv.pos, 56)) return null; // проксимити (анти-чит); R6-26: и видимость — не сквозь стену
+    return this.openDoorOf(lv);
+  }
+
+  /** Открыть дверь рычага (клетки → пол) и пометить рычаг. Нет двери — `null`, рычаг не тронут. */
+  private openDoorOf(lv: WorldState['levers'][number]): number | null {
     const door = this.world.doors.find((d) => d.id === lv.doorId);
     if (!door) return null;
     for (const c of door.cells) { const row = this.world.grid[c.cy]; if (row) row[c.cx] = Cell.Floor; }
     lv.used = true;
     return door.id;
+  }
+
+  /**
+   * ⭐ R4-01: ДЕЙСТВИЕ МЕЖДУ ТИКАМИ (команда игрока: сундук по id) — его события вызвавшему. Буфер событий живёт от тика
+   * до тика и уже отдан тем тиком, что прошёл: события, положенные в него после, не видел никто — кадр «сундук открыт»
+   * не доходил до клиента, и запись узла о сундуке тоже.
+   */
+  collectEvents(fn: () => void): SessionEvent[] {
+    const outer = this.events;
+    this.events = [];
+    try {
+      fn();
+      return this.events;
+    } finally {
+      this.events = outer;
+    }
   }
 
   /** Выбрасывает предмет из инвентаря игрока на землю у его ног (команда drop). Возвращает предмет или null. */
@@ -1818,7 +1996,8 @@ export class GameSession {
     if (i < 0) return null;
     const item = p.save.inventory.splice(i, 1)[0]!;
     item.pos = null;
-    this.world.drops.push({ id: this.world.nextId++, kind: 'item', pos: { x: p.pos.x, y: p.pos.y }, item });
+    // R2-02: помечаем аккаунтом выбросившего — чужой аккаунт её не поднимет (торговли между аккаунтами нет).
+    this.world.drops.push({ id: this.world.nextId++, kind: 'item', pos: { x: p.pos.x, y: p.pos.y }, item, ...(p.account !== undefined ? { owner: p.account } : {}) });
     return item;
   }
 
@@ -1827,14 +2006,17 @@ export class GameSession {
    * в кошелёк. `null` только у вещи, которой не хватило места: кошелёк не переполняется никогда,
    * и в этом весь смысл кошелька (docs/ECONOMY.md, Ч1).
    */
-  private takeDrop(p: PlayerEntity, index: number): { item?: Item; x: number; y: number } | null {
+  private takeDrop(p: PlayerEntity, index: number): { item?: Item; x: number; y: number; thrown?: true } | null {
     const d = this.world.drops[index]!;
+    // ⭐ R2-02: выброшенное игроком ДРУГОГО аккаунта не поднять — ни кликом, ни по [E], ни автоподбором. Леджер такую
+    // вещь не пускает: каждая следующая запись подобравшего падала бы на ней, а сама передача — торговля в обход.
+    if (foreignDrop(p, d)) return null;
     const x = d.pos.x;
     const y = d.pos.y;
     if (d.kind === 'item') {
       if (!addToInventory(p.save.inventory, d.item, this.cfg.get('balance').inventory)) return null;
       this.world.drops.splice(index, 1);
-      return { item: d.item, x, y };
+      return { item: d.item, x, y, ...(d.owner !== undefined ? { thrown: true as const } : {}) };   // R4-26
     }
     if (d.kind === 'gold') {
       this.world.drops.splice(index, 1);
@@ -1878,15 +2060,6 @@ export class GameSession {
     return best;
   }
 
-  private primaryPlayer(): PlayerEntity | undefined {
-    return this.primaryPlayerId ? this.world.players[this.primaryPlayerId] : undefined;
-  }
-
-  private primaryEquipped(): Item[] {
-    const p = this.primaryPlayer();
-    return p ? equippedItems(p.save) : [];
-  }
-
   private currentDifficulty(): Difficulty {
     const diffs = this.cfg.get('difficulties');
     return diffs.find((d) => d.id === this.world.difficultyId) ?? diffs.find((d) => d.id === 'normal') ?? diffs[0]!;
@@ -1894,6 +2067,14 @@ export class GameSession {
 
   private hasLos(a: Vec2, b: Vec2): boolean {
     return hasLineOfSight(this.world.grid, a.x, a.y, b.x, b.y, this.world.obstacles);
+  }
+
+  /**
+   * ⚠ R6-26: «РЯДОМ» для подбора, сундука и рычага — в радиусе И в прямой видимости. Радиусы (48–56 px) длиннее стены в
+   * клетку (32), и одно расстояние брало вещь, золото и сундук сквозь стену и закрытую дверь.
+   */
+  private within(p: PlayerEntity, at: Vec2, radius: number): boolean {
+    return vecLen(at.x - p.pos.x, at.y - p.pos.y) <= radius && this.hasLos(p.pos, at);
   }
 
   /**

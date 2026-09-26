@@ -172,6 +172,13 @@ describe('⭐ разбор вещи: поле дешевле, кузница п�
     expect(salvageFromItem(uniq, 'axe', rules, tuning, rich, {})).toEqual({});
   });
 
+  it('⚠ СКОВАННОЕ путём «по редкости» не разбирается нигде — только переплавка (иначе прачечная)', () => {
+    const forged = { ...item({ rarity: 'rare' }), parts: { strike: { id: 'x', step: 1 } } };
+    expect(canSalvage(forged, 'axe', rules, tuning, false).ok).toBe(false);
+    expect(canSalvage(forged, 'axe', rules, tuning, true).ok).toBe(false);
+    expect(salvageFromItem(forged, 'axe', rules, tuning, rich, {})).toEqual({});
+  });
+
   it('⚠ вещь без правила не разбирается — иначе разбор съел бы её впустую', () => {
     const potion = item({ kind: 'consumable' });
     expect(canSalvage(potion, undefined, rules, tuning, false).ok).toBe(false);
@@ -201,9 +208,10 @@ describe('⭐ разбор вещи: поле дешевле, кузница п�
     const worn = (rarity: string): MonsterGearRoll =>
       ({ slot: 'weapon', gearId: 'u-sword1h', name: 'меч', rarity, affixes: [], mods: [], base: {} } as MonsterGearRoll);
     const opt = { rarityTier: tuning.rarityTier, knownMaterial: (id: string) => reg.get('craft-materials').some((c) => c.id === id) };
-    expect(Object.keys(salvageFromMonster([worn('normal')], byGear, maxRng, opt))).toEqual(['iron-1']);
-    expect(Object.keys(salvageFromMonster([worn('magic')], byGear, maxRng, opt))).toEqual(['iron-2']);
-    expect(Object.keys(salvageFromMonster([worn('rare')], byGear, maxRng, opt))).toEqual(['iron-3']);
+    // Меч даёт железо клинка и прибор гарды (F2) — ОБА на ступени редкости этой вещи.
+    for (const [rarity, step] of [['normal', 1], ['magic', 2], ['rare', 3]] as const) {
+      expect(Object.keys(salvageFromMonster([worn(rarity)], byGear, maxRng, opt)).sort(), rarity).toEqual([`iron-${step}`, `trim-${step}`]);
+    }
   });
 
   it('⚠ у редкого монстра прокачан НЕ ВЕСЬ гир: ржавая броня даёт ржавое', () => {
@@ -221,8 +229,9 @@ describe('⭐ разбор вещи: поле дешевле, кузница п�
     // несколько (пластины + поддоспешник), и список меняется при правке данных, а правило — нет.
     const keys = Object.keys(got);
     expect(keys, 'меч редкий → калёная сталь').toContain('iron-3');
+    expect(keys, 'меч редкий → и прибор гарды его ступени').toContain('trim-3');
     expect(keys, 'кольчуга обычная → ржавые пластины').toContain('plate-1');
-    expect(keys.filter((k) => !k.startsWith('iron')).every((k) => k.endsWith('-1')),
+    expect(keys.filter((k) => !k.startsWith('iron') && !k.startsWith('trim')).every((k) => k.endsWith('-1')),
       'всё бронное с обычной вещи — первой ступени').toBe(true);
   });
 

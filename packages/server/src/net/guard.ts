@@ -43,6 +43,11 @@ const SCOPE: Record<TownCommand['cmd'], CmdScope> = {
   forgeReroll: 'town',
   forgeSalvage: 'town',
   forgeRepair: 'town',
+  // Ковка и зачарование — у кузнеца, как и прочая кузница: из подземелья не куют (и сундук аккаунта там не открыт).
+  craft: 'town',
+  forgeEnchant: 'town',
+  // Эскиз открывает деталь в журнале кузнеца — журнал в сундуке аккаунта, у кузнеца (R3-11).
+  forgeSketch: 'town',
   depositMaterials: 'town',
   stashOpen: 'town',
   stashMove: 'town',
@@ -81,23 +86,51 @@ export function cmdAllowedIn(cmd: TownCommand['cmd'], area: 'town' | 'dungeon' |
  * клиент её повторит — а повтор «купить» это лишняя вещь за лишнее золото. Помним последние
  * номера и молча пропускаем уже выполненные.
  *
- * Окно намеренно маленькое: команды идут редко (это не ввод), а хранить историю за всю
- * сессию незачем — повтор случается сразу за оригиналом, а не через час.
+ * Хранить историю за всю сессию незачем — повтор случается вскоре за оригиналом, а не через час.
+ *
+ * ⭐ R6-24: ОКНО — ПО ВРЕМЕНИ (`ttlMs`, 2 минуты), А НЕ ПО СЧЁТУ. Было 64 номера, а потолок команд города — всплеск 120
+ * (`limits.townCmd`): перекатка встала за медленной записью, за ней в очереди соединения — 64 перекладывания вещей, и повтор
+ * перекатки ТЕМ ЖЕ номером (верстак после «нет ответа», `client/modules/town/forgeBench.ts`) находил номер вытесненным —
+ * вторая перекатка за вторую цену. Номер моложе срока не вытесняется ничем: за срок потолок команд пропускает не больше
+ * 120 + 10/с × 120 с = 1320 номеров, а потолок счёта (`limit`) — только страховка памяти, вдвое выше.
+ *
+ * ИТОГ ТОЖЕ ПОМНИМ (D3). Повтор присылают как раз тогда, когда ответ на оригинал не дошёл, —
+ * значит повтору надо отдать ТОТ ЖЕ итог (`cmdResult`), а не «всё хорошо» по умолчанию:
+ * оригинал мог быть и отказом.
  */
-export class CommandDedup {
-  private readonly seen = new Set<number>();
-  private readonly order: number[] = [];
-  constructor(private readonly limit = 64) {}
+export class CommandDedup<R = unknown> {
+  /** Номер → итог. `undefined` — принят, но итог ещё не записан. */
+  private readonly seen = new Map<number, R | undefined>();
+  /** Номера в порядке приёма и когда приняты (монотонные мс). */
+  private readonly order: { id: number; at: number }[] = [];
+  constructor(
+    private readonly limit = 4096,
+    private readonly ttlMs = 120_000,
+    private readonly now: () => number = () => performance.now(),
+  ) {}
 
   /** true — команду надо выполнить; false — это повтор уже выполненной. */
   accept(id: number | undefined): boolean {
     // Клиент без нумерации (старая вкладка) обслуживается как раньше: лучше выполнить,
     // чем отказать живому игроку из-за отсутствия поля.
     if (id == null || !Number.isFinite(id)) return true;
+    const now = this.now();
+    // Сперва — забыть старше срока: повтор, пришедший позже срока, исполнится честно.
+    while (this.order.length && now - this.order[0]!.at > this.ttlMs) this.seen.delete(this.order.shift()!.id);
     if (this.seen.has(id)) return false;
-    this.seen.add(id);
-    this.order.push(id);
-    if (this.order.length > this.limit) this.seen.delete(this.order.shift()!);
+    this.seen.set(id, undefined);
+    this.order.push({ id, at: now });
+    if (this.order.length > this.limit) this.seen.delete(this.order.shift()!.id);
     return true;
+  }
+
+  /** Записать итог выполненной команды. Номер, которого окно не помнит, игнорируется. */
+  settle(id: number | undefined, outcome: R): void {
+    if (id != null && this.seen.has(id)) this.seen.set(id, outcome);
+  }
+
+  /** Итог уже выполненной команды; `undefined` — не записан или забыт. */
+  outcome(id: number | undefined): R | undefined {
+    return id == null ? undefined : this.seen.get(id);
   }
 }

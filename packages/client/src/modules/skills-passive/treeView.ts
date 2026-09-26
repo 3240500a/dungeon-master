@@ -50,7 +50,7 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
   reset.addEventListener('click', () => {
     if (ranks === 0 || state.save.gold < fee) return;
     if (!window.confirm(`Сбросить ВСЕ мастерства?\nВернётся ${ranks} очков мастерства.\nЗолото за узлы НЕ возвращается, комиссия: ${fee} зол.`)) return;
-    app.sendCmd({ cmd: 'respecPassives' });
+    app.sendCmd({ cmd: 'respecPassives', maxGold: fee });   // R5-15: комиссия, названная в вопросе, — дороже сервер не возьмёт
   });
   body.appendChild(reset);
 
@@ -144,7 +144,8 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     circle.addEventListener('click', (e) => {
       e.stopPropagation();
       if (dragMoved) return;
-      app.sendCmd({ cmd: 'allocPassive', nodeId: node.id });
+      // R6-16: цена карточки «след. ранг» — дороже сервер не возьмёт (отказ «Цена изменилась», клиент перечитает конфиг).
+      app.sendCmd({ cmd: 'allocPassive', nodeId: node.id, maxGold: passiveNodeCost(node.cost.amount, rank, mult) });
     });
     g.appendChild(circle);
   }

@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
+import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, weaponLookOf, weaponLookSig, type WeaponLook, type ConfigRegistry, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { BASE_GAIT_CHAR } from './locoBlend.js';   // ⭐ донор набора хода — ОДНО имя на игроков и монстров
@@ -32,6 +32,8 @@ import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
 import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, propTune, loadEnvKitFromObjects, type Torch, type EnvKit, type EnvSpec, type PropSpec } from './env3d.js';
 import { getMaterial } from './assetCache.js';
+import { removeProp } from './propDispose.js';
+import { projMesh, dropMesh } from './projDropMeshes.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -39,6 +41,7 @@ import { mountDebug } from './debug3d.js';
 import { mountSettings } from './settings3d.js';
 import { DomUi } from '../ui/domUi.js';
 import { GameLog } from '../ui/gameLog.js';
+import { dismissAsk } from '../ui/kit.js';
 import { ActionBar } from '../ui/actionBar.js';
 import { BeltBar } from '../ui/beltBar.js';
 import { SfxController } from '../modules/sfx/sfx.js';
@@ -54,6 +57,12 @@ import { stashPanel } from '../modules/town/stashPanel.js';
 import { questLogPanel } from '../modules/quests/questLogPanel.js';
 import { runNodeLabel } from '../modules/run/runLabels.js';
 import { runMapPanel } from '../modules/run/runMapPanel.js';
+import { mergePeerStatics } from '../net/peerStatics.js';
+import { EntryFlow } from '../net/entryFlow.js';
+import { routeToNode } from '../net/netClient.js';
+import { entryScreens } from '../ui/entryScreens.js';
+import { InputSampler } from '../net/inputSampler.js';
+import { onFocusLost } from '../net/focusRelease.js';   // R4-20: alt-tab — зажатое отпущено
 
 const yaw = (facing: number): number => Math.PI / 2 - facing;
 const FACTION: Record<string, number> = { undead: 0x9fb7a6, demon: 0xc9614a, beast: 0xb08a55, monster: 0x8a6fae };
@@ -107,6 +116,15 @@ function weaponKeyFromSave(save: SaveState): string {
 function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string {
   return pv.weaponKey ?? charFor(pv.classId).weapon;
 }
+/**
+ * D22: вид оружия из деталей для СВОЕЙ куклы — из сейва той же функцией, что сервер кладёт в `peerInfo` для
+ * других (`weaponLookOf`): себя и других рисуем одним путём. null — вида нет (кукле: снять, процедурный меш).
+ */
+function weaponLookFromSave(save: SaveState, reg: ConfigRegistry): WeaponLook | null {
+  return weaponLookOf(reg, save.equipment.weapon, save.equipment.offhand) ?? null;
+}
+/** Подпись вида пира — смена оружия по ней, а не только по ключу (другой меч того же класса — тот же `sword`). */
+const lookKeyOf = (l?: WeaponLook): string => `${weaponLookSig(l?.main)}#${weaponLookSig(l?.off)}`;
 /** Ф3: id 3D-моделей оружия из экипировки (main=оружие → правая, off=офф-рука/щит → левая) → GLB вместо процедурки.
  *  Пусто → процедурный меш. Оружие ОБЩЕЕ на всех (per-char только хват). Пиры пока без моделей (нужен поле в снапшоте). */
 function weaponModelsFromSave(save: SaveState, itemsBase: { id: string; modelId?: string }[]): { main?: string; off?: string } {
@@ -136,7 +154,7 @@ function appearanceFromModels(am?: Record<string, string>): Record<string, { mod
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean; animAcc?: number; bakeFailed?: boolean }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; lkey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean; animAcc?: number; bakeFailed?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -258,6 +276,14 @@ export async function startOnline3d(): Promise<void> {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) lmb = true; if (e.button === 2) rmb = true; });
   addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) rmb = false; });
+  // ⭐ R4-20: окно потеряло фокус (alt-tab, вкладку скрыли) — keyup/pointerup достанутся другому окну: зажатое отпускаем
+  // сами и сразу шлём серверу «стою», иначе герой бежал и бил, пока игрока нет.
+  onFocusLost(window, document, () => {
+    if (!keys.size && !lmb && !rmb) return;
+    keys.clear();
+    lmb = false; rmb = false;
+    if (myId) app.net.send({ t: 'input', seq: seq++, input: { move: { x: 0, y: 0 }, facing: myFacing, attack: false, cast: null, interact: false } });
+  });
   canvas.addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true; });
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = camZoom(orbit.dist, e.deltaY, CAM); }, { passive: false });
   const aimT = aimTmp();   // рейкаст прицела — общий с вкладкой «Тест» (иначе прицел в тесте свой)
@@ -382,6 +408,7 @@ export async function startOnline3d(): Promise<void> {
         r: st?.r ?? 14,
         weaponKey: st?.weaponKey,
         armorModels: st?.armorModels,
+        weaponLook: st?.weaponLook,   // D22: из чего сделано оружие пира — кукла строит модель ковки
       };
     }),
   });
@@ -490,6 +517,19 @@ export async function startOnline3d(): Promise<void> {
   let hudBars: { action: ActionBar; belt: BeltBar } | undefined;   // пояс + панель биндов (D2), создаём в мире
 
   const disposeActor = (a: Actor): void => { actorsGroup.remove(a.d.group); a.d.dispose(); if (a.hp) { actorsGroup.remove(a.hp.spr); a.hp.dispose(); } };   // hp.dispose освобождает неймплейт-текстуру+материал
+  /** Чью куклу держит `self`: «герой|класс» (R5-17). */
+  let selfKey = '';
+  /**
+   * ⭐ R5-17: снести куклу своего героя вместе с его светом. Кукла собирается под КЛАСС (тело, пол, сложение, походка,
+   * позы) и раньше строилась один раз на страницу: после R4-22 («герой недоступен» / «вход недействителен» → выбор героя
+   * без перезагрузки) новый герой другого класса ходил в теле прежнего. Свет — тоже: `buildArea` заводит его с куклой.
+   */
+  function dropSelf(): void {
+    if (self) disposeActor(self);
+    self = undefined;
+    if (playerLight) { scene.remove(playerLight); playerLight.dispose(); playerLight = undefined; }
+    selfKey = '';
+  }
   const markDead = (a: Actor): void => { if (corpseStart(a) && a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти (setDead будит уснувшего — `corpseStart` снимает и `dormant`)
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
@@ -515,19 +555,29 @@ export async function startOnline3d(): Promise<void> {
       .find((m) => m.kind === 'character' && m.classId === atlasKey);
   }
 
-  // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
-  function buildArea(floor: FloorInit): void {
-    // Снапшот ПРОШЛОЙ области больше не применим к новой (другие id монстров/позиции). Иначе ближайший кадр
-    // renderWorld отработает по старому снапшоту: новые куклы не в seenM → чистка сирот их снесёт (→ невидимые
-    // монстры, миникарта из снапшота их всё равно рисует). Ждём первый снапшот новой области.
+  /**
+   * Снести сущности, нарисованные из снапшотов: куклы пиров и монстров, снаряды, дропы, партикл-статусы и сам последний
+   * снапшот. Одно место на смену области (`buildArea`) и на потерю связи (`dropSession`).
+   * Снапшот ПРОШЛОЙ области больше не применим к новой (другие id монстров/позиции). Иначе ближайший кадр
+   * renderWorld отработает по старому снапшоту: новые куклы не в seenM → чистка сирот их снесёт (→ невидимые
+   * монстры, миникарта из снапшота их всё равно рисует). Ждём первый снапшот новой области.
+   */
+  function clearActors(): void {
     latest = undefined;
-    // снести прошлую область
     for (const a of peers.values()) disposeActor(a); peers.clear();
     for (const a of monsters.values()) disposeActor(a); monsters.clear();
+    // R6-12: снаряды и дропы — на общих геометриях и материалах (`projDropMeshes`): голого remove достаточно.
     for (const m of projMeshes.values()) actorsGroup.remove(m); projMeshes.clear();
     for (const m of dropMeshes.values()) actorsGroup.remove(m); dropMeshes.clear();
-    for (const n of npcLabels) actorsGroup.remove(n.spr); npcLabels.length = 0;
     statusFx.clear();   // сбросить партикл-эффекты статусов прошлой области
+  }
+
+  // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
+  function buildArea(floor: FloorInit): void {
+    dismissAsk();   // R3-23: вопрос «разобрать здесь?» прошлой области — «нет», а не плашка над новой (и над городом)
+    // снести прошлую область
+    clearActors();
+    for (const n of npcLabels) actorsGroup.remove(n.spr); npcLabels.length = 0;
     doorMeshes.clear(); leverMeshes.clear(); chestMeshes.clear(); interactables = [];
     clearGroup(floorGroup); clearGroup(corpsesGroup);   // запечённые трупы прошлого этажа — снести (геометрии dispose; общий corpseMat не трогаем)
     area = floor.area;
@@ -541,11 +591,15 @@ export async function startOnline3d(): Promise<void> {
     if (floor.biomeId) loadEnvForBiome(floor.biomeId);   // лениво подгрузить кит из объектов биома → пересоберём по готовности
     pw.buildStatic(layout);
 
-    // Игрок-кукла (создаём один раз, дальше перемещаем в spawn). Оружие/щит — из ЭКИПИРОВКИ.
+    // Игрок-кукла (создаём один раз на героя, дальше перемещаем в spawn). Оружие/щит — из ЭКИПИРОВКИ.
     const classId = app.state!.save.classId;
+    // ⭐ R5-17: другой герой или класс (новый вход после R4-22) — кукла прежнего прочь, эта строится заново под свой класс.
+    const key = `${app.state!.save.charId}|${classId}`;
+    if (self && selfKey !== key) dropSelf();
+    selfKey = key;
     selfWeaponKey = weaponKeyFromSave(app.state!.save);
     if (!self) {
-      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), x: floor.spawn.x, z: floor.spawn.y, ...playerLook(classId) });
+      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), x: floor.spawn.x, z: floor.spawn.y, ...playerLook(classId), weaponLook: weaponLookFromSave(app.state!.save, app.config) ?? undefined, craftReg: app.config });
       actorsGroup.add(d.group);
       {   // ⭐ свой удар: звук в полную громкость + тряска камеры по метке
         const sfx = markSfx(1);
@@ -561,7 +615,7 @@ export async function startOnline3d(): Promise<void> {
       playerLight.shadow.camera.near = 8; playerLight.shadow.camera.far = sh.playerLightDist;   // конфиг теней применит applyShadows()
       scene.add(playerLight); applyShadows();   // применить текущее состояние теней к новому свету героя
     } else {
-      self.d.setWeapon?.(selfWeaponKey, weaponModelsFromSave(app.state!.save, app.config.get('items.base')));   // на новом этаже снаряжение могло смениться
+      self.d.setWeapon?.(selfWeaponKey, weaponModelsFromSave(app.state!.save, app.config.get('items.base')), weaponLookFromSave(app.state!.save, app.config));   // на новом этаже снаряжение могло смениться
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
@@ -670,9 +724,10 @@ export async function startOnline3d(): Promise<void> {
   }
 
   function openDoor(doorId: number): void {
-    for (const m of doorMeshes.get(doorId) ?? []) floorGroup.remove(m);
+    // R4-38: снятый меш — вместе с его геометрией и материалом (свои у каждой створки и рычага).
+    for (const m of doorMeshes.get(doorId) ?? []) removeProp(floorGroup, m);
     doorMeshes.delete(doorId);
-    const lv = leverMeshes.get(doorId); if (lv) floorGroup.remove(lv); leverMeshes.delete(doorId);
+    const lv = leverMeshes.get(doorId); if (lv) removeProp(floorGroup, lv); leverMeshes.delete(doorId);
     interactables = interactables.filter((it) => it.doorId !== doorId);
   }
 
@@ -773,7 +828,7 @@ export async function startOnline3d(): Promise<void> {
       // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
       const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
       // ⭐ Считаем КАЖДЫЙ КАДР (а не раз в 33 мс вместе с отправкой): кукла доворачивается за мышью
-      // плавно, и это ОДИН источник — `sendInput` ниже отправляет ровно это же число.
+      // плавно, и это ОДИН источник — `pumpInput` ниже отправляет ровно это же число.
       if (mine.stun || !myFacingInit) { myFacing = mine.facing; myFacingInit = true; }   // под станом ведёт сервер; после — продолжаем с его угла
       else myFacing = facingFrom(myFacing, aimWorld(), smoothX, smoothZ, moveFromKeys(keys, CAM.azimuth), mouse.set);
       driveActor(self, bx, by, myFacing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun, vel: ip ? { x: ip.vx, z: ip.vz } : undefined });
@@ -793,18 +848,19 @@ export async function startOnline3d(): Promise<void> {
       let a = peers.get(pv.id);
       const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
       const ak = JSON.stringify(pv.armorModels ?? {});   // C7: ключ внешности брони пира (детект смены экипа)
+      const lk = lookKeyOf(pv.weaponLook);   // D22: подпись вида из деталей (другой меч того же класса — тот же ключ `sword`)
       if (!a) {
-        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, ...playerLook(pv.classId) }); actorsGroup.add(d.group);
+        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, ...playerLook(pv.classId), weaponLook: pv.weaponLook, craftReg: app.config }); actorsGroup.add(d.group);
         d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
         // ⭐ Чужие метки (взмах, шаги) — тише своих и гаснут с расстоянием: сервер шлёт всех игроков в окне, и шаги
         // каждого в полную громкость сливались бы в сплошной топот. Громкость считается В МОМЕНТ звука.
         const pid = pv.id;
         d.onMark = markSfx(() => { const q = peers.get(pid); return q ? 0.55 * earShot(q.lx - smoothX, q.lz - smoothZ) : 0; });
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
-        a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);
+        a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, lkey: lk, hp }; peers.set(pv.id, a);
       }
       else {
-        if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }         // пир сменил оружие/щит → пересобрать меш + адаптировать позы удара
+        if (a.wkey !== wk || a.lkey !== lk) { a.wkey = wk; a.lkey = lk; a.d.setWeapon?.(wk, undefined, pv.weaponLook ?? null); }   // пир сменил оружие/щит/детали → пересобрать меш + адаптировать позы удара
         if (a.akey !== ak) { a.akey = ak; a.d.setAppearance?.(appearanceFromModels(pv.armorModels)); }   // сменил броню → пересобрать скин-слой
       }
       const pp = interp.at('p' + pv.id, nowSec);
@@ -870,9 +926,10 @@ export async function startOnline3d(): Promise<void> {
     for (const pr of latest.projectiles) {
       seenPr.add(pr.id);
       let m = projMeshes.get(pr.id);
-      if (!m) { const tint = pr.owner === 'monster' ? 0xff8080 : dmgColorNum(pr.dom); m = new THREE.Mesh(new THREE.SphereGeometry(5, 8, 8), new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: 0.7 })); actorsGroup.add(m); projMeshes.set(pr.id, m); }
+      if (!m) { const tint = pr.owner === 'monster' ? 0xff8080 : dmgColorNum(pr.dom); m = projMesh(tint); actorsGroup.add(m); projMeshes.set(pr.id, m); }
       m.position.set(pr.x, 22, pr.y);
     }
+    // R6-12: голый remove — геометрия и материал снаряда общие (`projDropMeshes`), освобождать у меша нечего.
     for (const [id, m] of projMeshes) if (!seenPr.has(id)) { actorsGroup.remove(m); projMeshes.delete(id); }
     // дропы
     const seenD = new Set<number>();
@@ -882,11 +939,8 @@ export async function startOnline3d(): Promise<void> {
         // Цвет говорит, ЧТО лежит: вещь — латунь, золото — монетное жёлтое, материалы — сталь.
         // Без этого три разных награды у трупа выглядят одинаково и читаются как одна.
         const col = d.kind === 'gold' ? 0xffd24a : d.kind === 'materials' ? 0x9aa6b2 : 0xdcc060;
-        const g = new THREE.Group();
-        // Гем самосветится (emissive) — БЕЗ PointLight: каждый дроп-свет менял число света в сцене → Three.js
-        // перекомпилировал ВСЕ материалы (синхронный хитч в главном потоке на каждый спавн/деспаун лута).
-        const gem = new THREE.Mesh(new THREE.OctahedronGeometry(6), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.9 }));
-        gem.position.y = 12; g.add(gem);
+        // Гем самосветится (emissive) — БЕЗ PointLight (см. `projDropMeshes.dropMesh`); геометрия и материал общие (R6-12).
+        const g = dropMesh(col);
         g.position.set(d.x, 0, d.y); actorsGroup.add(g); dropMeshes.set(d.id, g);
       }
     }
@@ -918,7 +972,7 @@ export async function startOnline3d(): Promise<void> {
       // Сундук открыт — убираем меш и подсказку: FloorInit шлётся один раз, и без этого
       // события пустой сундук висел бы до конца этажа и звал жать [E].
       if (e.type === 'chest-opened') {
-        const m = chestMeshes.get(e.id); if (m) floorGroup.remove(m); chestMeshes.delete(e.id);
+        const m = chestMeshes.get(e.id); if (m) removeProp(floorGroup, m); chestMeshes.delete(e.id);   // R4-38: и буферы GPU
         interactables = interactables.filter((it) => Math.hypot(it.x - e.x, it.y - e.y) > 1 || it.label !== 'Сундук (открыть)');
         continue;
       }
@@ -1010,15 +1064,19 @@ export async function startOnline3d(): Promise<void> {
     // он один (`sword`): гейт «ключ не изменился — не звать» означал, что смена меча на другой меч вообще
     // не доезжала до куклы, и на персонаже до конца сессии висела модель предыдущего клинка. Дешевизну
     // держит сам `setWeapon`: он выходит сразу, если не изменились НИ ключ, НИ список моделей.
-    if (self) { const k = weaponKeyFromSave(f.save); selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save, app.config.get('items.base'))); self.d.setAppearance?.(appearanceFromSave(f.save, app.config.get('items.base'))); }   // сменил оружие/щит/броню → меши и скин-слой
+    if (self) { const k = weaponKeyFromSave(f.save); selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save, app.config.get('items.base')), weaponLookFromSave(f.save, app.config)); self.d.setAppearance?.(appearanceFromSave(f.save, app.config.get('items.base'))); }   // сменил оружие/щит/броню/детали → меши и скин-слой
     app.bus.emit('state:changed', {});
   });
-  app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });
+  // Кадр `shop` здесь НЕ слушаем (R4-37): его принимает сам `App` — вместе с ценами сервера (`shopPrices`); своя копия
+  // брала только сток, а цены прилавка считала бы по конфигу клиента.
   app.net.on('questBoard', (f) => { app.questBoard = f.quests; app.bus.emit('state:changed', {}); });
-  app.net.on('stash', (f) => { app.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount, materials: f.materials }; app.bus.emit('state:changed', {}); });
+  // Кадр `stash` здесь НЕ слушаем: его уже принимает сам `App` (`applyStash`). Своя копия полей тут
+  // теряла журнал кузнеца (`forgeJournal`) — окно ковки считало бы всё закрытым, а полевой разбор не
+  // знал бы о неизвестной детали — и дважды перерисовывала все окна.
   app.net.on('joined', (f) => {
-    hideAll(); myId = f.playerId;
+    myId = f.playerId;   // экраны входа снимает поток входа (`entry`) на тот же кадр
     const st = new GameState(f.save); st.restoreFull(); app.state = st;
+    mergePeerStatics(peerStatics, f.peers);   // R2-03: статика тех, кто уже в комнате, — сразу, а не с их экипировки
     buildArea(f.floor); showRoomCode(f.roomCode);
   });
   app.net.on('areaChanged', (f) => { closeDeath(); buildArea(f.floor); });
@@ -1027,40 +1085,18 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('voteStart', (f) => showVote(f.kind));
   app.net.on('voteUpdate', (f) => { const t = voteBox?.querySelector('.tally'); if (t) t.textContent = `${f.yes}/${f.total}`; });
   app.net.on('voteEnd', () => closeVote());
-  app.net.on('runStatus', (f) => { hideConnecting(); if (f.hasRun) showResume(f.roomCode ?? '', f.depth ?? 0); else showLobby(); });
-  app.net.on('abandoned', () => { hideResume(); showLobby(); });
-  app.net.on('error', (f) => { if (f.code === 'no-run') { hideResume(); showLobby(); return; } if (statusEl) statusEl.textContent = f.msg; });
+  // `runStatus`/`abandoned`/`error` и жизнь сокета — у потока входа (`entry` ниже), общего с 2D.
   app.net.on('peerLeft', (f) => { const a = peers.get(f.id); if (a) { disposeActor(a); peers.delete(f.id); } peerStatics.delete(f.id); });
-  app.net.on('peerInfo', (f) => { for (const pi of f.peers) peerStatics.set(pi.id, pi); });
+  app.net.on('peerInfo', (f) => mergePeerStatics(peerStatics, f.peers));
   app.net.on('monsterInfo', (f) => { for (const m of f.monsters) spawnMonster(m); });
   app.net.on('peerJoined', (f) => { peerStatics.set(f.peer.id, f.peer); });
 
   // ── Модалки (DOM, как в 2D OnlineScene) ──────────────────────────────────────
-  let lobby: HTMLElement | undefined, resumeB: HTMLElement | undefined, connecting: HTMLElement | undefined;
+  // Экраны входа (плашка «Подключение…», лобби, «Продолжить») — общие с 2D: `ui/entryScreens.ts` через поток `entry`.
   let voteBox: HTMLElement | undefined, deathBox: HTMLElement | undefined, codeLabel: HTMLElement | undefined, pingLabel: HTMLElement | undefined;
-  let statusEl: HTMLElement | undefined; let lastPing = -2;
+  let lastPing = -2;
   const mk = (html: string, css: string): HTMLElement => { const b = document.createElement('div'); b.style.cssText = css; b.innerHTML = html; root.appendChild(b); return b; };
-  const CENTER = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90;pointer-events:auto';
-  const sendJoin = (o: { fresh?: boolean; roomCode?: string; resume?: boolean }): void => app.net.send({ t: 'join', token: app.auth!.token, charId: app.pendingCharId!, ...o });
 
-  function showConnecting(): void { app.gameLog?.setVisible(false); minimap.setVisible(false); if (connecting) return; connecting = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px 30px;color:#e6ddc9;text-align:center"><div>Подключение к серверу…</div><div class="status" style="margin-top:8px;font-size:12px;color:#8f897c"></div></div>`, CENTER); statusEl = connecting.querySelector('.status') as HTMLElement; }
-  function hideConnecting(): void { connecting?.remove(); connecting = undefined; }
-  function showLobby(): void { app.gameLog?.setVisible(false); minimap.setVisible(false); if (lobby) return;
-    lobby = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:280px;color:#e6ddc9;text-align:center"><div style="font-size:18px;margin-bottom:14px">Кооп</div><button data-a="solo" style="display:block;width:100%;margin:6px 0;padding:8px;background:#1e2a3a;color:#cfe0f2;border:1px solid #6f9bcf;border-radius:6px;cursor:pointer">Соло (комната на 1)</button><button data-a="host" style="display:block;width:100%;margin:6px 0;padding:8px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Создать комнату</button><div style="display:flex;gap:6px;margin-top:6px"><input class="code" placeholder="КОД" maxlength="4" style="flex:1;text-transform:uppercase;padding:8px;background:#0f131a;color:#e6ddc9;border:1px solid #2b323f;border-radius:6px"><button data-a="join" style="padding:8px 12px;background:#3a2c15;color:#f0d9a8;border:1px solid #e39a3c;border-radius:6px;cursor:pointer">Войти</button></div><div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`, CENTER);
-    statusEl = lobby.querySelector('.status') as HTMLElement;
-    const go = (o: { fresh?: boolean; roomCode?: string }): void => { statusEl!.textContent = 'Подключение…'; sendJoin(o); };
-    lobby.querySelector('[data-a="solo"]')!.addEventListener('click', () => go({ fresh: true }));
-    lobby.querySelector('[data-a="host"]')!.addEventListener('click', () => go({ fresh: true }));
-    lobby.querySelector('[data-a="join"]')!.addEventListener('click', () => { const code = (lobby!.querySelector('.code') as HTMLInputElement).value.trim().toUpperCase(); if (code) go({ roomCode: code }); });
-  }
-  function hideLobby(): void { lobby?.remove(); lobby = undefined; }
-  function showResume(roomCode: string, depth: number): void { app.gameLog?.setVisible(false); minimap.setVisible(false); if (resumeB) return; const where = depth > 0 ? `этаж ${depth}` : 'подземелье';
-    resumeB = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:300px;color:#e6ddc9;text-align:center"><div style="font-size:18px;margin-bottom:8px">Незавершённый забег</div><div style="font-size:13px;color:#a8a090;margin-bottom:16px">У вас есть незавершённое прохождение (${where}${roomCode ? `, комната ${roomCode}` : ''}). Продолжить или завершить?</div><button data-a="resume" style="display:block;width:100%;margin:6px 0;padding:9px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Продолжить забег</button><button data-a="abandon" style="display:block;width:100%;margin:6px 0;padding:9px;background:#3a1c1c;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Завершить (гибель со штрафом)</button><div style="font-size:11px;color:#8f7a72;margin-top:4px">«Завершить» — персонаж считается погибшим: штраф золота и части предметов.</div><div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`, CENTER);
-    statusEl = resumeB.querySelector('.status') as HTMLElement;
-    resumeB.querySelector('[data-a="resume"]')!.addEventListener('click', () => { statusEl!.textContent = 'Возврат…'; sendJoin({ resume: true }); });
-    resumeB.querySelector('[data-a="abandon"]')!.addEventListener('click', () => { statusEl!.textContent = 'Забрасываем…'; app.net.send({ t: 'abandon', token: app.auth!.token, charId: app.pendingCharId! }); });
-  }
-  function hideResume(): void { resumeB?.remove(); resumeB = undefined; }
   function showRoomCode(code: string): void { if (!codeLabel) codeLabel = mk('', 'position:fixed;top:8px;right:12px;z-index:60;background:#171b24;border:1px solid #6f9bcf;border-radius:6px;padding:6px 10px;color:#cfe0f2;font-size:13px;pointer-events:none'); codeLabel.innerHTML = `Комната: <b style="color:#dca94b;letter-spacing:2px">${code}</b>`; }
   function showVote(kind: 'descend' | 'town' | 'arena'): void { if (voteBox) return; const q = kind === 'town' ? 'Вернуться в город?' : kind === 'arena' ? 'Войти в PvP-арену?' : 'Спуск на след. этаж?';
     voteBox = mk(`<div style="margin-bottom:8px">${q} <b class="tally">1/1</b></div><button data-v="1" style="margin:0 4px;padding:6px 14px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Принять</button><button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Отмена</button>`, 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#171b24;border:1px solid #6f9bcf;border-radius:8px;padding:12px 16px;color:#e6ddc9;text-align:center;pointer-events:auto');
@@ -1080,54 +1116,43 @@ export async function startOnline3d(): Promise<void> {
     deathBox.querySelector('[data-a="spec"]')?.addEventListener('click', () => closeDeath());
   }
   function closeDeath(): void { deathBox?.remove(); deathBox = undefined; }
-  function hideAll(): void { hideConnecting(); hideResume(); hideLobby(); }
   function updatePing(): void { const rtt = app.net.rtt; if (rtt === lastPing) return; lastPing = rtt;
     if (!pingLabel) pingLabel = mk('', 'position:fixed;top:40px;right:12px;z-index:60;background:rgba(23,27,36,0.8);border:1px solid #2b323f;border-radius:6px;padding:4px 8px;color:#cfe0f2;font-size:12px;font-family:monospace;pointer-events:none');
     const c = rtt < 0 ? '#8f897c' : rtt < 60 ? '#7fdc7f' : rtt < 120 ? '#dcd07f' : rtt < 200 ? '#dcae7f' : '#dc7f7f';
     pingLabel.innerHTML = `ping <b style="color:${c}">${rtt < 0 ? '—' : rtt}</b> мс`;
   }
 
-  // ── Ввод → сервер (схема как в 2D NetDriver) ─────────────────────────────────
-  const wasHeld: Record<string, boolean> = {};   // предыдущее удержание по источнику — фронт-детекция тоглов
-  const INPUT_PERIOD = 1 / 30;                  // Ф0.8: шлём ввод с частотой тика сервера, не кадров
-  let inputAcc = INPUT_PERIOD;                  // первый кадр отправляем сразу
+  // ── Ввод → сервер (сэмплер общий с 2D NetDriver) ─────────────────────────────
+  // ⭐ L2: кнопки сэмплируются КАЖДЫЙ кадр, а уходят с частотой тика сервера (`InputSampler` → `InputPacer`: остаток
+  // периода переносится); фронт нажатия (рывок, тогл, первый удар, [E]) — в том же кадре. Раньше здесь был свой счётчик,
+  // обнулявшийся на отправке (при 60 Гц с дрожью кадра ввод шёл то 30, то 20 раз в секунду), и фронт считался только в
+  // кадр отправки — удар или рывок, нажатый и отпущенный между отправками, терялся.
+  const inputSampler = new InputSampler();
   function isToggleSkill(nodeId: string): boolean {
     const cat = app.config.get('skill-tree')?.nodes.find((n) => n.id === nodeId)?.effect.active?.category;
     return cat === 'aura' || cat === 'stance';
   }
-  function sendInput(): void {
-    const s = app.state!.save;
-    const mine = latest?.players.find((p) => p.id === myId);
-    // Camera-relative WASD и выбор фейсинга — ОБЩИЕ с вкладкой «Тест» (см. `playerInput.ts`).
-    const mvv = moveFromKeys(keys, CAM.azimuth);   // ⚠ WASD ЗАВЯЗАН НА АЗИМУТ: крутим камеру — едет и «вперёд»
-    const mx = mvv.x, my = mvv.y;
-    // ⭐ ОДИН ИСТОЧНИК: тот же угол, который уже нарисован. Считать его здесь второй раз значило бы
-    // отправлять не то, что видит игрок (кадр и отправка идут с разной частотой).
-    const facing = myFacingInit ? myFacing : facingFrom(mine?.facing ?? 0, mine ? aimWorld() : null, smoothX, smoothZ, mvv, mouse.set);
-    // ЛКМ/ПКМ + Shift/Space/Alt = mouseLeft/mouseRight/hotbar[0..2]. Тогл (аура/стойка) — только по фронту нажатия.
-    let attack = false, cast: string | null = null;
-    const consider = (b: string | null | undefined, held: boolean, src: string): void => {
-      const prev = wasHeld[src] ?? false; wasHeld[src] = held;
-      if (!held || !b) return;
-      if (b === 'attack') { attack = true; return; }
-      if (isToggleSkill(b) && prev) return;
-      if (cast == null) cast = b;
-    };
+  /** Кадр ввода (`dt` — сек): сэмплировать кнопки и, если пора (тик или фронт нажатия), отправить. */
+  function pumpInput(dt: number): void {
+    // ЛКМ/ПКМ + Shift/Q/Alt = mouseLeft/mouseRight/hotbar[0..2]. Тогл (аура/стойка) — только по фронту нажатия.
     // Предмет «на курсоре» (D2): клик по миру = бросок/отмена (см. heldItem.onWorldClick), НЕ атака/каст —
     // иначе тот же клик уходит как mouseLeft и персонаж бьёт при выбросе предмета из инвентаря.
     const holding = getHeld() != null;
-    consider(s.mouseLeft, holding ? false : lmb, 'L');
-    consider(s.mouseRight, holding ? false : rmb, 'R');
-    consider(s.hotbar[0], keys.has('ShiftLeft') || keys.has('ShiftRight'), 'S');
-    consider(s.hotbar[1], keys.has('KeyQ'), 'Q');   // бывший Space-слот перевешен на Q (Space → уклонение)
-    consider(s.hotbar[2], keys.has('AltLeft') || keys.has('AltRight'), 'A');
-    // Пробел = УКЛОНЕНИЕ (dodge-рывок), эджево (только в кадр нажатия): рывок в направлении WASD (стоя — к прицелу).
-    const spaceDown = keys.has('Space');
-    const dodge = spaceDown && !(wasHeld['dodge'] ?? false);
-    wasHeld['dodge'] = spaceDown;
+    const r = inputSampler.frame(dt * 1000, app.state!.save, {
+      L: !holding && lmb, R: !holding && rmb,
+      S: keys.has('ShiftLeft') || keys.has('ShiftRight'), Q: keys.has('KeyQ'), A: keys.has('AltLeft') || keys.has('AltRight'),
+      dodge: keys.has('Space'), interact: keys.has('KeyE'),
+    }, isToggleSkill);
     // ⭐ Кукла должна знать, что атака ЗАЖАТА: на конце окна комбо она продолжит цепочку, а не встанет в стойку.
-    self?.d.setAttackHold?.(attack);
-    const input: PlayerInput = { move: { x: mx, y: my }, facing, attack, cast, interact: keys.has('KeyE'), dodge };
+    self?.d.setAttackHold?.(r.attack);
+    if (!r.due) return;
+    const mine = latest?.players.find((p) => p.id === myId);
+    // Camera-relative WASD и выбор фейсинга — ОБЩИЕ с вкладкой «Тест» (см. `playerInput.ts`).
+    const mvv = moveFromKeys(keys, CAM.azimuth);   // ⚠ WASD ЗАВЯЗАН НА АЗИМУТ: крутим камеру — едет и «вперёд»
+    // ⭐ ОДИН ИСТОЧНИК: тот же угол, который уже нарисован. Считать его здесь второй раз значило бы
+    // отправлять не то, что видит игрок (кадр и отправка идут с разной частотой).
+    const facing = myFacingInit ? myFacing : facingFrom(mine?.facing ?? 0, mine ? aimWorld() : null, smoothX, smoothZ, mvv, mouse.set);
+    const input: PlayerInput = { move: { x: mvv.x, y: mvv.y }, facing, attack: r.attack, cast: r.cast, interact: r.interact, dodge: r.dodge };
     app.net.send({ t: 'input', seq: seq++, input });
   }
 
@@ -1145,11 +1170,46 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // ── Подключение ──────────────────────────────────────────────────────────────
+  /**
+   * L2: связь потеряна — мир прошлой сессии прочь: окна голосования и смерти, окна `DomUi` (R4-36), наблюдение, куклы пиров и монстров,
+   * снаряды, дропы, статика игроков, последний снапшот и треки интерполятора (новая комната ведёт свои id и свой тик).
+   * Свой id забыт: до нового `joined` кадр мир не рисует и ввод не шлёт. Пол прошлой области стоит под плашкой до входа.
+   */
+  function dropSession(): void {
+    closeVote(); closeDeath();
+    ui.closeAll();   // R4-36: окна прошлой сессии (инвентарь, кузница…) — их кнопки слали бы команды в сессию, которой нет
+    spectateId = null; hideSpectateHint();
+    clearActors();
+    peerStatics.clear();
+    for (const k of interpKeys) interp.drop(k);
+    interpKeys = new Set();
+    myId = '';
+  }
+  /**
+   * ⭐ ВХОД И ПОТЕРЯ СВЯЗИ — общий с 2D поток (`net/entryFlow.ts`, экраны `ui/entryScreens.ts`). Раньше на ЛЮБОЕ закрытие
+   * сокета здесь было лобби «Сервер недоступен» без переподключения, а кнопки лобби слали `join` в мёртвый сокет: после
+   * 4009 / 4001 / 4008 помогала только перезагрузка. Теперь — плашка с причиной, переподключение, статус забега, лобби или
+   * «Продолжить» с причиной; сам поток героя НЕ вводит (два окна одного героя не выселяют друг друга по кругу).
+   */
+  const entry = new EntryFlow({
+    net: app.net,
+    who: () => ({ token: app.auth!.token, charId: app.pendingCharId! }),
+    view: entryScreens(() => root, () => { app.gameLog?.setVisible(false); minimap.setVisible(false); }),   // экраны входа — не игра
+    onLost: dropSession,
+    replies: app.replies,
+    log: (text) => app.bus.emit('log:message', { text, kind: 'system' }),
+    route: routeToNode,   // R4-13: адрес ноды — у гейтвея, перед каждым подключением
+    onJoined: () => void app.syncConfig(),   // ⭐ R5-15: деплой не перезагружает вкладку — конфиг сверяется на входе
+    inWorld: (on) => app.setInWorld(on),   // ⭐ R6-25: вне мира (экраны входа, вход, выбор героя) хоткеи окон молчат, смена закрывает окна
+    // R4-22: вход аккаунта недействителен — ко входу; героя нет у аккаунта — к выбору героя, потом снова в мир.
+    onRejected: (code) => {
+      if (code === 'auth') app.clearAuth(); else app.pendingCharId = null;
+      void runAuthFlow(app, root).then(() => entry.start());
+    },
+  });
   await runAuthFlow(app, root);   // логин → выбор персонажа
-  showConnecting();
-  app.net.onOpen(() => app.net.send({ t: 'runStatus', token: app.auth!.token, charId: app.pendingCharId! }));
-  app.net.onClose(() => { hideConnecting(); showLobby(); if (statusEl) statusEl.textContent = 'Сервер недоступен'; });
-  app.net.connect();
+  entry.attach();
+  entry.start();
 
   // ── Кадр (вынесен, чтобы гнать вручную в фоновой вкладке — rAF там заморожен) ──
   let tsec = 0, fps = 60, miniAcc = 0;
@@ -1186,8 +1246,8 @@ export async function startOnline3d(): Promise<void> {
       const _tw = performance.now();
       // Ф0.8: ввод не чаще тика сервера. Раньше слался каждый кадр (60–144 Гц), а сервер
       // всё равно оставляет последний за тик — лишние кадры это только разбор JSON на сервере.
-      inputAcc += dt;
-      if (inputAcc >= INPUT_PERIOD) { inputAcc = 0; sendInput(); }
+      // L2: сэмплируем каждый кадр, шлём по тику или сразу на фронт нажатия (`pumpInput`, остаток периода переносится).
+      pumpInput(dt);
       renderWorld(dt); hud.update(); updateInteractions();   // «мир»: драйв актёров + поза-пайплайн + HUD
       msWorld += (performance.now() - _tw - msWorld) * 0.1;
       const me = latest.players.find((p) => p.id === myId);

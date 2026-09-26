@@ -17,7 +17,9 @@ import { pickAttack, ATTACK_VARY } from './attackPick.js';   // ⭐ очеред
 import { GAIT } from './gaitKnobs.js';
 import { BASE_GAIT_CHAR } from './locoBlend.js';   // ⭐ донор набора хода — один на игроков и монстров
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
-import { attachWeapons , hostWeaponOnHand, dropWeaponHost} from './weapon3d.js';
+import { attachWeapons , hostWeaponOnHand, disposeWeaponGroup} from './weapon3d.js';
+import { applyCraftLooks } from './craftWeapon3d.js';
+import { weaponLookSig, type ConfigRegistry, type WeaponLook } from '@dm/shared';
 import { charFor } from './chars3d.js';
 import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel, applyWeaponModels } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
@@ -34,6 +36,8 @@ export interface HumanoidDollOpts {
   x: number; z: number;
   weapon: string;                                    // редакторный ключ оружия ('axe','staff','none',…)
   weaponModels?: { main?: string; off?: string };    // Ф3: id 3D-моделей оружия (kind:'weapon') на main/off руки → GLB вместо процедурки (общее на всех)
+  weaponLook?: WeaponLook;                           // D22: из чего сделано оружие (база + детали по рукам) → модель ковки вместо процедурки
+  craftReg?: ConfigRegistry;                         // реестр для модели ковки; нет — вид не строится (монстры, стенды)
   classId?: string;                                  // задан → ИГРОК (гейт класса → global GAIT + контент класса)
   atlasKey?: string;                                 // ключ атласа для МОНСТРА (семья subfaction||faction): скин по нему БЕЗ глобал-фолбэка (нет атласа→процедурка)
   baseAppearance?: { hair?: string; head?: string; hands?: string; body?: string; feet?: string };   // submesh-вид пустых слотов (нет экипа): hair→helm/head/gloves(hands)/chest(body)/boots(feet)
@@ -86,10 +90,18 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   group.add(solid.root);
   const gripChar = opts.classId ?? opts.gaitId ?? '';   // ключ для базового хвата pe_grip (игрок→class, монстр→gaitId)
   let weaponModels = opts.weaponModels;   // id GLB-моделей оружия (main/off) — общие на всех; меняются со сменой оружия
-  let weaponGroups = attachWeapons(solid, weapon, weaponModels); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback);   // единый базовый хват
+  let weaponLook = opts.weaponLook;       // D22: вид из деталей по рукам — у себя из сейва, у пиров из `peerInfo`; один путь
+  const craftReg = opts.craftReg;
+  const craftOf = (): { reg: ConfigRegistry; look?: WeaponLook } | undefined => (craftReg && weaponLook ? { reg: craftReg, look: weaponLook } : undefined);
+  /** Подпись вида: смена оружия — по ней, а не только по ключу (у всех одноручных мечей ключ один — `sword`). */
+  const lookKey = (l: WeaponLook | undefined): string => `${weaponLookSig(l?.main)}#${weaponLookSig(l?.off)}`;
+  let weaponGroups = attachWeapons(solid, weapon, weaponModels, craftOf()); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback);   // единый базовый хват
   // Ф3: свап процедурных мешей на GLB (если у экипа задан modelId оружия). Дёшево-ноуп без моделей (монстры/без GLB).
   const syncWeaponModels = (): void => { if (!(weaponModels?.main || weaponModels?.off)) return; void loadAssetConfig().then((cfg) => applyWeaponModels(weaponGroups, cfg, { materials: cfg.materials, textures: cfg.textures })); };
   syncWeaponModels();
+  // D22: построитель модели ковки грузится лениво — руки, которые встали процедурными, доснабжаются по загрузке.
+  const syncCraftLooks = (): void => { if (craftReg && weaponLook) void applyCraftLooks(weaponGroups, craftReg); };
+  syncCraftLooks();
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
   const target = buildHumanoid({ gender, build, profile, boneScale, boneOffsets, fingers: true });   // цель позы — тот же набор костей, что у solid
   target.root.visible = false; group.add(target.root);
@@ -338,7 +350,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       ragdoll.setDead(true);     // моторы off + таз dynamic → падение. Горизонт. отлёт даёт СЕРВЕР (глайд позиции); тут только опрокидывание.
       ragdoll.hit('Torso', dx, 0.12, dz, 0.5);   // мягкий толчок верха назад → валится ОТ атакующего (не «взрыв»)
     },
-    setWeapon(key, models) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
+    setWeapon(key, models, look) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
       // ⚠ МОДЕЛИ ЧИТАЕМ ДО РАННЕГО ВЫХОДА, И ВЫХОДИМ ТОЛЬКО ЕСЛИ НЕ ИЗМЕНИЛОСЬ НИЧЕГО.
       //
       // Было `if (key === weapon) return;` СТРОКОЙ ВЫШЕ присваивания — а ключ строится из КЛАССА оружия
@@ -346,12 +358,18 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       // Сменил меч на другой меч (другая база → другой `modelId`, обычное дело в лутовой игре) — ключ
       // прежний, функция выходила, и на персонаже оставалась модель ПРЕДЫДУЩЕГО клинка до конца сессии.
       // То же на офф-руке: сменил щит при том же мече — ключ `sword+shield` не менялся.
+      // D22: то же с видом из деталей — сковал другой меч того же класса, ключ прежний, а подпись деталей другая.
       const sameModels = models === undefined || JSON.stringify(models) === JSON.stringify(weaponModels);
-      if (key === weapon && sameModels) return;
+      const nextLook = look === undefined ? weaponLook : look ?? undefined;   // undefined — вид не трогаем, null — снять
+      if (key === weapon && sameModels && lookKey(nextLook) === lookKey(weaponLook)) return;
       if (models !== undefined) weaponModels = models;   // Ф3: новые id GLB-моделей оружия (self); пиры — undefined (нужна сеть)
-      for (const g of weaponGroups) { g.userData.stale = true; g.parent?.remove(g); dropWeaponHost(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-      weapon = key; weaponGroups = attachWeapons(solid, weapon, weaponModels); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback); player.setWeapon(weapon);
+      weaponLook = nextLook;
+      // Новые руки — ДО сноса старых: тот же вид (сменил только щит) берётся из кэша, а не строится заново.
+      const old = weaponGroups;
+      weapon = key; weaponGroups = attachWeapons(solid, weapon, weaponModels, craftOf()); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback); player.setWeapon(weapon);
+      for (const g of old) disposeWeaponGroup(g);
       syncWeaponModels();
+      syncCraftLooks();
     },
     setAppearance(equip) { equipModels = equip; refreshSkin(); },   // C6c: слоты брони (modelId) → пересобрать скин-слой
 
@@ -449,13 +467,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
     },
     dispose() {
+      // ⚠ ОРУЖИЕ — ПЕРВЫМ (R1-23). Руки висят на кистях solid или атласа, а модель ковки в них — ОБЩАЯ на всех кукол
+      // с тем же видом (кэш `craftWeapon3d`). Обходы ниже освобождают всё, до чего дотянутся: снятая раньше них рука
+      // уже вернула модель в кэш и ушла с кисти, иначе снос одной куклы освобождал бы геометрию и материалы у всех.
+      for (const g of weaponGroups) disposeWeaponGroup(g);   // модель ковки — назад в кэш (общая геометрия), процедурная — освободить
       skin?.dispose();
       ragdoll.dispose();
       // solid/target — ПРОЦЕДУРНЫЕ меши (материалы создаются per-кукла, buildHumanoid) → освобождаем и геометрию, И
       // материалы (иначе утечка ~3 MeshStandardMaterial на каждого убитого → рост кучи → GC-разгон ms_world). Скин
       // (атлас) и оружейные GLB могут делить ОБЩИЕ материалы из assetCache — их материалы НЕ трогаем (skin.dispose сам).
       for (const h of [solid, target]) h.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); const mm = m.material as THREE.Material | THREE.Material[] | undefined; if (Array.isArray(mm)) mm.forEach((x) => x.dispose()); else mm?.dispose?.(); });
-      for (const g of weaponGroups) g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
       group.clear();
     },
     _dbg: { player, ragdoll, get solid() { return solid; }, get target() { return target; } },
@@ -463,7 +484,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 }
 
 /** Игрок — тонкая обёртка над единой куклой: внешность/оружие класса из CLASS_CHARS. */
-export interface GamePlayerOpts { classId: string; weapon: string; weaponModels?: { main?: string; off?: string }; baseAppearance?: HumanoidDollOpts['baseAppearance']; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }
+export interface GamePlayerOpts { classId: string; weapon: string; weaponModels?: { main?: string; off?: string }; weaponLook?: WeaponLook; craftReg?: ConfigRegistry; baseAppearance?: HumanoidDollOpts['baseAppearance']; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }
 export function makeGamePlayerDoll(pw: PhysWorld, opts: GamePlayerOpts): RagdollHandle {
-  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, weaponModels: opts.weaponModels, baseAppearance: opts.baseAppearance, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, boneOffsets: opts.boneOffsets, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
+  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, weaponModels: opts.weaponModels, weaponLook: opts.weaponLook, craftReg: opts.craftReg, baseAppearance: opts.baseAppearance, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, boneOffsets: opts.boneOffsets, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
 }

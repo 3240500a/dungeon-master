@@ -8,6 +8,10 @@ import { Torch } from '../world/torch.js';
 import { Lighting } from '../world/lighting.js';
 import { GameState } from '../core/gameState.js';
 import { runNodeLabel } from '../modules/run/runLabels.js';
+import { dismissAsk } from '../ui/kit.js';
+import { EntryFlow } from '../net/entryFlow.js';
+import { routeToNode } from '../net/netClient.js';
+import { entryScreens } from '../ui/entryScreens.js';
 import { TILE, Cell, gridSize, type FloorInit, type Grid } from '@dm/shared';
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
@@ -44,10 +48,11 @@ export class OnlineScene extends Phaser.Scene {
   private area: 'town' | 'dungeon' = 'town';
   private eKey!: Phaser.Input.Keyboard.Key;
   private prompt?: Phaser.GameObjects.Text;
-  private lobby?: HTMLElement;
-  private resumeBox?: HTMLElement;
-  private connectingBox?: HTMLElement;
-  private statusEl?: HTMLElement;
+  /**
+   * Вход в мир и потеря связи — общий с веб-3D поток (`net/entryFlow.ts`): лобби / «Продолжить», а на закрытие сокета
+   * сервером (R3-25: 4009, 4001, обрыв) — плашка с причиной и переподключение без самовхода.
+   */
+  private entry?: EntryFlow;
   private voteBox?: HTMLElement;
   private deathBox?: HTMLElement;
   private codeLabel?: HTMLElement;
@@ -60,21 +65,23 @@ export class OnlineScene extends Phaser.Scene {
   create(): void {
     this.app = App.from(this);
     if (!this.app.auth || !this.app.pendingCharId) { this.scene.start('MainMenu'); return; }
-    this.eKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    // ⭐ R6-03: без перехвата (`false`) — перехват Phaser на всю страницу и переживает сцену: E не набиралась бы в код
+    // комнаты на лобби, а после ухода на вход (R4-22) — в ник и пароль.
+    this.eKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E, false);
     this.prompt = this.add.text(0, 0, '', { fontSize: '14px', color: '#f0d9a8', backgroundColor: '#000000aa', padding: { x: 6, y: 3 } }).setDepth(100).setVisible(false);
 
     // Сцена пере-подписывается при каждом входе — снимаем прошлые обработчики (net живёт в App).
     for (const t of ['joined', 'areaChanged', 'doorOpened', 'died', 'voteStart', 'voteUpdate', 'voteEnd', 'runStatus', 'abandoned', 'error'] as const) this.app.net.off(t);
     this.app.net.clearLifecycle();
 
-    // Сетевые обработчики области/голосования.
+    // Сетевые обработчики области/голосования (экраны входа снимает поток входа — на тот же кадр `joined`).
     this.app.net.on('joined', (f) => {
-      this.hideConnecting(); this.hideResumePrompt(); this.hideLobby();
       this.myId = f.playerId; // ВАЖНО до buildArea: иначе свой игрок рисуется как чужой
       const state = new GameState(f.save); // авторитетный сейв с сервера — истина
       state.restoreFull();
       this.app.state = state; // сеттер App.state подключает провайдеры модов
       this.buildArea(f.floor);
+      this.driver?.seedPeers(f.peers);   // R2-03: статика тех, кто уже в комнате, — сразу (драйвер создаёт buildArea)
       this.showRoomCode(f.roomCode);
     });
     this.app.net.on('areaChanged', (f) => { this.closeDeathModal(); this.buildArea(f.floor); }); // возрождение = смена области
@@ -83,94 +90,38 @@ export class OnlineScene extends Phaser.Scene {
     this.app.net.on('voteStart', (f) => this.showVote(f.kind, f.by));
     this.app.net.on('voteUpdate', (f) => { if (this.voteBox) this.voteBox.querySelector('.tally')!.textContent = `${f.yes}/${f.total}`; });
     this.app.net.on('voteEnd', () => this.closeVote());
-    // Вход: сервер сообщил, есть ли незавершённый забег → модалка «Продолжить/Забросить» либо лобби.
-    this.app.net.on('runStatus', (f) => { this.hideConnecting(); if (f.hasRun) this.showResumePrompt(f.roomCode ?? '', f.depth ?? 0); else this.showLobby(); });
-    this.app.net.on('abandoned', () => { this.hideResumePrompt(); this.showLobby(); });
-    this.app.net.on('error', (f) => {
-      if (f.code === 'no-run') { this.hideResumePrompt(); this.showLobby(); return; } // забег истёк за время раздумий
-      if (this.statusEl) this.statusEl.textContent = f.msg;
-    });
 
-    // Ещё не в игре → подключаемся и спрашиваем статус забега (плашка «Подключение…» до ответа).
-    if (!this.app.net.connected) {
-      this.showConnecting();
-      this.app.net.onOpen(() => this.app.net.send({ t: 'runStatus', token: this.app.auth!.token, charId: this.app.pendingCharId! }));
-      this.app.net.onClose(() => { if (this.connectingBox) { this.hideConnecting(); this.showLobby(); if (this.statusEl) this.statusEl.textContent = 'Сервер недоступен'; } });
-      this.app.net.connect();
-    }
+    // ⭐ ВХОД И ПОТЕРЯ СВЯЗИ — общий с веб-3D поток (`net/entryFlow.ts`, экраны `ui/entryScreens.ts`): открылся сокет —
+    // статус забега → лобби или «Продолжить»; сервер закрыл живую сессию (R3-25: 4009, 4001, 4008, обрыв) — окна прошлой
+    // области прочь, мир прошлой сессии снесён, плашка с причиной и переподключение без самовхода. Его обработчики
+    // (`runStatus`/`abandoned`/`error`/`joined`, open/close) сняты строками выше и вешаются заново на КАЖДЫЙ вход в сцену.
+    this.entry = new EntryFlow({
+      net: this.app.net,
+      who: () => ({ token: this.app.auth!.token, charId: this.app.pendingCharId! }),
+      view: entryScreens(() => document.getElementById('ui-root') ?? document.body, () => this.app.gameLog?.setVisible(false)),
+      // R4-36: и окна (инвентарь, кузница…) — их кнопки слали бы команды в сессию, которой нет, поверх лобби.
+      onLost: () => { this.closeVote(); this.closeDeathModal(); this.driver?.resetWorld(); this.app.bus.emit('ui:closeAll', {}); },
+      // ⭐ R6-25: герой в мире — только с кадра `joined` и до потери связи / выхода: вне мира хоткеи окон и [E] у NPC молчат.
+      inWorld: (on) => this.app.setInWorld(on),
+      replies: this.app.replies,
+      log: (text) => this.app.bus.emit('log:message', { text, kind: 'system' }),
+      route: routeToNode,   // R4-13: адрес ноды — у гейтвея, перед каждым подключением
+      onJoined: () => void this.app.syncConfig(),   // ⭐ R5-15: деплой не перезагружает вкладку — конфиг сверяется на входе
+      // R4-22: вход аккаунта недействителен — ко входу; героя нет у аккаунта — к выбору героя (лобби получило бы тот же отказ).
+      // ⭐ R5-16: HUD (сцена 'UI') и окна прошлой сессии — прочь, как при выходе в меню: иначе полосы, пояс и хоткеи окон
+      // (I/K/C — окна героя, которого уже нет) жили бы поверх экрана входа.
+      onRejected: (code) => {
+        if (this.scene.isActive('UI')) this.scene.stop('UI');
+        this.app.bus.emit('ui:closeAll', {});
+        if (code === 'auth') { this.app.clearAuth(); this.scene.start('Login'); return; }
+        this.app.pendingCharId = null;
+        this.scene.start('CharacterSelect');
+      },
+    });
+    this.entry.attach();
+    this.entry.start();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
   }
-
-  // ── Лобби / вход ──────────────────────────────────────────────────────────────
-  /** Единый способ отправить join по уже открытому сокету (соединение поднято в create). */
-  private sendJoin(opts: { fresh?: boolean; roomCode?: string; resume?: boolean }): void {
-    this.app.net.send({ t: 'join', token: this.app.auth!.token, charId: this.app.pendingCharId!, ...opts });
-  }
-
-  /** Плашка «Подключение к серверу…» до ответа runStatus (кнопок нет — исключаем misclick). */
-  private showConnecting(): void {
-    if (this.connectingBox) return;
-    const root = document.getElementById('ui-root') ?? document.body;
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
-    box.innerHTML = `<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px 30px;color:#e6ddc9;text-align:center">
-      <div style="font-size:16px">Подключение к серверу…</div>
-      <div class="status" style="margin-top:8px;font-size:12px;color:#8f897c"></div></div>`;
-    root.appendChild(box);
-    this.connectingBox = box;
-    this.statusEl = box.querySelector('.status') as HTMLElement;
-  }
-  private hideConnecting(): void { this.connectingBox?.remove(); this.connectingBox = undefined; this.statusEl = undefined; }
-
-  /** Незавершённый забег (вышли из подземелья): продолжить или забросить (персонаж гибнет со штрафом). */
-  private showResumePrompt(roomCode: string, depth: number): void {
-    if (this.resumeBox) return;
-    const root = document.getElementById('ui-root') ?? document.body;
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
-    const where = depth > 0 ? `этаж ${depth}` : 'подземелье';
-    box.innerHTML = `<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:300px;color:#e6ddc9;text-align:center">
-      <div style="font-size:18px;margin-bottom:8px">Незавершённое прохождение</div>
-      <div style="font-size:13px;color:#a8a090;margin-bottom:16px">Вы вышли из подземелья (${where}, комната ${roomCode}). Продолжить забег или забросить?</div>
-      <button data-a="resume" style="display:block;width:100%;margin:6px 0;padding:9px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Продолжить</button>
-      <button data-a="abandon" style="display:block;width:100%;margin:6px 0;padding:9px;background:#3a1c1c;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Забросить прохождение</button>
-      <div style="font-size:11px;color:#8f7a72;margin-top:6px">«Забросить» — персонаж считается погибшим (штраф золота и части предметов).</div>
-      <div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`;
-    root.appendChild(box);
-    this.resumeBox = box;
-    this.statusEl = box.querySelector('.status') as HTMLElement;
-    box.querySelector('[data-a="resume"]')!.addEventListener('click', () => { this.statusEl!.textContent = 'Возврат в забег…'; this.sendJoin({ resume: true }); });
-    box.querySelector('[data-a="abandon"]')!.addEventListener('click', () => {
-      this.statusEl!.textContent = 'Забрасываем…';
-      this.app.net.send({ t: 'abandon', token: this.app.auth!.token, charId: this.app.pendingCharId! });
-    });
-  }
-  private hideResumePrompt(): void { this.resumeBox?.remove(); this.resumeBox = undefined; this.statusEl = undefined; }
-
-  private showLobby(): void {
-    this.app.gameLog?.setVisible(false); // лобби (соло/мультиплеер/код) — не игра, чат скрыт
-    if (this.lobby) return;
-    const root = document.getElementById('ui-root') ?? document.body;
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
-    box.innerHTML = `<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:280px;color:#e6ddc9;text-align:center">
-      <div style="font-size:18px;margin-bottom:14px">Кооп</div>
-      <button data-a="solo" style="display:block;width:100%;margin:6px 0;padding:8px;background:#1e2a3a;color:#cfe0f2;border:1px solid #6f9bcf;border-radius:6px;cursor:pointer">Соло (комната на 1)</button>
-      <button data-a="host" style="display:block;width:100%;margin:6px 0;padding:8px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Создать комнату</button>
-      <div style="display:flex;gap:6px;margin-top:6px"><input class="code" placeholder="КОД" maxlength="4" style="flex:1;text-transform:uppercase;padding:8px;background:#0f131a;color:#e6ddc9;border:1px solid #2b323f;border-radius:6px"><button data-a="join" style="padding:8px 12px;background:#3a2c15;color:#f0d9a8;border:1px solid #e39a3c;border-radius:6px;cursor:pointer">Войти</button></div>
-      <div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`;
-    root.appendChild(box);
-    this.lobby = box;
-    this.statusEl = box.querySelector('.status') as HTMLElement;
-    const go = (opts: { fresh?: boolean; roomCode?: string }): void => { this.statusEl!.textContent = 'Подключение…'; this.sendJoin(opts); };
-    box.querySelector('[data-a="solo"]')!.addEventListener('click', () => go({ fresh: true }));
-    box.querySelector('[data-a="host"]')!.addEventListener('click', () => go({ fresh: true }));
-    box.querySelector('[data-a="join"]')!.addEventListener('click', () => {
-      const code = (box.querySelector('.code') as HTMLInputElement).value.trim().toUpperCase();
-      if (code) go({ roomCode: code });
-    });
-  }
-  private hideLobby(): void { this.lobby?.remove(); this.lobby = undefined; this.statusEl = undefined; }
 
   /** Показывает код комнаты (для приглашения друзей) — фикс-плашка справа сверху. */
   private showRoomCode(code: string): void {
@@ -186,6 +137,7 @@ export class OnlineScene extends Phaser.Scene {
   // ── Постройка области (город/этаж) ──────────────────────────────────────────
   private buildArea(floor: FloorInit): void {
     this.app.gameLog?.setVisible(true); // в мире → показать чат/лог (на экранах меню он скрыт)
+    dismissAsk();   // R3-23: вопрос «разобрать здесь?» прошлой области — «нет», а не плашка над новой
     for (const o of this.worldObjs) o.destroy();
     this.worldObjs = [];
     for (const t of this.torches) t.destroy();
@@ -197,6 +149,9 @@ export class OnlineScene extends Phaser.Scene {
     this.doorSprites.clear(); this.leverSprites.clear();
     this.floorGrid = floor.grid;
     this.floorDoors = floor.doors;
+    // ⭐ R3-24: область — и в состоянии игры: по ней инвентарь предлагает разбор в поле, а тот перепроверяет «не в
+    // городе». Раньше её ставил только 3D-клиент, и в 2D-подземелье `area` навсегда оставалась 'town'.
+    if (this.app.state) this.app.state.area = floor.area;
 
     const rendered = renderGrid(this, floor.grid);
     this.walls = rendered.walls;
@@ -225,13 +180,14 @@ export class OnlineScene extends Phaser.Scene {
       const tex = this.textures.exists(spr) ? spr : 'player-warrior';
       this.player = new Player(this, floor.spawn.x, floor.spawn.y, tex);
       this.driver = new NetDriver(this, this.app, this.player);
-      this.driver.setMyId(this.myId); // свой id — чтобы свой игрок не рисовался как «чужой»
       this.cameras.main.startFollow(this.player.cameraTarget, true, 1, 1); // следим за ЯКОРЕМ (не за спрайтом): спрайт подпрыгивает при ходьбе, мир — нет. Позиция уже сглажена в netDriver
       this.cameras.main.setZoom(2.925); // ближе к игроку (было 1.95, +50%); спрайт игрока компенсирован в Player (SPRITE_SIZE), чтобы он остался прежнего размера
       if (!this.scene.isActive('UI')) this.scene.launch('UI');
     } else {
       this.player.setPos(floor.spawn.x, floor.spawn.y);
     }
+    // Свой id — на КАЖДЫЙ вход: после переподключения (R3-25) он новый, и со старым свой игрок рисовался бы «чужим».
+    this.driver!.setMyId(this.myId);
     this.driver!.buildMonsters(floor);
     this.driver!.resetInterpolation(); // новая область: сбросить буфер интерполяции и сглаживание своего игрока
 
@@ -397,7 +353,10 @@ export class OnlineScene extends Phaser.Scene {
       this.lighting.update(this.player.x, this.player.y, lc.playerRadius,
         this.torches.map((t) => ({ x: t.x, y: t.y, radius: lc.torchRadius * t.flicker })));
     }
-    this.updateInteractions();
+    // ⭐ R6-25: под плашкой / лобби / «Продолжить» вид героя, драйвер и NPC прошлой сессии живы, а сессии нет — [E] у
+    // кузницы открывал её под экраном входа, и её `stashOpen` уходил в сокет без сессии («Сундук не загрузился»).
+    if (this.app.inWorld) this.updateInteractions();
+    else this.prompt?.setVisible(false);
   }
 
   /** Индикатор пинга (RTT до сервера) — правый верх, под плашкой «Комната» (слева HUD-бар города).
@@ -428,16 +387,27 @@ export class OnlineScene extends Phaser.Scene {
     } else this.prompt?.setVisible(false);
   }
 
+  /**
+   * Выход из сцены (SHUTDOWN). ⭐ R5-16: сцену запускают СНОВА (после R4-22 — вход / выбор героя → `scene.start('Online')`),
+   * а Phaser на выходе уже снёс её спрайты, клавиши и камеру. Ссылки на вид героя, драйвер и область обязаны уйти вместе
+   * с ними: иначе новый вход брал ветку «герой уже есть» — нового вида, драйвера, слежения камеры и зума не было, и
+   * снесённый драйвер жил дальше с мёртвыми клавишами (герой невидим и не двигается до перезагрузки страницы).
+   */
   private cleanup(): void {
+    this.entry?.detach();   // закрытие сокета после выхода из сцены её не трогает; экраны входа сняты
+    dismissAsk();   // R3-23: вопрос в поле не переживает выход из игры
     this.app.gameLog?.setVisible(false); // выход из игры (в меню) — скрыть чат
-    this.driver?.destroy();
-    this.fog?.destroy();
+    this.driver?.destroy(); this.driver = undefined;   // и его подписки на кадры сети (R5-16)
+    this.player?.destroy(); this.player = undefined;
+    this.fog?.destroy(); this.fog = undefined;
+    this.walls = undefined;           // группу стен снёс физический мир сцены
+    this.worldObjs = [];              // объекты сцены Phaser уже снёс
+    this.interactables = [];
+    this.doorSprites.clear(); this.leverSprites.clear();
+    this.myId = '';
     for (const t of this.torches) t.destroy();
     this.torches = [];
     this.lighting?.destroy(); this.lighting = undefined;
-    this.hideLobby();
-    this.hideResumePrompt();
-    this.hideConnecting();
     this.closeVote();
     this.closeDeathModal();
     this.codeLabel?.remove();

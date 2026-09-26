@@ -1,6 +1,6 @@
 import type { SaveState } from '@dm/shared';
 import { isUuid } from '@dm/shared';
-import { q, q1 } from './pool.js';
+import { q, q1, tx } from './pool.js';
 import { itemsOfSave, itemsOfStash, locOfChar, LOC_REVOKED } from './items.js';
 
 /**
@@ -39,8 +39,33 @@ export interface AuditResult {
   incidents: number;
 }
 
-/** Известные причины появления вещи. Всё остальное — повод посмотреть, кто это написал. */
-const KNOWN_REASONS = ['newCharacter', 'autosave', 'stash', 'join'];
+/**
+ * Известные причины появления вещи (сравнение по началу строки). Всё остальное — повод
+ * посмотреть, кто это написал. D9: кузница пишет свои причины — ковка, зачарование, разбор,
+ * переплавка и прочая работа кузнеца (`forge`: подъём тира, починка, перекатка).
+ */
+export const KNOWN_REASONS = ['newCharacter', 'autosave', 'stash', 'join', 'craft', 'enchant', 'salvage', 'melt', 'forge'];
+
+/** Во сколько раз выше медианы — уже выброс, и сколько аккаунтов нужно, чтобы медиана что-то значила. */
+const OUTLIER_MULT = 5;
+const OUTLIER_MIN_USERS = 5;
+
+/**
+ * Выбросы «впятеро выше медианы» по числу событий на аккаунт. `null` — аккаунтов слишком мало,
+ * чтобы медиана что-то значила. Медиана, а не среднее: среднее сдвигают сами нарушители
+ * (то же правило, что в Ф3.3). Вынесено из `runAudit`, чтобы правило проверялось без базы.
+ */
+export function medianOutliers(
+  rows: readonly { user_id: string; n: string | number }[],
+): { med: number; loud: { user_id: string; n: number }[] } | null {
+  if (rows.length < OUTLIER_MIN_USERS) return null;
+  const counts = rows.map((r) => Number(r.n)).sort((a, b) => a - b);
+  const med = counts[counts.length >> 1] ?? 0;
+  const loud = rows
+    .map((r) => ({ user_id: r.user_id, n: Number(r.n) }))
+    .filter((r) => med > 0 && r.n >= med * OUTLIER_MULT);
+  return { med, loud };
+}
 
 export async function runAudit(): Promise<AuditResult> {
   const findings: Finding[] = [];
@@ -60,16 +85,25 @@ export async function runAudit(): Promise<AuditResult> {
   if (orphan.length) add('orphan', 'incident', 'вещи без записи о рождении', orphan.map((r) => r.id));
 
   // ── 2. Главная сверка: сейвы против леджера ─────────────────────────────────
-  const chars = await q<{ char_id: string; user_id: string; data: SaveState }>(
-    'SELECT char_id, user_id, data FROM characters');
-  const stashes = await q<{ user_id: string; data: unknown }>('SELECT user_id, data FROM account_stash');
+  // ⭐ R3-18: ТРИ ЧТЕНИЯ — ОДИН СНИМОК. Аудит идёт, пока ноды пишут сейвы, а персонажи, сундуки и леджер читались тремя
+  // отдельными запросами — тремя разными снимками. Перенос вещи в сундук, зафиксированный между первым и вторым
+  // чтением, давал «ОДНА ВЕЩЬ В ДВУХ МЕСТАХ», любой автосейв между первым и третьим — «сейв и леджер разошлись», всё
+  // уровня «инцидент»: настоящий дюп тонул в шуме. REPEATABLE READ держит один снимок на всю транзакцию (его берёт
+  // первое чтение), а игра пишет сейв, сундук и леджер одной транзакцией — снимок видит её целиком или никак.
+  // Только для чтения: блокировок аудит не берёт и записи игры не держит.
+  const { chars, stashes, items: ledgerRows } = await tx(async (c) => {
+    await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    return {
+      chars: (await c.query<{ char_id: string; user_id: string; data: SaveState }>('SELECT char_id, user_id, data FROM characters')).rows,
+      stashes: (await c.query<{ user_id: string; data: unknown }>('SELECT user_id, data FROM account_stash')).rows,
+      items: (await c.query<{ id: string; loc: string; user_id: string }>('SELECT id, loc, user_id FROM items')).rows,
+    };
+  });
 
   // Леджер целиком в память: построчные запросы на тысячах вещей превращают ночную задачу
   // в получасовую. Строка леджера маленькая, десятки тысяч влезают без вопросов.
   const ledger = new Map<string, { loc: string; user: string }>();
-  for (const r of await q<{ id: string; loc: string; user_id: string }>('SELECT id, loc, user_id FROM items')) {
-    ledger.set(r.id, { loc: r.loc, user: r.user_id });
-  }
+  for (const r of ledgerRows) ledger.set(r.id, { loc: r.loc, user: r.user_id });
 
   const mismatch: string[] = [];
   const legacy: string[] = [];
@@ -116,19 +150,31 @@ export async function runAudit(): Promise<AuditResult> {
   }
 
   // ── 5. Экономика: скорость появления вещей и выбросы между аккаунтами ───────
+  // ⚠ Скованное (причина `craft…`) сюда НЕ входит: ковка — не добыча, её темп задаёт сырьё и
+  // золото, а не удача в забеге. Смешай их — кузнец, честно перековавший запас, выглядел бы
+  // ботом-фармером, а настоящий выброс добычи утонул бы в его вещах. У ковки своя проверка (5б).
   const perUser = await q<{ user_id: string; n: string }>(
     `SELECT user_id, COUNT(*) n FROM item_events
      WHERE kind = 'created' AND at > now() - interval '24 hours'
+       AND (reason IS NULL OR reason NOT LIKE 'craft%')
      GROUP BY user_id ORDER BY COUNT(*) DESC`);
-  if (perUser.length >= 5) {
-    const counts = perUser.map((r) => Number(r.n)).sort((a, b) => a - b);
-    const med = counts[counts.length >> 1] ?? 0;
-    // Медиана, а не среднее: среднее сдвигают сами нарушители (то же правило, что в Ф3.3).
-    const loud = perUser.filter((r) => med > 0 && Number(r.n) >= med * 5);
-    if (loud.length) {
-      add('loot-outlier', 'attention', `добыча выше медианы впятеро (медиана ${med} вещей за сутки)`,
-        loud.map((r) => `${r.user_id}: ${r.n} вещей`));
-    }
+  const lootOut = medianOutliers(perUser);
+  if (lootOut?.loud.length) {
+    add('loot-outlier', 'attention', `добыча выше медианы впятеро (медиана ${lootOut.med} вещей за сутки)`,
+      lootOut.loud.map((r) => `${r.user_id}: ${r.n} вещей`));
+  }
+
+  // ── 5б. Ковка: скованные вещи за сутки на аккаунт против медианы кузнецов ────
+  // Сырьё и золото ковку ограничивают, но только если их нельзя «напечатать». Аккаунт, скующий
+  // впятеро больше медианы, — повод проверить, откуда у него столько сырья.
+  const perCrafter = await q<{ user_id: string; n: string }>(
+    `SELECT user_id, COUNT(*) n FROM item_events
+     WHERE kind = 'created' AND at > now() - interval '24 hours' AND reason LIKE 'craft%'
+     GROUP BY user_id ORDER BY COUNT(*) DESC`);
+  const craftOut = medianOutliers(perCrafter);
+  if (craftOut?.loud.length) {
+    add('craft-outlier', 'attention', `ковка выше медианы впятеро (медиана ${craftOut.med} вещей за сутки)`,
+      craftOut.loud.map((r) => `${r.user_id}: ${r.n} скованных`));
   }
 
   // ── 6. Кластер: закрепления за узлами, которых больше нет ───────────────────

@@ -3,6 +3,7 @@ import type { SaveState } from '../types/save.js';
 import type { Item } from '../types/items.js';
 import { type AccountStash, STASH_VERSION } from '../types/stash.js';
 import { cellFree, packInventory, placeWithDisplacement, type Dims } from '../inventory/grid.js';
+import { isSafeKey, normalizeCraftNonces, normalizeJournal } from '../formulas/craft.js';
 import type { ActionResult } from './townActions.js';
 
 /**
@@ -23,8 +24,9 @@ export function stashTabCount(reg: ConfigRegistry): number {
 
 /**
  * Приводит сундук к валидному виду под текущий конфиг: гарантирует ≥N вкладок (добивает
- * пустыми), лечит битые/наложенные позиции в каждой вкладке (`packInventory`). НЕ удаляет
- * лишние вкладки при уменьшении конфига — анти-потеря предметов. Мутирует и возвращает stash.
+ * пустыми), лечит битые/наложенные позиции в каждой вкладке (`packInventory`), чистит журнал
+ * кузнеца и ключи заявок на ковку. НЕ удаляет лишние вкладки при уменьшении конфига — анти-потеря
+ * предметов. Мутирует и возвращает stash.
  */
 export function sanitizeStash(reg: ConfigRegistry, stash: AccountStash): AccountStash {
   const dims = stashDims(reg);
@@ -32,8 +34,28 @@ export function sanitizeStash(reg: ConfigRegistry, stash: AccountStash): Account
   if (!Array.isArray(stash.tabs)) stash.tabs = [];
   while (stash.tabs.length < need) stash.tabs.push([]);
   for (const tab of stash.tabs) packInventory(tab, dims);
-  if (!stash.materials) stash.materials = {};
+  cleanWallet(stash);
+  // Журнал и ключи заявок приходят из JSONB как есть — доверять их форме нельзя (D1): всё, что не
+  // того типа, отбрасывается, ключей — не больше 32 последних. Нет поля — пустой журнал, как у нового.
+  stash.forgeJournal = normalizeJournal(stash.forgeJournal);
+  stash.craftNonces = normalizeCraftNonces(stash.craftNonces);
   return stash;
+}
+
+/**
+ * Кошелёк сырья из базы → только целые положительные счётчики под безопасными ключами. Отрицательное
+ * или NaN в кошельке сломало бы проверку «хватает ли» (сравнение с NaN всегда ложно), а ключ вроде
+ * `__proto__` дальше по коду подменил бы прототип. Чистит НА МЕСТЕ: ссылку на кошелёк могут держать.
+ */
+function cleanWallet(stash: AccountStash): void {
+  const w = stash.materials as unknown;
+  if (!w || typeof w !== 'object' || Array.isArray(w)) { stash.materials = {}; return; }
+  const rec = w as Record<string, unknown>;
+  for (const id of Object.keys(rec)) {
+    const n = rec[id];
+    if (isSafeKey(id) && typeof n === 'number' && Number.isFinite(n) && n >= 1) rec[id] = Math.floor(n);
+    else delete rec[id];
+  }
 }
 
 /**

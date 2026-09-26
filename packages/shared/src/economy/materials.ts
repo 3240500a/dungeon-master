@@ -158,17 +158,46 @@ export function giveMaterials(
   stackMax: number,
   uid: () => string,
 ): MaterialCost {
+  return giveMaterialsTo(save.inventory, gains, defs, dims, stackMax, uid);
+}
+
+/** То же, что `giveMaterials`, но прямо в массив сумки — нужно примерке на копии (`bagCopy`). */
+export function giveMaterialsTo(
+  inventory: Item[],
+  gains: MaterialCost,
+  defs: readonly MaterialDef[],
+  dims: Dims,
+  stackMax: number,
+  uid: () => string,
+): MaterialCost {
   const left: MaterialCost = {};
   for (const [id, n] of Object.entries(gains)) {
-    if (n <= 0) continue;
+    if (!Number.isFinite(n) || n <= 0) continue;
     const def = defs.find((d) => d.id === id);
     if (!def) continue;                                   // материал выключен/удалён — молча мимо
     const carrier = materialItem(def, n, uid());
-    addToInventory(save.inventory, carrier, dims, stackMax);
+    addToInventory(inventory, carrier, dims, stackMax);
     // `addToInventory` оставляет в `count` носителя ровно то, что не влезло.
     if ((carrier.count ?? 0) > 0) left[id] = carrier.count!;
   }
   return left;
+}
+
+/**
+ * КОПИЯ СУМКИ ДЛЯ ПРИМЕРКИ — «влезет ли, если списать / положить», до того как тронуть настоящую.
+ * Вещи копируются поверхностно: `spendBoth` и `giveMaterialsTo` меняют у стеков только `count`, а
+ * позиции только читают. Порядок тот же, поэтому примерка и настоящая операция идут клетка в клетку.
+ */
+export function bagCopy(inventory: readonly Item[]): Item[] {
+  return inventory.map((it) => ({ ...it }));
+}
+
+/** Доложить сырьё в кошелёк сундука (остаток, не влезший в сумку). Мусорные числа — мимо. */
+export function addToWallet(wallet: MaterialWallet, gains: MaterialCost): void {
+  for (const [id, n] of Object.entries(gains)) {
+    if (!Number.isFinite(n) || n <= 0) continue;
+    wallet[id] = (wallet[id] ?? 0) + Math.floor(n);
+  }
 }
 
 // ── Кошелёк аккаунта + сумка: кузница видит оба источника ────────────────────────────────────────

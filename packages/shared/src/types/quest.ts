@@ -50,6 +50,16 @@ export interface QuestProgress {
   questId: string;
   status: 'active' | 'completed' | 'turned-in';
   counters: Record<string, number>;
+  /**
+   * Когда квест С ДОСКИ принят (мс, часы сервера) — R3-10: квота «одно задание шаблона за срок доски» считается по
+   * нему. Нет поля — квест цепочки или принят до правки: в квоту не идёт.
+   */
+  acceptedAt?: number;
+  /**
+   * Когда катали доску, с которой квест принят (мс, часы сервера) — R4-33: квота меряется между поколениями досок,
+   * а не от принятия. Нет поля — квест цепочки или принят до правки: за поколение берётся `acceptedAt`.
+   */
+  boardAt?: number;
 }
 
 export interface GeneratedQuest extends QuestDef {

@@ -431,7 +431,7 @@ describe('⭐ §26 найденный меч = скованный из тех ж
   const drop = (baseId: string, level: number, seed: number, forceRarity: Rarity = 'normal', uniques = reg.get('uniques')): Item =>
     generateItem(reg.get('items.base'), reg.get('affixes'), uniques, {
       dropBias: 1, itemLevel: level, tierLevel: level, baseId, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'),
-      forceRarity, maxReqTotal: reg.get('balance').maxTotalRequirement, baseRoll: ROLL,
+      forceRarity, maxReqTotal: reg.get('balance').maxTotalRequirement, baseRoll: ROLL, origin: 'drop',   // находка: журнал учит деталям только её
     }, createRng(seed));
 
   it('детали замораживаются на вещи, статы — от клинка: ось, разброс, точка баланса; остальное не трогается', () => {
@@ -484,7 +484,7 @@ describe('⭐ §26 найденный меч = скованный из тех ж
       expect(shapeFoundWeapon(reg, { ...x, uid: 'другой' }).foundParts).toEqual(sx.foundParts);
     }
   });
-  it('не трогает уникальные, скованные, прочие классы (без геометрии) и не-оружие', () => {
+  it('не трогает уникальные, скованные и не-оружие; прочим классам (без геометрии) только записывает детали', () => {
     const gore = reg.get('uniques').filter((u) => baseOf(u.baseId)?.weaponClass === 'sword');
     expect(gore.length).toBeGreaterThan(0);
     const u = drop('short-sword', 30, 7, 'unique', gore);
@@ -492,11 +492,15 @@ describe('⭐ §26 найденный меч = скованный из тех ж
     expect(shapeFoundWeapon(reg, u)).toBe(u);
     const crafted = craftWeapon(reg, buildWith(partById(reg, 'sw-a-xii')!)).item!;
     expect(shapeFoundWeapon(reg, crafted)).toBe(crafted);
+    // D17 (§12.1): детали замораживаются у ЛЮБОГО найденного оружия, но без геометрии клинка ни одно число
+    // вещи не меняется — вещь та же, плюс `foundParts`. Повторная форма ничего не сдвигает.
     for (const id of ['war-axe', 'mace', 'spear', 'long-bow']) {
       const x = drop(id, 30, 11);
       const s = shapeFoundWeapon(reg, x);
-      expect(s, id).toBe(x);
-      expect(s.foundParts, id).toBeUndefined();
+      expect(s.foundParts, id).toBeTruthy();
+      const { foundParts: _fp, ...rest } = s;
+      expect(rest, id).toEqual(x);
+      expect(shapeFoundWeapon(reg, s), id).toEqual(s);
     }
     const armor = reg.get('items.base').find((b) => b.kind === 'armor')!;
     const worn = drop(armor.id, 30, 3);

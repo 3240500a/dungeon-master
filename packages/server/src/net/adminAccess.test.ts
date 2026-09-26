@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { timingSafeEqual } from 'node:crypto';
-import { originAllowed, parseOrigins, keyMatches } from './adminAccess.js';
+import { originAllowed, parseOrigins, keyMatches, isLoopback, localCaller } from './adminAccess.js';
 
 const eq = (a: Buffer, b: Buffer): boolean => timingSafeEqual(a, b);
 const LIST = ['http://localhost:5173', 'http://localhost:5174'];
@@ -53,5 +53,24 @@ describe('ключ процессов (DM_ADMIN_KEY)', () => {
 
   it('сравнение не роняется на разной длине (timingSafeEqual этого не прощает)', () => {
     expect(() => keyMatches('a', 'abcdef', eq)).not.toThrow();
+  });
+});
+
+describe('⭐ R3-03: служебные ручки — только прямому вызову с самой машины', () => {
+  it('петля во всех записях — петля; чужой адрес — нет', () => {
+    for (const a of ['127.0.0.1', '127.1.2.3', '::1', '[::1]', '::ffff:127.0.0.1', '0000:0000:0000:0000:0000:0000:0000:0001',
+      '0000:0000:0000:0000:0000:ffff:7f00:0001', 'localhost']) expect(isLoopback(a), a).toBe(true);
+    for (const a of ['10.8.1.3', '::ffff:10.8.1.3', '128.0.0.1', '::2', '', undefined, 'evil.example']) expect(isLoopback(a), String(a)).toBe(false);
+  });
+
+  it('петля без заголовков прокси — своя машина; с любым из них — запрос пришёл через прокси', () => {
+    expect(localCaller({}, '127.0.0.1')).toBe(true);
+    expect(localCaller({ host: 'localhost:3001' }, '::ffff:127.0.0.1')).toBe(true);
+    // За прокси uWS и за Caddy/nginx сокет express — петля у КАЖДОГО запроса: решает заголовок прокси.
+    for (const h of ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto', 'via']) {
+      expect(localCaller({ [h]: '203.0.113.9' }, '127.0.0.1'), h).toBe(false);
+    }
+    expect(localCaller({}, '10.8.1.3'), 'не петля').toBe(false);
+    expect(localCaller({}, undefined)).toBe(false);
   });
 });

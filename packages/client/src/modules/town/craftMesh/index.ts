@@ -66,9 +66,18 @@ export function meshCtx(reg: ConfigRegistry, weaponClass: string, hands: number,
 export function buildCraftMesh(reg: ConfigRegistry, weaponClass: string, hands: number, parts: CraftParts): CraftMeshResult | null {
   const build = BUILDERS[weaponClass];
   const mats = new MatCache();
-  const ctx = meshCtx(reg, weaponClass, hands, parts, mats);
-  if (!build || !ctx) { mats.dispose(); return null; }
-  const group = build(ctx);
+  let group: THREE.Group;
+  try {
+    const ctx = meshCtx(reg, weaponClass, hands, parts, mats);
+    if (!build || !ctx) { mats.dispose(); return null; }
+    group = build(ctx);
+  } catch (e) {
+    // Построитель упал посреди сборки: материалы уже заведены в кэше — отпускаем их здесь, иначе их
+    // не освободит никто. Ошибку не глотаем: что показать, решает вызывающий (`craftWeapon3d` помечает
+    // сборку несобираемой, вкладка ковки кузницы `forgeCraftTab` пишет «Модель сборки не строится»).
+    mats.dispose();
+    throw e;
+  }
   return {
     group,
     dispose: () => {

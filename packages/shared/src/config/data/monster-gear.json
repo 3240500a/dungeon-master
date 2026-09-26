@@ -18,6 +18,11 @@
         "materialId": "iron-1",
         "min": 1,
         "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -44,6 +49,11 @@
       {
         "materialId": "wood-1",
         "min": 1,
+        "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
         "max": 1
       }
     ]
@@ -72,6 +82,11 @@
         "materialId": "wood-1",
         "min": 1,
         "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -94,6 +109,11 @@
         "materialId": "iron-1",
         "min": 1,
         "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -121,6 +141,11 @@
         "materialId": "wood-1",
         "min": 1,
         "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -141,6 +166,11 @@
     "salvageTo": [
       {
         "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "stave-1",
         "min": 1,
         "max": 2
       }
@@ -170,6 +200,16 @@
         "materialId": "iron-1",
         "min": 1,
         "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      },
+      {
+        "materialId": "stave-1",
+        "min": 1,
+        "max": 2
       }
     ]
   },
@@ -197,6 +237,11 @@
         "materialId": "wood-1",
         "min": 1,
         "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -219,6 +264,11 @@
         "materialId": "iron-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -238,6 +288,16 @@
     "salvageTo": [
       {
         "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      },
+      {
+        "materialId": "focus-1",
         "min": 1,
         "max": 2
       }
@@ -261,6 +321,181 @@
         "materialId": "wood-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      },
+      {
+        "materialId": "focus-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "kind": "weapon",
+    "id": "u-spear",
+    "name": "Ржавое копьё",
+    "faction": "undead",
+    "weaponClass": "spear",
+    "weight": "medium",
+    "attackType": "melee",
+    "hands": 2,
+    "damageType": "physical",
+    "minDamage": 8,
+    "maxDamage": 16,
+    "attackSpeed": 0.75,
+    "physSub": "piercing",
+    "salvageTo": [
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "kind": "weapon",
+    "id": "u-halberd",
+    "name": "Алебарда павшего стража",
+    "faction": "undead",
+    "weaponClass": "halberd",
+    "weight": "massive",
+    "attackType": "melee",
+    "hands": 2,
+    "damageType": "physical",
+    "minDamage": 10,
+    "maxDamage": 24,
+    "attackSpeed": 0.6,
+    "physSub": "chopping",
+    "salvageTo": [
+      {
+        "materialId": "iron-1",
+        "min": 2,
+        "max": 3
+      },
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "kind": "weapon",
+    "id": "u-wand",
+    "name": "Жезл тлена",
+    "faction": "undead",
+    "weaponClass": "wand",
+    "weight": "mystic",
+    "attackType": "ranged",
+    "hands": 1,
+    "damageType": "physical",
+    "minDamage": 3,
+    "maxDamage": 5,
+    "attackSpeed": 1.0,
+    "physSub": "slashing",
+    "salvageTo": [
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      },
+      {
+        "materialId": "focus-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "kind": "weapon",
+    "id": "u-staff-crooked",
+    "name": "Кривой посох",
+    "faction": "undead",
+    "weaponClass": "staff",
+    "weight": "magical",
+    "attackType": "ranged",
+    "hands": 2,
+    "damageType": "physical",
+    "minDamage": 3,
+    "maxDamage": 7,
+    "attackSpeed": 0.8,
+    "physSub": "slashing",
+    "salvageTo": [
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      },
+      {
+        "materialId": "focus-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "kind": "weapon",
+    "id": "u-crossbow-light",
+    "name": "Ржавый самострел",
+    "faction": "undead",
+    "weaponClass": "crossbow",
+    "weight": "medium",
+    "attackType": "ranged",
+    "hands": 2,
+    "damageType": "physical",
+    "minDamage": 7,
+    "maxDamage": 9,
+    "attackSpeed": 0.5,
+    "physSub": "piercing",
+    "salvageTo": [
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 1
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      },
+      {
+        "materialId": "stave-1",
+        "min": 1,
+        "max": 2
       }
     ]
   },

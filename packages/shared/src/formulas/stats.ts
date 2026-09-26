@@ -173,3 +173,29 @@ export function meetsRequirements(item: Item, attrs: Attributes): boolean {
   }
   return true;
 }
+
+/**
+ * ⚠ R4-08: КАКИЕ ИЗ НАДЕТЫХ ВЕЩЕЙ НЕ ДЕРЖАТСЯ на атрибутах `base` (сейв, без экипировки). Держится вещь, чьи
+ * требования закрыты базой и вещами, ВСТАВШИМИ РАНЬШЕ неё (своя прибавка себе не в счёт, как на входе в слот):
+ * наименьшая неподвижная точка от пустого набора — ровно то, что можно надеть по одной в каком-то порядке. Две
+ * вещи, подпирающие только друг друга, не держатся обе: проверка «против всех прочих надетых» пропускала бы их
+ * вдвоём. Второй проход снимает вещь, которую выбил чужой минус к атрибуту (в данных таких нет, в редакторе — могут быть).
+ */
+export function unmetWorn(base: Attributes, items: readonly Item[]): Item[] {
+  let held: Item[] = [];
+  let rest = [...items];
+  for (;;) {   // рост: встаёт всё, что закрывают база и уже вставшие
+    const attrs = finalAttributes(base, modifiersFromItems(held));
+    const up = rest.filter((it) => meetsRequirements(it, attrs));
+    if (!up.length) break;
+    held = held.concat(up);
+    rest = rest.filter((it) => !up.includes(it));
+  }
+  for (;;) {   // сжатие: вставшая позже вещь с минусом могла выбить вставшую раньше
+    const out = held.filter((it) => !meetsRequirements(it, finalAttributes(base, modifiersFromItems(held.filter((o) => o !== it)))));
+    if (!out.length) break;
+    held = held.filter((it) => !out.includes(it));
+    rest = rest.concat(out);
+  }
+  return rest;
+}

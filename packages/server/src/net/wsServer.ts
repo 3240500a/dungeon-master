@@ -3,8 +3,9 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { clientIp } from './rateLimit.js';
-import { MAX_BACKPRESSURE, type GameConn } from './conn.js';
+import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, type GameConn } from './conn.js';
 import { counters } from './metrics.js';
+import { nodeShutdownInstalled } from '../cluster/node.js';
 
 /**
  * Транспорт по умолчанию: библиотека `ws` поверх общего HTTP-сервера (тот же порт, что REST).
@@ -34,7 +35,11 @@ class WsConn implements GameConn {
     try { this.ws.close(code, reason); } catch { /* уже закрыт */ }
   }
   onMessage(cb: (raw: string) => void): void {
-    this.ws.on('message', (data: Buffer) => cb(data.toString()));
+    // R2-01: бросок из обработчика кадра внутри события сокета — это необработанное исключение и выход процесса со
+    // всеми комнатами. Менеджер ловит своё сам; здесь — последний рубеж: гасим кадр, не процесс.
+    this.ws.on('message', (data: Buffer) => {
+      try { cb(data.toString()); } catch (e) { frameFailed(e); }
+    });
   }
   onClose(cb: () => void): void {
     let done = false;
@@ -42,6 +47,21 @@ class WsConn implements GameConn {
     this.ws.on('close', once);
     this.ws.on('error', once);
   }
+}
+
+/**
+ * Кадр погашен исключением на уровне транспорта (R2-01) — счётчик и лог не чаще раза в 10 с: поток кривых
+ * кадров не должен топить лог. Общий для обоих транспортов.
+ */
+let frameFailLogAt = 0;
+let frameFailMuted = 0;
+export function frameFailed(e: unknown): void {
+  counters.frameErrors++;
+  const now = Date.now();
+  if (now - frameFailLogAt < 10_000) { frameFailMuted++; return; }
+  const muted = frameFailMuted ? ` (и ещё ${frameFailMuted} с прошлого сообщения)` : '';
+  frameFailLogAt = now; frameFailMuted = 0;
+  console.error(`[ws] кадр погашен исключением${muted}:`, e);
 }
 
 export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
@@ -53,9 +73,12 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
   // вниз, после чего сжимать будет уже нечего. Возвращать сжатие без замера — не надо.
   const wss = new WebSocketServer({
     server,
-    path: '/ws',
     perMessageDeflate: false,
+    // R2-18: кадр больше потолка закрывается кодом 1009 ДО того, как ляжет в память (умолчание `ws` — 100 МБ).
+    maxPayload: MAX_FRAME_BYTES,
   });
+  // R4-13: игровой сокет — `/ws` и `/ws/<i>` (путь за прокси по путям, см. `isGameWsPath`); прочие пути — 400, как было.
+  wss.shouldHandle = (req) => isGameWsPath(req.url ?? '');
   // WSS привязан к http-серверу и переизлучает его ошибки (напр. EADDRINUSE при dev-рестарте). БЕЗ обработчика
   // 'error' здесь Node роняет процесс (unhandled 'error') → сервер умирает и редактор/клиент ловят ECONNREFUSED.
   // Логируем; освобождение порта/повтор listen обрабатывает server.on('error') в index.ts.
@@ -94,7 +117,10 @@ export function installShutdown(rooms: RoomManager): void {
   // `process.exit` сразу после вызова просто выбросил бы незаписанные сейвы.
   let leaving = false;
   const shutdown = (): void => {
-    if (leaving) return;
+    // ⭐ R3-12: у ноды кластера (роли node и single) выходит СЛИВ НОДЫ — он пишет те же сейвы, снимает ноду и её
+    // закрепления из реестра и сам выходит. Раньше этот обработчик выходил первым, сразу после своей записи (или
+    // через 5 с): до `releaseNode` и раньше, чем слив дожидался прощальных записей.
+    if (leaving || nodeShutdownInstalled()) return;
     leaving = true;
     const done = (): never => process.exit(0);
     // Страховка: если база молчит, всё равно выходим — иначе рестарт dev-сервера подвиснет.
@@ -102,6 +128,7 @@ export function installShutdown(rooms: RoomManager): void {
     void rooms.flushAll().catch((e: unknown) => console.error('[dm-server] сейвы при остановке:', e))
       .finally(() => { clearTimeout(guard); done(); });
   };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
+  // ⭐ R5-08: `on`, а не `once`: повторный сигнал во время записи не должен убивать процесс действием по умолчанию.
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }

@@ -1,5 +1,6 @@
 import type { Item } from '@dm/shared';
 import type { App } from '../../core/app.js';
+import type { Dims } from './grid.js';
 import { COLORS, mk } from '../../ui/kit.js';
 import { rarityHex } from '../loot/rarity.js';
 
@@ -36,6 +37,21 @@ let lastPointer = { x: 0, y: 0 };
 
 export function getHeld(): { item: Item; grabOx: number; grabOy: number; from: HeldFrom } | null {
   return held;
+}
+
+/**
+ * КУДА ЛЯЖЕТ ДЕРЖИМЫЙ ПРЕДМЕТ при клике в клетку (col, row): левый-верх с учётом точки захвата — или `null`, если
+ * он не лёг бы в сетку целиком (взяли 2×3 за правый столбец и бросили у левого края). ⚠ R2-35: такую команду НЕ
+ * шлём — строгая схема сервера (`parseTownCommand`) считает клетку < 0 «неверной командой», и честный игрок
+ * выглядел бы в метриках (`dm_cmd_invalid_total`) и логе сервера как читер. Порт того же правила — Unity
+ * `DmHeld.DropCell`; сверка — эталон `town/__golden__/unity_town.json`.
+ */
+export function dropCell(
+  item: Pick<Item, 'gridW' | 'gridH'>, grabOx: number, grabOy: number, col: number, row: number, dims: Dims,
+): { x: number; y: number } | null {
+  const x = col - grabOx;
+  const y = row - grabOy;
+  return x < 0 || y < 0 || x + item.gridW > dims.cols || y + item.gridH > dims.rows ? null : { x, y };
 }
 export function setLastPointer(x: number, y: number): void { lastPointer = { x, y }; }
 

@@ -63,9 +63,25 @@ fn main() {
     rt.block_on(run(a, threads));
 }
 
+/// ⭐ R5-24: метрики сервера — или выход с объяснением. Раньше отказ (`/metrics` отвечает 403 стенду не с машины сервера)
+/// становился пустой картой: тик 0, CPU 0 %, RSS 0 — и ✓ у перегруженного сервера.
+async fn metrics_or_exit(base: &str, key: Option<&str>) -> HashMap<String, f64> {
+    match http::metrics(base, key).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[dmload] {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 async fn run(a: Args, threads: usize) {
     let base = a.s("base", "http://127.0.0.1:3999");
     let mode = a.s("mode", "ramp");
+    // R5-24: ключ чтения метрик сервера (его `DM_METRICS_KEY`) — стенд не с машины сервера без него метрик не получит.
+    let metrics_key = a.0.get("metricsKey").cloned()
+        .or_else(|| std::env::var("DM_METRICS_KEY").ok())
+        .filter(|k| !k.is_empty());
 
     if mode == "net" {
         net_probe(&base).await;
@@ -174,12 +190,12 @@ async fn run(a: Args, threads: usize) {
         spawned = target;
 
         st.reset();
-        let m0 = http::metrics(&base).await;
+        let m0 = metrics_or_exit(&base, metrics_key.as_deref()).await;
         let cpu0 = stats::cpu_ms();
         let t0 = Instant::now();
         tokio::time::sleep(Duration::from_secs(secs)).await;
         let dt = t0.elapsed().as_secs_f64();
-        let m1 = http::metrics(&base).await;
+        let m1 = metrics_or_exit(&base, metrics_key.as_deref()).await;
         let self_cpu = (stats::cpu_ms() - cpu0) / 1000.0 / dt;
 
         let alive = st.alive.load(Relaxed);

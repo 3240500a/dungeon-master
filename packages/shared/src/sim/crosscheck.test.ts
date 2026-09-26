@@ -17,6 +17,10 @@ reg.loadAll();
 const classId = reg.get('classes')[0]!.id;
 
 function mob(baseId: string, depth: number) {
+  // ⚠ Id обязан существовать: без него `generateMonster` берёт СЛУЧАЙНОГО из всего ростера, и тест молча
+  // мерил бы другого монстра после каждой правки ростера (так и было: «zombie-brute» исчез при переименовании,
+  // и бросок попадал в рыцаря, пока в ростере было 13 монстров).
+  expect(reg.get('monsters').some((m) => m.id === baseId), `нет монстра ${baseId}`).toBe(true);
   return generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'),
     { baseId, depth, mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity: 'normal', monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') },
     createRng(1));
@@ -28,7 +32,7 @@ describe('кросс-чек: закрытая формула ≈ реальны�
     // формула и движок должны сойтись близко. (На ~1-ударных киллах отношение искажает целочисленность.)
     for (const level of [15, 25, 35]) {
       const save = buildBotAt(reg, classId, level, DEFAULT_BUILD, 7);
-      const m = mob('zombie-brute', level * 2 + 10); // глубина растёт быстрее уровня — держим кил за много ударов
+      const m = mob('zombie-knight', level * 2 + 10); // танк (щит, латы); глубина растёт быстрее уровня — кил за много ударов
       const cf = closedFormTtk(reg, save, m);
       const mc = microFightStats(reg, { save, monsters: [m], tier: 'basic' }, 40, 3);
       const ratio = mc.hitsToKill.mean / cf.landedHitsToKill;

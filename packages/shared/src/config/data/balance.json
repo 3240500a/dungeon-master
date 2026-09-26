@@ -207,6 +207,7 @@
   "respecCost": 500,
   "passiveRespecCostPct": 0.5,
   "skillRespecCostPerPoint": 100,
+  "townRestockSec": 600,
   "skillSocketRanks": [
     1,
     6,
@@ -297,6 +298,7 @@
     }
   },
   "craft": {
+    "live": true,
     "strike": {
       "damagePct": 0.1,
       "attackSpeed": 0.08
@@ -438,6 +440,7 @@
       "uncommon": 4,
       "rare": 1
     },
+    "foundEvenness": 2,
     "blade": {
       "brackets": [
         {

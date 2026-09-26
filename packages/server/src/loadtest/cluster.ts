@@ -27,7 +27,13 @@ async function post<T>(path: string, body: unknown, token?: string): Promise<T> 
 }
 
 interface Cluster { players: number; nodes: { id: string; url: string; players: number; draining: boolean }[] }
-const cluster = async (): Promise<Cluster> => (await (await fetch(`${BASE}/api/cluster`)).json()) as Cluster;
+/** R6-20: состояние кластера — служебное: с самой машины или ключом чтения метрик (`DM_METRICS_KEY`), как `/metrics`. */
+const METRICS_KEY = process.env.DM_METRICS_KEY ?? '';
+const cluster = async (): Promise<Cluster> => {
+  const r = await fetch(`${BASE}/api/cluster`, { headers: METRICS_KEY ? { authorization: `Bearer ${METRICS_KEY}` } : {} });
+  if (!r.ok) throw new Error(`/api/cluster → ${r.status}: состояние кластера — с машины сервера или с DM_METRICS_KEY`);
+  return (await r.json()) as Cluster;
+};
 
 /** Завести аккаунт с персонажем — общая часть обеих проверок. */
 async function makePlayer(i: number): Promise<{ token: string; charId: string }> {

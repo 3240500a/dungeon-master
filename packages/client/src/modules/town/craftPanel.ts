@@ -1,7 +1,7 @@
 import {
   CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseTierRange, bladeCaption, bladeStats, clampStep,
-  craftTiers, craftWeapon, defaultParts, enchantCost, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
-  partById, rangeLabel, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
+  craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
+  partById, rangeLabel, sketchable, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
 } from '@dm/shared';
@@ -12,15 +12,26 @@ import { itemTooltipHtml } from '../inventory/itemView.js';
 /**
  * ОКНО КОВКИ ОРУЖИЯ ИЗ ДЕТАЛЕЙ (docs/CRAFT_WEAPONS.md §17).
  *
- * ⭐ Это ИГРОВАЯ панель, а не макет. Сегодня её показывает песочница конфиг-редактора, завтра —
- * кузница города, и между ними меняется только ХОЗЯИН (`CraftHost`): в песочнице ковка идёт
- * локально тем же ядром (`craftWeapon`), в игре — командой серверу, который зовёт то же ядро.
- * Сама панель ни сети, ни сейва не трогает — поэтому переносится без правок.
+ * ⭐ Это ИГРОВАЯ панель, а не макет. Её показывают песочница конфиг-редактора и вкладка «Ковка» кузницы
+ * города, и между ними меняется только ХОЗЯИН (`CraftHost`): в песочнице ковка идёт локально тем же
+ * ядром (`craftAction`), в игре — командой серверу, который зовёт то же ядро (`craftHost.ts`).
+ * Сама панель ни сети, ни сейва не трогает — поэтому одна на оба места.
+ *
+ * ⚠ Ответ игрового хозяина — ПРОМИС (ждём `cmdResult`). Пока он в полёте, окно держит «куём…» и
+ * вторую заявку не шлёт; признак живёт в состоянии окна (`busy`), потому что тело перерисовывается
+ * на каждый кадр сейва и локальная переменная обнулялась бы сама.
  *
  * Порядок — от деталей: семейство (класс × хват) → ключевая деталь, она «определяет тип» →
  * остальные детали, у каждой — свой материал. Тип, историческое имя и ступень вещи окно НЕ
  * спрашивает, а показывает: их выводит ядро (`craftWeapon`, `craftType.ts`). Своих формул здесь нет.
  */
+
+/**
+ * Итог ковки, зачарования или «надеть». `unknown` — ответа сервера нет (обрыв, таймаут): итог
+ * неизвестен, и повтор той же заявки безопасен — хозяин шлёт его с ТЕМ ЖЕ ключом (`nonce`).
+ * `item` может отсутствовать и при успехе: повтор ключа отвечает вещью, которой уже нет в сумке.
+ */
+export interface CraftReply { ok: boolean; reason?: string; item?: Item; unknown?: boolean }
 
 export interface CraftHost {
   /** Сырьё, доступное ковке: в игре — сумка и сундук, в песочнице — её кошелёк. */
@@ -29,10 +40,24 @@ export interface CraftHost {
   journal(): CraftJournal;
   /** Сохранённый сейв героя: по нему считается «в руках → скую». */
   save(): SaveState;
-  craft(input: CraftInput): { ok: boolean; reason?: string; item?: Item };
-  enchant(item: Item, rarity: Rarity): { ok: boolean; reason?: string; item?: Item };
+  /**
+   * Песочница отвечает сразу, игра — промисом ответа сервера. ⭐ R5-15: `maxGold` — цена в золоте, которую показало окно:
+   * игра шлёт её в команде, и дороже сервер не возьмёт (его конфиг мог уйти вперёд клиентского).
+   */
+  craft(input: CraftInput, maxGold?: number): CraftReply | Promise<CraftReply>;
+  enchant(item: Item, rarity: Rarity, maxGold?: number): CraftReply | Promise<CraftReply>;
   /** Надеть скованное на героя (песочница — сразу, игра — командой экипировки). */
-  equip?(item: Item): void;
+  equip?(item: Item): void | CraftReply | Promise<CraftReply>;
+  /**
+   * Где сейчас скованная вещь: в сумке или надета; `null` — её больше нет (продали, разобрали). В игре вещь
+   * живёт в сейве; в песочнице — в окне, а надетая — в руках героя песочницы (R1-26: надетую не зачаровать и там).
+   */
+  find?(uid: string): { item: Item; inBag: boolean } | null;
+  /**
+   * R3-11: потратить эскиз (жалость разбора, §12) — открыть закрытую деталь в журнале. Игра — командой `forgeSketch`,
+   * песочница — тем же ядром (`sketchAction`). Нет — окно эскизов не предлагает.
+   */
+  sketch?(variantId: string): CraftReply | Promise<CraftReply>;
   /** В песочнице можно смотреть материалы, которых ещё нет в игре (выключенные в конфиге). */
   allowDisabledMaterials?: boolean;
 }
@@ -50,7 +75,14 @@ export interface CraftWindowState {
   finish?: number;
   /** Итог последнего действия, одной строкой. */
   message: string;
+  /** Что сейчас в полёте (ждём ответа сервера): пока есть — кнопки гаснут, вторая заявка не уходит. */
+  busy?: 'craft' | 'enchant' | 'equip' | 'sketch';
+  /** Закрытая деталь, выбранная к эскизу (R3-11): ждёт подтверждения — эскиз не вернуть. */
+  sketchPick?: string;
 }
+
+const isThenable = <T>(x: unknown): x is PromiseLike<T> =>
+  !!x && (typeof x === 'object' || typeof x === 'function') && typeof (x as { then?: unknown }).then === 'function';
 
 const RARITY_DOT: Record<string, string> = { common: COLORS.dim, uncommon: COLORS.info, rare: COLORS.gold };
 const RARITY_NAME: Record<string, string> = { common: 'обычная', uncommon: 'нечастая', rare: 'редкая' };
@@ -221,6 +253,14 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     root.innerHTML = '';
     const j = host.journal();
     normalizeCraftState(reg, st, j);
+    // Скованная вещь в игре живёт в СЕЙВЕ: берём её свежей (зачарование и сервер её меняют), а пропала —
+    // забываем, иначе кнопки предлагали бы зачаровать проданное.
+    let craftedInBag = true;
+    if (st.crafted && host.find) {
+      const f = host.find(st.crafted.uid);
+      st.crafted = f?.item ?? null;
+      craftedInBag = f?.inBag ?? false;
+    }
     const anat = anatomyOf(reg, st.weaponClass);
     const tiers = craftTiers(reg);
     const mats = reg.get('craft-materials');
@@ -231,13 +271,38 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       `padding:3px 8px;border-radius:5px;font-size:11.5px;cursor:${disabled ? 'default' : 'pointer'};border:1px solid ${on ? COLORS.accent : COLORS.borderHi};` +
       `background:${on ? '#26221a' : COLORS.panel};color:${disabled ? '#4a4a4a' : on ? COLORS.accent : COLORS.text}`;
     const reset = (): void => { st.crafted = null; st.message = ''; };
+    /**
+     * R3-22: заявка в полёте — выбор сборки ЗАМОРОЖЕН: классы, «Вся вещь из», детали, материал и доводка погашены и
+     * не меняют окно. Иначе клик посреди ковки сбрасывал сборку, и ответ клал скованную вещь рядом с ДРУГОЙ сборкой.
+     */
+    const busy = !!st.busy;
+    /**
+     * Действие хозяина: сразу (песочница) или промисом (игра). Пока промис в полёте — `busy`, кнопки
+     * погашены, повторный клик ничего не шлёт. Итог — после ответа; перерисовываем ЖИВОЕ окно: тело
+     * кузницы к этому времени пересобрано кадром сейва, и этот `root` уже может быть снят со страницы.
+     */
+    const act = (kind: NonNullable<CraftWindowState['busy']>, run: () => void | CraftReply | Promise<CraftReply>, done: (r: CraftReply) => void): void => {
+      if (st.busy) return;
+      const after = (): void => { onAfter?.(); if (root.isConnected) draw(); };
+      const fail = (e: unknown): CraftReply => ({ ok: false, unknown: true, reason: `Нет ответа: ${e instanceof Error ? e.message : String(e)}` });
+      let r: void | CraftReply | Promise<CraftReply>;
+      try { r = run(); } catch (e) { done(fail(e)); after(); return; }
+      if (!isThenable<CraftReply>(r)) { done(r ?? { ok: true }); after(); return; }
+      st.busy = kind;
+      draw();
+      Promise.resolve(r).then((v) => v, fail).then((v) => { st.busy = undefined; done(v); after(); });
+    };
+    // Эскизы (R3-11): жалость разбора открывает закрытую деталь на выбор. Хозяин без `sketch` их не предлагает.
+    const sketches = host.sketch ? j.sketches : 0;
+    if (st.sketchPick && (sketches <= 0 || !sketchable(reg, j, st.sketchPick))) st.sketchPick = undefined;
 
     // ── Класс и семейство ──
     const clsRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px');
     for (const a of [...reg.get('weapon-anatomy')].sort((x, y) => ORDER.indexOf(x.id) - ORDER.indexOf(y.id))) {
       const on = a.id === st.weaponClass;
-      const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:pointer;font-size:12px;border:1px solid ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : COLORS.text}`, a.name);
-      b.addEventListener('click', () => { if (on) return; Object.assign(st, initialCraftState(reg, a.id)); draw(); });
+      const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:${busy ? 'default' : 'pointer'};font-size:12px;border:1px solid ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : busy ? '#4a4a4a' : COLORS.text}`, a.name);
+      b.disabled = busy;
+      b.addEventListener('click', () => { if (on || st.busy) return; Object.assign(st, initialCraftState(reg, a.id)); draw(); });
       clsRow.append(b);
     }
     root.append(clsRow);
@@ -246,8 +311,9 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       const famRow = mk('div', 'display:flex;gap:6px;margin-bottom:10px;align-items:center');
       famRow.append(mk('span', `color:${COLORS.dim};font-size:12px;margin-right:4px`, 'Семейство'));
       for (const h of fams) {
-        const b = mk('button', chip(h === st.hands, false), h === 2 ? 'Двуручное' : 'Одноручное');
-        b.addEventListener('click', () => { if (h === st.hands) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw(); });
+        const b = mk('button', chip(h === st.hands, busy), h === 2 ? 'Двуручное' : 'Одноручное');
+        b.disabled = busy;
+        b.addEventListener('click', () => { if (h === st.hands || st.busy) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw(); });
         famRow.append(b);
       }
       root.append(famRow);
@@ -284,14 +350,35 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     if (!pv.ok && pv.reason) head.append(mk('div', `font-size:12px;color:${COLORS.bad};margin-top:6px`, `⚠ ${pv.reason}`));
     root.append(head);
 
+    // ── Эскизы (R3-11): сколько есть и подтверждение выбранной детали — эскиз не вернуть ──
+    if (sketches > 0) {
+      const box = mk('div', `border:1px dashed ${COLORS.gold};border-radius:6px;padding:6px 10px;margin-bottom:10px;font-size:12px;color:${COLORS.gold}`);
+      const pick = st.sketchPick ? partById(reg, st.sketchPick) : undefined;
+      if (!pick) {
+        box.append(mk('div', '', `✦ Эскизов: ${sketches} — открой закрытую деталь на выбор: нажми на неё в списке (✦). Ключевую форму неоткрытого типа эскиз не открывает — тип открывает разбор.`));
+      } else {
+        box.append(mk('div', 'margin-bottom:6px', `✦ Открыть «${pick.name}» эскизом? Эскизов останется ${sketches - 1} — вернуть эскиз нельзя.`));
+        const confirm = mk('div', 'display:flex;gap:6px');
+        confirm.append(button(st.busy === 'sketch' ? '⏳ открываю…' : '✦ Открыть эскизом', () => act('sketch', () => host.sketch!(pick.id), (r) => {
+          st.sketchPick = undefined;
+          st.message = r.ok ? `Открыто эскизом: ${pick.name}` : r.unknown ? r.reason ?? 'Нет ответа от кузнеца' : `Не вышло: ${r.reason}`;
+        }), 'primary', !!st.busy));
+        confirm.append(button('Отмена', () => { st.sketchPick = undefined; draw(); }, 'default', !!st.busy));
+        box.append(confirm);
+      }
+      root.append(box);
+    }
+
     // ── Вся вещь из… ──
     if (anat) {
       const allRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px');
       allRow.append(mk('span', `color:${COLORS.dim};font-size:12px;margin-right:4px`, 'Вся вещь из'));
       for (let k = 1; k <= 5; k++) {
-        const b = mk('button', chip(CRAFT_SLOT_LIST.every((s) => st.parts[s].step === k), false), `ст. ${k} · ${matName(`${anat[keySlot].family}-${k}`)}`);
+        const b = mk('button', chip(CRAFT_SLOT_LIST.every((s) => st.parts[s].step === k), busy), `ст. ${k} · ${matName(`${anat[keySlot].family}-${k}`)}`);
         b.title = 'Каждой детали — эта ступень, прижатая к окну её формы';
+        b.disabled = busy;
         b.addEventListener('click', () => {
+          if (st.busy) return;
           for (const s of CRAFT_SLOT_LIST) { const p = partById(reg, st.parts[s].id); if (p) st.parts[s].step = clampStep(p, k); }
           reset(); draw();
         });
@@ -315,17 +402,24 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       const list = mk('div', 'display:flex;flex-direction:column;gap:2px;max-height:250px;overflow:auto;margin-bottom:6px');
       const row = (p: WeaponPart, baseOpen = true): HTMLElement => {
         const open = j.variants.includes(p.id) && baseOpen;
-        const on = p.id === st.parts[slot].id;
-        const b = mk('button', `display:flex;align-items:center;gap:6px;text-align:left;padding:3px 6px;border-radius:4px;font-size:12px;cursor:${open ? 'pointer' : 'default'};` +
-          `border:1px solid ${on ? COLORS.accent : 'transparent'};background:${on ? '#26221a' : 'transparent'};color:${!open ? '#4d4d4d' : on ? COLORS.accent : COLORS.text}`);
+        // R3-11: закрытую деталь ОТКРЫТОГО типа можно открыть эскизом — строка кликабельна и выбирает её к эскизу.
+        const bySketch = !open && baseOpen && sketches > 0 && sketchable(reg, j, p.id);
+        const on = p.id === st.parts[slot].id || (bySketch && st.sketchPick === p.id);
+        const b = mk('button', `display:flex;align-items:center;gap:6px;text-align:left;padding:3px 6px;border-radius:4px;font-size:12px;cursor:${open || bySketch ? 'pointer' : 'default'};` +
+          `border:1px solid ${on ? COLORS.accent : 'transparent'};background:${on ? '#26221a' : 'transparent'};color:${!open ? (bySketch ? COLORS.gold : '#4d4d4d') : on ? COLORS.accent : COLORS.text}`);
         // Ось и подпись — те, что считает ядро: у клинка с геометрией выведенные из замера (§26).
         b.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${open ? RARITY_DOT[p.rarity] : '#333'};flex:none"></span>` +
-          `<span style="flex:1">${open ? '' : '🔒 '}${p.name}</span>` +
+          `<span style="flex:1">${open ? '' : bySketch ? '✦ ' : '🔒 '}${p.name}</span>` +
           `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace">ст.${p.stepMin}–${p.stepMax}</span>` +
           `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace;width:34px;text-align:right">${axisLabel(axisOf(reg, p))}</span>`;
-        b.title = [partCaption(reg, p), p.lore, bladeMeasureLine(reg, p), `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`].filter(Boolean).join('\n');
-        b.disabled = !open;
-        b.addEventListener('click', () => { st.parts[slot] = { id: p.id, step: clampStep(p, st.parts[slot].step) }; reset(); draw(); });
+        b.title = [partCaption(reg, p), p.lore, bladeMeasureLine(reg, p), `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`,
+          bySketch ? `✦ Открыть эскизом (эскизов: ${sketches})` : ''].filter(Boolean).join('\n');
+        b.disabled = (!open && !bySketch) || busy;
+        b.addEventListener('click', () => {
+          if (st.busy) return;
+          if (!open) { if (bySketch) { st.sketchPick = p.id; draw(); } return; }
+          st.parts[slot] = { id: p.id, step: clampStep(p, st.parts[slot].step) }; reset(); draw();
+        });
         return b;
       };
       if (isKey) {
@@ -350,11 +444,11 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
           const inWin = k >= sel.stepMin && k <= sel.stepMax;
           const id = `${sel.family || anat[slot].family}-${k}`;
           const on = st.parts[slot].step === k;
-          const b = mk('button', chip(on, !inWin), stepLabel(reg, anat, slot, sel, k));
-          b.disabled = !inWin;
+          const b = mk('button', chip(on, !inWin || busy), stepLabel(reg, anat, slot, sel, k));
+          b.disabled = !inWin || busy;
           b.title = inWin ? `${matName(id)} (${id})${matOn(id) ? '' : ' — ещё нет в игре'}` : `«${sel.name}» из этого не куётся: только ступени ${sel.stepMin}–${sel.stepMax}`;
           if (inWin && !matOn(id)) b.style.borderStyle = 'dashed';
-          b.addEventListener('click', () => { st.parts[slot].step = k; reset(); draw(); });
+          b.addEventListener('click', () => { if (st.busy) return; st.parts[slot].step = k; reset(); draw(); });
           matRow.append(b);
         }
         card.append(mk('div', `font-size:10.5px;color:${COLORS.dim};margin:2px 0 3px`, `Материал · ${anat[slot].stepNames.length && !sel.family ? 'обработка' : matName(`${sel.family || anat[slot].family}-${st.parts[slot].step}`)}`));
@@ -397,9 +491,10 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       finishes.forEach((f, i) => {
         const on = (st.finish ?? 0) === i;
         const extra = f.strikeUnits <= 0 && f.goldMult === 1 ? 'без надбавки' : `+${f.strikeUnits} ${strikeMat ? matName(strikeMat.id) : ''} · золото ×${fx(f.goldMult, 2)}`;
-        const b = mk('button', chip(on, false), f.name);
+        const b = mk('button', chip(on, busy), f.name);
         b.title = `${extra}\nНиже ${Math.round(f.floor * 100)} % вилки урон не выпадет`;
-        b.addEventListener('click', () => { if (on) return; st.finish = i; reset(); draw(); });
+        b.disabled = busy;
+        b.addEventListener('click', () => { if (on || st.busy) return; st.finish = i; reset(); draw(); });
         frow.append(b);
       });
       fin.append(frow);
@@ -426,25 +521,47 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     }
 
     const btns = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:10px');
-    const doCraft = (): void => {
-      const r = host.craft(input);
-      st.crafted = r.ok ? r.item ?? null : st.crafted;
-      st.message = r.ok ? `Скована: ${r.item?.name}${r.item ? rollVerdict(r.item, pv.ranges, pv.cost?.finish?.floor ?? 0) : ''}` : `Не вышло: ${r.reason}`;
-      onAfter?.(); draw();
-    };
-    btns.append(button('🔨 Ковать', doCraft, 'primary', !pv.ok));
+    const verdict = pv; // предпросмотр в момент клика: вилка для строки «куда лёг бросок»
+    const doCraft = (): void => act('craft', () => host.craft(input, verdict.cost?.gold), (r) => {
+      if (r.ok && r.item) st.crafted = r.item;
+      st.message = r.ok
+        ? r.item ? `Скована: ${r.item.name}${rollVerdict(r.item, verdict.ranges, verdict.cost?.finish?.floor ?? 0)}` : r.reason ?? 'Скована'
+        : r.unknown ? r.reason ?? 'Нет ответа от кузнеца' : `Не вышло: ${r.reason}`;
+    });
+    // Не хватает — кнопка гаснет и говорит чего (§17): сервер отказал бы тем же расчётом (`craftMissing`).
+    const lack = pv.cost ? craftMissing(host.wallet(), host.gold(), pv.cost) : null;
+    const short = lack ? [...(Object.keys(lack.materials).length ? [describeCost(reg, lack.materials)] : []), ...(lack.gold > 0 ? [`${lack.gold} золота`] : [])] : [];
+    const craftBtn = button(st.busy === 'craft' ? '⏳ куём…' : '🔨 Ковать', doCraft, 'primary', !pv.ok || busy || short.length > 0);
+    if (!pv.ok && pv.reason) craftBtn.title = pv.reason;
+    else if (short.length) craftBtn.title = `Не хватает: ${short.join(' · ')}`;
+    btns.append(craftBtn);
     if (st.crafted) {
+      const item = st.crafted;
       for (const r of ['magic', 'rare'] as const) {
-        const cost = enchantCost(reg, st.crafted, r);
-        btns.append(button(`✦ ${r === 'magic' ? 'Магический' : 'Редкий'} · ${cost} з.`, () => {
-          const res = host.enchant(st.crafted!, r);
+        const cost = enchantCost(reg, item, r);
+        // Гаснет ТЕМИ ЖЕ правилами, которыми откажет сервер (`enchantAction`), — и говорит почему.
+        const fit = enchantSlots(reg, item, r);
+        const why = item.rarity !== 'normal' ? 'Вещь уже зачарована'
+          : !craftedInBag ? 'Надетую не зачаровать: сперва сними её в сумку'
+          : item.broken ? 'Сперва почини'
+          : !fit ? 'Кузнец не знает такой вещи'
+          : Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? 'Этой вещи некуда принять свойства'
+          : !fit.fillable ? 'Кузнецу не хватит свойств на форму этой вещи'
+          : host.gold() < cost ? `Недостаточно золота: нужно ${cost}` : '';
+        const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'} · ${cost} з.`;
+        const b = button(label, () => act('enchant', () => host.enchant(item, r, cost), (res) => {
           if (res.ok && res.item) st.crafted = res.item;
-          st.message = res.ok ? `Зачарована: ${res.item?.name}` : `Не вышло: ${res.reason}`;
-          onAfter?.(); draw();
-        }, 'default', host.gold() < cost));
+          st.message = res.ok ? `Зачарована: ${res.item?.name ?? item.name}` : res.unknown ? res.reason ?? 'Нет ответа от кузнеца' : `Не вышло: ${res.reason}`;
+        }), 'default', !!why || busy);
+        if (why) b.title = why;
+        btns.append(b);
       }
-      if (host.equip) btns.append(button('Надеть', () => { host.equip!(st.crafted!); st.message = 'Надето'; onAfter?.(); draw(); }));
-      btns.append(button('Новая заготовка', () => { reset(); draw(); }));
+      if (host.equip && craftedInBag) {
+        btns.append(button(st.busy === 'equip' ? '⏳ надеваю…' : 'Надеть', () => act('equip', () => host.equip!(item), (res) => {
+          st.message = res.ok ? 'Надето' : res.unknown ? res.reason ?? 'Нет ответа' : `Не вышло: ${res.reason}`;
+        }), 'default', busy));
+      }
+      btns.append(button('Новая заготовка', () => { reset(); draw(); }, 'default', busy));
     }
     left.append(btns);
     if (st.message) left.append(mk('div', `margin-top:6px;font-size:12px;color:${st.message.startsWith('Не') ? COLORS.bad : COLORS.good}`, st.message));
@@ -544,8 +661,9 @@ export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName:
     sec(`Статус: ${s.name}`);
     line('шанс за попадание', x?.chance, y?.chance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, ' п.п.', 1));
     line('средних стаков', x?.avgStacks, y?.avgStacks, (v) => `${fx(v, 2)} / ${s.maxStacks}`);
-    if (y?.over100 || (!y && x?.over100)) {
-      const r = mk('tr'); const c = mk('td', `padding:2px 6px;color:${COLORS.bad};font-size:11px`, '⚠ шанс выше 100 %: в бою статус вешается каждым ударом — шанс не клампится (долг §20)');
+    // При упоре `chance` и есть потолок боя (STATUS_CHANCE_CAP) — число берём из карточки.
+    if (s.capped) {
+      const r = mk('tr'); const c = mk('td', `padding:2px 6px;color:${COLORS.bad};font-size:11px`, `⚠ шанс упёрся в потолок ${pct(s.chance, 0)}: прибавка к шансу сверх него не работает`);
       c.colSpan = 4; r.append(c); t.append(r);
     }
   };

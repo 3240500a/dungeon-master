@@ -79,7 +79,7 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   reset.addEventListener('click', () => {
     if (ranks === 0 || state.save.gold < fee) return;
     if (!window.confirm(`Сбросить ВСЕ скиллы?\nВернётся ${ranks} очков скиллов, комиссия ${fee} зол.\nБинды скиллов будут очищены.`)) return;
-    app.sendCmd({ cmd: 'respecSkills' });
+    app.sendCmd({ cmd: 'respecSkills', maxGold: fee });   // R5-15: комиссия, названная в вопросе, — дороже сервер не возьмёт
   });
   body.appendChild(reset);
 

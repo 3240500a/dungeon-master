@@ -12,5 +12,6 @@ export * from './weapon3d.js';
 export * from './toggles.js';
 export * from './inserts.js';
 export * from './netSchemas.js';
+export * from './wireLimits.js';
 export * from './delta.js';
 export * from './wire.js';

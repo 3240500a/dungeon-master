@@ -13,6 +13,7 @@ function row(over: Partial<PlaySessionRow> = {}): PlaySessionRow {
     started_at: new Date(), ended_at: null,
     minutes: 60, kills: 100, gold: 1000, xp: 2000, items: 20, deaths: 1,
     floors: 5, actions: 500, action_mean_ms: 900, action_sd_ms: 220,
+    crafted: 0, melted: 0, salvaged: 0, enchanted: 0,
     ...over,
   };
 }

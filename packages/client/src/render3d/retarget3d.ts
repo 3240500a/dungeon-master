@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { findTwistChains, driveTwistChains, twistReport, type TwistChain } from './twistBones.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { mapFingerBones, allFingerBones, FINGER_CHAINS, FINGER_SEGMENTS } from './boneNames.js';
+import { disposeOwnGeometry } from './craftWeapon3d.js';
 
 // Эталонный скелет БЕЗ профиля (дефолтные длины) — знаменатель относительного конформа. Строим один раз.
 let _baseH: Humanoid | null = null;
@@ -596,7 +597,9 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
     twistBones: () => twistReport(twistChains),   // диагностика: какие твисты найдены и с какой долей
     targetBone: (our) => byName.get(boneMap[our] ?? '') ?? null,   // импортная кость по нашему имени
     setBone(our, targetName) { boneMap[our] = targetName; bake(targetName); },
-    dispose() { loaded.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); },
+    // ⚠ Своё — да, общую модель ковки — нет (R1-23): на кисти атласа висит оружие куклы (`hostWeaponOnHand`), а
+    // геометрию модели из деталей держат все куклы с тем же видом. Снос рига идёт и на КАЖДОЙ смене брони.
+    dispose() { disposeOwnGeometry(loaded); },
   };
 }
 

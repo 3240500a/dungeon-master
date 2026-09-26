@@ -48,3 +48,36 @@ export function keyMatches(token: string, key: string, eq: (a: Buffer, b: Buffer
   const a = Buffer.from(token), b = Buffer.from(key);
   return a.length === b.length && eq(a, b);
 }
+
+/**
+ * Адрес петли — этот же компьютер. Во всех записях, в которых он приходит: IPv4 127/8, IPv6 `::1` (и полной записью,
+ * как его отдаёт uWS), IPv4 внутри IPv6 (`::ffff:127.0.0.1`, в том числе шестнадцатеричной полной записью).
+ */
+export function isLoopback(addr: string | undefined): boolean {
+  if (!addr) return false;
+  const a = addr.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (a === 'localhost' || a === '::1') return true;
+  const v4 = /^(?:::ffff:|(?:0{1,4}:){5}ffff:)?(\d{1,3})\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.exec(a);
+  if (v4) return v4[1] === '127';
+  return /^(?:0{1,4}:){7}0{0,3}1$/.test(a) || /^(?:0{1,4}:){5}ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(a);
+}
+
+/** Заголовки, которые ставит прокси. Запрос с любым из них пришёл через прокси, а не от самой машины. */
+export const PROXY_HEADERS: readonly string[] = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto', 'via'];
+
+/**
+ * ⭐ R3-03: ПРЯМОЙ ВЫЗОВ С САМОЙ МАШИНЫ — только ему открыты служебные ручки (`/metrics`, `/internal/drain`).
+ *
+ * Раньше хватало адреса сокета «петля». Но всё, что идёт через прокси, приходит С ПЕТЛИ: свой uWS переправляет в
+ * express каждый запрос с 127.0.0.1, Caddy или nginx перед сервером — тоже. Проверку проходил любой из интернета:
+ * `curl -X POST http://сервер:порт/internal/drain` гасил ноду (а заодно давал рестарт по заказу), `/metrics` уходил наружу.
+ *
+ * Теперь: сокет — петля И в запросе нет заголовков прокси. Свой прокси uWS не добавляет их только настоящему
+ * локальному вызову (собеседник с петли и без чужих заголовков) — всем остальным ставит `X-Forwarded-For` сам
+ * (`proxyToExpress`). Обратный прокси перед сервером обязан ставить `X-Forwarded-For` (Caddy делает это по
+ * умолчанию, nginx — `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`): по нему же считаются лимиты
+ * входа (`clientIp`). Подделка заголовков здесь ничего не даёт: лишний заголовок только ЗАКРЫВАЕТ доступ.
+ */
+export function localCaller(headers: Record<string, string | string[] | undefined>, socketAddr: string | undefined): boolean {
+  return isLoopback(socketAddr) && !PROXY_HEADERS.some((h) => headers[h] !== undefined);
+}

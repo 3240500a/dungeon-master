@@ -92,6 +92,14 @@ async function rollback(userId: string, to: string, reason: string): Promise<voi
   console.log('\nЧЕГО ОТКАТ НЕ ВЕРНЁТ: золото и опыт (журнала для них нет),');
   console.log('слоты экипировки (журнал пишет место, но не слот — всё уедет в инвентарь),');
   console.log('и отозванные вещи (решение человека сильнее восстановления по времени).');
+  // R2-32: вещь, разобранную после отсечки, откат вернёт, а её выход — нет.
+  console.log('ВЫХОД КУЗНИЦЫ тоже остаётся: сырьё с разбора (сумка и кошелёк сундука) и открытия журнала кузнеца.');
+  if (plan.forge.length) {
+    console.log(`  ⚠ после отсечки разобрано/переплавлено: ${plan.forge.length} — сверить сырьё и журнал РУКАМИ`);
+    for (const f of plan.forge.slice(0, 10)) console.log(`      ${f.id}  ${f.reason}  ${new Date(f.at).toISOString()}`);
+    if (plan.forge.length > 10) console.log(`      … и ещё ${plan.forge.length - 10}`);
+  }
+  console.log(`  журнал кузнеца: мификов ${plan.journalMythic} (ворота t6) — откат их не трогает`);
 
   if (!process.argv.includes('--apply')) {
     console.log('\nЭто был показ. Чтобы применить: добавьте --apply');

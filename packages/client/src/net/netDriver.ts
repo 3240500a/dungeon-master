@@ -6,6 +6,9 @@ import { Projectile } from '../modules/combat/projectile.js';
 import { DroppedItem } from '../modules/loot/droppedItem.js';
 import { PlayerVfx } from '../modules/combat/playerVfx.js';
 import { SnapshotBuffer } from './snapshotBuffer.js';
+import { InputSampler } from './inputSampler.js';
+import { onFocusLost } from './focusRelease.js';
+import { mergePeerStatics } from './peerStatics.js';
 import { dmgColorNum } from '../core/damageTypes.js';
 import { monsterCombatStats } from '@dm/shared';
 import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot, WorldSnapshotFull, PeerInfo } from '@dm/shared';
@@ -16,6 +19,13 @@ const INTERP_DELAY_MS = 100;
 const SELF_SMOOTH_TAU_MS = 45;
 /** Рассинхрон больше — телепорт (респавн/смена этажа/рывок): не сглаживаем, ставим мгновенно. */
 const SELF_SNAP_DIST = 120;
+/**
+ * ⭐ R6-03: клавиши, которые драйвер ПЕРЕХВАТЫВАЕТ (`preventDefault`), — только эти и только пока он жив: пробел (рывок)
+ * не жмёт кнопку, оставшуюся в фокусе, и не листает страницу; отпускание Alt не уводит в меню браузера. Буквам перехват
+ * не нужен вовсе: у Phaser он на всю страницу (слушатель на `window`, поле ввода не в счёт) и переживает сцену — после
+ * ухода на вход (R4-22) w/a/s/d/e/q и пробел не набирались ни в ник, ни в пароль, а «a» — в код комнаты в лобби.
+ */
+const GAME_CAPTURES = ['SPACE', 'SHIFT', 'ALT'];
 
 /** Текст лога по типу квестового события с сервера. */
 function questText(kind: 'accepted' | 'progress' | 'completed' | 'turned-in', name: string): string {
@@ -54,9 +64,16 @@ export class NetDriver {
   private keys: Record<'w' | 'a' | 's' | 'd' | 'shift' | 'space' | 'alt' | 'e' | 'q', Phaser.Input.Keyboard.Key>;
   private leftHeld = false;
   private rightHeld = false;
-  /** Предыдущее удержание по источнику ввода — для фронт-детекции нажатия тоглов. */
-  private wasHeld: Record<string, boolean> = {};
+  /** R4-20: отписка от потери фокуса окна. */
+  private offFocus: () => void;
+  /** R5-16: отписки от кадров сети — снимаются в `destroy`. */
+  private offNet: (() => void)[];
   private seq = 0;
+  /**
+   * R3-08: ввод уходит с частотой тика сервера, а не кадров (иначе на 90+ Гц сервер рвал сокет кодом 4008); фронт
+   * нажатия — в том же кадре. Сэмплер общий с веб-3D (L2): фронты и темп считаются одним кодом.
+   */
+  private input = new InputSampler();
   private latest?: WorldSnapshotFull;
   /** Буфер снапшотов для интерполяции чужих сущностей (пиры/монстры/снаряды). */
   private buffer = new SnapshotBuffer();
@@ -79,6 +96,7 @@ export class NetDriver {
           r: st?.r ?? 14,
           weaponKey: st?.weaponKey,
           armorModels: st?.armorModels,
+          weaponLook: st?.weaponLook,   // D22: 2D его не рисует, но форма игрока та же, что у 3D-клиента
         };
       }),
     };
@@ -97,39 +115,67 @@ export class NetDriver {
     this.vfx = new PlayerVfx(scene);
     const kb = scene.input.keyboard!;
     const K = Phaser.Input.Keyboard.KeyCodes;
+    // R6-03: `addKey(код, false)` — без перехвата (по умолчанию Phaser перехватывает каждую добавленную клавишу).
     this.keys = {
-      w: kb.addKey(K.W), a: kb.addKey(K.A), s: kb.addKey(K.S), d: kb.addKey(K.D),
-      shift: kb.addKey(K.SHIFT), space: kb.addKey(K.SPACE), alt: kb.addKey(K.ALT), e: kb.addKey(K.E), q: kb.addKey(K.Q),
+      w: kb.addKey(K.W, false), a: kb.addKey(K.A, false), s: kb.addKey(K.S, false), d: kb.addKey(K.D, false),
+      shift: kb.addKey(K.SHIFT, false), space: kb.addKey(K.SPACE, false), alt: kb.addKey(K.ALT, false),
+      e: kb.addKey(K.E, false), q: kb.addKey(K.Q, false),
     };
-    kb.addCapture(['SPACE', 'SHIFT', 'ALT']);
+    kb.addCapture(GAME_CAPTURES);
     scene.input.mouse?.disableContextMenu();
     scene.input.on('pointerdown', this.onDown);
     scene.input.on('pointerup', this.onUp);
+    // ⭐ R4-20: окно потеряло фокус — клавиши Phaser отпускает сам (BLUR игры), а кнопки мыши нет: pointerup достаётся
+    // другому окну, и удар «залипал» до следующего клика. (Без окна — стенд в node — отпускать нечего.)
+    this.offFocus = typeof window === 'undefined' ? () => undefined
+      : onFocusLost(window, document, () => { this.leftHeld = false; this.rightHeld = false; });
 
     // Ф1.1: статика игроков приходит отдельным кадром; сливаем её со снапшотом на приёме,
     // чтобы остальной код работал с привычной формой.
-    app.net.on('peerInfo', (f) => { for (const pi of f.peers) this.peerStatics.set(pi.id, pi); });
-    app.net.on('monsterInfo', (f) => {
-      for (const m of f.monsters) {
-        if (!this.monsters.has(m.id)) this.monsters.set(m.id, new Monster(this.scene, m.x, m.y, m.def));
-      }
-    });
-    app.net.on('peerJoined', (f) => { this.peerStatics.set(f.peer.id, f.peer); });
-    // Ф1.4: дельты применяет транспорт (`netClient`) — сюда приходит уже собранный мир.
-    app.net.on('snapshot', (f) => {
-      const merged = this.mergeSnapshot(f.snap);
-      this.latest = merged;
-      this.buffer.push(merged, performance.now());
-    });
-    app.net.on('events', (f) => this.onEvents(f.events));
-    app.net.on('saveUpdate', (f) => this.applySave(f.save));
-    app.net.on('peerLeft', (f) => { const r = this.remotes.get(f.id); r?.sprite.destroy(); r?.nose.destroy(); this.remotes.delete(f.id); this.peerStatics.delete(f.id); });
+    // ⭐ R5-16: подписки — с отписками: драйвер живёт одну сцену, а `NetClient` — всё приложение. Раньше снесённый
+    // драйвер (выход на вход / выбор героя и новый вход) слушал кадры до перезагрузки страницы — рисовал в снесённую сцену.
+    this.offNet = [
+      app.net.on('peerInfo', (f) => mergePeerStatics(this.peerStatics, f.peers)),
+      app.net.on('monsterInfo', (f) => {
+        for (const m of f.monsters) {
+          if (!this.monsters.has(m.id)) this.monsters.set(m.id, new Monster(this.scene, m.x, m.y, m.def));
+        }
+      }),
+      app.net.on('peerJoined', (f) => { this.peerStatics.set(f.peer.id, f.peer); }),
+      // Ф1.4: дельты применяет транспорт (`netClient`) — сюда приходит уже собранный мир.
+      app.net.on('snapshot', (f) => {
+        const merged = this.mergeSnapshot(f.snap);
+        this.latest = merged;
+        this.buffer.push(merged, performance.now());
+      }),
+      app.net.on('events', (f) => this.onEvents(f.events)),
+      app.net.on('saveUpdate', (f) => this.applySave(f.save)),
+      app.net.on('peerLeft', (f) => { const r = this.remotes.get(f.id); r?.sprite.destroy(); r?.nose.destroy(); this.remotes.delete(f.id); this.peerStatics.delete(f.id); }),
+    ];
   }
 
   setMyId(id: string): void { this.myId = id; }
 
+  /** Статика игроков из кадра `joined` (R2-03): те, кто уже в комнате, известны сразу, а не с их следующей экипировки. */
+  seedPeers(peers: readonly PeerInfo[]): void { mergePeerStatics(this.peerStatics, peers); }
+
   /** Сброс интерполяции/сглаживания при смене области (иначе лерп «протянет» через границу этажа). */
   resetInterpolation(): void { this.buffer.clear(); this.hasSmooth = false; }
+
+  /**
+   * R3-25: соединение потеряно — снести всё, что рисовалось из прошлой сессии: пиров (их `peerLeft` уже не придёт, и
+   * спрайты застыли бы на карте навсегда), монстров, снаряды, дропы и последний снапшот. Вход заново нарисует своё.
+   */
+  resetWorld(): void {
+    for (const m of this.monsters.values()) m.destroy();
+    for (const p of this.projs.values()) p.destroy();
+    for (const r of this.remotes.values()) { r.sprite.destroy(); r.nose.destroy(); }
+    for (const d of this.drops.values()) d.destroy();
+    this.monsters.clear(); this.projs.clear(); this.remotes.clear(); this.drops.clear();
+    this.peerStatics.clear();
+    this.latest = undefined;
+    this.resetInterpolation();
+  }
 
   /** Тогл ли забинженный узел (аура/стойка) — для фронт-детекции нажатия (иначе удержание мигает тоглом). */
   private isToggleSkill(nodeId: string): boolean {
@@ -160,37 +206,25 @@ export class NetDriver {
     this.rightHeld = p.rightButtonDown();
   };
 
-  /** Каждый кадр: шлём ввод, рисуем VFX, применяем последний снапшот. `dt` — мс с прошлого кадра. */
+  /**
+   * Каждый кадр: собираем ввод, рисуем VFX, применяем последний снапшот. `dt` — мс с прошлого кадра.
+   * ⚠ R3-08: ввод УХОДИТ не каждый кадр, а с частотой тика сервера; фронт нажатия — в том же кадре (`InputSampler`).
+   * Удержания сэмплируются каждый кадр, поэтому фронт не теряется между отправками.
+   */
   update(dt = 0): void {
-    const save = this.app.state!.save;
-    let attack = false;
-    let cast: string | null = null;
-    const consider = (b: string | null | undefined, held: boolean, src: string): void => {
-      const prev = this.wasHeld[src] ?? false;
-      this.wasHeld[src] = held;
-      if (!held || !b) return;
-      if (b === 'attack') { attack = true; return; }
-      // Тогл (аура/стойка): шлём каст ТОЛЬКО по фронту нажатия — иначе удержание переключает
-      // его каждый тик, и аура «мигает»/сбрасывается. Обычные удары/касты — как раньше (по удержанию).
-      if (this.isToggleSkill(b) && prev) return;
-      if (cast == null) cast = b;
-    };
-    consider(save.mouseLeft, this.leftHeld, 'L');
-    consider(save.mouseRight, this.rightHeld, 'R');
-    consider(save.hotbar[0], this.keys.shift.isDown, 'S');
-    consider(save.hotbar[1], this.keys.q.isDown, 'Q');   // бывший Space-слот перевешен на Q (Space → уклонение)
-    consider(save.hotbar[2], this.keys.alt.isDown, 'A');
-    // Пробел = УКЛОНЕНИЕ (dodge-рывок), эджево (только в кадр нажатия): рывок в направлении WASD (стоя — к прицелу).
-    const spaceDown = this.keys.space.isDown;
-    const dodge = spaceDown && !(this.wasHeld['dodge'] ?? false);
-    this.wasHeld['dodge'] = spaceDown;
-
-    const move = {
-      x: (this.keys.d.isDown ? 1 : 0) - (this.keys.a.isDown ? 1 : 0),
-      y: (this.keys.s.isDown ? 1 : 0) - (this.keys.w.isDown ? 1 : 0),
-    };
-    // Клавиша E — подбор ближайшего дропа (удержание надёжно: сервер сэмплит каждый тик). Клик по предмету — точечно (onDown).
-    this.app.net.send({ t: 'input', seq: this.seq++, input: { move, facing: this.player.facing, attack, cast, interact: this.keys.e.isDown, dodge } });
+    // ЛКМ/ПКМ + Shift/Q/Alt — по биндам сейва; тоглы (аура/стойка) — по фронту; пробел — рывок (фронт);
+    // E — подбор ближайшего дропа (удержание: сервер сэмплит каждый тик). Клик по предмету — точечно (onDown).
+    const s = this.input.frame(dt, this.app.state!.save, {
+      L: this.leftHeld, R: this.rightHeld, S: this.keys.shift.isDown, Q: this.keys.q.isDown, A: this.keys.alt.isDown,
+      dodge: this.keys.space.isDown, interact: this.keys.e.isDown,
+    }, (id) => this.isToggleSkill(id));
+    if (s.due) {
+      const move = {
+        x: (this.keys.d.isDown ? 1 : 0) - (this.keys.a.isDown ? 1 : 0),
+        y: (this.keys.s.isDown ? 1 : 0) - (this.keys.w.isDown ? 1 : 0),
+      };
+      this.app.net.send({ t: 'input', seq: this.seq++, input: { move, facing: this.player.facing, attack: s.attack, cast: s.cast, interact: s.interact, dodge: s.dodge } });
+    }
 
     // VFX: форма удара рисуется по СОБЫТИЮ `swing` с сервера (реальный удар, мана/КД учтены) — см.
     // onEvents; здесь только кольца аур + телеграф текущих свингов (позиция/поворот live).
@@ -351,9 +385,13 @@ export class NetDriver {
   }
 
   destroy(): void {
+    for (const off of this.offNet) off();   // R5-16: кадры сети этому драйверу больше не нужны
+    this.offNet = [];
+    this.scene.input.keyboard?.removeCapture(GAME_CAPTURES);   // R6-03: выход сцены клавиши сносит, а перехват — нет
     this.vfx.destroy();
     this.scene.input.off('pointerdown', this.onDown);
     this.scene.input.off('pointerup', this.onUp);
+    this.offFocus();
     for (const m of this.monsters.values()) m.destroy();
     for (const p of this.projs.values()) p.destroy();
     for (const r of this.remotes.values()) { r.sprite.destroy(); r.nose.destroy(); }
