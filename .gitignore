@@ -17,3 +17,4 @@ tools/deploy/local.claude.json
 # Наборы мокапа для загрузки в редактор (пересобираются `tools/mocapSet.ts`, в git не нужны).
 mocap_core.json
 mocap_test.json
+packages/client/public/mocap/

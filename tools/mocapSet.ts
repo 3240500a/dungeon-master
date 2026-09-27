@@ -14,7 +14,7 @@
  * ⚠ `FBXLoader` в node требует заглушки `window` — в пакете лежат камеры Motionbuilder, а он читает
  *   `window.innerWidth`. В браузере-редакторе это неважно.
  */
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { openBakeSource, bakeFromSource, type BakeSource } from '../packages/client/src/render3d/clipBaker.js';
 import { isStaticBake, stitchLocoClip } from '../packages/client/src/render3d/clipImport.js';
@@ -25,6 +25,14 @@ import { readRootYawCurves, sampleCurve, type RootYawCurve } from './fbxRootCurv
 const DIR = process.env['MAP_DIR']
   ?? 'C:/work/Games_Art/Games_Art/top_down/dungeon/Assets/MovementAnimsetPro/Animations';
 const OUT = process.cwd();
+/**
+ * ⭐ ВТОРАЯ КОПИЯ — В `public` КЛИЕНТА, чтобы редактор мог перезалить набор В ОДИН КЛИК (`/mocap/…`),
+ * без окна выбора файла и без абсолютных путей в коде. Обе копии в `.gitignore`: файлы пересобираются
+ * этим скриптом. ⚠ Клипы живут в localStorage БРАУЗЕРА и на сервер не публикуются автоматически —
+ * поэтому перезалив обязан быть дешёвым: набор перепекается часто, и «старый клип остался рядом»
+ * уже стоил владельцу вечера.
+ */
+const PUB = path.join(OUT, 'packages', 'client', 'public', 'mocap');
 const D = 180 / Math.PI;
 
 /**
@@ -92,7 +100,13 @@ async function main(): Promise<void> {
     }
   }
   const core = takes.map((t) => bakeTake(t.take, t.clip, t.cyclic, t));
-  writeFileSync(path.join(OUT, 'mocap_core.json'), JSON.stringify(core));
+  mkdirSync(PUB, { recursive: true });
+  const put = (file: string, data: unknown): void => {
+    const txt = JSON.stringify(data);
+    writeFileSync(path.join(OUT, file), txt);
+    writeFileSync(path.join(PUB, file), txt);
+  };
+  put('mocap_core.json', core);
 
   // Контроль поворотов: канал несёт угол, а таз в клипе НЕ крутится ему навстречу.
   for (const t of takes.filter((x) => x.rootYaw)) {
@@ -128,7 +142,7 @@ async function main(): Promise<void> {
       test.push(bakeTake(t.take, t.clip, t.cyclic, t));
     }
   }
-  writeFileSync(path.join(OUT, 'mocap_test.json'), JSON.stringify(test));
+  put('mocap_test.json', test);
 
   console.log(`\nстандартный набор: ${core.length} клипов → mocap_core.json`);
   console.log(`тестовый набор:    ${test.length} клипов → mocap_test.json  (сшитых ${Object.keys(STITCH).length}, дополнительных ${extraSeen.size})`);

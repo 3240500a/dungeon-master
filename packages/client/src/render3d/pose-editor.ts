@@ -4047,27 +4047,72 @@ function clipSection(): void {
     // ни автоматизации, ни тесту — подставить в него файл нечем, а нативное окно выбора не нажимается.
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = '.json'; inp.style.display = 'none'; inp.id = 'pe-load-clips';
+    /**
+     * ⭐ ОДИН ШОВ РАЗБОРА для обоих путей: файл из окна выбора и файл, взятый с dev-сервера кнопкой
+     * перезалива. Разными их делать нельзя — «загрузил по кнопке» и «загрузил файлом» обязаны класть
+     * клипы ОДИНАКОВО, иначе одна из дорог тихо разойдётся с другой.
+     */
+    const applyClips = (txt: string, src: string): void => {
+      let raw: unknown;
+      try { raw = JSON.parse(txt); } catch { alert(src + ': не JSON'); return; }
+      const arr = Array.isArray(raw) ? raw : (raw as { clips?: unknown[] }).clips;
+      if (!Array.isArray(arr) || !arr.length) { alert(src + ': в файле нет массива клипов'); return; }
+      const clips = arr.map(migrateClip).filter((c) => c.name && Array.isArray(c.keys) && c.keys.length);
+      if (!clips.length) { alert(src + ': клипы не разобрались'); return; }
+      const busy = clips.filter((c) => library.some((x) => x.character === curCharId && x.weapon === weapon && x.name === c.name));
+      /**
+       * ⚠ ДВА РАЗНЫХ НАМЕРЕНИЯ, И ПУТАТЬ ИХ НЕЛЬЗЯ. «Положить рядом» нужно, когда несут ЧУЖОЙ набор.
+       * «Заменить» — когда несут ПЕРЕПЕЧЁННЫЙ СВОЙ: суффиксы оставляют в библиотеке МЁРТВЫЕ старые клипы,
+       * а игра и редактор берут ПЕРВЫЙ по имени, то есть продолжают играть СТАРОЕ. Ровно на этом владелец
+       * и потерял время: смотрел «новый» набор, а видел клип до правки.
+       */
+      let mode: 'replace' | 'rename' = 'rename';
+      if (busy.length) {
+        mode = confirm(`${src}: клипов в файле ${clips.length}, из них ${busy.length} с ЗАНЯТЫМИ именами`
+          + ` (персонаж «${curChar().name}», оружие «${weapon}»).\n\n`
+          + `ОК — ЗАМЕНИТЬ одноимённые: перезалив перепечённого набора, метки шагов и звука переносятся долей цикла.\n`
+          + `Отмена — положить РЯДОМ, занятые имена получат суффикс.`) ? 'replace' : 'rename';
+      } else if (!confirm(`${src}: положить ${clips.length} клипов персонажу «${curChar().name}», оружие «${weapon}»?`)) return;
+      const names: string[] = [];
+      let carried = 0;
+      histLib('загрузка клипов из файла', () => {
+        for (const c of clips) {
+          c.character = curCharId; c.weapon = weapon;
+          let put = c;
+          if (mode === 'replace') {
+            // Метки расставлены РУКАМИ и запеканию не принадлежат — переносим их со старой версии клипа.
+            const old = library.find((x) => x.character === curCharId && x.weapon === weapon && x.name === c.name);
+            if (old) { const withMarks = carryMarks(old, c); if (withMarks !== c) { carried++; put = withMarks; } }
+          }
+          names.push(putClip(put, mode)?.name ?? put.name);
+        }
+        saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === names[0])); frameIdx = 0; refreshAll();
+      });
+      const renamed = names.filter((n, i) => n !== clips[i]!.name);
+      alert(`положено ${names.length}`
+        + (mode === 'replace' ? `\nзаменено одноимённых: ${busy.length}` + (carried ? `, перенесено меток с ${carried}` : '') : '')
+        + (renamed.length ? `\n⚠ имена были заняты: ${renamed.join(', ')}` : ''));
+    };
     inp.onchange = () => {
       const f = inp.files?.[0]; if (!f) return;
-      void f.text().then((txt) => {
-        let raw: unknown;
-        try { raw = JSON.parse(txt); } catch { alert('не JSON'); return; }
-        const arr = Array.isArray(raw) ? raw : (raw as { clips?: unknown[] }).clips;
-        if (!Array.isArray(arr) || !arr.length) { alert('в файле нет массива клипов'); return; }
-        const clips = arr.map(migrateClip).filter((c) => c.name && Array.isArray(c.keys) && c.keys.length);
-        if (!clips.length) { alert('клипы не разобрались'); return; }
-        if (!confirm(`Положить ${clips.length} клипов персонажу «${curChar().name}», оружие «${weapon}»?\nНичего не затрётся: занятое имя получит суффикс.`)) return;
-        const names: string[] = [];
-        histLib('загрузка клипов из файла', () => {
-          for (const c of clips) { c.character = curCharId; c.weapon = weapon; names.push(putClip(c, 'rename')?.name ?? c.name); }
-          saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === names[0])); frameIdx = 0; refreshAll();
-        });
-        const renamed = names.filter((n, i) => n !== clips[i]!.name);
-        alert(`положено ${names.length}` + (renamed.length ? `\n⚠ имена были заняты: ${renamed.join(', ')}` : ''));
-        inp.value = '';                                  // иначе тот же файл второй раз не выберется
-      });
+      void f.text().then((txt) => { applyClips(txt, f.name); inp.value = ''; });   // иначе тот же файл второй раз не выберется
     };
-    row1.append(inp, pbtn('📦 загрузить', () => inp.click()));
+    /**
+     * ⭐ ПЕРЕЗАЛИВ НАБОРА В ОДИН КЛИК. Набор мокапа пересобирается скриптом `tools/mocapSet.ts`, и тот же
+     * скрипт кладёт копию в `public/mocap/` — отсюда её и берём, без окна выбора файла и без абсолютных
+     * путей в коде. ⚠ Клипы живут в localStorage БРАУЗЕРА и на сервер сами не уезжают, поэтому после
+     * каждого перезапекания набор надо занести сюда руками; дешёвый перезалив — единственное, что спасает
+     * от «смотрю новый набор, а вижу клип до правки».
+     */
+    const reload = (file: string, label: string): void => {
+      void fetch('/mocap/' + file).then((r) => {
+        if (!r.ok) { alert(`${label}: файла нет (${r.status}).\nСобери набор: node node_modules/tsx/dist/cli.mjs tools/mocapSet.ts`); return; }
+        return r.text().then((txt) => { applyClips(txt, label); });
+      }).catch((e: unknown) => { alert(`${label}: ${String(e)}`); });
+    };
+    row1.append(inp, pbtn('📦 загрузить', () => inp.click()),
+      pbtn('⟳ мокап: ядро', () => { reload('mocap_core.json', 'мокап-ядро (15)'); }),
+      pbtn('⟳ мокап: тест', () => { reload('mocap_test.json', 'мокап-тест (68)'); }));
   }
   if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
