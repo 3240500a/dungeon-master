@@ -366,6 +366,9 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       const r = bakeFromSource(src!, {
         ...o, animationIndex: i, name: t.clip, loop: t.cyclic, locoSet: true, bakeId,
         anchorIdle: false, fps: 60,
+        // ⚠ БЕЗ ПИНОВ СТОП: у мокапа стопы уже верны, а холостой прогон солвера ломает ногу на бегу
+        // (голень ложится вдоль полюса — замер 3.1°, мировой скачок голени 179°). См. `mocapSetMap.ts`.
+        limbLock: { LF: false, RF: false },
         rootYaw: t.rootYaw ?? false, yawFromFeet: t.yawFromFeet ?? false, rootPos: true,
         startSec: t.trim ? t.trim[0] * dur : undefined,
         endSec: t.trim ? t.trim[1] * dur : undefined,
