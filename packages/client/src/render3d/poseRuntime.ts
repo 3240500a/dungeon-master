@@ -109,12 +109,17 @@ export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: numb
  * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (в сумме ~1 → голова доходит до прицела).
  * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше сегментов/порог, лёгкая → свободнее).
  */
-export interface TwistProfile { threshold: number; turnRate: number; maxTwist: number; relaxTime: number; weights: [number, number, number, number, number]; headLook: number; headPitch: number }
+export interface TwistProfile { threshold: number; turnRate: number; turnClipRate: number; maxTwist: number; relaxTime: number; weights: [number, number, number, number, number]; headLook: number; headPitch: number }
+// turnClipRate — ТЕМП КЛИПА ПОВОРОТА (множитель к его собственному времени). Ветка клипа своей скорости не имела вовсе:
+// таз там ведёт клип, и поворот шёл ровно столько, сколько он длится. У Kubold 90° занимают 1.300 с (69 °/с), а наши
+// запечённые — 0.68 с (132 °/с): вдвое быстрее, и к этому темпу автор привык. Отсюда умолчание 2.
+// ⚠ Ускоряется ВРЕМЯ КЛИПА, а не отдельно таз: и курс (`turnYawAt`), и подшаги берутся из одного времени,
+// поэтому стопы с тазом не разъезжаются — ровно то, ради чего клип и ведёт поворот.
 // headLook 0..1: стабилизация ГОЛОВЫ на прицел в МИР-yaw (компенсирует свинг корпуса от удара). 1 = строго на курсор, 0 = голова
 // целиком едет с телом (старое поведение). ~0.85 = смотрит на курсор + чуть гуляет (подмес движения). Зовётся ПОСЛЕ applyTorsoTwist.
 // headPitch (рад): ЦЕЛЕВОЙ кивок головы (0 = ровно/горизонт, <0 = смотрит вниз). Убирает НАСЛЕДОВАННЫЙ кивок от свинга корпуса
 // (удар качает грудь/спину → голова-ребёнок ныряет). Тем же весом headLook голова уводится к этому кивку, а не к свинг-нырку.
-export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, maxTwist: 1.4, relaxTime: 1.2, weights: [0.15, 0.25, 0.30, 0.15, 0.15], headLook: 0.85, headPitch: 0 });
+export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, turnClipRate: 2, maxTwist: 1.4, relaxTime: 1.2, weights: [0.15, 0.25, 0.30, 0.15, 0.15], headLook: 0.85, headPitch: 0 });
 // Скрутка корпуса настраивается ПО СОСТОЯНИЮ ДВИЖЕНИЯ (стой/ходьба/бег) — в игре эффективный профиль блендится ПЛАВНО
 // по скорости (3 якоря), в редакторе каждая кнопка правит свой профиль. Хранилище pe_twist: либо плоский (легаси —
 // применяется на все 3), либо { stand?, walk?, run? } частичных профилей.
@@ -144,6 +149,7 @@ const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
 /** Записать смешанный профиль скрутки в out (in-place, БЕЗ аллокаций — для горячего цикла). */
 function lerpTwistInto(out: TwistProfile, a: TwistProfile, b: TwistProfile, t: number): TwistProfile {
   out.threshold = lerpN(a.threshold, b.threshold, t); out.turnRate = lerpN(a.turnRate, b.turnRate, t);
+  out.turnClipRate = lerpN(a.turnClipRate, b.turnClipRate, t);
   out.maxTwist = lerpN(a.maxTwist, b.maxTwist, t); out.relaxTime = lerpN(a.relaxTime, b.relaxTime, t);
   out.headLook = lerpN(a.headLook, b.headLook, t); out.headPitch = lerpN(a.headPitch, b.headPitch, t);
   for (let i = 0; i < 5; i++) out.weights[i] = lerpN(a.weights[i]!, b.weights[i]!, t);
@@ -2801,7 +2807,9 @@ export class PosePlayer {
         return null;                                                  // курс — снова у обычного доворота, от текущего
       }
       this.turnMode = true;
-      t.t += dt;
+      // Темп клипа: 1 = авторский, 2 = как у наших запечённых поворотов. Зажим — чтобы кривая не проскакивала
+      // мимо ключей (слишком быстро) и чтобы ноль не подвесил поворот навсегда.
+      t.t += dt * clamp(twist.turnClipRate || 1, 0.25, 4);
       this.rootYaw = t.startYaw + turnYawAt(t.clip, t.t);
       if (t.t >= dur) { this.turn = null; this.replantPlanner(); }   // встал в стойку на новом курсе → стопы туда же
       return { rootYaw: this.rootYaw, residual: clampTw(wrapPi(this.aimYaw - this.rootYaw)), turning: true };

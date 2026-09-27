@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, TWIST_STATES_DEFAULT, TWIST_DEFAULT, lerpTwist, type PoseContent } from './poseRuntime.js';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { GAIT } from './gaitKnobs.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, BAKE_MAXSPD } from './clipBake.js';
@@ -222,6 +224,54 @@ describe('поворот на месте в рантайме', () => {
     expect(r.contactChanges, '⚠ ход не забрал ноги у недоигранного поворота').toBeGreaterThan(2);
   });
 
+  /**
+   * ⭐⭐ ТЕМП КЛИПА ПОВОРОТА — РУЧКА, А НЕ ДЛИТЕЛЬНОСТЬ ФАЙЛА. Жалоба: «на месте очень медленно крутится».
+   * Ветка клипа своей скорости не имела вовсе: поворот шёл ровно столько, сколько длится клип.
+   * ЗАМЕР, почему умолчание 2: наши запечённые повороты идут 132 °/с на 90° (0.68 с), а мокап Kubold —
+   * 69 °/с (1.30 с), вдвое медленнее привычного.
+   * ⚠ Ускоряется ВРЕМЯ КЛИПА целиком: и курс (`turnYawAt`), и подшаги берутся из ОДНОГО времени, поэтому
+   * стопы с тазом не разъезжаются — это и проверяется вторым числом.
+   */
+  it('⭐⭐ ТЕМП КЛИПА УСКОРЯЕТ ПОВОРОТ ВО СТОЛЬКО ЖЕ, А ОПОРА ОСТАЁТСЯ НА МЕСТЕ', () => {
+    const lib = bake(true);
+    const run = (rate: number): { frames: number; yaw: number; slide: number } => {
+      const h = buildHumanoid({});
+      const base = localStorageContent('warrior');
+      const content = { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } };
+      const st = TWIST_STATES_DEFAULT();
+      for (const k of ['stand', 'walk', 'run'] as const) st[k].turnClipRate = rate;
+      const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid(), st);
+      setLocoMixOverride(1);
+      p.setVel(0, 0); p.setYaw(0); p.snapYaw();
+      for (let i = 0; i < 120; i++) p.step(1 / 60);
+      p.setYaw(rad(90));
+      // ⚠ СЧИТАЕМ С МОМЕНТА ПОЯВЛЕНИЯ КЛИПА: поворот запускается не сразу — он ждёт, пока прицел
+      // успокоится (`TURN_SETTLE_SEC`). Считать с нуля значило бы мерить задержку решения, а не темп.
+      let frames = -1, slide = 0, started = -1, planted: THREE.Vector3 | null = null;
+      for (let i = 0; i < 300; i++) {
+        p.step(1 / 60); h.root.updateMatrixWorld(true);
+        if (p.turnClipName) {
+          if (started < 0) started = i;
+          const sup = p.groundSupport;
+          const leg = sup[0] ? 0 : sup[1] ? 1 : -1;
+          if (leg >= 0) {
+            const f = h.bones.get(leg === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(new THREE.Vector3());
+            if (!planted) planted = f; else slide = Math.max(slide, Math.hypot(f.x - planted.x, f.z - planted.z));
+          } else planted = null;
+        } else if (started >= 0 && frames < 0) { frames = i - started; break; }
+      }
+      return { frames, yaw: p.pelvisYaw, slide };
+    };
+    const one = run(1), two = run(2);
+    expect(one.frames, 'поворот на обычном темпе обязан закончиться').toBeGreaterThan(4);
+    // Вдвое быстрее — вдвое короче. Допуск ±3 кадра: конец ловится по исчезновению клипа, это дискретно.
+    expect(Math.abs(two.frames - one.frames / 2), `×1 занял ${one.frames} кадров, ×2 — ${two.frames}`).toBeLessThan(3);
+    // ⚠ Курс доезжает до той же величины, а не обрывается раньше.
+    expect(Math.abs(two.yaw - one.yaw) * 180 / Math.PI, 'конечный курс таза').toBeLessThan(6);
+    // ⚠ И связь таза со стопами не рвётся: опорная стопа стоит не хуже, чем на обычном темпе.
+    expect(two.slide, `скольжение опоры: ×1 ${one.slide.toFixed(2)}, ×2 ${two.slide.toFixed(2)}`)
+      .toBeLessThan(Math.max(0.5, one.slide * 2 + 0.2));
+  });
 });
 
 describe('шов клипа поворота: таз и ноги не прыгают (жалоба 17.09 «при повороте дёргается вверх-вниз»)', () => {
@@ -539,6 +589,8 @@ describe('шов клипа поворота: таз и ноги не прыга
     expect(tail, `⚠ ноги ${tail.toFixed(2)}° за кадр после смены (снап вне шва ${s.leg[still]!.toFixed(2)}°)`).toBeLessThan(s.leg[still]! * 0.25);
   });
 
+
+
 });
 
 describe('запекание поворотов', () => {
@@ -583,5 +635,43 @@ describe('запекание поворотов', () => {
     setLocoMixOverride(1);
     const got = bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' }, [spec])[0]!;
     expect(Math.abs(clipDur(got.clip) - clipDur(ref.clip)), `⚠ клип снят с уже запечённого: ${clipDur(got.clip).toFixed(2)} с против ${clipDur(ref.clip).toFixed(2)}`).toBeLessThan(0.1);
+  });
+});
+
+/**
+ * ⚠⚠ СМЕСЬ ПРОФИЛЕЙ СКРУТКИ КОПИРУЕТ ПОЛЯ ПОИМЁННО — И ЭТО ТЕРЯЕТ НОВЫЕ МОЛЧА.
+ *
+ * Поймано на себе: добавил `turnClipRate` (темп клипа поворота), а `lerpTwistInto` его не переносил.
+ * В `stepTurn` приходил общий scratch с умолчанием, и ручка НЕ ДЕЙСТВОВАЛА вовсе — при этом ни один тест
+ * не падал, потому что умолчание само по себе разумное. Ровно тот случай, ради которого пишут структурный
+ * сторож: он читает поля ТИПА, а не список, который надо помнить.
+ */
+describe('профиль скрутки: смесь не теряет поля', () => {
+  const SRC = readFileSync(path.join(__dirname, 'poseRuntime.ts'), 'utf8');
+
+  it('⭐⭐ КАЖДОЕ ЧИСЛОВОЕ ПОЛЕ ПРОФИЛЯ ПЕРЕНОСИТСЯ СМЕСЬЮ', () => {
+    const a = TWIST_DEFAULT();
+    const b = TWIST_DEFAULT();
+    // Каждому полю — СВОЁ, заведомо отличное значение: совпадение с умолчанием прошло бы мимо.
+    let n = 1;
+    for (const k of Object.keys(b) as (keyof typeof b)[]) {
+      if (typeof b[k] === 'number') (b[k] as number) = (b[k] as number) + 0.37 * n++;
+      else if (Array.isArray(b[k])) (b[k] as number[]).forEach((_, i) => { (b[k] as number[])[i] = 0.11 * (i + 1); });
+    }
+    const out = lerpTwist(a, b, 1);
+    // ⚠ Сравнение ЧИСЛАМИ с допуском, а не строками: `lerp(x, y, 1)` даёт y с точностью double
+    // (0.11 превращается в 0.11000000000000001), и строковое равенство поймало бы само округление.
+    const same = (x: unknown, y: unknown): boolean =>
+      typeof x === 'number' && typeof y === 'number' ? Math.abs(x - y) < 1e-9
+        : Array.isArray(x) && Array.isArray(y) ? x.length === y.length && x.every((v, i) => Math.abs(v - y[i]) < 1e-9)
+          : JSON.stringify(x) === JSON.stringify(y);
+    const lost = (Object.keys(b) as (keyof typeof b)[]).filter((k) => !same(out[k], b[k]));
+    expect(lost, '⚠ смесь не перенесла поля — ручка будет молча не действовать').toEqual([]);
+  });
+
+  it('⭐ и сама ручка темпа объявлена с умолчанием 2 (наш привычный темп против авторского)', () => {
+    expect(TWIST_DEFAULT().turnClipRate).toBe(2);
+    // ⚠ Поле обязано быть в списке переноса — сторож выше это и ловит, здесь только адресная подпись.
+    expect(SRC).toMatch(/out\.turnClipRate = lerpN\(a\.turnClipRate, b\.turnClipRate, t\)/);
   });
 });

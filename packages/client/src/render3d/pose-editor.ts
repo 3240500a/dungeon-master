@@ -5531,6 +5531,9 @@ function renderTurn(): void {
   grpT(`скрутка корпуса — ${lblMv[turnTestMove]} (кнопки ↑ переключают режим)`);
   sl('порог таза (°)', () => editTwist().threshold * R2D, (d) => { editTwist().threshold = d / R2D; }, 5, 90, 1, saveTwistCfg, deg);
   sl('скорость доворота (рад/с)', () => editTwist().turnRate, (v) => { editTwist().turnRate = v; }, 1, 8, 0.25, saveTwistCfg);
+  // ⚠ ЭТО ДРУГАЯ СКОРОСТЬ: выше — сервопривод таза БЕЗ клипа, здесь — темп САМОГО клипа поворота.
+  // 1 = как записано у автора (у мокапа Kubold 90° за 1.30 с = 69 °/с), 2 = как у наших запечённых (132 °/с).
+  sl('темп клипа поворота (×)', () => editTwist().turnClipRate, (v) => { editTwist().turnClipRate = v; }, 0.25, 4, 0.25, saveTwistCfg);
   sl('макс. скрутка верха (°)', () => editTwist().maxTwist * R2D, (d) => { editTwist().maxTwist = d / R2D; }, 20, 120, 5, saveTwistCfg, deg);
   sl('выравнивание, прицел стабилен (с)', () => editTwist().relaxTime, (v) => { editTwist().relaxTime = v; }, 0.2, 3, 0.1, saveTwistCfg);
   sl('голова: смотреть на прицел (0=с телом, 1=на курсор)', () => editTwist().headLook, (v) => { editTwist().headLook = v; }, 0, 1, 0.05, saveTwistCfg);

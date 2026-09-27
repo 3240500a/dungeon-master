@@ -4,7 +4,7 @@ import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { groundFeet } from './footIk.js';
 import { flipPose, clipDur, clipPoseAt, clipChannelAt, hipsOffset, setHipsOffset, type Clip, type Pose } from './clipModel.js';
 import { turnYawAt, turnSupportAt } from './turnInPlace.js';
-import { localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
+import { TWIST_DEFAULT, localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
 import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeTurnToClip, bakeTurnSet, defaultReadPose, TURN_PRESETS } from './clipBake.js';
 import {
@@ -481,7 +481,10 @@ describe('⭐ таз клипа поворота: игра (настоящий `
         if (!cn) { if (j >= 0) break; continue; }
         if (j < 0) { startYaw = p.pelvisYaw; out.played = cn; }
         j++;
-        const c = lib.get(cn)!, t = j / 60;
+        // ⚠ ВРЕМЯ КЛИПА ≠ ВРЕМЯ ПО ЧАСАМ с тех пор, как у поворота появился ТЕМП (`twist.turnClipRate`):
+        // игра крутит клип быстрее, чем идут секунды. Равенство «таз игры = показ манекена» проверяется
+        // НА ОДНОМ ВРЕМЕНИ КЛИПА — его и считаем тем же множителем, что у плеера, а не цифрой из головы.
+        const c = lib.get(cn)!, t = (j / 60) * p.twistStates.stand.turnClipRate;
         expect(Math.abs(p.pelvisYaw - (startYaw + turnYawAt(c, t))), 'время клипа сошлось с курсом игры').toBeLessThan(1e-9);
         if (j < 10) continue;                                            // шов старта (0.15 с) ещё идёт
         const pose = clipPoseAt(c, Math.min(1, t / (clipDur(c) || 1)));
@@ -512,7 +515,10 @@ describe('⭐ таз клипа поворота: игра (настоящий `
           const g = playTurn(lib, name, h0, deg, 1);
           const msg = `${en}, старт ${h0}°: ${g.deg.toFixed(3)}° / ${g.u.toFixed(3)}u за ${g.frames} кадров`;
           expect(g.played, msg).toBe(name);
-          expect(g.frames, msg).toBeGreaterThan(15);
+          // ⚠ Порог в КАДРАХ ПО ЧАСАМ, а клип с 27.09 крутится вдвое быстрее (`twist.turnClipRate`), то есть
+          // тех же кадров стало вдвое меньше. Сторож бережёт не число 15, а «клип реально играл, а не мигнул»,
+          // поэтому порог делим на тот же множитель, а не подгоняем под новый результат.
+          expect(g.frames, msg).toBeGreaterThan(15 / TWIST_DEFAULT().turnClipRate);
           expect(Math.abs(g.course) / D, `${msg}: поворот сыграл целиком`).toBeGreaterThan(Math.abs(deg) * 0.7);
           expect(g.deg, msg).toBeLessThan(0.2);
           expect(g.u, msg).toBeLessThan(0.05);
