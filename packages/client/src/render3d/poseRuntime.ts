@@ -3208,7 +3208,14 @@ export class PosePlayer {
           }
           return sumW > 1e-6 ? sum / sumW : null;
         };
-        const cycle = mixed((c) => bakedLocoSpeed(c) * (clipDur(c) || 1)) ?? 0;
+        /**
+         * ⚠⚠ ДЛИНА ЦИКЛА — ПО СЕКЦИИ ЦИКЛА, А НЕ ПО ВСЕМУ КЛИПУ. У сшитого клипа («разгон + цикл +
+         * остановка», метки `loop_start`/`loop_end`) полная длительность втрое больше самого цикла, и
+         * часы `clipPhase += 2π·spd·dt/cycle` пошли бы втрое медленнее: ноги переступают едва-едва, пока
+         * земля уезжает. ЗАМЕР на сшитом `walk_fwd` из мокапа: клип 2.60 с при цикле 1.00 с — темп ×0.38.
+         * У обычного цикличного клипа `loopStart = 0`, `loopEnd = dur`, то есть формула та же бит в бит.
+         */
+        const cycle = mixed((c) => { const sc = clipSections(c); return bakedLocoSpeed(c) * ((sc.loopEnd - sc.loopStart) || clipDur(c) || 1); }) ?? 0;
         if (cycle > 1e-3) this.clipPhase += (2 * Math.PI) * spd * dt / cycle;
         // ⭐ ДОЛЯ ОПОРЫ — ТА, С КОТОРОЙ КЛИП СНЯТ: ось планировщика на СКОРОСТИ ЗАПЕКАНИЯ клипа, а не на текущей скорости.
         // Чистый набор (40 / 120 при speedWalk ≥ 40, speedRun ≤ 120) даёт ровно dutyWalk / dutyRun, и смесь равна

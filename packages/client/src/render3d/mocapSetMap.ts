@@ -112,69 +112,78 @@ const CORE: readonly MocapTake[] = [
 ];
 
 /**
- * ДОПОЛНИТЕЛЬНОЕ СОДЕРЖИМОЕ. Имена все с приставкой `mocap_` — НАМЕРЕННО, по двум причинам:
- * 1. рантайм их пока не читает вовсе (машина секций старт/остановка написана, но меток никто не ставит;
- *    колонок 45°/135° в бленде нет) — приставка не даёт принять содержимое за работающую механику;
- * 2. `locoSetAudit.isGait` считает клипом ХОДА всё, что начинается на `walk_`/`run_`, и без приставки
- *    двадцать этих клипов встали бы в панель покрытия ложными дефектами `stale_speed`.
- * Появится машина — переименовать по одному клику каждый.
+ * ДОПОЛНИТЕЛЬНОЕ СОДЕРЖИМОЕ — В НАШЕЙ ЖЕ КОНВЕНЦИИ ИМЁН (`walk_*` / `run_*`), а не с приставкой.
+ *
+ * ⚠ Раньше здесь стояла приставка `mocap_`, и довод был такой: «`locoSetAudit.isGait` считает клипом ХОДА
+ * всё, что начинается на `walk_`/`run_`, и без приставки два десятка клипов встали бы в панель покрытия
+ * ложными дефектами». Довод НЕВЕРЕН — проверено по коду: `auditChar` обходит РОВНО `REQUIRED_NAMES`
+ * (`locoSetAudit.ts:86`), а `isGait` лишь отсеивает внутри этого списка. Клипа, которого движок не
+ * спрашивает, аудит не видит вовсе.
+ *
+ * Цена ошибки была ровно та, на которую пожаловался автор: редактор раскладывает клипы по видам по
+ * ПРИСТАВКЕ (`pose-editor.clipKind`: `^(idle|walk|run|strafe|turn)(_|$)` → «ходьба»), и полсотни стартов,
+ * остановок и диагоналей лежали в «прочем» вперемешку со стойками и ударами.
+ *
+ * Имена не могут столкнуться с ядром: ядро — это ровно 15 имён без суффиксов (`walk_fwd`), а здесь у всех
+ * есть суффикс (`walk_fwd_start`, `walk_fwd_stop_L`). Сторож на неповторяемость имён держит это.
+ * Запасные айдлы остаются `mocap_idle2…6`: они НЕ локомоция, и в «ходьбу» им не надо.
  */
 const EXTRA: readonly MocapTake[] = [
   // Остановки ПО ОПОРНОЙ НОГЕ — то, чем лечится замеренный прокат 10.71 / 15.74 ед («рампой торможения НЕ лечится»).
-  { take: 'WalkFwdStop_LU', clip: 'mocap_walk_fwd_stop_L', cyclic: false, note: 'остановка ходьбы, левая нога поднята' },
-  { take: 'WalkFwdStop_RU', clip: 'mocap_walk_fwd_stop_R', cyclic: false, note: 'остановка ходьбы, правая поднята' },
-  { take: 'RunFwdStop_LU', clip: 'mocap_run_fwd_stop_L', cyclic: false, note: 'остановка бега, левая поднята' },
-  { take: 'RunFwdStop_RU', clip: 'mocap_run_fwd_stop_R', cyclic: false, note: 'остановка бега, правая поднята' },
-  { take: 'WalkBwdStop_LU', clip: 'mocap_walk_back_stop_L', cyclic: false, note: 'остановка ходьбы назад, левая' },
-  { take: 'WalkBwdStop_RU', clip: 'mocap_walk_back_stop_R', cyclic: false, note: 'остановка ходьбы назад, правая' },
-  { take: 'StrafeLeftStop_LU', clip: 'mocap_walk_strafe_L_stop_L', cyclic: false, note: 'остановка страйфа влево, левая' },
-  { take: 'StrafeLeftStop_RU', clip: 'mocap_walk_strafe_L_stop_R', cyclic: false, note: 'остановка страйфа влево, правая' },
-  { take: 'StrafeRightStop_LU', clip: 'mocap_walk_strafe_R_stop_L', cyclic: false, note: 'остановка страйфа вправо, левая' },
-  { take: 'StrafeRightStop_RU', clip: 'mocap_walk_strafe_R_stop_R', cyclic: false, note: 'остановка страйфа вправо, правая' },
+  { take: 'WalkFwdStop_LU', clip: 'walk_fwd_stop_L', cyclic: false, note: 'остановка ходьбы, левая нога поднята' },
+  { take: 'WalkFwdStop_RU', clip: 'walk_fwd_stop_R', cyclic: false, note: 'остановка ходьбы, правая поднята' },
+  { take: 'RunFwdStop_LU', clip: 'run_fwd_stop_L', cyclic: false, note: 'остановка бега, левая поднята' },
+  { take: 'RunFwdStop_RU', clip: 'run_fwd_stop_R', cyclic: false, note: 'остановка бега, правая поднята' },
+  { take: 'WalkBwdStop_LU', clip: 'walk_back_stop_L', cyclic: false, note: 'остановка ходьбы назад, левая' },
+  { take: 'WalkBwdStop_RU', clip: 'walk_back_stop_R', cyclic: false, note: 'остановка ходьбы назад, правая' },
+  { take: 'StrafeLeftStop_LU', clip: 'walk_strafe_L_stop_L', cyclic: false, note: 'остановка страйфа влево, левая' },
+  { take: 'StrafeLeftStop_RU', clip: 'walk_strafe_L_stop_R', cyclic: false, note: 'остановка страйфа влево, правая' },
+  { take: 'StrafeRightStop_LU', clip: 'walk_strafe_R_stop_L', cyclic: false, note: 'остановка страйфа вправо, левая' },
+  { take: 'StrafeRightStop_RU', clip: 'walk_strafe_R_stop_R', cyclic: false, note: 'остановка страйфа вправо, правая' },
   // Старты с места.
-  { take: 'WalkFwdStart', clip: 'mocap_walk_fwd_start', cyclic: false, note: 'старт ходьбы' },
-  { take: 'RunFwdStart', clip: 'mocap_run_fwd_start', cyclic: false, note: 'старт бега' },
-  { take: 'WalkBwdStart', clip: 'mocap_walk_back_start', cyclic: false, note: 'старт ходьбы назад' },
-  { take: 'StrafeLeftStart', clip: 'mocap_walk_strafe_L_start', cyclic: false, note: 'старт страйфа влево' },
-  { take: 'StrafeRightStart', clip: 'mocap_walk_strafe_R_start', cyclic: false, note: 'старт страйфа вправо' },
+  { take: 'WalkFwdStart', clip: 'walk_fwd_start', cyclic: false, note: 'старт ходьбы' },
+  { take: 'RunFwdStart', clip: 'run_fwd_start', cyclic: false, note: 'старт бега' },
+  { take: 'WalkBwdStart', clip: 'walk_back_start', cyclic: false, note: 'старт ходьбы назад' },
+  { take: 'StrafeLeftStart', clip: 'walk_strafe_L_start', cyclic: false, note: 'старт страйфа влево' },
+  { take: 'StrafeRightStart', clip: 'walk_strafe_R_start', cyclic: false, note: 'старт страйфа вправо' },
   // Старты С ДОВОРОТОМ — ими закрывается перелёт на 135° (замер: 5.90 ед проката, 1.28 с).
-  { take: 'WalkFwdStart90_L', clip: 'mocap_walk_fwd_start_L90', cyclic: false, note: 'старт ходьбы с доворотом 90° влево — угол в тейке НЕ лежит, кладёт код' },
-  { take: 'WalkFwdStart90_R', clip: 'mocap_walk_fwd_start_R90', cyclic: false, note: 'старт ходьбы с доворотом 90° вправо — в тейке лежит ЧАСТИЧНЫЙ рыск -18° — имени не соответствует, поэтому не снимаем' },
-  { take: 'WalkFwdStart135_L', clip: 'mocap_walk_fwd_start_L135', cyclic: false, note: 'старт ходьбы 135° влево (Additionals) — в тейке лежит ЧАСТИЧНЫЙ рыск 31° — имени не соответствует, поэтому не снимаем' },
-  { take: 'WalkFwdStart135_R', clip: 'mocap_walk_fwd_start_R135', cyclic: false, note: 'старт ходьбы 135° вправо (Additionals) — в тейке лежит ЧАСТИЧНЫЙ рыск -1° — имени не соответствует, поэтому не снимаем' },
-  { take: 'WalkFwdStart180_L', clip: 'mocap_walk_fwd_start_L180', cyclic: false, note: 'старт ходьбы 180° влево — в тейке лежит ЧАСТИЧНЫЙ рыск 33° — имени не соответствует, поэтому не снимаем' },
-  { take: 'WalkFwdStart180_R', clip: 'mocap_walk_fwd_start_R180', cyclic: false, note: 'старт ходьбы 180° вправо — в тейке лежит ЧАСТИЧНЫЙ рыск -146° — имени не соответствует, поэтому не снимаем' },
-  { take: 'RunFwdStart90_L', clip: 'mocap_run_fwd_start_L90', cyclic: false, note: 'старт бега с доворотом 90° влево — угол в тейке НЕ лежит, кладёт код' },
-  { take: 'RunFwdStart90_R', clip: 'mocap_run_fwd_start_R90', cyclic: false, note: 'старт бега с доворотом 90° вправо — угол в тейке НЕ лежит, кладёт код' },
-  { take: 'RunFwdStart135_L', clip: 'mocap_run_fwd_start_L135', cyclic: false, note: 'старт бега 135° влево (Additionals) — угол в тейке НЕ лежит, кладёт код' },
-  { take: 'RunFwdStart135_R', clip: 'mocap_run_fwd_start_R135', cyclic: false, note: 'старт бега 135° вправо (Additionals) — угол в тейке НЕ лежит, кладёт код' },
-  { take: 'RunFwdStart180_L', clip: 'mocap_run_fwd_start_L180', cyclic: false, note: 'старт бега 180° влево — угол в тейке НЕ лежит, кладёт код' },
-  { take: 'RunFwdStart180_R', clip: 'mocap_run_fwd_start_R180', cyclic: false, note: 'старт бега 180° вправо — в тейке лежит ЧАСТИЧНЫЙ рыск -12° — имени не соответствует, поэтому не снимаем' },
+  { take: 'WalkFwdStart90_L', clip: 'walk_fwd_start_L90', cyclic: false, note: 'старт ходьбы с доворотом 90° влево — угол в тейке НЕ лежит, кладёт код' },
+  { take: 'WalkFwdStart90_R', clip: 'walk_fwd_start_R90', cyclic: false, note: 'старт ходьбы с доворотом 90° вправо — в тейке лежит ЧАСТИЧНЫЙ рыск -18° — имени не соответствует, поэтому не снимаем' },
+  { take: 'WalkFwdStart135_L', clip: 'walk_fwd_start_L135', cyclic: false, note: 'старт ходьбы 135° влево (Additionals) — в тейке лежит ЧАСТИЧНЫЙ рыск 31° — имени не соответствует, поэтому не снимаем' },
+  { take: 'WalkFwdStart135_R', clip: 'walk_fwd_start_R135', cyclic: false, note: 'старт ходьбы 135° вправо (Additionals) — в тейке лежит ЧАСТИЧНЫЙ рыск -1° — имени не соответствует, поэтому не снимаем' },
+  { take: 'WalkFwdStart180_L', clip: 'walk_fwd_start_L180', cyclic: false, note: 'старт ходьбы 180° влево — в тейке лежит ЧАСТИЧНЫЙ рыск 33° — имени не соответствует, поэтому не снимаем' },
+  { take: 'WalkFwdStart180_R', clip: 'walk_fwd_start_R180', cyclic: false, note: 'старт ходьбы 180° вправо — в тейке лежит ЧАСТИЧНЫЙ рыск -146° — имени не соответствует, поэтому не снимаем' },
+  { take: 'RunFwdStart90_L', clip: 'run_fwd_start_L90', cyclic: false, note: 'старт бега с доворотом 90° влево — угол в тейке НЕ лежит, кладёт код' },
+  { take: 'RunFwdStart90_R', clip: 'run_fwd_start_R90', cyclic: false, note: 'старт бега с доворотом 90° вправо — угол в тейке НЕ лежит, кладёт код' },
+  { take: 'RunFwdStart135_L', clip: 'run_fwd_start_L135', cyclic: false, note: 'старт бега 135° влево (Additionals) — угол в тейке НЕ лежит, кладёт код' },
+  { take: 'RunFwdStart135_R', clip: 'run_fwd_start_R135', cyclic: false, note: 'старт бега 135° вправо (Additionals) — угол в тейке НЕ лежит, кладёт код' },
+  { take: 'RunFwdStart180_L', clip: 'run_fwd_start_L180', cyclic: false, note: 'старт бега 180° влево — угол в тейке НЕ лежит, кладёт код' },
+  { take: 'RunFwdStart180_R', clip: 'run_fwd_start_R180', cyclic: false, note: 'старт бега 180° вправо — в тейке лежит ЧАСТИЧНЫЙ рыск -12° — имени не соответствует, поэтому не снимаем' },
   // Развороты НА БЕГУ по опорной ноге — эти поворот НЕСУТ (замер: 182.0°).
-  { take: 'RunFwdTurn180_L_LU', clip: 'mocap_run_turn180_L_footL', cyclic: false, rootYaw: true, note: 'разворот на бегу влево, левая нога поднята — ЕДИНСТВЕННЫЙ тейк с полным поворотом (замер 177° в файле, 182° после съёма)' },
-  { take: 'RunFwdTurn180_L_RU', clip: 'mocap_run_turn180_L_footR', cyclic: false, note: 'разворот на бегу влево, правая поднята — поворота в тейке НЕТ (дорожки Root.quaternion нет)' },
-  { take: 'RunFwdTurn180_R_LU', clip: 'mocap_run_turn180_R_footL', cyclic: false, note: 'разворот на бегу вправо, левая поднята — поворота в тейке НЕТ' },
-  { take: 'RunFwdTurn180_R_RU', clip: 'mocap_run_turn180_R_footR', cyclic: false, note: 'разворот на бегу вправо, правая поднята — поворота в тейке НЕТ' },
+  { take: 'RunFwdTurn180_L_LU', clip: 'run_turn180_L_footL', cyclic: false, rootYaw: true, note: 'разворот на бегу влево, левая нога поднята — ЕДИНСТВЕННЫЙ тейк с полным поворотом (замер 177° в файле, 182° после съёма)' },
+  { take: 'RunFwdTurn180_L_RU', clip: 'run_turn180_L_footR', cyclic: false, note: 'разворот на бегу влево, правая поднята — поворота в тейке НЕТ (дорожки Root.quaternion нет)' },
+  { take: 'RunFwdTurn180_R_LU', clip: 'run_turn180_R_footL', cyclic: false, note: 'разворот на бегу вправо, левая поднята — поворота в тейке НЕТ' },
+  { take: 'RunFwdTurn180_R_RU', clip: 'run_turn180_R_footR', cyclic: false, note: 'разворот на бегу вправо, правая поднята — поворота в тейке НЕТ' },
   // ДИАГОНАЛИ — ими закрывается шов на 47.5° (сегодня до него чистый «вперёд» тазом, после — чистый страйф).
-  { take: 'StrafeLeft45Loop', clip: 'mocap_walk_diag_L45', cyclic: true, note: 'ходьба по диагонали 45° влево, 55.2 (Additionals)' },
-  { take: 'StrafeLeft135Loop', clip: 'mocap_walk_diag_L135', cyclic: true, note: 'ходьба по диагонали 135° влево, 55.2 (RunStrafeUpdate)' },
-  { take: 'StrafeRight45Loop', clip: 'mocap_walk_diag_R45', cyclic: true, note: 'ходьба по диагонали 45° вправо, 55.2 (RunStrafeUpdate)' },
-  { take: 'StrafeRight135Loop', clip: 'mocap_walk_diag_R135', cyclic: true, note: 'ходьба по диагонали 135° вправо, 55.2 (Additionals)' },
-  { take: 'RunStrafeLeft45Loop', clip: 'mocap_run_diag_L45', cyclic: true, note: 'бег по диагонали 45° влево, 120.1' },
-  { take: 'RunStrafeLeft135Loop', clip: 'mocap_run_diag_L135', cyclic: true, note: 'бег по диагонали 135° влево, 73.4' },
-  { take: 'RunStrafeRight45Loop', clip: 'mocap_run_diag_R45', cyclic: true, note: 'бег по диагонали 45° вправо, 120.1' },
-  { take: 'RunStrafeRight135Loop', clip: 'mocap_run_diag_R135', cyclic: true, note: 'бег по диагонали 135° вправо, 73.4' },
+  { take: 'StrafeLeft45Loop', clip: 'walk_diag_L45', cyclic: true, note: 'ходьба по диагонали 45° влево, 55.2 (Additionals)' },
+  { take: 'StrafeLeft135Loop', clip: 'walk_diag_L135', cyclic: true, note: 'ходьба по диагонали 135° влево, 55.2 (RunStrafeUpdate)' },
+  { take: 'StrafeRight45Loop', clip: 'walk_diag_R45', cyclic: true, note: 'ходьба по диагонали 45° вправо, 55.2 (RunStrafeUpdate)' },
+  { take: 'StrafeRight135Loop', clip: 'walk_diag_R135', cyclic: true, note: 'ходьба по диагонали 135° вправо, 55.2 (Additionals)' },
+  { take: 'RunStrafeLeft45Loop', clip: 'run_diag_L45', cyclic: true, note: 'бег по диагонали 45° влево, 120.1' },
+  { take: 'RunStrafeLeft135Loop', clip: 'run_diag_L135', cyclic: true, note: 'бег по диагонали 135° влево, 73.4' },
+  { take: 'RunStrafeRight45Loop', clip: 'run_diag_R45', cyclic: true, note: 'бег по диагонали 45° вправо, 120.1' },
+  { take: 'RunStrafeRight135Loop', clip: 'run_diag_R135', cyclic: true, note: 'бег по диагонали 135° вправо, 73.4' },
   // Крен и дуга — авторский материал под наш `stepDirWarp` (у крена корень едет ПРЯМО, угол кладёт код).
-  { take: 'WalkFwdLoop_LeanL', clip: 'mocap_walk_lean_L', cyclic: true, note: 'ходьба с креном влево, корень едет прямо' },
-  { take: 'WalkFwdLoop_LeanR', clip: 'mocap_walk_lean_R', cyclic: true, note: 'ходьба с креном вправо, корень едет прямо' },
-  { take: 'RunFwdLoop_LeanL', clip: 'mocap_run_lean_L', cyclic: true, note: 'бег с креном влево, корень едет прямо' },
-  { take: 'RunFwdLoop_LeanR', clip: 'mocap_run_lean_R', cyclic: true, note: 'бег с креном вправо, корень едет прямо' },
-  { take: 'WalkArchLoop_L', clip: 'mocap_walk_arch_L', cyclic: true, note: 'ходьба по дуге влево: стопы идут по дуге, а КОРПУС курс не меняет (замер: Root 0°) — материал под наш `stepDirWarp`' },
-  { take: 'WalkArchLoop_R', clip: 'mocap_walk_arch_R', cyclic: true, note: 'ходьба по дуге вправо, Root 0° — угол кладёт код' },
-  { take: 'RunArchLoop_L', clip: 'mocap_run_arch_L', cyclic: true, note: 'бег по дуге влево, Root 0° — угол кладёт код' },
-  { take: 'RunArchLoop_R', clip: 'mocap_run_arch_R', cyclic: true, note: 'бег по дуге вправо, Root 0° — угол кладёт код' },
+  { take: 'WalkFwdLoop_LeanL', clip: 'walk_lean_L', cyclic: true, note: 'ходьба с креном влево, корень едет прямо' },
+  { take: 'WalkFwdLoop_LeanR', clip: 'walk_lean_R', cyclic: true, note: 'ходьба с креном вправо, корень едет прямо' },
+  { take: 'RunFwdLoop_LeanL', clip: 'run_lean_L', cyclic: true, note: 'бег с креном влево, корень едет прямо' },
+  { take: 'RunFwdLoop_LeanR', clip: 'run_lean_R', cyclic: true, note: 'бег с креном вправо, корень едет прямо' },
+  { take: 'WalkArchLoop_L', clip: 'walk_arch_L', cyclic: true, note: 'ходьба по дуге влево: стопы идут по дуге, а КОРПУС курс не меняет (замер: Root 0°) — материал под наш `stepDirWarp`' },
+  { take: 'WalkArchLoop_R', clip: 'walk_arch_R', cyclic: true, note: 'ходьба по дуге вправо, Root 0° — угол кладёт код' },
+  { take: 'RunArchLoop_L', clip: 'run_arch_L', cyclic: true, note: 'бег по дуге влево, Root 0° — угол кладёт код' },
+  { take: 'RunArchLoop_R', clip: 'run_arch_R', cyclic: true, note: 'бег по дуге вправо, Root 0° — угол кладёт код' },
   // Спринт и запасные айдлы.
-  { take: 'SprintFwdLoop', clip: 'mocap_sprint_fwd', cyclic: true, note: 'спринт 205.1 u/с — почти наш рывок 200 (файл SprintFixed)' },
+  { take: 'SprintFwdLoop', clip: 'run_sprint_fwd', cyclic: true, note: 'спринт 205.1 u/с — почти наш рывок 200 (файл SprintFixed)' },
   { take: 'Idle2', clip: 'mocap_idle2', cyclic: true, note: 'запасной айдл 7.4 с (файл Idles)' },
   { take: 'Idle3', clip: 'mocap_idle3', cyclic: true, note: 'запасной айдл 7.1 с (Idles)' },
   { take: 'Idle4', clip: 'mocap_idle4', cyclic: true, note: 'запасной айдл 12.4 с (Idles)' },
