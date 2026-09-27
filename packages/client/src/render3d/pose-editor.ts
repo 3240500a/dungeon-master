@@ -4029,6 +4029,46 @@ function clipSection(): void {
   };
   row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; histLib('новый клип', () => { putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }, 'rename'); clipIdx = list.length; frameIdx = 0; previewT = null; saveLib(); refreshAll(); }); }));   // единственный ключ нового клипа — ЭТО показанная поза: `previewT` прошлого клипа (скраб на t=0.45) иначе отказывал бы в записи с подсказкой «между ключами»
   row1.append(pbtn('📥 из FBX/BVH', () => openImportAnimModal()));   // импорт мокап/AI-анимации → наш клип (запекатель)
+  /**
+   * ⭐ БИБЛИОТЕКА ↔ ФАЙЛ. Выгрузка — БЭКАП, которого до сих пор не было вовсе: перезапекание и переносы
+   * переписывают авторские позы, а единственной страховкой был сервер (то есть «успел ли опубликовать»).
+   * Загрузка — тот же приём, что у импорта: `putClip(…, 'rename')`, НИКОГДА не затирает, и клипы ложатся
+   * ТЕКУЩЕМУ персонажу (одно правило с кнопкой «взять» в панели импорта — чтобы не появлялись клипы
+   * персонажа, которого в ростере нет, и потому невидимые).
+   */
+  row1.append(pbtn('💾 выгрузить', () => {
+    const mine = library.filter((c) => c.character === curCharId);
+    const what = mine.length && confirm(`Выгрузить только «${curChar().name}» (${mine.length})?\nОтмена — всю библиотеку (${library.length}).`) ? mine : library;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    downloadFile(`pe_clips_${stamp}.json`, JSON.stringify(what), 'application/json');
+  }));
+  {
+    // ⚠ Поле файла ЖИВЁТ В DOM (скрытое), а не создаётся на клик. Созданный на лету `input` никому не виден:
+    // ни автоматизации, ни тесту — подставить в него файл нечем, а нативное окно выбора не нажимается.
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.json'; inp.style.display = 'none'; inp.id = 'pe-load-clips';
+    inp.onchange = () => {
+      const f = inp.files?.[0]; if (!f) return;
+      void f.text().then((txt) => {
+        let raw: unknown;
+        try { raw = JSON.parse(txt); } catch { alert('не JSON'); return; }
+        const arr = Array.isArray(raw) ? raw : (raw as { clips?: unknown[] }).clips;
+        if (!Array.isArray(arr) || !arr.length) { alert('в файле нет массива клипов'); return; }
+        const clips = arr.map(migrateClip).filter((c) => c.name && Array.isArray(c.keys) && c.keys.length);
+        if (!clips.length) { alert('клипы не разобрались'); return; }
+        if (!confirm(`Положить ${clips.length} клипов персонажу «${curChar().name}», оружие «${weapon}»?\nНичего не затрётся: занятое имя получит суффикс.`)) return;
+        const names: string[] = [];
+        histLib('загрузка клипов из файла', () => {
+          for (const c of clips) { c.character = curCharId; c.weapon = weapon; names.push(putClip(c, 'rename')?.name ?? c.name); }
+          saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === names[0])); frameIdx = 0; refreshAll();
+        });
+        const renamed = names.filter((n, i) => n !== clips[i]!.name);
+        alert(`положено ${names.length}` + (renamed.length ? `\n⚠ имена были заняты: ${renamed.join(', ')}` : ''));
+        inp.value = '';                                  // иначе тот же файл второй раз не выберется
+      });
+    };
+    row1.append(inp, pbtn('📦 загрузить', () => inp.click()));
+  }
   if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
   if (c) {
