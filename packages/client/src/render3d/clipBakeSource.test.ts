@@ -5,6 +5,7 @@ import { makeBakeRig, parentOfOur, OUR_BONES } from './retarget3d.js';
 import { bakeFromSource, type BakeSource } from './clipBaker.js';
 import { hipsOffset, type Pose } from './clipModel.js';
 import { presetMask, setPartWeight, type BoneMask } from './boneMask.js';
+import { LOCO_BAKE_REV } from './poseRuntime.js';
 
 /**
  * ИСТОЧНИК-БЛИЗНЕЦ: скелет из тех же rest-офсетов, что и наш риг. Тогда обратный ретаргет — тождество,
@@ -408,5 +409,108 @@ describe('clipBaker — корень: поворот мокапа снимает
       const keys = bakeFromSource(fall(from, to), { ...OPTS, ground: false, hips: 'full', rootYaw: true }).clip.keys;
       for (const k of keys) expect(Math.abs(k.pose['__rootY']![0] / D), `наклон ${from} → ${to}°, t ${k.t}`).toBeLessThan(0.5);
     }
+  });
+});
+
+/**
+ * ⚠⚠ ГРАНИЦА КЛИПА. Умолчание `AnimationAction` — `LoopRepeat`, и `setTime(duration)` на нём отдаёт КАДР 0.
+ *
+ * Беда была МОЛЧАЛИВОЙ и зависела от арифметики: последний семпл упирается ровно в `duration` только когда
+ * накопление `t += 1/fps` перелетает длину. На клипе 1 с так ведёт себя РОВНО fps 60 (1.0000000000000013),
+ * а 10/30/120 не доходят до 1.0 — поэтому тесты этого файла (fps 10) беду не видели, а мокап на 60 ловил её
+ * каждый раз. Последствие: `detrendTravel` строит тренд по линии «первый ↔ последний кадр», они становились
+ * ОДНИМ кадром → наклон 0 → перенос персонажа оставался в канале переноса ВЕСА.
+ * Замер на Kubold `WalkFwdLoop`: размах таза по Z 54.79 ед (1.71 м травела) и `__rootP` из нулей.
+ */
+describe('clipBaker — граница клипа: последний семпл это КОНЕЦ, а не начало', () => {
+  const hipsRest = buildHumanoid().hipsRest.clone();
+
+  it('⭐⭐ СЕМПЛ РОВНО НА `duration` ДАЁТ ПОЗУ КОНЦА', () => {
+    // Время задано явно (`startSec = endSec = dur`) → от накопления `t += dt` тест не зависит вовсе.
+    const src = source([clipOf([posTrack('Hips',
+      [hipsRest.x, hipsRest.y, hipsRest.z], [hipsRest.x, hipsRest.y - 3, hipsRest.z])])]);
+    const r = bakeFromSource(src, { ...OPTS, ground: false, startSec: 1, endSec: 1 });
+    expect(r.clip.keys.length).toBe(1);
+    expect(hipsOffset(r.clip.keys[0]!.pose, hipsRest.y)![1],
+      '⚠ миксер отдал кадр 0 вместо конца: действию вернули `LoopRepeat`').toBeCloseTo(-3, 1);
+  });
+
+  it('⭐⭐ ТРАВЕЛ УХОДИТ В `__rootP`, А НЕ В ПЕРЕНОС ВЕСА — на том самом fps 60', () => {
+    const src = source([clipOf([posTrack('Hips',
+      [hipsRest.x, hipsRest.y, hipsRest.z], [hipsRest.x, hipsRest.y, hipsRest.z + 50])])]);
+    const r = bakeFromSource(src, { ...OPTS, fps: 60, ground: false, hips: 'full', rootPos: true });
+    const k = r.clip.keys;
+    // Меряем СЕРЕДИНУ: на конце заворот делает обе величины нулевыми и по нему беду не отличить.
+    const mid = k[k.length >> 1]!;
+    expect(mid.t).toBeCloseTo(0.5, 2);
+    expect(mid.pose['__rootP']![2], '⚠ перенос персонажа не попал в канал корня').toBeCloseTo(25, 0);
+    expect(hipsOffset(mid.pose, hipsRest.y)![2],
+      '⚠ травел остался в переносе веса — в игре таз уезжал бы вперёд от стоп').toBeCloseTo(0, 1);
+  });
+});
+
+/**
+ * ⭐⭐ МОКАП-ХОД ОБЯЗАН ПОПАДАТЬ В НАБОР ПОЛНОЦЕННЫМ.
+ *
+ * Метаданные набора (`bakeSpeed`/`bakeRev`/`upperPure`/`swingRef`) писал ТОЛЬКО процедурный запекатель, и потому
+ * любой импортированный ход молча становился легаси: `bakedLocoSpeed` подставляла ему 50.4 / 102 u/с ПО ИМЕНИ,
+ * то есть часы клипа шли по чужой скорости. У мокапа скорость есть настоящая — она в травеле источника.
+ */
+describe('clipBaker — метаданные набора хода', () => {
+  const hipsRest = buildHumanoid().hipsRest.clone();
+  /** Источник, едущий вперёд на `dz` за 1 с — то же, чем мокап отличается от нашего in-place клипа. */
+  const moving = (dz: number): BakeSource => source([clipOf([posTrack('Hips',
+    [hipsRest.x, hipsRest.y, hipsRest.z], [hipsRest.x, hipsRest.y, hipsRest.z + dz])])]);
+  const LOCO = { ...OPTS, fps: 30, ground: false, hips: 'full', loop: true, locoSet: true } as const;
+
+  it('⭐⭐ СКОРОСТЬ СЪЁМА ЗАМЕРЯЕТСЯ ПО ТРАВЕЛУ, а не берётся из имени', () => {
+    // Два источника, отличающиеся ТОЛЬКО пройденным путём, обязаны дать разные числа — иначе «замер» фиктивный.
+    expect(bakeFromSource(moving(50), LOCO).clip.bakeSpeed, 'путь 50 ед за 1 с').toBeCloseTo(50, 0);
+    expect(bakeFromSource(moving(100), LOCO).clip.bakeSpeed, 'путь 100 ед за 1 с').toBeCloseTo(100, 0);
+    expect(bakeFromSource(moving(50), LOCO).stats.locoSpeed, 'то же число видно в панели').toBeCloseTo(50, 0);
+  });
+
+  it('⭐ и остальной набор метаданных при этом на месте', () => {
+    const c = bakeFromSource(moving(50), LOCO).clip;
+    expect(c.bakeRev, 'ревизия набора').toBe(LOCO_BAKE_REV);
+    expect(c.upperPure, 'руки пришли из мокапа целиком').toBe(true);
+    expect(c.swingRef?.['RightUpperArm'], 'нейтраль маха посчитана').toBeTruthy();
+    expect(bakeFromSource(moving(50), { ...LOCO, bakeId: 20260927 }).clip.bakeId).toBe(20260927);
+  });
+
+  it('⚠ БЕЗ ГАЛКИ НАБОРА не пишется НИЧЕГО: прежний импорт не должен обрасти полями', () => {
+    const c = bakeFromSource(moving(50), { ...LOCO, locoSet: false }).clip;
+    expect(c.bakeSpeed).toBeUndefined();
+    expect(c.bakeRev).toBeUndefined();
+    expect(c.upperPure).toBeUndefined();
+    expect(c.swingRef).toBeUndefined();
+  });
+
+  it('⭐⭐ НЕЦИКЛИЧНЫЙ ТЕЙК (старт/остановка) поля темпа НЕ получает — там это средняя по разгону', () => {
+    const r = bakeFromSource(moving(50), { ...LOCO, loop: false });
+    expect(r.clip.bakeSpeed, '⚠ средняя по разгону встала бы в поле темпа цикла').toBeUndefined();
+    expect(r.clip.bakeRev).toBeUndefined();
+    expect(r.stats.locoSpeed, 'но замер всё равно показан в панели').toBeCloseTo(50, 0);
+  });
+
+  it('⚠ СТОЯЩИЙ ИСТОЧНИК скорости не получает — иначе idle встал бы в набор с выдуманным темпом', () => {
+    const still = source([clipOf([posTrack('Hips',
+      [hipsRest.x, hipsRest.y, hipsRest.z], [hipsRest.x, hipsRest.y - 2, hipsRest.z])])]);   // только присед
+    const r = bakeFromSource(still, LOCO);
+    expect(r.clip.bakeSpeed, '⚠ вертикаль — не travel').toBeUndefined();
+    expect(r.clip.bakeRev).toBeUndefined();
+  });
+
+  /**
+   * ⚠ ФЛАГ «ЧИСТЫЙ ВЕРХ» — УТВЕРЖДЕНИЕ О ДАННЫХ, а не галочка режима. Взяли руки из базовой позы (то есть из
+   * СТОЙКИ) — значит стойка в руках уже есть, и написать `upperPure` значило бы соврать: рантайм применил бы её
+   * вторично. На этой грабле проект уже стоял (0.2 × 0.5 = 10 % маха), поэтому флага просто нет, а панель говорит.
+   */
+  it('⭐⭐ РУКИ НЕ ИЗ МОКАПА → `upperPure` НЕ ПИШЕТСЯ, и панель это показывает', () => {
+    const noArms: BoneMask = setPartWeight(setPartWeight(presetMask('noFingers'), 'armL', 0), 'armR', 0);
+    const r = bakeFromSource(moving(50), { ...LOCO, mask: noArms, basePose: {} });
+    expect(r.clip.bakeSpeed, 'скорость съёма при этом замерена — она про ноги').toBeCloseTo(50, 0);
+    expect(r.clip.upperPure, '⚠ флаг чистоты верха соврал бы').toBeUndefined();
+    expect(r.stats.upperDirty, 'панель обязана сказать, почему флага нет').toBe(true);
   });
 });

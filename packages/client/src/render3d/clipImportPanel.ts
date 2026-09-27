@@ -155,6 +155,12 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
   const loopChk = check(false, (v) => { o.loop = v; rebake(); });
   row('зациклить').append(loopChk);
 
+  // ⭐⭐ НАБОР ХОДА. Без этой галки мокап-ход попадает в набор ЛЕГАСИ: часы читают ему скорость долями
+  // по имени (50.4 / 102 u/с), а не ту, на которой его сняли. Скорость меряется по травелу источника
+  // и печатается в строке итога всегда — по ней сразу видно, ходьба это или бег.
+  row('клип набора хода', 'Дописать метаданные набора: скорость съёма (замер по травелу), ревизию, нейтраль маха и «чистый верх». Оружие при этом обязано быть «нет» — набор хода снят безоружным.')
+    .append(check(false, (v) => { o.locoSet = v; rebake(); }));
+
   // ── МАСКА: части тела ──
   const mh = el('div', 'color:#8fb7ff;font-weight:bold;margin:10px 0 2px;font-size:11px'); mh.textContent = 'ЧТО БЕРЁМ ИЗ МОКАПА'; box.append(mh);
   const mHint = el('div', 'color:#6b7180;font-size:10px;margin-bottom:4px');
@@ -311,11 +317,17 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       const hr = s.hipsRange;
       status.textContent = `${s.frames} кадров → ${s.keys} ключей · движение ${s.maxMoveDeg.toFixed(1)}° (${s.worstBone})`
         + (hr ? ` · таз ${hr[0]}/${hr[1]}/${hr[2]}` : '')
-        + (seam ? ` · шов цикла ${seam.deg.toFixed(1)}°` : '');
+        + (seam ? ` · шов цикла ${seam.deg.toFixed(1)}°` : '')
+        // Скорость съёма — в u/с И в м/с: наши числа (ходьба 40, бег 120) в юнитах, а мокап автор знает в м/с.
+        + ((s.locoSpeed ?? 0) >= 1 ? ` · съём ${s.locoSpeed!.toFixed(1)} u/с (${(s.locoSpeed! / 32).toFixed(2)} м/с)` : '');
       status.style.color = isStaticBake(s) ? '#e08080' : '#9ae6a0';
       if (isStaticBake(s)) status.textContent += ' ← СТАТИЧНО: анимация не дошла до костей, проверь карту костей';
       // Срыв опоры — единственный способ увидеть, что «перенос веса» упёрся в длину ноги, а не работает.
       if ((s.footMiss ?? 0) > 0.5) { status.style.color = '#e0b060'; status.textContent += ` ← перенос веса упёрся в длину ноги (стопа сорвана на ${s.footMiss!.toFixed(1)})`; }
+      // Набор хода просили, а руки пришли не из мокапа → флага «чистый верх» нет, и стойка ляжет в руки дважды.
+      if (s.upperDirty) { status.style.color = '#e0b060'; status.textContent += ' ← руки НЕ из мокапа: «чистый верх» не проставлен, аудит покажет «стойка в руках»'; }
+      // Режим набора включён, а источник стоит на месте — метаданные не пишутся, и это надо видеть сразу.
+      if (o.locoSet && (s.locoSpeed ?? 0) < 1) { status.style.color = '#e0b060'; status.textContent += ' ← источник НЕ едет: скорость съёма не замерить, метаданные набора не записаны'; }
     } catch (e) {
       takeBtn.disabled = true; status.style.color = '#e08080'; status.textContent = 'ошибка: ' + (e as Error).message;
     }

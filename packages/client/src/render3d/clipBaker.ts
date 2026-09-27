@@ -18,7 +18,8 @@ import { slerpEuler, setHipsOffset, setRootMotion, ERROR_POS_KEYS, POS_DEG_PER_U
 import { pelvisHeading, pelvisPoseToChar } from './pelvisFrame.js';   // ⭐ корень: курс таза и его вычет — обратной композицией игры
 import { groundBakeOffset , FOOT_SOLE} from './footIk.js';
 import { detrendTravel, rootTravel, refPose, readLimbTarget, groundTargets, clampHipsToFeet, lockLimb, limbBones, LIMBS, type Vec3, type FootTarget, type LimbId } from './footLock.js';
-import { applyHeadLookAt } from './poseRuntime.js';
+import { applyHeadLookAt, LOCO_BAKE_REV } from './poseRuntime.js';
+import { meanPose, SWING_BONES } from './armBlend.js';   // ⭐ нейтраль маха: тот же расчёт, что у процедурного запекателя
 import type { Clip, Keyframe, Pose } from './poseRuntime.js';
 
 const RAD2DEG = 180 / Math.PI;
@@ -168,6 +169,24 @@ export interface BakeOptions {
    */
   rootPos?: boolean;
   rootYaw?: boolean;
+  /**
+   * ⭐⭐ КЛИП НАБОРА ХОДА — дописать метаданные набора, без которых рантайм считает импорт ЛЕГАСИ.
+   *
+   * Их пишет только процедурный запекатель (`clipBake.ts`), и потому любой мокап-ход до сих пор попадал в
+   * набор ущербным: `bakedLocoSpeed` подставляла ему легаси-доли (50.4 / 102 u/с по имени), то есть часы
+   * клипа шли по чужой скорости, а `locoSetAudit` раскладывал его по дефектам `dirty_upper`/`no_ref`.
+   *
+   * Что пишется: `bakeSpeed` (ЗАМЕР по травелу источника — у мокапа скорость настоящая, а не авторская),
+   * `bakeRev`, `swingRef` (нейтраль маха — среднее позы за цикл) и `upperPure`, но последний ТОЛЬКО если
+   * руки действительно пришли из мокапа (вес маски 1). Взяли руки из базовой позы — флага нет, и аудит
+   * честно скажет «стойка в руках»: врать флагом хуже, чем не иметь его.
+   */
+  locoSet?: boolean;
+  /**
+   * НОМЕР СЪЁМА (обычно `Date.now()`) — один на весь прогон набора; по нему аудит видит, что клипы сняты
+   * ВМЕСТЕ (`split_bake`). Тип тот же, что у процедурного запекателя: число, а не строка.
+   */
+  bakeId?: number;
   /** ЗАЗЕМЛЕНИЕ: каждый кадр приподнять таз так, чтобы нижняя стопа стояла на полу. Дефолт вкл. */
   ground?: boolean;
   /**
@@ -329,6 +348,20 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
   const H = buildHumanoid();
   const mixer = new THREE.AnimationMixer(src.root);
   const action = mixer.clipAction(anim); action.play();
+  /**
+   * ⚠⚠ ПОСЛЕДНИЙ СЕМПЛ ОБЯЗАН БЫТЬ КОНЦОМ КЛИПА, А НЕ ЕГО НАЧАЛОМ.
+   *
+   * Умолчание `AnimationAction` — `LoopRepeat`, и `setTime(duration)` на нём ЗАВОРАЧИВАЕТСЯ на кадр 0
+   * (замер на мокапе Kubold: `Root.z` = 172.43 при `t = dur − 1e-4` и 0.00 ровно при `t = dur`).
+   * Пока источник был in-place (наш экспорт, Mixamo-цикл), это не замечалось: поза конца и так равна позе
+   * начала. На ЕДУЩЕМ мокапе последствие тяжёлое и МОЛЧАЛИВОЕ — `detrendTravel` строит тренд по линии
+   * «первый ↔ последний кадр», а они стали одним кадром → наклон 0 → перенос персонажа НЕ снимается и
+   * целиком остаётся в канале переноса ВЕСА (`__hipsD`).
+   * Замер на `WalkFwdLoop`: размах таза по Z 54.79 ед (это 1.71 м травела) и `__rootP` из нулей;
+   * после правки — таз 1.42 ед, `__rootP` 0 → 54.79, скорость съёма 55.7 u/с.
+   * `clampWhenFinished` держит позу конца вместо возврата в начало.
+   */
+  action.setLoop(THREE.LoopOnce, 1); action.clampWhenFinished = true;
 
   const fps = Math.max(1, opts.fps ?? 30), dt = 1 / fps, dur = anim.duration;
   const t0s = Math.max(0, Math.min(dur, opts.startSec ?? 0));
@@ -460,13 +493,50 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
       { t: +(lastT + 2 * trans).toFixed(4), pose: idleKey() }];
   }
   const loop = opts.loop ?? /walk|run|idle|цикл|loop|ход|бег/i.test(anim.name || '');
+
+  /**
+   * ⭐ СКОРОСТЬ СЪЁМА — ПО ТРАВЕЛУ САМОГО ИСТОЧНИКА, а не по авторскому числу.
+   *
+   * Меряем по КОНЦАМ сырого смещения таза, и это не зависит от режима таза: инвариант `footLock`
+   * (`detrend + travel = сырое`) даёт одну и ту же разницу концов при любом `hipsMode`, а при `none`
+   * сырые смещения всё равно сняты. Юниты уже НАШИ — обратный ретаргет нормирует размер источника
+   * (`TILE = 32 u = 1 м`), поэтому мокап в сантиметрах приходит сюда переведённым.
+   * Замер на Kubold `WalkFwdLoop`: 54.79 ед за 0.983 с = 55.7 u/с = 1.74 м/с (наш `walk_fwd` снят на 40).
+   */
+  const locoSpeed = ((): number => {
+    const n = rawHips.length;
+    if (n < 2) return 0;
+    const dt2 = (times[n - 1] ?? 0) - (times[0] ?? 0);
+    if (dt2 <= 1e-6) return 0;
+    const a = rawHips[0]!, b = rawHips[n - 1]!;
+    return +(Math.hypot(b[0] - a[0], b[2] - a[2]) / dt2).toFixed(3);
+  })();
+  /**
+   * Порог 1 u/с ≈ 3 см/с: idle и работа руками травела не несут, и «скорость съёма 0.2» в наборе — шум.
+   *
+   * ⚠ И ТОЛЬКО У ЦИКЛА. `bakeSpeed` — это ТЕМП ЦИКЛА (`cycle = bakeSpeed × длительность`, `bakedLocoSpeed`),
+   * а на старте/остановке то же деление даёт СРЕДНЮЮ ПО РАЗГОНУ: замер на Kubold — 55.7 u/с у `WalkFwdLoop`
+   * против 30.8 у `WalkFwdStart` и 15.7 у `WalkFwdStop_RU` при одной и той же ходьбе. Написать её в поле
+   * темпа значило бы соврать часам, поэтому нецикличный тейк поля не получает, а замер всё равно виден в
+   * панели (`stats.locoSpeed`) — по нему и судят, тот ли это тейк.
+   */
+  const locoOn = opts.locoSet === true && locoSpeed >= 1 && loop;
+  const upperClean = partWeight(mask, 'armL') >= 1 && partWeight(mask, 'armR') >= 1;
+  const swingRef = locoOn && loop ? meanPose(dense.map((k) => k.pose), SWING_BONES) : undefined;
+
   const clip: Clip = {
     name: opts.name ?? (anim.name || src.fileName.replace(/\.[^.]+$/, '')),
     character: opts.character, weapon: opts.weapon, loop, keys,
+    ...(locoOn ? {
+      bakeSpeed: locoSpeed, bakeRev: LOCO_BAKE_REV,
+      ...(upperClean ? { upperPure: true as const } : {}),
+      ...(swingRef ? { swingRef } : {}),
+      ...(opts.bakeId ? { bakeId: opts.bakeId } : {}),
+    } : {}),
     idleEnds: !!(opts.anchorIdle && base),   // концы = idle → редактор блокирует их и синкает из стойки (как удары)
     rootYaw: opts.rootYaw || undefined, rootPos: opts.rootPos || undefined,
   };
-  const stats: BakeStats = { frames: dense.length, keys: keys.length, maxMoveDeg, worstBone, footMiss: +worstMiss.toFixed(2), hipsRange: hipsSpan(hipsFull.map((h) => [h[0] * hipsW, h[1] * hipsW, h[2] * hipsW])) };
+  const stats: BakeStats = { frames: dense.length, keys: keys.length, maxMoveDeg, worstBone, footMiss: +worstMiss.toFixed(2), hipsRange: hipsSpan(hipsFull.map((h) => [h[0] * hipsW, h[1] * hipsW, h[2] * hipsW])), locoSpeed, ...(locoOn && !upperClean ? { upperDirty: true } : {}) };
   return { clip, boneMap: src.boneMap, frames: dense.length, keys: keys.length, stats, animations: src.report.animations.map((a) => a.name) };
 }
 
