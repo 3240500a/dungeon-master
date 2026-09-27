@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { makeBakeRig, parentOfOur, OUR_BONES } from './retarget3d.js';
+import { makeBakeRig, parentOfOur, OUR_BONES, enforceTPose, FULL_AIM_CHILD } from './retarget3d.js';
 import { bakeFromSource, type BakeSource } from './clipBaker.js';
 import { hipsOffset, type Pose } from './clipModel.js';
 import { presetMask, setPartWeight, type BoneMask } from './boneMask.js';
@@ -617,5 +617,72 @@ describe('clipBaker — наша кость без пары в источник�
       const deg = 2 * Math.acos(Math.min(1, Math.abs(qs.dot(qo)))) * 180 / Math.PI;
       expect(deg, `${b}: расхождение с источником ${deg.toFixed(1)}°`).toBeLessThan(0.5);
     }
+  });
+});
+
+/**
+ * ⭐⭐ ПРИВЕДЕНИЕ К T-ПОЗЕ НЕ СМЕЕТ ТРОГАТЬ СТОПЫ. Это прямая причина жалобы «ступни как у пингвина и
+ * носок тянет вперёд»: приведение переписывает рест стопы ИСТОЧНИКА в наш канон ДО снятия `restW`, и
+ * перенос стопы из дельты-от-своего-рест превращается в АБСОЛЮТНЫЙ — разница рестов садится постоянным
+ * слагаемым в каждый кадр. ЗАМЕР на Kubold (отклонение стопы от своего рест на кадрах ОПОРЫ, ходьба):
+ * рыск был +6.9…+23.9° (Л) и +9.5…+23.7° (П) наружу, стал −3.5…+4.8° и +0.6…+5.9°.
+ * Руки приводить по-прежнему надо: без этого 20° по плечу и 49.5° по предплечью на A-позном бинде.
+ */
+describe('enforceTPose — стопы не трогаем, руки трогаем', () => {
+  /** Близнец, у которого стопа в ресте РАЗВЁРНУТА (как у мокапа), а предплечье согнуто (как A-поза). */
+  function skewed(): { root: THREE.Object3D; map: Record<string, string> } {
+    const H = buildHumanoid();
+    const root = new THREE.Object3D(); root.name = 'SrcRoot';
+    const made = new Map<string, THREE.Bone>();
+    for (const our of OUR_BONES) {
+      const g = H.bones.get(our); if (!g) continue;
+      const b = new THREE.Bone(); b.name = 's_' + our; b.position.copy(g.position);
+      const p = parentOfOur(our);
+      (((p ? made.get(p) : undefined) ?? root) as THREE.Object3D).add(b);
+      made.set(our, b);
+    }
+    // носок уводим наружу и вниз — ровно та разница, что у бинда Kubold (+8.9° рыска, −30.2° тангажа)
+    for (const [s, sx] of [['Left', 1], ['Right', -1]] as [string, number][]) {
+      const toe = made.get(s + 'Toes')!;
+      toe.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), sx * 8.9 * Math.PI / 180);
+      toe.position.applyAxisAngle(new THREE.Vector3(sx, 0, 0), 20.7 * Math.PI / 180);
+    }
+    made.get('LeftLowerArm')!.rotation.z = 0.7;            // рука «в A-позе» — её приводить НАДО
+    root.updateMatrixWorld(true);
+    const map: Record<string, string> = {};
+    for (const our of OUR_BONES) if (made.has(our)) map[our] = 's_' + our;
+    return { root, map };
+  }
+  const dirOf = (root: THREE.Object3D, map: Record<string, string>, a: string, b: string): THREE.Vector3 => {
+    const by = new Map<string, THREE.Object3D>();
+    root.traverse((o) => { if (o.name && !by.has(o.name)) by.set(o.name, o); });
+    root.updateMatrixWorld(true);
+    return by.get(map[b]!)!.getWorldPosition(new THREE.Vector3())
+      .sub(by.get(map[a]!)!.getWorldPosition(new THREE.Vector3())).normalize();
+  };
+  const deg = (a: THREE.Vector3, b: THREE.Vector3): number => a.angleTo(b) * 180 / Math.PI;
+
+  it('⭐⭐ СТОПА остаётся как в файле — иначе её разворот уедет в каждый кадр', () => {
+    const { root, map } = skewed();
+    const before = [dirOf(root, map, 'LeftFoot', 'LeftToes'), dirOf(root, map, 'RightFoot', 'RightToes')];
+    enforceTPose(root, map, FULL_AIM_CHILD);
+    const after = [dirOf(root, map, 'LeftFoot', 'LeftToes'), dirOf(root, map, 'RightFoot', 'RightToes')];
+    expect(deg(before[0]!, after[0]!), '⚠ ЛЕВУЮ стопу привели — вернётся «пингвин»').toBeLessThan(0.5);
+    expect(deg(before[1]!, after[1]!), '⚠ ПРАВУЮ стопу привели — вернётся «пингвин»').toBeLessThan(0.5);
+  });
+
+  it('РУКА при этом приводится — приведение не выключено целиком', () => {
+    const { root, map } = skewed();
+    const before = dirOf(root, map, 'LeftLowerArm', 'LeftHand');
+    enforceTPose(root, map, FULL_AIM_CHILD);
+    const after = dirOf(root, map, 'LeftLowerArm', 'LeftHand');
+    expect(deg(before, after), 'согнутое предплечье обязано выпрямиться').toBeGreaterThan(20);
+  });
+
+  it('в таблице приведения стоп НЕТ — структурный сторож на случай «вернули строчку»', () => {
+    const t = FULL_AIM_CHILD as Record<string, string | undefined>;
+    expect(t['LeftFoot'], '⚠ стопа не приводится к канону: у источника это ГЕОМЕТРИЯ (лодыжка на подушечке), а не поза').toBeUndefined();
+    expect(t['RightFoot']).toBeUndefined();
+    expect(t['LeftLowerArm'], 'руки приводить надо').toBe('LeftHand');
   });
 });
