@@ -130,7 +130,7 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
   let baseId = '';
   const o: BakeOptions & { character: string; weapon: string } = {
     character: '', weapon: '', animationIndex: 0, fps: 30, epsDeg: 3,
-    hips: 'full', ground: true, head: 'mocap', headPitch: 0, anchorIdle: true,
+    hips: 'full', ground: false, head: 'mocap', headPitch: 0, anchorIdle: true,
     limbLock: { LF: true, RF: true },
   };
   let last: BakeResult | null = null;
@@ -259,8 +259,8 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
   }
   row('сила привязки', 'Reach из HumanIK: 1 = держится намертво, 0 = едет за телом, между — на полпути. Тот же смысл, что у ползунка в редакторе.')
     .append(...pct(1, (v) => { o.lockWeight = v; rebake(); }));
-  row('заземление', 'Каждый кадр приподнять таз так, чтобы нижняя стопа стояла на полу — в клип попадает уже заземлённая анимация.')
-    .append(check(true, (v) => { o.ground = v; rebake(); }));
+  row('заземление', 'ВЫКЛЮЧЕНО по умолчанию: мокап уже заземлён, а покадровый лифт таза ломает вертикаль — на беге исчезает ФАЗА ПОЛЁТА целиком (замер: 42.6 % кадров в воздухе → 0.0 %), на ходьбе вертикаль таза раздувается на 26–33 %, щелчок стопы растёт до +72 %. Контакт с полом делает рантайм каждый кадр. Включай, только если источник действительно висит или тонет.')
+    .append(check(false, (v) => { o.ground = v; rebake(); }));
   // ── КОРЕНЬ (Ф2). Две галки, и обе по умолчанию ВЫКЛЮЧЕНЫ. ──
   // Клип остаётся in-place при любой из них: позицию и фейсинг задаёт сервер, и в игре эти каналы не
   // читает никто. Снимаем их не ради движения, а ради анализатора (длина шага, угол поворота за шаг)

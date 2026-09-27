@@ -63,7 +63,9 @@ async function main(): Promise<void> {
       const r = bakeFromSource(src, {
         character: 'mocap', weapon: 'none', animationIndex: i, name, loop,
         locoSet: true, bakeId: 20260927, anchorIdle: false, fps: 60, epsDeg: 3,
-        hips: 'full', ground: true, head: 'mocap',
+        // ⚠ БЕЗ ЗАЗЕМЛЕНИЯ: покадровый лифт таза вырезает фазу полёта целиком (42.6 % кадров → 0.0 %)
+        // и раздувает вертикаль таза на ходьбе. Подробности и числа — в шапке `ground` у `clipBaker.ts`.
+        hips: 'full', ground: false, head: 'mocap',
         // ⚠ БЕЗ ПИНОВ СТОП: у мокапа стопы уже верны, а холостой прогон солвера выворачивает голень
         // на бегу (замер: мировой скачок 179° против 26° без пинов). См. шапку `mocapSetMap.ts`.
         limbLock: { LF: false, RF: false },

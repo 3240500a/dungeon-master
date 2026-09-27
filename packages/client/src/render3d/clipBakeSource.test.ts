@@ -122,6 +122,28 @@ describe('clipBaker — заземление', () => {
     const r = bakeFromSource(sunk(), { ...OPTS, ground: true });
     for (const k of r.clip.keys) expect(footY(rigWith(k.pose))).toBeCloseTo(1.5, 3);   // 1.5 = SOLE
   });
+
+  /**
+   * ⭐⭐ УМОЛЧАНИЕ — БЕЗ ЗАЗЕМЛЕНИЯ, И ЭТО НЕ КОСМЕТИКА. Покадровый лифт таза ставит НИЗШУЮ стопу ровно
+   * на пол на каждом кадре, а значит ВЫРЕЗАЕТ ФАЗУ ПОЛЁТА: замер на наборе Kubold — доля кадров, где обе
+   * стопы в воздухе, 42.6 % у `run_fwd` без заземления и 0.0 % с ним, на ВСЕХ 15 клипах без исключения.
+   * Здесь тот же смысл на синтетике: источник ПОДПРЫГИВАЕТ (таз вверх и обратно, стопы уходят от пола),
+   * и заземление обязано этот подскок съесть, а умолчание — сохранить.
+   */
+  it('⭐⭐ УМОЛЧАНИЕ = БЕЗ заземления: подскок источника доезжает в клип, а не прибивается к полу', () => {
+    const jump = (): BakeSource => source([clipOf([posTrackMid('Hips',
+      [hipsRest.x, hipsRest.y, hipsRest.z], [hipsRest.x, hipsRest.y + 9, hipsRest.z], [hipsRest.x, hipsRest.y, hipsRest.z])])]);
+    const span = (r: { clip: { keys: { pose: Pose }[] } }): number => {
+      const ys = r.clip.keys.map((k) => footY(rigWith(k.pose)));
+      return Math.max(...ys) - Math.min(...ys);
+    };
+    const dflt = span(bakeFromSource(jump(), { ...OPTS }));                    // ← ground НЕ передан
+    const off = span(bakeFromSource(jump(), { ...OPTS, ground: false }));
+    const on = span(bakeFromSource(jump(), { ...OPTS, ground: true }));
+    expect(dflt, '⚠ умолчание обязано совпадать с ground:false').toBeCloseTo(off, 6);
+    expect(off, 'подскок обязан доехать в клип').toBeGreaterThan(5);
+    expect(on, '⚠ заземление обязано прибить стопу к полу — это и есть срезанный полёт').toBeLessThan(0.01);
+  });
 });
 
 describe('clipBaker — голова', () => {
