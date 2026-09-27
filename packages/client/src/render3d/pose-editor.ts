@@ -6523,6 +6523,24 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
     const r2 = el('div', 'display:flex;gap:2px;margin-top:4px'); const sel = el('select', 'flex:1;background:#20242f;color:#cfe;border:1px solid #39415a;border-radius:4px;font-size:11px') as HTMLSelectElement;
     srcC.forEach((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.append(o); });
     r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('idle_') || c.name.startsWith('hit_') || c.name.startsWith('s_hit_')))) putClip(cloneClipTo(cl, curCharId), 'replace'); swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; if (layerStore[src]) { layerStore[curCharId] = JSON.parse(JSON.stringify(layerStore[src])) as Record<string, LayerEntry>; saveLayers(); } atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
+    /**
+     * ⭐ ПОВОРОТЫ ОТДЕЛЬНОЙ КНОПКОЙ, и это не мелочь. «Основа: класс» берёт стойки и удары — ВЕРХ; повороты
+     * это ноги, и в тот список они не входят. А без них у нового персонажа `turnInPlace` не находит ничего:
+     * поворот идёт без подшагов, и сравнивать походку с донорской нечестно ровно в том месте, где сравнение
+     * и нужно. Мокап тут не помогает: его четыре «поворота на месте» курс не меняют вовсе (см. `mocapSetMap.ts`),
+     * так что запечённые повороты класса — единственный источник.
+     */
+    const r3 = el('div', 'display:flex;gap:2px;margin-top:2px');
+    r3.append(pbtn(`+ повороты от «${srcC[0]!.name}»`, () => {
+      const src = (r2.firstElementChild as HTMLSelectElement).value;
+      const got = library.filter((c) => c.character === src && c.name.startsWith('turn_'));
+      if (!got.length) { alert('у этого персонажа нет запечённых поворотов'); return; }
+      histLib('повороты от класса', () => {
+        for (const cl of got) putClip(cloneClipTo(cl, curCharId), 'replace');
+        saveLib(); renderLoco(); refreshAll();
+      });
+    }));
+    box.append(r3);
   }
   body.append(box);
 }
