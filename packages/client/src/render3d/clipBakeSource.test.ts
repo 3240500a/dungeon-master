@@ -514,3 +514,86 @@ describe('clipBaker — метаданные набора хода', () => {
     expect(r.stats.upperDirty, 'панель обязана сказать, почему флага нет').toBe(true);
   });
 });
+
+/**
+ * ⭐⭐ ИСТОЧНИК БЕЗ `UpperChest` — не экзотика, а НОРМА: у всей родни CC/AccuRIG и у мокапа Kubold спин всего
+ * два (`Spine`+`Spine1`), а дети нашего `UpperChest` — это `Neck` и ОБА `Shoulder`.
+ *
+ * ЗАМЕР на `RunFwdLoop` пакета Kubold ДО правки: поправка «источник → клип» у `Neck`/`LeftShoulder`/
+ * `RightShoulder` гуляла 17.2/20.1/25.5° (у костей с привязанным родителем 0.06–0.73°), направление плеча
+ * в системе груди уходило на 31–37°, а СГИБ ЛОКТЯ при этом был бит в бит. Ровно так это и читалось глазами:
+ * «в максе чисто, а у нас руку выгибает не туда» — ломался не сустав, а вся рука целиком.
+ */
+describe('clipBaker — наша кость без пары в источнике не должна ломать детей', () => {
+  /** Близнец, из которого ВЫРЕЗАН `UpperChest`: его дети висят на `Chest`, как у CC/Kubold. */
+  function twinNoUpperChest(): BakeSource {
+    const H = buildHumanoid();
+    const root = new THREE.Object3D(); root.name = 'SrcRoot';
+    const made = new Map<string, THREE.Bone>();
+    const skip = 'UpperChest';
+    for (const our of OUR_BONES) {
+      if (our === skip) continue;
+      const g = H.bones.get(our); if (!g) continue;
+      const b = new THREE.Bone(); b.name = 's_' + our; b.position.copy(g.position);
+      let p = parentOfOur(our);
+      while (p === skip) p = parentOfOur(p);              // ребёнок вырезанной кости висит на её родителе
+      (((p ? made.get(p) : undefined) ?? root) as THREE.Object3D).add(b);
+      made.set(our, b);
+    }
+    root.updateMatrixWorld(true);
+    const map: Record<string, string> = {};
+    for (const our of OUR_BONES) if (made.has(our)) map[our] = 's_' + our;
+    const bake = makeBakeRig(root, map);
+    const snap: { o: THREE.Object3D; q: THREE.Quaternion; p: THREE.Vector3 }[] = [];
+    root.traverse((o) => snap.push({ o, q: o.quaternion.clone(), p: o.position.clone() }));
+    return {
+      fileName: 'twin2.fbx', root, loaded: root, animations: [], boneMap: map, bake, signature: 'twin2',
+      report: { file: 'twin2.fbx', animations: [], bones: snap.length, dupNames: [], mapped: [], unmapped: [skip], fingers: 0, tracks: [], restBefore: { arm: '', leg: '' }, restAfter: { arm: '', leg: '' } },
+      restore() { for (const s of snap) { s.o.quaternion.copy(s.q); s.o.position.copy(s.p); } root.updateMatrixWorld(true); },
+    };
+  }
+
+  /** Спина/грудь крутятся (как на беге), шея и ключица — на свой собственный угол. */
+  const SPINE = 0.30, CHEST = 0.25, NECK = 0.12, CLAV = 0.18;
+  const bent = (): BakeSource => {
+    const s = twinNoUpperChest();
+    s.animations = [clipOf([
+      quatTrack('Spine', [1, 0, 0], SPINE), quatTrack('Chest', [1, 0, 0], CHEST),
+      quatTrack('Neck', [1, 0, 0], NECK), quatTrack('LeftShoulder', [0, 0, 1], CLAV),
+    ])];
+    return s;
+  };
+
+  it('⭐⭐ ШЕЯ И КЛЮЧИЦА получают СВОЙ угол, а не мировой (поворот спины не прилетает им второй раз)', () => {
+    const r = bakeFromSource(bent(), { ...OPTS, ground: false });
+    const p = lastPose(r.clip.keys);
+    // Мировой шеи здесь был бы SPINE+CHEST+NECK = 0.67 рад (38°) — именно это и писалось в локаль.
+    expect(p['Neck']![0], '⚠ шее прилетел мировой поворот').toBeCloseTo(NECK, 2);
+    expect(p['LeftShoulder']![2], '⚠ ключице прилетел мировой поворот').toBeCloseTo(CLAV, 2);
+    expect(p['Chest']![0], 'контроль: у груди родитель привязан — она и раньше была верна').toBeCloseTo(CHEST, 2);
+  });
+
+  it('вырезанная кость остаётся В ПОКОЕ — иначе её поворот входит в мировой детей', () => {
+    const r = bakeFromSource(bent(), { ...OPTS, ground: false });
+    const p = lastPose(r.clip.keys);
+    for (const v of p['UpperChest'] ?? [0, 0, 0]) expect(v).toBeCloseTo(0, 6);
+  });
+
+  it('⭐ мировая ориентация КИСТИ совпадает с источником — сквозной контроль всей цепи', () => {
+    const src = bent();
+    const r = bakeFromSource(src, { ...OPTS, ground: false });
+    const H = rigWith(lastPose(r.clip.keys));
+    const sb = new Map<string, THREE.Object3D>();
+    src.root.traverse((o) => { if (o.name) sb.set(o.name, o); });
+    // источник ставим на конец дорожек тем же микшером
+    const mx = new THREE.AnimationMixer(src.root);
+    const a = mx.clipAction(src.animations[0]!); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.play();
+    mx.setTime(1); src.root.updateMatrixWorld(true);
+    for (const b of ['Neck', 'Head', 'LeftShoulder', 'LeftUpperArm', 'LeftHand']) {
+      const qs = sb.get('s_' + b)!.getWorldQuaternion(new THREE.Quaternion());
+      const qo = H.bones.get(b)!.getWorldQuaternion(new THREE.Quaternion());
+      const deg = 2 * Math.acos(Math.min(1, Math.abs(qs.dot(qo)))) * 180 / Math.PI;
+      expect(deg, `${b}: расхождение с источником ${deg.toFixed(1)}°`).toBeLessThan(0.5);
+    }
+  });
+});

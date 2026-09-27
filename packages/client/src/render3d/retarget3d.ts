@@ -655,11 +655,19 @@ export function makeBakeRig(loaded: THREE.Object3D, boneMap: Record<string, stri
     restP.set(t, b.getWorldPosition(new THREE.Vector3()));
   }
 
-  const _Wt = new THREE.Quaternion(), _rtI = new THREE.Quaternion(), _pwI = new THREE.Quaternion();
+  const _Wt = new THREE.Quaternion(), _rtI = new THREE.Quaternion(), _pwI = new THREE.Quaternion(), _skip = new THREE.Quaternion();
   const Wmap = new Map<string, THREE.Quaternion>();
   function sampleInto(dst: Humanoid, fingers = false): void {
     Wmap.clear();
     loaded.updateMatrixWorld(true);
+    // ⚠ НАШИ КОСТИ БЕЗ ПАРЫ В ИСТОЧНИКЕ — В ПОКОЙ, и это не уборка, а условие правильности блока ниже:
+    // их поворот входит в мировой ребёнка, а мы его там считаем по РЕСТУ. Без сброса кость держала бы
+    // значение предыдущего прогона (микшер её не перетирает — дорожки у неё нет).
+    for (const our of OUR_BONES) {
+      if (boneMap[our]) continue;
+      const db = dst.bones.get(our), r = dst.restQuat.get(our);
+      if (db && r) db.quaternion.copy(r);
+    }
     // Порядок родитель→ребёнок (parentOurWorld уже в Wmap). Фаланги — ПОСЛЕ тела: их родитель по цепочке
     // упирается в кисть, а она снимается в OUR_BONES; `OUR_FINGERS` сам идёт от проксимальной к дистальной.
     for (const our of fingers ? [...OUR_BONES, ...OUR_FINGERS] as string[] : OUR_BONES as readonly string[]) {
@@ -669,9 +677,28 @@ export function makeBakeRig(loaded: THREE.Object3D, boneMap: Record<string, stri
       tb.getWorldQuaternion(_Wt);                        // W_target
       const Wour = new THREE.Quaternion().copy(_Wt).multiply(_rtI.copy(rt).invert());   // W_our = W_target·R_restTarget⁻¹
       Wmap.set(our, Wour);
-      const pName = parentOfOur(our);
-      const pw = pName ? Wmap.get(pName) : undefined;   // мировой нашей родит-кости (или identity для Hips/непривязанных)
-      db.quaternion.copy(pw ? _pwI.copy(pw).invert().multiply(Wour) : Wour);            // → локаль (rotation синхронизируется)
+      /**
+       * ⭐⭐ РОДИТЕЛЬ — БЛИЖАЙШИЙ ПРИВЯЗАННЫЙ ПРЕДОК, А НЕ ПРЯМОЙ. Пропущенные кости входят в мировой
+       * своим РЕСТОМ (у нашего канона он единичный, но считаем честно — риг может прийти с морфом).
+       *
+       * ⚠ ЦЕНА ОШИБКИ БЫЛА ВЕЛИКА. Раньше при непривязанном ПРЯМОМ родителе в локаль писался МИРОВОЙ
+       * кватернион. А `UpperChest` не мапится у всей родни CC/AccuRIG и у мокапа Kubold (там спин всего
+       * два: `Spine`+`Spine1`), и его дети — это `Neck` и ОБА `Shoulder`. То есть весь поворот спины и
+       * груди прилетал шее и рукам ВТОРОЙ РАЗ: ЗАМЕР на `RunFwdLoop` — поправка «источник → клип» у
+       * `Neck`/`LeftShoulder`/`RightShoulder` гуляла 17.2/20.1/25.5° (у правильных костей 0.06–0.73°),
+       * направление плеча уходило на 31–37°. Сгиб локтя при этом был бит в бит — потому и читалось как
+       * «в максе чисто, а у нас руки выгибает не туда»: ломался не сустав, а вся рука целиком.
+       *
+       * Для ПОЗИЦИЙ этот же подъём по предкам уже сделан (см. `chain`-блок выше), для поворотов — не был.
+       */
+      let pw: THREE.Quaternion | undefined;
+      _skip.identity();
+      for (let p = parentOfOur(our); p; p = parentOfOur(p)) {
+        const w = Wmap.get(p);
+        if (w) { pw = _pwI.copy(w).multiply(_skip); break; }
+        const r = dst.restQuat.get(p); if (r) _skip.premultiply(r);
+      }
+      db.quaternion.copy(pw ? pw.invert().multiply(Wour) : Wour);                       // → локаль (rotation синхронизируется)
     }
   }
   const _hp = new THREE.Vector3();
