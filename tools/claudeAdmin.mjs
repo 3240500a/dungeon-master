@@ -21,13 +21,19 @@
  */
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const CRED = path.join(ROOT, 'tools', 'deploy', 'local.claude.json');
-const USER = process.argv[2] || 'claude';
+const ARGS = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const USER = ARGS[0] || 'claude';
+/** Явное согласие сменить пароль СУЩЕСТВУЮЩЕМУ аккаунту — по умолчанию мы этого не делаем. */
+const FORCE = process.argv.includes('--force-reset');
 const API = process.env.DM_API || 'http://localhost:3001';
+/** На Windows исполняемый файл npm — `npm.cmd`. Зовём его НАПРЯМУЮ, без `shell: true`:
+ *  с шеллом node ругается DEP0190 (аргументы не экранируются), и это не придирка — имя аккаунта приходит извне. */
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const say = (s) => process.stdout.write(s + '\n');
 
@@ -37,6 +43,41 @@ async function main() {
 
   const pass = randomBytes(24).toString('base64url');
 
+  /**
+   * ⚠ ДВЕ РАЗНЫЕ КОМАНДЫ, И ПУТАТЬ ИХ НЕЛЬЗЯ. `create-admin -- <ник>` заводит аккаунт (пароль берёт
+   * из пайпа), а СУЩЕСТВУЮЩЕМУ только выдаёт роль и пароль НЕ трогает — намеренно, «чтобы не сменить
+   * незаметно чужой пароль при совпадении ника». `--reset` меняет пароль, но только существующему.
+   *
+   * Отсюда порядок: сначала ЗАВЕСТИ. Если аккаунт уже был — записанный здесь пароль ему не подходит,
+   * и молча делать `--reset` НЕЛЬЗЯ: под этим ником может оказаться живой игрок, и мы сменили бы ему
+   * пароль и выбили все сессии. В таком случае останавливаемся и спрашиваем.
+   */
+  say('Завожу аккаунт «' + USER + '» и выдаю роль admin…');
+  const made = await run(NPM, ['run', '--silent', 'create-admin', '--', USER], pass + '\n');
+  if (made.code !== 0) {
+    say('\n❌ Не получилось (код ' + made.code + '). Причину CLI написал выше. Частые случаи:');
+    say('   • не поднят Postgres — в деве ожидается 127.0.0.1:5432, база dungeon;');
+    say('   • ник короче 3 или длиннее 20 символов.');
+    return 1;
+  }
+  if (/уже есть/.test(made.out)) {
+    if (!FORCE) {
+      say('\n⚠ Аккаунт «' + USER + '» СУЩЕСТВОВАЛ ДО ЭТОГО. Роль admin ему выдана, но пароль не менялся —');
+      say('   значит записанный сейчас в local.claude.json пароль ему НЕ подходит.');
+      say('   Молча менять пароль не буду: под этим ником может быть живой игрок.');
+      say('\n   Если «' + USER + '» — точно наш служебный аккаунт, запусти так:');
+      say('     tools\\claude-admin.cmd ' + USER + ' --force-reset');
+      say('   Если нет — возьми другое имя:');
+      say('     tools\\claude-admin.cmd мой-агент');
+      return 1;
+    }
+    say('\n--force-reset: выставляю пароль существующему аккаунту (старые сессии будут отозваны)…');
+    const set = await run(NPM, ['run', '--silent', 'create-admin', '--', USER, '--reset'], pass + '\n');
+    if (set.code !== 0) { say('\n❌ Сменить пароль не удалось (код ' + set.code + ').'); return 1; }
+  }
+
+  // ⚠ ФАЙЛ С ПАРОЛЕМ ПИШЕТСЯ ТОЛЬКО ПОСЛЕ УСПЕХА. Записать его раньше значит оставить после отказа
+  // правдоподобный, но НЕРАБОЧИЙ пароль — и следующий вход упрётся в него, а причина будет уже забыта.
   mkdirSync(path.dirname(CRED), { recursive: true });
   const prev = existsSync(CRED);
   writeFileSync(CRED, JSON.stringify({
@@ -45,17 +86,8 @@ async function main() {
     api: API,
     note: 'Учётка агента для ЛОКАЛЬНОГО dev-сервера. В git не попадает (.gitignore). Отозвать: npm run revoke-admin -- ' + USER,
   }, null, 2));
-  say((prev ? 'Пароль перевыпущен' : 'Пароль создан') + ' и записан в:');
-  say('  ' + CRED + '\n');
-
-  say('Завожу аккаунт «' + USER + '» и выдаю роль admin…');
-  const code = await run('npm', ['run', '--silent', 'create-admin', '--', USER, '--reset'], pass + '\n');
-  if (code !== 0) {
-    say('\n❌ Команда create-admin завершилась с кодом ' + code + '.');
-    say('   Чаще всего это значит, что не поднят Postgres (в деве ожидается 127.0.0.1:5432, база dungeon).');
-    say('   Подними базу/сервер и запусти этот файл ещё раз.');
-    return 1;
-  }
+  say('\n' + (prev ? 'Пароль перевыпущен' : 'Пароль создан') + ' и записан в:');
+  say('  ' + CRED);
 
   say('\nПроверяю вход на ' + API + ' …');
   try {
@@ -82,10 +114,14 @@ async function main() {
 /** Запустить команду, отдав ей `stdin`, и НЕ показывая содержимое stdin. */
 function run(cmd, args, stdin) {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { cwd: ROOT, shell: true, stdio: ['pipe', 'inherit', 'inherit'] });
+    // stdout ПЕРЕХВАТЫВАЕМ (по нему решаем, был ли аккаунт), но тут же печатаем — человек должен
+    // видеть ровно то, что сказал CLI, а не наш пересказ.
+    const p = spawn(cmd, args, { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] });
+    let out = '';
+    p.stdout.on('data', (d) => { out += d.toString('utf8'); process.stdout.write(d); });
     p.stdin.end(stdin);
-    p.on('close', (c) => resolve(c ?? 1));
-    p.on('error', () => resolve(1));
+    p.on('close', (code) => resolve({ code: code ?? 1, out }));
+    p.on('error', () => resolve({ code: 1, out }));
   });
 }
 
