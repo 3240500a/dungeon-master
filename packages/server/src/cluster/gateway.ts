@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN } from '@dm/shared';
 import { q, q1 } from '../db/pool.js';
-import { getSession, getCharacter } from '../db/db.js';
+import { getCharacter } from '../db/db.js';
 import { limits } from '../net/rateLimit.js';
 import { localCaller } from '../net/adminAccess.js';
 import { cachedJson } from '../net/cachedJson.js';
+import { queryText } from '../net/asyncRoute.js';
+import { sessionUser } from '../net/authSession.js';
 import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow } from './registry.js';
 
 /**
@@ -60,30 +62,114 @@ const TICKET_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 const ROOM_CODE_RE = new RegExp(`^[A-Z0-9]{1,${ROOM_CODE_LEN}}$`);
 
 /**
- * Сколько игроков мы отправили на узел с прошлого обновления его показателей.
+ * Одно направление: когда выдано (монотонные часы гейтвея — только для запасного срока) и какое сердцебиение ноды гейтвей
+ * видел в тот момент (`beat_ms`, часы базы).
+ */
+interface Issued { node: string; at: number; beat: number | undefined }
+/**
+ * Кого мы отправили на узел, а его показатели этого ещё не отражают (по ноде).
  *
  * БЕЗ ЭТОГО ВСПЛЕСК УХОДИТ НА ОДИН УЗЕЛ. Показатели приходят с сердцебиением раз в две
  * секунды; если за это время подключаются сорок человек, все сорок видят «везде по нулю»
  * и все едут на первый узел. Проверено на первом же прогоне: 4 узла, 14 игроков — все на
  * `node-0`. Поэтому к числу игроков прибавляем ещё не учтённые направления.
  */
-const issued = new Map<string, number>();
-/** Раз в несколько секунд показатели узлов догоняют реальность — счётчик обнуляем. */
-setInterval(() => issued.clear(), 4_000).unref();
+const issued = new Map<string, Issued[]>();
+/**
+ * ⭐ E2E 27.09: ПОПРАВКА СНИМАЕТСЯ СЕРДЦЕБИЕНИЕМ, КОТОРОЕ ЕЁ ТОЧНО ОТРАЗИЛО, А НЕ ТАЙМЕРОМ. Раньше счёт обнулялся раз в 4 с по
+ * своим часам: сброс между выдачей адреса и сердцебиением, которое уже видит вошедших, — и они выпадали из суммы (живой
+ * `poc:cluster --mode=queue`, потолок 30: впущено 33); между сердцебиением и сбросом те же игроки считались дважды — очередь
+ * вставала раньше потолка (25 из 30). Теперь направление живёт, пока сердцебиение ноды не ушло от увиденного при выдаче на
+ * `ISSUED_REFLECT_MS` — это второе сердцебиение после выдачи (нода бьётся раз в 2 с, `node.ts`): первое могло быть замерено
+ * раньше, чем клиент вошёл, второе видит всех, кто вошёл в пределах ~2 с. Сравниваются только значения часов базы между собой.
+ * Кто не вошёл (закрыл вкладку), тоже снимается — места он не держит.
+ */
+const ISSUED_REFLECT_MS = 3_500;
+/** Запасной срок направления — если сердцебиения ноды не видно (строка без `beat_ms`): монотонные часы гейтвея. */
+const ISSUED_TTL_MS = 30_000;
+const monotonicMs = (): number => performance.now();
+
+/** Снять направления, которые сердцебиения нод уже отразили (или которые пережили запасной срок); ноды, выпавшие из живых, — целиком. */
+function settleIssued(nodes: readonly NodeRow[]): void {
+  const now = monotonicMs();
+  const live = new Map(nodes.map((n) => [n.id, n]));
+  for (const [id, list] of issued) {
+    const beat = live.get(id)?.beat_ms;
+    const kept = live.has(id)
+      ? list.filter((e) => now - e.at < ISSUED_TTL_MS && !(beat !== undefined && e.beat !== undefined && beat - e.beat >= ISSUED_REFLECT_MS))
+      : [];
+    if (kept.length) issued.set(id, kept); else issued.delete(id);
+  }
+}
+
+/** Сколько игроков направлено на ноду, но ещё не отражено в её показателях. */
+function pendingOf(nodeId: string): number {
+  return issued.get(nodeId)?.length ?? 0;
+}
 
 /** Сколько игроков направлено, но ещё не отражено в показателях узлов. */
 function pendingIssued(): number {
   let n = 0;
-  for (const v of issued.values()) n += v;
+  for (const v of issued.values()) n += v.length;
   return n;
+}
+
+/**
+ * R7-05: лог отказов маршрутизации (база не ответила и т. п.) — не чаще раза в 10 с, с числом промолчанных (как `warnFrame` у
+ * кадров): поток запросов в лежащую базу лог не топит.
+ */
+let routeWarnAt = 0;
+let routeWarnMuted = 0;
+function warnRoute(e: unknown): void {
+  const now = Date.now();
+  if (now - routeWarnAt < 10_000) { routeWarnMuted++; return; }
+  const muted = routeWarnMuted ? ` (и ещё ${routeWarnMuted} с прошлого сообщения)` : '';
+  routeWarnAt = now; routeWarnMuted = 0;
+  console.error(`[гейтвей] отказ маршрутизации${muted}:`, e);
 }
 
 /** Самая свободная живая нода с учётом уже выданных, но ещё не учтённых направлений. */
 function leastLoaded(nodes: NodeRow[]): NodeRow | undefined {
-  const score = (n: NodeRow): number => n.players + (issued.get(n.id) ?? 0);
-  const best = nodes.filter((n) => !n.draining).sort((a, b) => score(a) - score(b))[0];
-  if (best) issued.set(best.id, (issued.get(best.id) ?? 0) + 1);
-  return best;
+  const score = (n: NodeRow): number => n.players + pendingOf(n.id);
+  return nodes.filter((n) => !n.draining).sort((a, b) => score(a) - score(b))[0];
+}
+
+/**
+ * ⭐ E2E 27.09: направление засчитывается ТОЙ ноде, чей адрес ушёл клиенту, — на КАЖДОМ пути: новичок, вход по коду комнаты,
+ * возврат к своей ноде. Раньше поправку получал только новичок и только выбранная «самая свободная»: напарники хоста по коду
+ * в неё не шли (живой кластер, 2 ноды, 6 пати по 4 — 5 комнат на одной ноде и 1 на другой: хосты следующих пати видели
+ * ноду первой почти пустой), герой, закреплённый за другой нодой, засчитывался не той, а поток входов по коду в окне между
+ * сердцебиениями видел одну и ту же сумму и проходил потолок кластера целиком, мимо запаса ноды (R6-08).
+ */
+function noteIssued(node: NodeRow): Issued {
+  const e: Issued = { node: node.id, at: monotonicMs(), beat: node.beat_ms };
+  const list = issued.get(node.id) ?? [];
+  list.push(e);
+  issued.set(node.id, list);
+  return e;
+}
+
+/** Снять направление (не впустили — место не держит). */
+function dropIssued(e: Issued): void {
+  const list = issued.get(e.node);
+  const i = list ? list.indexOf(e) : -1;
+  if (i < 0) return;
+  list!.splice(i, 1);
+  if (!list!.length) issued.delete(e.node);
+}
+
+/**
+ * ⭐ E2E 27.09: направление ЗАСЧИТЫВАЕТСЯ В ТОМ ЖЕ ШАГЕ, ГДЕ СЧИТАЛИ СУММУ, — до следующего ожидания базы (очередь,
+ * закрепление): одновременные маршруты переплетаются на ожиданиях, и засчитанное после них все видели «ещё не засчитанным» —
+ * всплеск ехал на одну ноду и проходил потолок разом (перезапуск кластера — тысяча одновременных реконнектов). Узнали, что
+ * нода другая (закрепление за другой, вход по коду), — направление переезжает туда.
+ */
+function moveIssued(e: Issued, node: NodeRow): void {
+  if (e.node === node.id) return;
+  dropIssued(e);
+  const list = issued.get(node.id) ?? [];
+  list.push({ ...e, node: node.id, beat: node.beat_ms });
+  issued.set(node.id, list);
 }
 
 /**
@@ -106,15 +192,19 @@ export function installGatewayRoutes(
       // его не видать: токен — вид сессии, id героя — правило провода, билет — вид `randomUUID`, код комнаты — вид кода.
       const token = bearer(req);
       if (!token || !WIRE_TOKEN_RE.test(token)) return res.status(401).json({ error: 'Требуется вход' });
-      const charId = String(req.query.charId ?? '');
-      if (!WIRE_CHAR_ID_RE.test(charId)) return res.status(400).json({ error: 'Неверный id персонажа' });
-      const ticket = String(req.query.ticket ?? '');
-      if (ticket && !TICKET_RE.test(ticket)) return res.status(400).json({ error: 'Неверный билет очереди' });
-      const code = String(req.query.roomCode ?? '').toUpperCase();
-      if (code && !ROOM_CODE_RE.test(code)) return res.status(400).json({ error: 'Неверный код комнаты' });
+      // ⭐ R7-05: значение — только строкой (`queryText`): `?charId[toString]=1` разборщик express делает объектом, и `String()` на
+      // нём бросал — 500 и стек в лог на каждый анонимный запрос (токен нужен лишь того вида, в базу до броска не ходили).
+      const charId = queryText(req.query.charId);
+      if (charId === undefined || !WIRE_CHAR_ID_RE.test(charId)) return res.status(400).json({ error: 'Неверный id персонажа' });
+      const ticket = queryText(req.query.ticket);
+      if (ticket === undefined || (ticket && !TICKET_RE.test(ticket))) return res.status(400).json({ error: 'Неверный билет очереди' });
+      const code = queryText(req.query.roomCode)?.toUpperCase();
+      if (code === undefined || (code && !ROOM_CODE_RE.test(code))) return res.status(400).json({ error: 'Неверный код комнаты' });
 
-      const userId = await getSession(token);
-      if (!userId) return res.status(401).json({ error: 'Требуется вход' });
+      // ⭐ R9-12: сессия — под бакетом сети адреса (`sessionUser`): потолок маршрута ниже держит аккаунт, то есть стоит ПОСЛЕ базы,
+      // и поток случайных токенов правильного вида ходил в общую базу без предела.
+      const userId = await sessionUser(req, res, token);
+      if (!userId) return;
       // R4-21: каждый маршрут пишет закрепление героя в базу — не чаще потолка аккаунта.
       if (!limits.route.take(userId)) {
         res.setHeader('Retry-After', String(limits.route.retryAfterSec(userId)));
@@ -126,6 +216,7 @@ export function installGatewayRoutes(
 
       const nodes = await liveNodes();
       if (!nodes.length) return res.status(503).json({ error: 'Игровые узлы недоступны' });
+      settleIssued(nodes);   // E2E 27.09: поправка — до всех сумм ниже (потолок, самая свободная)
 
       // ⭐ R5-13: код комнаты — только полный (буква ноды + знаки, R4-18). Раньше хватало одной буквы: `?roomCode=A` отдавал
       // адрес первой ноды мимо очереди, а дальше вход без кода туда же.
@@ -137,6 +228,10 @@ export function installGatewayRoutes(
       // К числу игроков из реестра ОБЯЗАТЕЛЬНО прибавляем уже выданные направления: показатели
       // приходят раз в две секунды, а полсотни человек заходят за доли секунды. Без этой
       // поправки потолок не срабатывает вовсе — проверено, пропустило всех 50 при потолке 30.
+      // Нода по коду комнаты (буква кода) — известна сразу, без базы.
+      const byLetter = code ? nodes.find((n) => nodeLetter(n.id) === code[0]) : undefined;
+      // Направление этого маршрута — засчитывается синхронно с суммой, до ожиданий базы (см. `moveIssued`).
+      let mine: Issued | undefined;
       if (MAX_PLAYERS > 0) {
         // ⭐ R6-08: ВОЗВРАЩЕНИЕ — НЕ НОВЫЙ ВХОД. Клиенты спрашивают маршрут перед каждым подключением и реконнектом (R4-13), и
         // на потолке герой, чья связь моргнула посреди забега, вставал в очередь вместо своей грейс-комнаты (а пати тем
@@ -144,16 +239,20 @@ export function installGatewayRoutes(
         const liveAt = await liveClaim(charId);
         const home = liveAt ? nodes.find((n) => n.id === liveAt) : undefined;
         if (home) {
+          noteIssued(home);
           if (ticket) await dropTicket(ticket, userId);
           return res.json({ url: home.url, node: home.id, reason: 'закреплён за узлом' });
         }
         const total = nodes.reduce((a, n) => a + n.players, 0) + pendingIssued();
         // ⭐ R6-08: к другу по коду — в пределах запаса ноды, а не в общей очереди (см. `partyHeadroom`).
         if (code && total < MAX_PLAYERS + partyHeadroom(MAX_PLAYERS)) {
+          if (byLetter) mine = noteIssued(byLetter);
           if (ticket) await dropTicket(ticket, userId);
         } else {
+          const provisional = (code ? byLetter : leastLoaded(nodes)) ?? nodes[0]!;
+          mine = noteIssued(provisional);
           const q1r = await admit(ticket, userId, MAX_PLAYERS - total);
-          if (!q1r.admitted) return res.status(503).json(q1r.body);
+          if (!q1r.admitted) { dropIssued(mine); return res.status(503).json(q1r.body); }
         }
       } else if (ticket) {
         await q('DELETE FROM login_queue WHERE ticket = $1', [ticket]);   // потолка нет — билет не нужен
@@ -161,18 +260,24 @@ export function installGatewayRoutes(
 
       // 2. По коду комнаты — к другу.
       if (code) {
-        const byLetter = nodes.find((n) => nodeLetter(n.id) === code[0]);
-        if (byLetter) return res.json({ url: byLetter.url, node: byLetter.id, reason: 'по коду комнаты' });
+        if (byLetter) {
+          if (mine) moveIssued(mine, byLetter); else noteIssued(byLetter);
+          return res.json({ url: byLetter.url, node: byLetter.id, reason: 'по коду комнаты' });
+        }
+        if (mine) dropIssued(mine);
         return res.status(404).json({ error: 'Комната не найдена: узел не отвечает' });
       }
 
-      // 3. Свой персонаж возвращается на свою ноду; новый — на самую свободную.
-      const free = leastLoaded(nodes) ?? nodes[0]!;
+      // 3. Свой персонаж возвращается на свою ноду; новый — на самую свободную. Засчитано до ожидания закрепления: выбор
+      // «самой свободной» и счёт — один шаг, иначе одновременные новички видели бы одну и ту же картину.
+      const free = (mine ? nodes.find((n) => n.id === mine!.node) : undefined) ?? leastLoaded(nodes) ?? nodes[0]!;
+      mine ??= noteIssued(free);
       const nodeId = await claimChar(charId, free.id);
       const target = nodes.find((n) => n.id === nodeId) ?? free;
+      moveIssued(mine, target);
       res.json({ url: target.url, node: target.id, reason: target.id === free.id ? 'самая свободная' : 'закреплён за узлом' });
     })().catch((e: unknown) => {
-      console.error('[гейтвей] отказ маршрутизации:', e);
+      warnRoute(e);
       if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
     });
   });

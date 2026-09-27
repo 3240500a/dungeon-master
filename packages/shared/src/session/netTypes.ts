@@ -140,6 +140,13 @@ export interface FloorInit {
   runNodeType?: string;
   /** id активных модификаторов этажа (v2). */
   floorModifiers?: string[];
+  /**
+   * ⭐ R8-10: тир сложности и УРОВЕНЬ ВЫЗОВА узла — ровно то, по чему сервер его заселил (`floorChallengeLevel` от мощи
+   * узла). Клиент показывает их в строке «этаж · тир · вызов ур.»: своей мерой он не знает ни снаряжения напарников, ни
+   * мощи, с которой узел заселили раньше. Только в подземелье; нет поля (старый сервер) — клиент считает сам, как прежде.
+   */
+  difficultyId?: string;
+  challengeLevel?: number;
   decor: DecorObject[];
   /** Запертые ворота (клетки грида) — для рендера/открытия по `doorOpened`. */
   doors: { id: number; cells: { cx: number; cy: number }[] }[];
@@ -167,24 +174,27 @@ export interface WorldSnapshot {
 // ⭐ R5-15: `maxGold` у платных команд — цена в золоте, которую показала игроку карточка. Сервер берёт по СВОЕМУ конфигу
 // и при цене выше показанной отказывает до траты («Цена изменилась: N золота», `priceRaised`). Нет поля — как раньше.
 // R6-16: и у покупки в лавке, и у узла мастерства; у продажи — `minGold`: лавка даёт меньше показанного — отказ.
+// ⭐ R8-14: и сырьё — `maxMaterials` (ковка, улучшение, починка: больше показанного — отказ), и выход разбора — `minYield`
+// (нижняя граница вилки «от–до»: меньше — отказ, вещь цела). id материала → число; нет поля — как раньше.
+// R9-04: у разборов ещё `avgYield` — средний выход карточки (`salvageMean`): низ дробной доли — 0 при любой правке выхода.
 export type TownCommand =
   | { cmd: 'buy'; uid: string; maxGold?: number }
   | { cmd: 'sell'; uid: string; minGold?: number }
-  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number }
+  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number; maxMaterials?: Record<string, number> }
   | { cmd: 'forgeReroll'; uid: string; maxGold?: number }
   /** Починка сломанного трофея: снимает флаг за золото и материалы. */
-  | { cmd: 'forgeRepair'; uid: string; maxGold?: number }
+  | { cmd: 'forgeRepair'; uid: string; maxGold?: number; maxMaterials?: Record<string, number> }
   /** Сдать всё сырьё из сумки в общий сундук аккаунта. */
   | { cmd: 'depositMaterials' }
   /** Разбор у кузнеца: полный выход материалов; найденное оружие открывает журнал кузнеца (§12). */
-  | { cmd: 'forgeSalvage'; uid: string }
+  | { cmd: 'forgeSalvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number> }
   /**
    * ⭐ Сковать оружие из деталей (docs/CRAFT_WEAPONS.md). `nonce` — ключ идемпотентности заявки (D4):
    * придумывает клиент, сервер помнит его на АККАУНТЕ вместе с вещью. Повтор того же ключа — даже
    * после реконнекта или на другой ноде — отвечает прежней вещью, а не кует вторую. Заявка — только
    * `{id, step}` четырёх гнёзд, хват и доводка: базу, имя, ступень и цену сервер выводит сам.
    */
-  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number }
+  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number; maxMaterials?: Record<string, number> }
   /** Зачаровать СКОВАННУЮ обычную вещь из сумки до магической или редкой — за золото (§13). */
   | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number }
   /**
@@ -193,7 +203,7 @@ export type TownCommand =
    */
   | { cmd: 'forgeSketch'; variantId: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
-  | { cmd: 'salvage'; uid: string }
+  | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number> }
   | { cmd: 'equip'; uid: string }
   | { cmd: 'unequip'; slot: string }
   /** Вложить `n` очков в атрибут (нет — одно). Пачка очков — одна команда, а не `n` кадров (R2-15). */
@@ -297,7 +307,16 @@ export type ServerFrame =
   // Смерть игрока: потери + режим возрождения (город=соло/вайп, иначе ждать пати на след. этаже).
   // pvp=true — гибель в PvP-арене: без штрафа, авто-возрождение через пару секунд (клиент → иной текст).
   | { t: 'died'; goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean }
-  | { t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string }
+  /**
+   * Голосование за переход. ⭐ R9-08: СПУСК ИЗ ГОРОДА — С ТЕМ, ЧТО НАЧНЁТСЯ: тир (`difficultyId`), шаблон, биом и модификаторы
+   * забега, а `resume` — продолжение припаркованного забега героя `host` с глубины `depth` (тир и прочее тогда — его забега).
+   * Раньше окно знало только «спуск»: принявший входил в тир, которого не открывал и не выбирал. Начнётся ровно показанное:
+   * сменилось, пока голосовали (вошёл хозяин другого забега), — голосование отменяется (`error` с кодом `vote`).
+   */
+  | {
+    t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string;
+    difficultyId?: string; templateId?: string; biomeId?: string; modifiers?: string[]; resume?: { host: string; depth: number };
+  }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }
   /**

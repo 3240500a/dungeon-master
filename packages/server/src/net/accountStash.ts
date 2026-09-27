@@ -1,4 +1,5 @@
 import { getAccountStash, putAccountStash, putCharacterWithStash } from '../db/db.js';
+import { CommitUnknown } from '../db/errors.js';
 import { sanitizeStash, emptyStash, migrateWalletToStash, type AccountStash, type ConfigRegistry, type SaveState } from '@dm/shared';
 
 /**
@@ -41,20 +42,32 @@ export async function saveAccountStash(userId: string, stash: AccountStash): Pro
  * снимку — вещь оказывалась и на земле, и в сумке. Неудачу записи с D8 можно вызвать нарочно (второй герой
  * аккаунта трогает сундук), и кошелёк оставался в сейве — трюк повторялся на каждом входе.
  * Возвращает сейв и версию, с которыми входить.
+ *
+ * ⭐ R8-17: СТАРАЯ КОПИЯ — ТОЛЬКО КОГДА СТРОКА ГЕРОЯ НАВЕРНЯКА НЕ ТРОНУТА (сундук обогнали — не записано ничего; сбой до фиксации).
+ * Исход фиксации неизвестен (`CommitUnknown`, R2-09) или строку обогнали — в базе уже может лежать (или лежит) другая версия:
+ * вход со старой копией и старой версией давал сессию, чья первая запись упрётся в отказ (4009), а до неё следующий кадр
+ * соединения успевал бросить вещь на землю — сосед по аккаунту поднимал её, а строка героя в базе её держала: вещь у двоих.
+ * Тогда — бросок: вход ответит «сервер занят», повтор прочитает правду из базы.
  */
 export async function migrateLegacyWallet(
   userId: string, save: SaveState, version: number, cfg: ConfigRegistry,
 ): Promise<{ save: SaveState; version: number }> {
   if (!save.materials || !Object.keys(save.materials).length) return { save, version };
+  let res: Awaited<ReturnType<typeof putCharacterWithStash>>;
+  let next: SaveState;
   try {
     const loaded = await loadAccountStash(userId, cfg);
-    const next = structuredClone(save);
+    next = structuredClone(save);
     if (!migrateWalletToStash(next, loaded.stash)) return { save, version };
-    const res = await putCharacterWithStash(save.charId, userId, next, version, loaded.stash, loaded.version, 'stash');
-    if (res.ok) return { save: next, version: res.version };
-    console.warn(`[room] переезд кошелька ${save.charId} не записан (обогнали ${res.conflict === 'stash' ? 'сундук' : 'сейв'}) — повторится при следующем входе`);
+    res = await putCharacterWithStash(save.charId, userId, next, version, loaded.stash, loaded.version, 'stash');
   } catch (e) {
+    if (e instanceof CommitUnknown) throw e;   // R8-17: строка, может быть, уже новая — старой копией не входим
     console.error(`[room] переезд кошелька ${save.charId} упал:`, e);
+    return { save, version };
   }
+  if (res.ok) return { save: next, version: res.version };
+  // R8-17: версию сейва обогнали — старая копия уже не та, что в базе.
+  if (res.conflict === 'save') throw new Error(`переезд кошелька ${save.charId}: строку героя обогнали — вход со старой копией отменён`);
+  console.warn(`[room] переезд кошелька ${save.charId} не записан (обогнали сундук) — повторится при следующем входе`);
   return { save, version };
 }

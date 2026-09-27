@@ -1,5 +1,5 @@
 import {
-  craftTiers, emptyJournal, partById, salvageIntoJournal, salvageYield, sketchable, typeOfItem,
+  craftTiers, emptyJournal, partById, salvageIntoJournal, salvageMean, salvageRange, salvageYield, sketchable, typeOfItem,
   type ConfigRegistry, type CraftJournal, type Item, type SalvageRng,
 } from '@dm/shared';
 import type { App } from '../../core/app.js';
@@ -125,7 +125,11 @@ export async function salvageInField(
   const why = !state ? 'герой не в игре' : state.area === 'town' ? 'герой уже в городе — там разбирает кузнец'
     : !state.save.inventory.some((i) => i.uid === item.uid) ? `«${item.name}» уже нет в сумке` : '';
   if (why) { app.bus.emit('log:message', { text: `Разбор отменён: ${why}`, kind: 'system' }); return false; }
-  void app.request({ cmd: 'salvage', uid: item.uid }).then((r) => {
+  // ⭐ R8-14: с низом вилки выхода по конфигу клиента: правка выхода живьём на сервере — отказ, вещь цела, конфиг перечитан.
+  // R9-04: и со средним выходом — у дробной доли (пояс, обычное оружие: «0–1») низ вилки правку выхода не видит.
+  const low = Object.fromEntries(Object.entries(salvageRange(app.config, item, true).range).map(([id, r]) => [id, r.min]));
+  const avg = salvageMean(app.config, item, true);
+  void app.request({ cmd: 'salvage', uid: item.uid, minYield: low, ...(avg ? { avgYield: avg } : {}) }).then((r) => {
     if (r && !r.ok) app.bus.emit('log:message', { text: `Разбор не удался: ${r.reason ?? 'сервер отказал'}`, kind: 'system' });
   });
   return true;

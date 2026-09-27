@@ -23,7 +23,9 @@
     </style>
   </head>
   <body>
-    <canvas id="app"></canvas>
+    <!-- data-dm-world — поверхность мира: клик предметом на курсоре сюда = выброс (heldItem.WORLD_SURFACE, R9-09);
+         холсты интерфейса (3D-стенд кузницы, миникарта) миром не считаются. -->
+    <canvas id="app" data-dm-world></canvas>
 
     <div id="hudbar">
       <div class="track"><div id="hp" class="fill"></div></div>

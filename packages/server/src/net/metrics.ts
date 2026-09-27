@@ -87,6 +87,11 @@ export const counters = {
    * отказывает дольше короткого сбоя, а правда об этих героях живёт только в памяти ноды.
    */
   farewellRetryFailed: 0,
+  /**
+   * ⭐ R7-09: недописанных копий героя, ЗАБЫТЫХ из-за того, что его закрепление ушло другой ноде. Ненулевое — инцидент: отданное
+   * такой копией могло остаться у двоих (разбор человеком, см. `RoomManager.forgetUnsaved`).
+   */
+  farewellForgotten: 0,
   /** Шагов симуляции выполнено — из этого считается фактическая частота мира. */
   ticks: 0,
   /** Отключено клиентов, не успевавших читать (переполнение исходящей очереди). */
@@ -189,6 +194,7 @@ export function renderMetrics(): string {
   g('dm_stash_conflicts_total', 'Записей сундука отклонено по версии (D8)', counters.stashConflicts, 'counter');
   g('dm_save_errors_total', 'Записей сейва, упавших с ошибкой базы', counters.saveErrors, 'counter');
   g('dm_farewell_retry_failed_total', 'Фоновых попыток дописать недописанную копию героя, снова упавших (R3-19)', counters.farewellRetryFailed, 'counter');
+  g('dm_farewell_forgotten_total', 'Недописанных копий героя, забытых из-за закрепления у другой ноды — инцидент (R7-09)', counters.farewellForgotten, 'counter');
   g('dm_forge_crafted_total', 'Вещей скованно (K7)', counters.forgeCrafted, 'counter');
   g('dm_forge_melted_total', 'Скованных вещей переплавлено (K7)', counters.forgeMelted, 'counter');
   g('dm_forge_salvaged_total', 'Найденных вещей разобрано — у кузнеца и на месте (K7)', counters.forgeSalvaged, 'counter');

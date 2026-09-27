@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   CRAFT_SLOT_LIST, ConfigRegistry, baseTierRange, craftTiers, craftWeapon, createRng, defaultParts, emptyJournal, fullJournal,
-  generateItem, newBotSave, partsOf, shapeFoundWeapon, sketchable, tierIndexOfItem, typeOfItem,
+  generateItem, newBotSave, partsOf, salvageMean, salvageRange, shapeFoundWeapon, sketchable, tierIndexOfItem, typeOfItem,
   type CraftJournal, type Item,
 } from '@dm/shared';
 import { askInGame, dismissAsk } from '../../ui/kit.js';
@@ -25,6 +25,10 @@ const LAST = TIERS.length - 1;
 const starter = (): Item => newBotSave(reg, reg.get('classes')[0]!.id).equipment.weapon!;
 /** Найденное оружие: то же, но с пола — детали журналу открывает только находка (`countsAsFind`). */
 const found = (): Item => ({ ...starter(), origin: 'drop' });
+/** R8-14: низ вилки выхода разбора в поле — его несёт команда. R9-04: и средний выход (у дробной доли низ — всегда 0). */
+const fieldLow = (it: Item): Record<string, number> =>
+  Object.fromEntries(Object.entries(salvageRange(reg, it, true).range).map(([id, r]) => [id, r.min]));
+const fieldAvg = (it: Item): Record<string, number> => salvageMean(reg, it, true)!;
 const crafted = (): Item => {
   const pv = craftWeapon(reg, { weaponClass: 'sword', hands: 1, parts: defaultParts(reg, 'sword', 1, 2)! }, { rng: createRng(3) });
   if (!pv.item) throw new Error(pv.reason);
@@ -261,7 +265,7 @@ describe('⭐ R1-14: вопрос в поле — в игре, а не window.co
     expect(q!.box.text()).toContain(PHRASE);
     q!.yes.click();
     await expect(p).resolves.toBe(true);
-    expect(sent).toEqual([{ cmd: 'salvage', uid: it0.uid }]);
+    expect(sent, 'R8-14, R9-04: с низом вилки и средним выходом — меньше сервер не даст').toEqual([{ cmd: 'salvage', uid: it0.uid, minYield: fieldLow(it0), avgYield: fieldAvg(it0) }]);
     expect(body.children, 'ответили — плашка снята').toHaveLength(0);
   });
 
@@ -277,7 +281,7 @@ describe('⭐ R1-14: вопрос в поле — в игре, а не window.co
 
     const b = fieldApp(it0, knownAll(it0));
     await expect(salvageInField(b.app, it0)).resolves.toBe(true);
-    expect(b.sent).toEqual([{ cmd: 'salvage', uid: it0.uid }]);
+    expect(b.sent).toEqual([{ cmd: 'salvage', uid: it0.uid, minYield: fieldLow(it0), avgYield: fieldAvg(it0) }]);
     expect(body.children).toHaveLength(0);
   });
 

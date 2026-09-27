@@ -26,7 +26,7 @@ async function post<T>(path: string, body: unknown, token?: string): Promise<T> 
   return (await r.json()) as T;
 }
 
-interface Cluster { players: number; nodes: { id: string; url: string; players: number; draining: boolean }[] }
+interface Cluster { players: number; maxPlayers: number | null; nodes: { id: string; url: string; players: number; draining: boolean }[] }
 /** R6-20: состояние кластера — служебное: с самой машины или ключом чтения метрик (`DM_METRICS_KEY`), как `/metrics`. */
 const METRICS_KEY = process.env.DM_METRICS_KEY ?? '';
 const cluster = async (): Promise<Cluster> => {
@@ -96,10 +96,17 @@ async function queueMode(): Promise<void> {
     const r = await route(players[i]!.token, players[i]!.charId, ticket);
     if (r.url) letIn++;
   }
-  console.log(`  освободили ${freeing} мест → из очереди впустили: ${letIn}`);
+  // ⚠ E2E 27.09: свободных мест после освобождения — не `freeing`, а потолок минус оставшиеся. Сразу пускают не всегда ровно
+  // потолок: поправка гейтвея на ещё не отражённые направления держится до второго сердцебиения ноды, и вошедший успевает
+  // посчитаться дважды (а билеты прошлого прогона стоят в голове очереди минуту). Прежняя проверка «впущено не больше
+  // освобождённых + 2» тогда падала на честном сервере: мест было 9, пустили 9. Опасная сторона — пустить СВЕРХ потолка
+  // (до правки гейтвея: 33 при потолке 30, `cluster/gateway.balance.test.ts`) — проверяется отдельно и строго.
+  const cap = (await cluster()).maxPlayers ?? 0;
+  const free = cap - (admitted - freeing);
+  console.log(`  освободили ${freeing} мест (свободно ${free} из потолка ${cap}) → из очереди впустили: ${letIn}`);
 
   for (const s of socks) s.close();
-  const ok = queued > 0 && letIn > 0 && letIn <= freeing + 2;
+  const ok = cap > 0 && admitted <= cap && queued > 0 && letIn > 0 && letIn <= free + 2;
   console.log(ok
     ? '\n✓ Сверх потолка игроки встают в очередь и проходят по мере освобождения мест.'
     : '\n✗ Очередь ведёт себя не так, как задумано.');

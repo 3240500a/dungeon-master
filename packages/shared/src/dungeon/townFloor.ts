@@ -3,10 +3,15 @@ import { Cell, makeGrid, cellToWorld } from '../world/grid.js';
 import { type DungeonLayout, type Room, carveRoom, carveCorridor, roomCenter } from './floorCommon.js';
 
 /**
- * Компактный город-хаб (rest-узел): ОДНА центральная комната-вход (spawn + портал в город + сундук)
+ * Компактный город-хаб (rest-узел): ОДНА центральная комната-вход (spawn + портал в город)
  * и РОВНО `exitCount` комнат-выходов вокруг, каждая соединена коротким коридором с входом. Без
  * промежуточных комнат, без монстров и замков. Проходимость — по конструкции. `exits[i]` = центр
  * i-й комнаты-выхода (соответствует i-му ребру узла).
+ *
+ * ⭐ R7-11: СУНДУКА ЗДЕСЬ НЕТ. Привал — это подземелье (область `dungeon`), а сундук аккаунта сервер открывает только
+ * в городе (`server/net/guard.ts`: иначе добытое не надо нести до города и смерть бесплатна, плюс дорожка для мула).
+ * Сундук, который ставился тут всегда, оба клиента превращали в «[E] Общий сундук»: окно слало `stashOpen`, сервер
+ * отказывал и считал каждый честный клик сигналом чита. Дорога к сундуку с привала — портал в город.
  */
 export function townFloor(exitCount: number, seed: number): DungeonLayout {
   const rng = createRng((seed >>> 0) || 1);
@@ -38,8 +43,7 @@ export function townFloor(exitCount: number, seed: number): DungeonLayout {
 
   const ec = roomCenter(entrance);
   const decor: DungeonLayout['decor'] = [
-    { ...cellToWorld(ec.cx, ec.cy - 1), kind: 'portal' }, // портал в город
-    { ...cellToWorld(ec.cx + 2, ec.cy + 1), kind: 'stash' }, // общий сундук
+    { ...cellToWorld(ec.cx, ec.cy - 1), kind: 'portal' }, // портал в город (сундук — там, R7-11)
   ];
   const spawn = cellToWorld(ec.cx, ec.cy + 1);
 

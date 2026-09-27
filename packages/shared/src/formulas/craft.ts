@@ -943,7 +943,8 @@ export function restepParts(reg: ConfigRegistry, parts: CraftParts, t: number): 
  * (`restepParts`). Не собираются — ДЕРЖИТСЯ ТО, ЧТО НЕСЁТ ТИП И ЧИСЛА: ключевая деталь (тип, кодекс), а у клинка с
  * геометрией ещё и оголовье (точка баланса — блок и укус). Прочие гнёзда числа найденной вещи не трогают (держак и
  * обвязка — см. `shapeFoundWeapon`), и под ступень берётся другой вариант той же семьи: по частоте на дропе, как у
- * находки (`rarityWeight`), с сидом от самой вещи — предпросмотр и подъём дают одно и то же, лотереи нет. Меняется
+ * находки (`rarityWeight`), с сидом от самой вещи — предпросмотр и подъём дают одно и то же, лотереи нет (и перекаткой её не
+ * устроить: сид — от неизменного в вещи, `upgradeSeed`, R7-17). Меняется
  * как можно меньше гнёзд, ступени — ближе к прежним. Не дотягивается и держимое — `null`: выше эта форма не куётся.
  *
  * ⚠ R5-09: отказ R4-31 бил и по вещам, чьи числа от деталей не зависят вовсе: 15–52 % найденных t5 посохов, жезлов,
@@ -990,7 +991,7 @@ export function upgradeFoundParts(reg: ConfigRegistry, item: Item, t: number): C
   }
   if (!best) return null;
   const w = reg.get('balance').craft.rarityWeight;
-  const rng = createRng(hashStr(`${foundSeed(item)}|${t}`));
+  const rng = createRng(upgradeSeed(item, parts, t));
   const out = {} as CraftParts;
   for (const slot of CRAFT_SLOT_LIST) {
     const step = best.s[slot].step;
@@ -1002,9 +1003,23 @@ export function upgradeFoundParts(reg: ConfigRegistry, item: Item, t: number): C
 }
 
 /**
+ * ⚠ R7-17: СИД ЗАМЕНЫ ДЕТАЛИ ПРИ ПОДЪЁМЕ (`upgradeFoundParts`) — только из того, что у найденной вещи НЕ МЕНЯЕТСЯ после рождения
+ * (база, редкость, уровень, бросок базы), её записанных деталей (они и ведут цепочку подъёмов) и ступени подъёма. Прежде — от
+ * `foundSeed`, а в нём аффиксы и имя: перекатка у кузнеца их меняет, и три перекатки давали 2–4 разных замены в 93 % таких
+ * вещей — предпросмотр (чистая функция) показывал, когда подставится редкая деталь, а разбор поднятой открывал её в журнале.
+ * Ключи — в своём порядке, а не в порядке объекта: jsonb базы переставляет ключи, и сид не должен зависеть от записи в базу.
+ */
+function upgradeSeed(item: Item, parts: CraftParts, t: number): number {
+  const roll = item.baseRoll ? (Object.keys(item.baseRoll) as (keyof BaseRoll)[]).sort().map((k) => `${k}:${item.baseRoll![k]}`).join(',') : '';
+  const recorded = CRAFT_SLOT_LIST.map((slot) => `${parts[slot].id}@${parts[slot].step}`).join(',');
+  return hashStr(`${item.baseId}|${item.rarity}|${item.itemLevel}|${roll}|${recorded}|${t}`);
+}
+
+/**
  * Сид деталей найденной вещи — из того, что уже выпало: база, редкость, уровень, тир, бросок, аффиксы,
  * имя. Не из `uid`: тот сделан из времени и `Math.random`, и сим с сидом перестал бы повторяться; и не
- * новым броском `rng` — лишний бросок сдвинул бы всю следующую добычу.
+ * новым броском `rng` — лишний бросок сдвинул бы всю следующую добычу. Только для РОЖДЕНИЯ вещи (`shapeFoundWeapon`):
+ * подъём сеется `upgradeSeed` (R7-17) — аффиксы у кузнеца перекатываются.
  */
 function foundSeed(item: Item): number {
   const aff = item.affixes.map((a) => `${a.affixId}:${a.modifier?.value ?? ''}`).join(',');

@@ -11,6 +11,10 @@
 - **Сцены:** `LoginScene` (вход/регистрация) → `CharacterSelectScene` (ростер с сервера,
   «Создать»/«Удалить»/«Выйти») → `ClassSelectScene` (`POST /api/characters`) → `OnlineScene`
   (join `{token, charId}`; полный сейв приходит в `joined`).
+  ⚠ Phaser держит ОДИН экземпляр сцены на страницу: `scene.start` лишь заново зовёт `create()`, поля переживают
+  показ. Состояние показа сбрасывать в `create()` — R9-15: флаг «запрос создания в пути» `ClassSelectScene` был полем
+  и после успеха (мир → возврат в «Персонажей») или 401 («Вход» → снова «Создать») глушил все карточки до F5. Теперь
+  флаг — на показ (как `busy` в `screens3d.showCreate`); сторож — `scenes/ClassSelectScene.test.ts`.
 - **Сервер:** `packages/server` — `/api/register|login|logout`, `/api/characters` CRUD
   (`requireAuth` по токену). Пароль — scrypt+соль (`auth/password.ts`, без зависимостей),
   сессия — токен в БД (Postgres: таблицы `users`/`sessions`/`characters`). WS-join проверяет

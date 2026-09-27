@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
+import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, renderEnum } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
@@ -1061,7 +1061,22 @@ function setStatus(msg: string, color: string): void {
 }
 
 function apply(): void {
-  applyKeys([current]);
+  lockGate(() => applyKeys([current]));
+}
+
+/** Секции, правка которых может запереть тир сложности навсегда (R8-13): пороги тиров и длина забега. */
+const LOCK_KEYS = ['difficulties', 'run-templates'];
+
+/**
+ * ⭐ R8-13: сохранение «Сложностей» и «Шаблонов забега» — только через подтверждение, если после правки тир не откроется
+ * никогда (`difficultyLockIssues`). Раньше порог «Кошмара» (20) стоял глубже самого длинного забега (15) — тир был заперт для
+ * всех, и ни редактор, ни игра об этом не говорили. Прочие секции сохраняются как раньше.
+ */
+function lockGate(save: () => void): void {
+  const issues = LOCK_KEYS.includes(current) ? difficultyLockIssues() : [];
+  if (!issues.length) { save(); return; }
+  setStatus(`Тир сложности не откроется никогда: ${issues.map((i) => i.id).join(', ')} (см. отчёт).`, '#ff8080');
+  showValidationModal(issues, save);
 }
 
 /**
@@ -1131,7 +1146,7 @@ function applyToFile(): void {
       if (errs) { setStatus(`Публикация остановлена: ${errs} ошибок ссылок.`, '#ff8080'); showValidationModal(issues, publish); }   // блок только на ошибках; предупреждения не мешают
       else publish();
     });
-  } else publish();
+  } else lockGate(publish);
 }
 
 /**
@@ -1239,7 +1254,7 @@ interface ConfigIssue { section: string; id: string; msg: string; severity: 'err
  * Валидатор конфига: проверяет, что все перекрёстные ссылки РАЗРЕШАЮТСЯ и файлы ассетов существуют на сервере.
  * Ловит класс багов «ссылка на то, чего нет». Схема (zod) проверяет форму полей, а это — целостность графа ссылок.
  *  - error (жёстко, ломает рендер, блокирует публикацию): url→файл, objects→models/materials, materials→textures,
- *    submeshMaterials→materials.
+ *    submeshMaterials→materials; тир сложности, который не откроется никогда (R8-13, `difficultyLockIssues`).
  *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир).
  */
 async function validateConfig(): Promise<ConfigIssue[]> {
@@ -1265,8 +1280,33 @@ async function validateConfig(): Promise<ConfigIssue[]> {
   // 3) submeshMaterials{} на моделях → materials [error]
   for (const m of arr('models')) { const sm = m.submeshMaterials; if (sm && typeof sm === 'object') for (const [k, v] of Object.entries(sm as Record<string, unknown>)) if (typeof v === 'string' && v && !materials.has(v)) issues.push({ section: 'models', id: String(m.id), msg: `submeshMaterials["${k}"]="${v}" — нет в materials`, severity: 'error' }); }
 
+  // 4) тир сложности, который не откроется никогда (R8-13) [error]
+  issues.push(...difficultyLockIssues());
+
   // ошибки — вперёд, потом предупреждения
   return issues.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
+}
+
+/**
+ * ⭐ R8-13: включённые тиры сложности, которые НЕ ОТКРОЮТСЯ НИКОГДА при текущих «Сложностях» и «Шаблонах забега» редактора.
+ * Прогресс тира — глубина узла забега, а она не глубже самого длинного включённого шаблона + финал (`runMaxDepth`); порог
+ * выше или выключенный предыдущий тир — замок для всех. Та же функция, что у сторожа данных (`difficultyReach.test.ts`).
+ * Данные сперва через схему (умолчания `enabled`/`finale`); негодные — не наш отчёт, их остановит проверка схемой.
+ */
+function difficultyLockIssues(): ConfigIssue[] {
+  const diffs = configSchemas.difficulties.safeParse(data.difficulties);
+  const tpls = configSchemas['run-templates'].safeParse(data['run-templates']);
+  if (!diffs.success || !tpls.success) return [];
+  const depth = runMaxDepth(tpls.data);
+  const name = (id: string): string => diffs.data.find((d) => d.id === id)?.name ?? id;
+  return lockedDifficulties(diffs.data, depth).map((l) => ({
+    section: 'difficulties',
+    id: l.id,
+    msg: l.cause === 'depth'
+      ? `нужен этаж ${l.unlockFloor} на «${name(l.prevId)}», а самый длинный включённый шаблон забега доходит до ${depth} — не откроется никогда`
+      : `предыдущий тир «${name(l.prevId)}» выключен или сам не открывается — прогресс для этого тира не набрать`,
+    severity: 'error',
+  }));
 }
 
 /** Модалка-отчёт валидации: ошибки (красным) + предупреждения (жёлтым) по секциям, либо «чисто». `onForce` — публикация вопреки. */
@@ -1288,7 +1328,7 @@ function showValidationModal(issues: ConfigIssue[], onForce?: () => void): void 
       for (const i of items) { const row = document.createElement('div'); row.textContent = `• ${i.id}: ${i.msg}`; row.style.cssText = `color:${color};margin:2px 0 2px 10px`; box.appendChild(row); }
     }
   };
-  if (errors.length) { const h = document.createElement('div'); h.textContent = '⛔ Ошибки (ломают рендер):'; h.style.cssText = 'color:#ff8080;font-weight:600;margin-top:10px'; box.appendChild(h); renderGroup(errors, '#e0a0a0'); }
+  if (errors.length) { const h = document.createElement('div'); h.textContent = '⛔ Ошибки (ломают рендер или игру):'; h.style.cssText = 'color:#ff8080;font-weight:600;margin-top:10px'; box.appendChild(h); renderGroup(errors, '#e0a0a0'); }
   if (warns.length) { const h = document.createElement('div'); h.textContent = '⚠ Предупреждения (есть фолбэк):'; h.style.cssText = 'color:#ffb020;font-weight:600;margin-top:12px'; box.appendChild(h); renderGroup(warns, '#d0c090'); }
   const btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:16px;justify-content:flex-end';
   if (onForce) btnRow.append(btn(errors.length ? 'Всё равно опубликовать' : 'Опубликовать', () => { overlay.remove(); onForce(); }, errors.length ? '#4a2a2a' : '#26406a'));

@@ -28,6 +28,7 @@
 | `floor:entered` | `{ depth }` | dungeon-gen | quests, spawner |
 | `quest:progress` | `{ questId, objectiveId, current, total }` | quests | ui |
 | `config:reloaded` | `{ keys }` | config registry / editor | все модули |
+| `area:entered` | `{ area }` | оба онлайн-клиента (`buildArea` на `joined`/`areaChanged`) | `DomUi`: вне города закрывает окна объектов города (R7-11) |
 
 > При добавлении события: объяви его в `GameEvents`, укажи в таблице выше и в README
 > модулей-участников.

@@ -14,6 +14,17 @@ export const ah = <P extends RouteParams = RouteParams>(
   });
 };
 
+/**
+ * ⭐ R7-05: ЗНАЧЕНИЕ СТРОКИ ЗАПРОСА — ТОЛЬКО СТРОКОЙ. Разборщик express по умолчанию (`qs`, «extended») строит из `?x[toString]=1`
+ * объект `{ toString: '1' }`, а из `?x=a&x=b` — массив; `String()` на таком объекте бросает (`toString` не функция), и ручка
+ * отвечала 500 со стеком в лог на каждый анонимный запрос. Строка — как есть, нет значения — пусто, прочее — `undefined`
+ * (не строка: отказ 400 или «как не прислано» — решает ручка).
+ */
+export function queryText(v: unknown): string | undefined {
+  if (v === undefined) return '';
+  return typeof v === 'string' ? v : undefined;
+}
+
 /** Лог ошибок, дошедших до `httpErrors`, — не чаще раза в 10 с (как `warnFrame` у кадров): поток таких не топит лог. */
 let httpWarnAt = 0;
 let httpWarnMuted = 0;

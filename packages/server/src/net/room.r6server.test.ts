@@ -6,6 +6,11 @@ import {
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
 
+// Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
+// таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
+// потолок не прячет — они падают утверждением, а не временем.
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * Раунд 6 (сервер): то, что правка сервера обязана довезти через настоящую `Room` — сбежавший отключением не уходит живым
  * на следующий узел (R6-01), место в пати держит только тот, кто может вернуться на то же место (R6-14), мощь узла — по
@@ -18,6 +23,9 @@ const db = vi.hoisted(() => ({
   data: new Map<string, SaveState>(),
 }));
 vi.mock('../db/db.js', () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   putCharacter: (charId: string, _u: string, data: SaveState, v: number) => {
     const snap = structuredClone(data);          // снимок в момент вызова — как и настоящая запись
     if (v !== (db.saves.get(charId) ?? 1)) return Promise.resolve(null);
@@ -166,6 +174,9 @@ describe('⭐ R6-01: сбежавший из боя отключением не 
     await settle();
     const w = inner(room).session.world;
     w.players[a!]!.pos = { ...w.spawn };
+    // R8-07: «спокойно» — на него никто не идёт. Тик комнаты идёт и в ожиданиях теста, и монстр у входа успевал погнаться за
+    // ним: у портала входа это «бегство» для спуска (там «за» спуск ему не засчитали бы), и тест зависел от случая.
+    for (const m of w.monsters) m.alive = false;
     await room.removePlayer(a!);
     await settle();
     expect(inner(room).disconnected.get(sa!.charId)?.fled).toBe(false);
@@ -250,6 +261,7 @@ describe('⭐ R6-27: мощь узла — по сильнейшему геро�
     // Основной ушёл спокойно (у портала) — его копия этого же забега ждёт реконнекта; альт спускается один.
     const w = inner(room).session.world;
     w.players[main!]!.pos = { ...w.spawn };
+    for (const m of w.monsters) m.alive = false;   // R8-07: спокойно — на него никто не идёт (см. контроль R6-01)
     await room.removePlayer(main!);
     const to = nodeNow(room).edges[0]!.to;
     inner(room).movedAt = 0;

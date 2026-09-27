@@ -10,6 +10,7 @@ import { InputSampler } from './inputSampler.js';
 import { onFocusLost } from './focusRelease.js';
 import { mergePeerStatics } from './peerStatics.js';
 import { dmgColorNum } from '../core/damageTypes.js';
+import { getHeld } from '../modules/inventory/heldItem.js';
 import { monsterCombatStats } from '@dm/shared';
 import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot, WorldSnapshotFull, PeerInfo } from '@dm/shared';
 
@@ -198,6 +199,9 @@ export class NetDriver {
     // Клик по предмету на земле — не атака, а ТОЧЕЧНАЯ команда подбора (надёжно, без гонки ввода).
     const drop = this.scene.input.hitTestPointer(p).find((o) => o.getData?.('drop') === true);
     if (drop) { this.app.sendCmd({ cmd: 'pickup', dropId: drop.getData('dropId') as number }); return; }
+    // ⭐ R8-11: предмет «на курсоре» (D2) — этот клик бросает его на землю или отменяет взятие из сундука
+    // (`heldItem.onWorldClick`), а не бьёт и не кастует: удержание кнопки не поднимаем вовсе.
+    if (getHeld()) return;
     if (p.leftButtonDown()) this.leftHeld = true;
     if (p.rightButtonDown()) this.rightHeld = true;
   };
@@ -214,8 +218,11 @@ export class NetDriver {
   update(dt = 0): void {
     // ЛКМ/ПКМ + Shift/Q/Alt — по биндам сейва; тоглы (аура/стойка) — по фронту; пробел — рывок (фронт);
     // E — подбор ближайшего дропа (удержание: сервер сэмплит каждый тик). Клик по предмету — точечно (onDown).
+    // ⭐ R8-11: пока предмет «на курсоре», мышь — не атака/каст (правило веб-3D `online3d.pumpInput`): иначе клик-выброс
+    // уходил как ЛКМ, и герой бил или кастовал скилл ЛКМ на каждый выброс.
+    const holding = getHeld() != null;
     const s = this.input.frame(dt, this.app.state!.save, {
-      L: this.leftHeld, R: this.rightHeld, S: this.keys.shift.isDown, Q: this.keys.q.isDown, A: this.keys.alt.isDown,
+      L: !holding && this.leftHeld, R: !holding && this.rightHeld, S: this.keys.shift.isDown, Q: this.keys.q.isDown, A: this.keys.alt.isDown,
       dodge: this.keys.space.isDown, interact: this.keys.e.isDown,
     }, (id) => this.isToggleSkill(id));
     if (s.due) {
@@ -364,6 +371,9 @@ export class NetDriver {
           this.app.attackLockUntil = now + e.lockMs; // общий лок → остальные атак-слоты серые
           this.vfx.startSwing(this.vfx.currentAttack(this.app.state!, this.app.config, e.ability), e.windupMs);
         }
+      } else if (e.type === 'cooldown') {
+        // ⭐ R8-15: действие без удара (бафф) — только заливка-откат слота: ни формы удара, ни общего attack-лока.
+        if (e.playerId === this.myId) { const now = performance.now(); this.app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs }; }
       } else if (e.type === 'monster-swing') {
         this.monsters.get(e.id)?.telegraph(e.windupMs); // вспышка-телеграф замаха монстра
       }

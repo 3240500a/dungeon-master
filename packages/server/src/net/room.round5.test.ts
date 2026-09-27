@@ -3,6 +3,11 @@ import type { GameConn } from './conn.js';
 import { ConfigRegistry, newCharacterSave, type ServerFrame, type RunPlan, type RunNode, type SaveState, type Item } from '@dm/shared';
 import { limits } from './rateLimit.js';
 
+// Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
+// таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
+// потолок не прячет — они падают утверждением, а не временем.
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * Раунд 5 ревью сервера — комната. Настоящая `Room` с фейковым сокетом, база — маленькая ЧЕСТНАЯ (версии сейва проверяются
  * как в Postgres), как в `room.run.test.ts`: там же разобрано, зачем мок отдаёт промисы и снимок в момент вызова.
@@ -14,6 +19,9 @@ const db = vi.hoisted(() => ({
   data: new Map<string, SaveState>(),
 }));
 vi.mock('../db/db.js', () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   putCharacter: (charId: string, _u: string, data: SaveState, v: number) => {
     const snap = structuredClone(data);
     if (v !== (db.saves.get(charId) ?? 1)) return Promise.resolve(null);
@@ -33,9 +41,10 @@ vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(
 
 type Room = import('./room.js').Room;
 let RoomCtor: typeof import('./room.js').Room;
+let forgetTownStocks: typeof import('./room.js').forgetTownStocks;
 let cfg: ConfigRegistry;
 beforeAll(async () => {
-  ({ Room: RoomCtor } = await import('./room.js'));
+  ({ Room: RoomCtor, forgetTownStocks } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
@@ -348,11 +357,18 @@ describe('Room — раунд 5: сток кузницы переживает п
   /** Вещь без личности: что это за бросок (uid у каждого броска свой — купленное не повторит чужой uid). */
   const sig = (it: Item): string => { const { uid: _u, ...rest } = it as Item & { uid: string }; return JSON.stringify(rest); };
   const gearOf = (ws: FakeWs): Item[] => ws.last('shop')!.items.filter((i) => i.kind !== 'consumable');
-  /** «Другая нода»: модуль комнаты заново — своя карта стоков в памяти, как у отдельного процесса. */
-  async function otherNode(): Promise<typeof import('./room.js').Room> {
-    vi.resetModules();
-    return (await import('./room.js')).Room;
+  /**
+   * «Другая нода»: память процесса — как у свежего (`forgetTownStocks`: кэш стоков пуст, как у отдельного процесса или после
+   * рестарта); стока вне этого кэша и сейва нет. Раньше здесь перезагружался модуль комнаты (`vi.resetModules()` — весь граф,
+   * shared целиком): под нагрузкой полного прогона одни импорты не укладывались в потолок теста (свой экземпляр модуля по
+   * адресу с меткой — тоже: его разбор идёт через общий для всех процессов vite). Что память и правда чужая, тест проверяет
+   * сам: витрина другой ноды собрана заново — вещи те же, `uid` свои (у кэша процесса они были бы прежними).
+   */
+  function otherNode(): typeof import('./room.js').Room {
+    forgetTownStocks();
+    return RoomCtor;
   }
+  const uids = (items: Item[]): string[] => items.map((i) => i.uid);
   function joinOn(Ctor: typeof import('./room.js').Room, save: SaveState, userId: string): { room: Room; ws: FakeWs; pid: string } {
     const room = new Ctor('R5N', cfg, { onEmpty() {}, onGrace() {}, onUngrace() {} });
     rooms.push(room);
@@ -379,14 +395,15 @@ describe('Room — раунд 5: сток кузницы переживает п
     const stored = structuredClone(db.data.get(save.charId)!);
     const want = first.filter((i) => i.uid !== bought.uid).map(sig);
 
-    const B = await otherNode();
+    const B = otherNode();
     const b = joinOn(B, structuredClone(stored), user);
     await settle();
     expect(gearOf(b.ws).map(sig), 'та же витрина без купленного — перекатать сменой ноды нельзя').toEqual(want);
+    expect(uids(gearOf(b.ws)).filter((u) => uids(first).includes(u)), 'витрина собрана заново из сейва, не из памяти ноды A').toEqual([]);
     await b.room.removePlayer(b.pid);
     await settle();
 
-    const C = await otherNode();                            // и после рестарта процесса — то же
+    const C = otherNode();                            // и после рестарта процесса — то же
     const c = joinOn(C, structuredClone(db.data.get(save.charId)!), user);
     await settle();
     expect(gearOf(c.ws).map(sig)).toEqual(want);
@@ -395,7 +412,7 @@ describe('Room — раунд 5: сток кузницы переживает п
 
     const up = structuredClone(db.data.get(save.charId)!);
     up.level += 5;
-    const D = await otherNode();
+    const D = otherNode();
     const d = joinOn(D, up, user);
     await settle();
     expect(gearOf(d.ws).map(sig), 'вырос уровень — снаряжение по новому уровню (R3-17)').not.toEqual(want);
@@ -403,7 +420,7 @@ describe('Room — раунд 5: сток кузницы переживает п
     await settle();
 
     vi.setSystemTime(T0 + cfg.get('balance').townRestockSec * 1000 + 1);
-    const E = await otherNode();
+    const E = otherNode();
     const e = joinOn(E, structuredClone(stored), user);
     await settle();
     expect(gearOf(e.ws).map(sig), 'срок вышел — новый прилавок').not.toEqual(want);

@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventBus } from '@dm/shared';
-import { DomUi } from './domUi.js';
+import { DomUi, TOWN_PANELS } from './domUi.js';
+
+const DIR = dirname(fileURLToPath(import.meta.url));
 
 /**
  * ⭐ R4-36: ОКНА — ПОД ЭКРАНАМИ ВХОДА, ГОЛОСОВАНИЕМ И СМЕРТЬЮ. Каждый клик в окне поднимал его `z-index` на единицу без
@@ -126,5 +131,60 @@ describe('⭐ R6-25: вне мира окна не открываются — н
     u.app.inWorld = false;
     u.key('Escape');
     expect(u.d.isOpen()).toBe(false);
+  });
+});
+
+describe('⭐ R7-11: уход из города закрывает окна объектов города', () => {
+  /**
+   * Хост повёл пати в подземелье (или на арену), пока у кого-то была открыта кузница, лавка или сундук: `areaChanged` окон
+   * не закрывал, и каждый клик в них из подземелья получал «Это доступно только в городе» и шёл в телеметрию чита
+   * (`dm_cmd_out_of_place_total`), хотя честный клиент таких команд не шлёт. Окна горячих клавиш (инвентарь, скилы,
+   * персонаж, квесты, карта забега) работают везде — они остаются.
+   */
+  const G = globalThis as unknown as { document?: unknown; window?: unknown };
+  beforeEach(() => {
+    G.document = { createElement: (t: string) => new El(t), body: new El('body') };
+    G.window = { addEventListener: () => { } };
+  });
+  afterEach(() => { delete G.document; delete G.window; });
+
+  const HOTKEY = ['inventory', 'skills', 'character', 'quests', 'runmap'];
+  function ui() {
+    const bus = new EventBus();
+    const d = new DomUi({ bus, inWorld: true } as never, new El('ui-root') as unknown as HTMLElement);
+    for (const name of [...TOWN_PANELS, ...HOTKEY]) d.register(name, () => ({ title: name, render: () => { } }));
+    for (const name of [...TOWN_PANELS, ...HOTKEY]) d.openPanel(name);
+    return { d, bus };
+  }
+
+  it('⭐ город → подземелье: лавка, кузница, мастер, сундук и алтарь закрыты; окна горячих клавиш — открыты', () => {
+    const u = ui();
+    u.bus.emit('area:entered', { area: 'dungeon' });
+    for (const name of TOWN_PANELS) expect(u.d.isOpen(name), `${name} закрыто`).toBe(false);
+    for (const name of HOTKEY) expect(u.d.isOpen(name), `${name} открыто`).toBe(true);
+  });
+
+  it('вход в город окон не трогает', () => {
+    const u = ui();
+    u.bus.emit('area:entered', { area: 'town' });
+    for (const name of [...TOWN_PANELS, ...HOTKEY]) expect(u.d.isOpen(name), name).toBe(true);
+  });
+
+  it('окна объектов города — ровно те, что открываются у объектов города обоих клиентов (кроме доски: у квестов хоткей J)', () => {
+    expect([...TOWN_PANELS].sort()).toEqual(['difficulty', 'forge', 'master', 'shop', 'stash']);
+    for (const f of [join(DIR, '..', 'scenes', 'OnlineScene.ts'), join(DIR, '..', 'render3d', 'online3d.ts')]) {
+      const src = readFileSync(f, 'utf8');
+      const npcs = [...src.matchAll(/\{ cx: \d+, cy: \d+, label: '[^']+', panel: '(\w+)'/g)].map((m) => m[1]!);
+      expect(npcs.length, `${f}: список NPC города найден`).toBeGreaterThan(0);
+      for (const p of npcs) if (!HOTKEY.includes(p)) expect(TOWN_PANELS, `${f}: окно NPC «${p}»`).toContain(p);
+    }
+  });
+
+  it('⭐ оба клиента сообщают об области на каждый вход и не строят «Общий сундук» из декора подземелья', () => {
+    for (const f of [join(DIR, '..', 'scenes', 'OnlineScene.ts'), join(DIR, '..', 'render3d', 'online3d.ts')]) {
+      const src = readFileSync(f, 'utf8');
+      expect(src, `${f}: область — в шину`).toMatch(/bus\.emit\('area:entered', \{ area: floor\.area \}\)/);
+      expect(src, `${f}: сундук подземелья`).not.toMatch(/label: 'Общий сундук'/);
+    }
   });
 });

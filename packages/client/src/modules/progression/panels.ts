@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, statusChance, STATUS_CHANCE_CAP, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, carriedGear, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, statusChance, STATUS_CHANCE_CAP, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -229,13 +229,14 @@ export const characterPanel: PanelFactory = (app, ui) => {
       }
 
       // Мощь (эфф. уровень) — определяет стартовую сложность забега.
-      const pw = effectiveLevel(state.save, app.config.get('balance').power);
+      const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save));   // R8-10: как меряет сервер
       const powRow = mk('div', 'display:flex;justify-content:space-between;align-items:center;font-size:13px;margin:0 0 12px;cursor:help');
       powRow.append(mk('span', `color:${COLORS.dim}`, 'Мощь (эфф. уровень)'));
       powRow.append(mk('span', `font-weight:700;color:${COLORS.gold}`, String(pw.total)));
       attachTooltip(powRow, () =>
         `Эффективный уровень персонажа = уровень + гир + мастерства.<br>` +
         `Уровень <b>${pw.level}</b> + гир <b>+${pw.gearBonus}</b> + мастерства <b>+${pw.passiveBonus}</b> = <b>${pw.total}</b>.<br>` +
+        `Гир — лучшее в каждый слот из надетого и того, что можешь надеть из сумки.<br>` +
         `Задаёт стартовую сложность подземелья при выборе тира.`);
       body.append(powRow);
 

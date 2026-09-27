@@ -17,10 +17,15 @@ import { setRarityMeta } from '@dm/client/modules/loot/rarity.js';
  *
  * Кузница — тоже ТЕ ЖЕ действия, что у сервера (`craftAction` / `enchantAction` / `forgeSalvage`), над
  * сундуком `stash` (сырьё + журнал кузнеца): не передан — свой пустой, как у нового аккаунта.
+ *
+ * ⭐ R7-15: мост — `App` БЕЗ СЕРВЕРА (`offline`): конфиг моста — ровно `data` (песочница — со своими оверрайдами). Раньше
+ * конструктор `App` тянул `/api/config` и через миллисекунды клал серверный конфиг поверх: первый кадр песочницы считал по
+ * её данным, следующий клик — по серверу. Правка в редакторе доходит до моста только из данных инструмента (`followHarness`).
  */
 export function makeHarness(data: Record<string, unknown>, save: SaveState, onChange: () => void, stash?: AccountStash): App {
-  const app = new App();
+  const app = new App({ offline: true });
   app.config.loadAll(data);
+  harnessData.set(app, JSON.stringify(data));
   refreshResolvers(app);
   save.gold = 9_999_999; // калькулятор не гейтит по золоту (комиссии респеков/аллокаций покрыты)
   const gs = new GameState(save);
@@ -43,6 +48,23 @@ export function makeHarness(data: Record<string, unknown>, save: SaveState, onCh
   return app;
 }
 
+/** R7-15: данные, из которых собран конфиг моста (JSON), — по ним `followHarness` видит, что правка была. */
+const harnessData = new WeakMap<App, string>();
+
+/**
+ * ⭐ R7-15: правка в редакторе (с «Применить» или без) — в конфиг моста, из ТЕХ ЖЕ данных инструмента. Раньше её приносил
+ * канал «Применить», который каждый мост открывал сам: голым значением таблицы (оверрайд песочницы пропадал) и в мосты,
+ * брошенные давно. Сейв, панели и сундук моста остаются — пересобирать билд не нужно. `true` — конфиг перечитан.
+ */
+export function followHarness(app: App, data: Record<string, unknown>): boolean {
+  const json = JSON.stringify(data);
+  if (harnessData.get(app) === json) return false;
+  app.config.loadAll(data);
+  harnessData.set(app, json);
+  refreshResolvers(app);
+  return true;
+}
+
 /** Итог команды моста — те же поля, что у ответа сервера (`cmdResult`). */
 interface HarnessOutcome { ok: boolean; reason?: string; uid?: string; unlocked?: string[] }
 
@@ -57,11 +79,11 @@ const harnessRng = (): ReturnType<typeof createRng> => createRng((harnessSeed++ 
 function applyCmd(app: App, gs: GameState, cmd: TownCommand, stash: AccountStash): HarnessOutcome {
   const reg = app.config, s = gs.save;
   switch (cmd.cmd) {
-    case 'craft': return craftAction(reg, s, stash, cmd.nonce, cmd.input, harnessRng(), { maxGold: cmd.maxGold });   // R5-15: как сервер
+    case 'craft': return craftAction(reg, s, stash, cmd.nonce, cmd.input, harnessRng(), { maxGold: cmd.maxGold, maxMaterials: cmd.maxMaterials });   // R5-15, R8-14: как сервер
     case 'forgeEnchant': return enchantAction(reg, s, cmd.uid, cmd.rarity, harnessRng(), cmd.maxGold);
     case 'forgeSketch': return sketchAction(reg, stash, cmd.variantId);   // R3-11: то же ядро, что у сервера
-    case 'forgeSalvage': return forgeSalvage(reg, s, stash, cmd.uid, harnessRng());
-    case 'salvage': return fieldSalvage(reg, s, cmd.uid, harnessRng());
+    case 'forgeSalvage': return forgeSalvage(reg, s, stash, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);   // R8-14, R9-04: как сервер
+    case 'salvage': return fieldSalvage(reg, s, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);
     case 'allocAttr': return allocAttr(s, cmd.attr, cmd.n);
     case 'equip': return equip(reg, s, cmd.uid);
     case 'unequip': return unequip(reg, s, cmd.slot);

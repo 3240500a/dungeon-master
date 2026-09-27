@@ -3,7 +3,8 @@ import type pg from 'pg';
 import { ConfigRegistry, newCharacterSave, emptyStash, uuidv7, type AccountStash } from '@dm/shared';
 
 /**
- * ⭐ R3-18: НОЧНОЙ АУДИТ ПРОТИВ ЖИВОЙ ИГРЫ — против НАСТОЯЩЕЙ базы `dungeon_test` (без базы тест пропускается).
+ * ⭐ R3-18: НОЧНОЙ АУДИТ ПРОТИВ ЖИВОЙ ИГРЫ — против НАСТОЯЩЕЙ базы `dungeon_test`, в своей схеме (`testDb.ts`; без базы тест
+ * пропускается).
  *
  * Аудит идёт на гейтвее, пока ноды пишут сейвы. Раньше персонажи, сундуки и леджер читались тремя отдельными
  * запросами — тремя разными снимками: перенос вещи в сундук, зафиксированный между чтением персонажей и чтением
@@ -11,11 +12,9 @@ import { ConfigRegistry, newCharacterSave, emptyStash, uuidv7, type AccountStash
  * разошлись». Всё — уровня «инцидент»: настоящий дюп тонул в шуме, от которого R1-16 и берёгся.
  *
  * Запись вставляется РОВНО между чтением персонажей и остальными (перехват ответа драйвера), ответы сужаются до
- * аккаунта теста — в общей тестовой базе полно подсаженных «дюпов» других тестов.
+ * аккаунта теста (схема файла своя, но сужение держит проверку честной и при общей базе).
  */
-vi.hoisted(() => {
-  process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
-});
+const tdb = await vi.hoisted(async () => (await import('./testDb.js')).testDb('auditrace'));
 
 let db: typeof import('./db.js');
 let pool: typeof import('./pool.js');
@@ -24,20 +23,18 @@ let alive = false;
 let cfg: ConfigRegistry;
 
 beforeAll(async () => {
+  alive = await tdb.open();
   pool = await import('./pool.js');
-  try {
-    await pool.initSchema();
-    alive = true;
-  } catch {
-    alive = false;
-    return;
-  }
+  if (!alive) return;   // базы нет — тест пропустится
+  // Обе схемы, как у процессов, гоняющих аудит (гейтвей, `items:audit`): аудит читает и закрепления кластера.
+  await pool.initSchema();
+  await (await import('../cluster/registry.js')).initClusterSchema();
   db = await import('./db.js');
   audit = await import('./audit.js');
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
-afterAll(async () => { if (alive) await pool.closePool(); });
+afterAll(async () => { if (alive) { await pool.closePool(); await tdb.drop(); } });
 
 describe.runIf(process.env.DM_SKIP_PG !== '1')('аудит и живая игра (R3-18)', () => {
   it('⭐ перенос вещи в сундук посреди чтений аудита — ни «дюпа», ни «расхождения»: чтения делят один снимок', async () => {

@@ -354,10 +354,12 @@ describe('⭐ R5-15: цена окна — в команду', () => {
   it('ковка и зачарование несут `maxGold`, который им дало окно; команда проходит строгую схему; без цены — без поля', async () => {
     const { link, sent } = fakeLink(() => ok({ uid: 'nope' }));
     const host = gameCraftHost(link, memo());
-    await host.craft(INPUT, 660);
+    await host.craft(INPUT, 660, { 'iron-2': 24, 'hide-2': 12 });
     await host.enchant({ uid: 'x' } as never, 'rare', 1234);
     await host.craft(OTHER);
     expect(sent.map((c) => ('maxGold' in c ? c.maxGold : 'нет')), 'было: ни одна не несла цены').toEqual([660, 1234, 'нет']);
+    // R8-14: и сырьё окна — у ковки; нет его — нет поля.
+    expect(sent.map((c) => ('maxMaterials' in c ? c.maxMaterials : 'нет'))).toEqual([{ 'iron-2': 24, 'hide-2': 12 }, 'нет', 'нет']);
     for (const c of sent) expect(parseTownCommand(c).ok, JSON.stringify(c)).toBe(true);
   });
 });

@@ -68,6 +68,7 @@ describe('подбор этажа по РОЛИ + биому + глубине + 
     expect(restSpec.kind).toBe('town');
     const L = generateFloor(restSpec);
     expect(L.decor.some((d) => d.kind === 'portal')).toBe(true);
-    expect(L.decor.some((d) => d.kind === 'stash')).toBe(true);
+    // ⭐ R7-11: сундук аккаунта — только в городе (`server/net/guard.ts`): на привале его кнопка получала бы отказ.
+    expect(L.decor.some((d) => d.kind === 'stash')).toBe(false);
   });
 });

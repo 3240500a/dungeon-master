@@ -61,6 +61,7 @@ import { mergePeerStatics } from '../net/peerStatics.js';
 import { EntryFlow } from '../net/entryFlow.js';
 import { routeToNode } from '../net/netClient.js';
 import { entryScreens } from '../ui/entryScreens.js';
+import { voteQuestion, type VoteStartFrame } from '../ui/voteText.js';
 import { InputSampler } from '../net/inputSampler.js';
 import { onFocusLost } from '../net/focusRelease.js';   // R4-20: alt-tab — зажатое отпущено
 
@@ -583,6 +584,7 @@ export async function startOnline3d(): Promise<void> {
     area = floor.area;
     areaGrid = floor.grid;   // для DBG-диагностики «монстры вне пола»
     if (app.state) app.state.area = floor.area;   // HUD/отчёт различают город/этаж по area (depth=0 у старта забега = как город)
+    app.bus.emit('area:entered', { area: floor.area });   // ⭐ R7-11: вне города окна объектов города закрываются (`DomUi`)
 
     const layout = { grid: floor.grid, doors: [], decor: floor.decor, stairsDown: floor.stairs } as unknown as Parameters<typeof buildEnvironment>[1];
     applyEnvFade(floor.biomeId);                    // параметры фейда стен из конфига биома
@@ -639,10 +641,10 @@ export async function startOnline3d(): Promise<void> {
         st.position.set(ex.x, 0, ex.y); floorGroup.add(st);
         interactables.push({ x: ex.x, y: ex.y, radius: 34, label: exitLabel(floor, i), run: () => descendExit(i) });
       });
-      // Декор узла: общий сундук / лавка / портал (rest → в город, финал → завершить забег). Меши строит env3d.
+      // Декор узла: лавка / портал (rest → в город, финал → завершить забег). Меши строит env3d. Сундука аккаунта в
+      // подземелье нет (R7-11): сервер открывает его только в городе, и генератор его на этаж не ставит.
       for (const d of floor.decor) {
-        if (d.kind === 'stash') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Общий сундук', run: () => app.bus.emit('ui:open', { panel: 'stash' }) });
-        else if (d.kind === 'shop') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => app.bus.emit('ui:open', { panel: 'shop' }) });
+        if (d.kind === 'shop') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => app.bus.emit('ui:open', { panel: 'shop' }) });
         else if (d.kind === 'portal') interactables.push(isFinale
           ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => app.net.send({ t: 'descend' }) }
           : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });
@@ -675,6 +677,8 @@ export async function startOnline3d(): Promise<void> {
         interactables.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', run: () => app.net.send({ t: 'chest', chestId: ch.id }) });
       }
       app.state!.depth = floor.depth;
+      app.state!.challengeLevel = floor.challengeLevel ?? null;   // R8-10: «вызов ур.» — как узел заселил сервер
+      if (floor.difficultyId) app.state!.difficultyId = floor.difficultyId;
     } else {
       app.run = null; // город — забега нет (мог остаться от завершённого/бросенного)
       // город: NPC-столбики с подписью-биллбордом + портал в подземелье
@@ -691,6 +695,7 @@ export async function startOnline3d(): Promise<void> {
       portal.rotation.x = Math.PI / 2; portal.position.set(pwx, 16, pwz); floorGroup.add(portal);
       interactables.push({ x: pwx, y: pwz, radius: 46, label: 'В подземелье (выбор сложности)', run: () => app.bus.emit('ui:open', { panel: 'difficulty' }) });
       app.state!.depth = 0;
+      app.state!.challengeLevel = null;
     }
     app.gameLog?.setVisible(true);   // лента лога/«чат» видна только В ИГРЕ (как 2D OnlineScene.buildArea)
     minimap.setFloor(floor.grid); minimap.setVisible(true);
@@ -1030,6 +1035,10 @@ export async function startOnline3d(): Promise<void> {
           if (!e.chain) app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
           app.attackLockUntil = now + e.lockMs;   // …а лок продлевает каждый: он держит ВСЮ серию
         }
+      } else if (e.type === 'cooldown') {
+        // ⭐ R8-15: действие без удара (бафф) — только заливка-откат слота. Не свинг: кукла не бьёт, «слэша» и свиста нет,
+        // общий attack-лок не трогается (бафф посреди замаха обнулял его, и слоты атак переставали сереть).
+        if (e.playerId === myId) { const now = performance.now(); app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs }; }
       } else if (e.type === 'monster-swing') {
         // Телеграф монстра несёт только windupMs (окна атаки у него нет) — этого достаточно, чтобы кадр
         // `impact` сел ровно на момент удара: игроку становится видно, когда уворачиваться.
@@ -1082,7 +1091,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('areaChanged', (f) => { closeDeath(); buildArea(f.floor); });
   app.net.on('doorOpened', (f) => openDoor(f.doorId));
   app.net.on('died', (f) => showDeath(f));
-  app.net.on('voteStart', (f) => showVote(f.kind));
+  app.net.on('voteStart', (f) => showVote(f));
   app.net.on('voteUpdate', (f) => { const t = voteBox?.querySelector('.tally'); if (t) t.textContent = `${f.yes}/${f.total}`; });
   app.net.on('voteEnd', () => closeVote());
   // `runStatus`/`abandoned`/`error` и жизнь сокета — у потока входа (`entry` ниже), общего с 2D.
@@ -1098,7 +1107,8 @@ export async function startOnline3d(): Promise<void> {
   const mk = (html: string, css: string): HTMLElement => { const b = document.createElement('div'); b.style.cssText = css; b.innerHTML = html; root.appendChild(b); return b; };
 
   function showRoomCode(code: string): void { if (!codeLabel) codeLabel = mk('', 'position:fixed;top:8px;right:12px;z-index:60;background:#171b24;border:1px solid #6f9bcf;border-radius:6px;padding:6px 10px;color:#cfe0f2;font-size:13px;pointer-events:none'); codeLabel.innerHTML = `Комната: <b style="color:#dca94b;letter-spacing:2px">${code}</b>`; }
-  function showVote(kind: 'descend' | 'town' | 'arena'): void { if (voteBox) return; const q = kind === 'town' ? 'Вернуться в город?' : kind === 'arena' ? 'Войти в PvP-арену?' : 'Спуск на след. этаж?';
+  // ⭐ R9-08: спуск из города — с тем, что начнётся (тир, шаблон, биом, модификаторы, чьё продолжение), `voteQuestion`.
+  function showVote(f: VoteStartFrame): void { if (voteBox) return; const q = voteQuestion(f, app.config, app.state?.save.difficultyProgress);
     voteBox = mk(`<div style="margin-bottom:8px">${q} <b class="tally">1/1</b></div><button data-v="1" style="margin:0 4px;padding:6px 14px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Принять</button><button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Отмена</button>`, 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#171b24;border:1px solid #6f9bcf;border-radius:8px;padding:12px 16px;color:#e6ddc9;text-align:center;pointer-events:auto');
     voteBox.querySelector('[data-v="1"]')!.addEventListener('click', () => app.net.send({ t: 'vote', accept: true }));
     voteBox.querySelector('[data-v="0"]')!.addEventListener('click', () => app.net.send({ t: 'vote', accept: false }));

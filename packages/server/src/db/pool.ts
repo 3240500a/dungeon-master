@@ -162,8 +162,34 @@ const SCHEMA_LOCK = 947_213_001;
 
 export async function initSchema(): Promise<void> {
   // R2-22: схема на месте — ни одного DDL и ни одной блокировки таблиц (см. `applySchema`).
-  await withSchemaLock(SCHEMA_LOCK, (c) => applySchema(c, 'main', SCHEMA_MAIN));
+  // R9-01: свод записей забегов — своей частью: новая таблица не переприменяет основную схему (и её блокировки).
+  await withSchemaLock(SCHEMA_LOCK, async (c) => {
+    await applySchema(c, 'main', SCHEMA_MAIN);
+    await applySchema(c, 'runs', SCHEMA_RUNS);
+  });
 }
+
+/**
+ * ⭐ R9-01: СВОД ЗАПИСЕЙ ЗАБЕГА — В БАЗЕ, ПО ЛИЧНОСТИ ЗАБЕГА (`run_key`: `RunConfig.id`, у старых — сид и всё, из чего
+ * пересобирается граф). Что взято на узле (открытые сундуки, номера убитых из заселения, дёрнутые рычаги) принадлежит
+ * ЗАБЕГУ, а не тому, у кого ещё жива копия: записи жили только в сейвах участников, и копия, брошенная одним (финал, «Завершить»,
+ * вайп), уносила взятое с узлов, куда другой не доходил, — его старая копия потом собирала эти узлы свежими (R4-04 снова).
+ * Строка — узел; списки — множества (запись только добавляет: `mergeRunLedger`), мощь — первой записи. Чистится по сроку
+ * (`sweepRunLedger`): забеги не переживают рестарт ноды (`clearAllRuns`), а строки — неделю.
+ */
+const SCHEMA_RUNS: readonly string[] = [`
+    CREATE TABLE IF NOT EXISTS run_ledger (
+      run_key    text NOT NULL,
+      node_id    text NOT NULL,
+      el         double precision NOT NULL,
+      chests     integer[] NOT NULL DEFAULT '{}',
+      killed     integer[] NOT NULL DEFAULT '{}',
+      levers     integer[] NOT NULL DEFAULT '{}',
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (run_key, node_id)
+    );
+    CREATE INDEX IF NOT EXISTS run_ledger_updated ON run_ledger (updated_at);
+  `];
 
 /** R6-18: сколько процесс на старте ждёт блокировку схемы, которую держит другой (применяет правку схемы). */
 const SCHEMA_WAIT_MS = 10 * 60_000;

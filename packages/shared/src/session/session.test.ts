@@ -1505,6 +1505,8 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
     const s = new GameSession(r, seed, 'normal', { rewards: true });
     const host = s.addPlayer('host', newBotSave(r, 'mage'));
     const main = s.addPlayer('main', newBotSave(r, 'mage'));
+    // У каждого героя комнаты свой charId (комната держит ровно одну сущность на charId); боты сима все — 'bot'.
+    host.save.charId = 'char-host'; main.save.charId = 'char-main';
     main.save.skills['b-curse-a4'] = 1;
     const mp = cellToWorld(20, 6);
     const mon = tankMon(r, mp.x, mp.y, 'undead');
@@ -1583,6 +1585,86 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
     expect(host.save.xp).toBe(0);
   });
 
+  /**
+   * ⚠ R9-06: УШЁЛ ХОЗЯИН СТАТУСА — НАГРАДЫ НЕТ, НО ДОБЫЧА ПАДАЕТ. Добитое ядом или кровотечением ушедшего (разрыв, выход) не
+   * давало вовсе ничего: `killMonster` без убийцы выходил до бросков золота, сырья, колб и вещей, а запись узла помечала
+   * монстра убитым навсегда — партия, оставшаяся в комнате, теряла добычу босса, и лишить её было можно нарочно: повесил
+   * яд — вышел. Теперь без убийцы нет только его наград (опыт, лечение за убийство, «Уничтожить N»); добыча — та же и в том
+   * же порядке бросков, что при нём.
+   */
+  it('⭐ R9-06: повесивший ушёл — опыта и убийства нет, а добыча падает та же, что при нём', () => {
+    const run = (away: boolean) => {
+      const r = reg();
+      const loot = r.get('balance').loot;
+      loot.goldChance = 1; loot.dropChance = 1; loot.materials.chance = 1; loot.potions.chance = 1;
+      const s = new GameSession(r, 118, 'normal', { rewards: true });
+      const host = s.addPlayer('host', newBotSave(r, 'mage'));
+      const main = s.addPlayer('main', newBotSave(r, 'mage'));
+      host.save.charId = 'char-host'; main.save.charId = 'char-main';
+      const mp = cellToWorld(20, 6);
+      const mon = tankMon(r, mp.x, mp.y, 'undead');
+      mon.def.xp = 500; mon.def.hpRegen = 0;
+      s.enterFloor(1, { grid: openField(30, 13), spawn: cellToWorld(3, 6), monsters: [mon] });
+      main.pos = cellToWorld(3, 10);
+      const m = s.world.monsters[0]!;
+      addDebuffStack(m.debuffs, { kind: 'poison', chance: 1, maxStacks: 1, durationMs: 60_000, mag: 50 }, s.world.timeMs);
+      m.dotBy = { poison: 'main' }; m.dotHero = { poison: 'char-main' };
+      m.hp = 0.01;                                        // следующий тик яда добивает
+      if (away) s.removePlayer('main');
+      const evs = s.tick(1 / 30, away ? { host: idle } : { host: idle, main: idle });
+      // Что упало — без мест (разлёт «прочь от убийцы» у ушедшего не от кого) и без uid вещей (их даёт не кубик).
+      const drops = s.world.drops.map((d) => JSON.stringify({ ...d, pos: undefined, id: undefined }, (k, v) => (k === 'uid' ? undefined : v)));
+      return { m, evs, host, main, drops };
+    };
+    const here = run(false), gone = run(true);
+    expect(here.m.alive).toBe(false);
+    expect(died(here.evs)?.by).toBe('main');
+    expect(xpTo(here.evs, 'main')).toBe(500);
+    expect(here.drops.length, 'при хозяине — золото, сырьё, колба, вещь').toBeGreaterThanOrEqual(3);
+
+    expect(gone.m.alive).toBe(false);
+    expect(died(gone.evs)?.by, 'убийства никому').toBeUndefined();
+    expect(gone.evs.some((e) => e.type === 'xp'), 'опыта никому').toBe(false);
+    expect(gone.host.save.xp).toBe(0);
+    expect(gone.drops, 'было: ни золота, ни вещи — добыча босса пропадала для всей партии').toEqual(here.drops);
+    expect(gone.evs.filter((e) => e.type === 'item-dropped').length).toBe(here.evs.filter((e) => e.type === 'item-dropped').length);
+  });
+
+  /**
+   * ⚠ R7-07: ВЕРНУЛСЯ — ЭТО ТОТ ЖЕ ГЕРОЙ. Комната даёт каждому входу новый id (`p_<uuid>`), и хозяин статуса, отвалившийся
+   * и вернувшийся («Продолжить»; соло-комната на грейсе стоит, и яд ждёт его), искался по старому id: добитое ядом уходило
+   * «никому» — ни опыта, ни добычи, ни «Уничтожить N», а запись узла помечала монстра убитым навсегда (босс — с его уником).
+   */
+  for (const same of [true, false]) {
+    it(`⭐ R7-07: повесивший вернулся под новым id (${same ? 'тот же объект сейва' : 'сейв из базы'}) — добитое ядом его`, () => {
+      const { s, host, main, m } = coop(116);
+      for (let i = 0; i < 40 && !m.debuffs.poison; i++) {
+        main.mana = 999; main.hp = main.maxHp;
+        s.tick(1 / 30, { host: idle, main: { ...idle, cast: i === 0 ? 'b-curse-a4' : null } });
+      }
+      expect(m.debuffs.poison, 'яд повешен').toBeTruthy();
+      const at = { ...main.pos };
+      s.removePlayer('main');
+      const save = same ? main.save : structuredClone(main.save);
+      const back = s.addPlayer('main-2', save, at);
+      const evs = untilDead(s, back, m, idle, ['host', 'main-2']);
+      expect(m.alive).toBe(false);
+      expect(died(evs)?.by, 'было: undefined — смерть без наград').toBe('main-2');
+      expect(xpTo(evs, 'main-2')).toBe(500);
+      expect(save.xp).toBe(500);
+      expect(xpTo(evs, 'host'), 'соседу — ничего').toBe(0);
+      expect(host.save.xp).toBe(0);
+    });
+  }
+
+  it('R7-07: при хозяине статуса на месте — решает его id, а не совпавший charId соседа (боты сима все «bot»)', () => {
+    const { s, host, main, m } = coop(117);
+    host.save.charId = main.save.charId;               // как у ботов сима: charId один на всех
+    const evs = untilDead(s, main, m, { ...idle, cast: 'b-curse-a4' });
+    expect(died(evs)?.by).toBe('main');
+    expect(host.save.xp).toBe(0);
+  });
+
   it('⭐ шум брони — у ЦЕЛИ монстра, а не у первого в комнате: латник-хозяин вдали не делает тихого соседа слышным', () => {
     for (const [hostPlate, mainPlate, heard] of [[true, false, false], [false, true, true]] as const) {
       const r = reg();
@@ -1603,6 +1685,48 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
       for (let i = 0; i < 5; i++) { m.pos = { ...mp }; s.tick(1 / 30, { host: idle, main: idle }); }
       expect(m.aiState, `латы: хозяин ${hostPlate}, сосед ${mainPlate}`).toBe(heard ? 'chase' : 'idle');
     }
+  });
+});
+
+/**
+ * ⭐ R9-02: ПОТОК БРОСКОВ СЕССИИ — ВНЕДРЯЕМЫЙ. У комнаты сервера поток сессии был mulberry32 с 32-битным состоянием, и его
+ * выход виден с первого снимка (взгляд каждого монстра — `rng.float(0, 2π)`): состояние подбиралось перебором за секунды,
+ * а дальше изменённый клиент считал сундук и дроп наперёд тем же `GameSession` и крутил их ударами в воздух (удар — ровно
+ * один бросок). Сессия берёт источник из опций — сервер кормит её криптоисточником (`sessionRng`); сим, боты, тесты и клиент
+ * по-прежнему сеют mulberry32 — их воспроизводимость на сиде не меняется.
+ */
+describe('⭐ R9-02: поток бросков сессии — внедряемый', () => {
+  /** Источник по списку чисел — тот же интерфейс, что у `createRng`. */
+  function listRng(vals: readonly number[]) {
+    let k = 0;
+    const next = (): number => vals[k++ % vals.length]!;
+    return {
+      next,
+      int: (a: number, b: number) => Math.floor(next() * (b - a + 1)) + a,
+      float: (a: number, b: number) => next() * (b - a) + a,
+      pick: <T,>(arr: readonly T[]) => arr[Math.floor(next() * arr.length)]!,
+      chance: (p: number) => next() < p,
+    };
+  }
+  const floorOf = (r: ConfigRegistry): FloorLayout => ({
+    grid: openField(30, 13), spawn: cellToWorld(3, 6),
+    monsters: [10, 12, 14].map((cx) => { const p = cellToWorld(cx, 6); return tankMon(r, p.x, p.y, 'undead'); }),
+  });
+
+  it('⭐ источник из опций ведёт броски сессии: взгляды заселения — его числа, а не поток сида', () => {
+    const r = reg();
+    const vals = [0.125, 0.5, 0.875];
+    const s = new GameSession(r, 5, 'normal', { rng: listRng(vals) });
+    s.enterFloor(1, floorOf(r));
+    expect(s.world.monsters.map((m) => m.facing), 'было: опция не читалась — поток сида').toEqual(vals.map((v) => v * Math.PI * 2));
+  });
+
+  it('без источника — сидовый mulberry32, как было: сим и тесты на сиде воспроизводимы', () => {
+    const r = reg();
+    const s = new GameSession(r, 5, 'normal');
+    s.enterFloor(1, floorOf(r));
+    const ref = createRng(5);
+    expect(s.world.monsters.map((m) => m.facing)).toEqual([0, 1, 2].map(() => ref.float(0, Math.PI * 2)));
   });
 });
 
@@ -1744,7 +1868,7 @@ describe('⚠ R6-02: смена снаряжения, аур и вставок �
  * пяти баффов игры откат длиннее действия (воин a5 — 12 с на 8 с), и повтор в кадр истечения держал бафф 100 % времени.
  */
 describe('⚠ R6-15: бафф держит свой откат', () => {
-  it('⭐ «b-class-warrior-a5» зажат 40 с: касты не чаще отката (12 с), откат встаёт сразу, клиенту — свинг с откатом', () => {
+  it('⭐ «b-class-warrior-a5» зажат 40 с: касты не чаще отката (12 с), откат встаёт сразу, клиенту — событие отката (не свинг, R8-15)', () => {
     const r = reg();
     const s = new GameSession(r, 7, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
@@ -1756,7 +1880,8 @@ describe('⚠ R6-15: бафф держит свой откат', () => {
     const cd = a.cooldown;
     expect(cd, 'предпосылка: откат длиннее действия').toBeGreaterThan(a.category === 'buff' ? a.durationSec : Infinity);
     const casts: number[] = [];
-    const swings: Extract<SessionEvent, { type: 'swing' }>[] = [];
+    const cds: Extract<SessionEvent, { type: 'cooldown' }>[] = [];
+    let swings = 0;
     let up = 0;
     const dt = 1 / 30, T = 40 * 30;
     for (let i = 0; i < T; i++) {
@@ -1769,14 +1894,33 @@ describe('⚠ R6-15: бафф держит свой откат', () => {
         casts.push(i * dt);
         expect(p.skillCd['b-class-warrior-a5'], 'откат встал в кадр каста').toBeGreaterThan(cd - 0.1);
       }
-      for (const e of evs) if (e.type === 'swing' && e.ability === 'b-class-warrior-a5') swings.push(e);
+      for (const e of evs) {
+        if (e.type === 'cooldown' && e.ability === 'b-class-warrior-a5') cds.push(e);
+        if (e.type === 'swing') swings++;
+      }
     }
     expect(casts.length, 'касты были').toBeGreaterThan(1);
     for (let k = 1; k < casts.length; k++) expect(casts[k]! - casts[k - 1]!, `промежуток ${k}`).toBeGreaterThanOrEqual(cd - 1e-6);
     expect(up / T, 'время под баффом — действие/откат, а не 100 %').toBeLessThan(0.75);
-    expect(swings.length, 'свинг на каждый каст — клиент рисует откат слота').toBe(casts.length);
-    expect(swings[0]!.cooldownMs).toBeCloseTo(cd * 1000, 0);
-    expect(swings[0]!.lockMs, 'бафф не занимает общий attack-лок').toBe(0);
+    expect(cds.length, 'событие отката на каждый каст — клиент заливает откат слота').toBe(casts.length);
+    expect(cds[0]!.cooldownMs).toBeCloseTo(cd * 1000, 0);
+    expect(cds[0]!.playerId).toBe('p1');
+    // ⚠ R8-15: бафф — не удар. Свинг клиенты играют ударом оружия (кукла, «слэш», свист) и ставят им общий attack-лок:
+    // бафф посреди замаха обнулял лок (слоты атак переставали сереть) и перезапускал удар куклы.
+    expect(swings, 'бафф не шлёт свинг').toBe(0);
+  });
+
+  it('⚠ R8-15: бафф посреди замаха удара — свинг один (удар), бафф — только событие отката', () => {
+    const r = reg();
+    const s = new GameSession(r, 7, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    p.save.skills['b-class-warrior-a5'] = 1;
+    s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+    p.stamina = 50; p.mana = 50;
+    const evs = [...s.tick(1 / 30, { p1: { ...idle, attack: true } }), ...s.tick(1 / 30, { p1: { ...idle, attack: true, cast: 'b-class-warrior-a5' } })];
+    expect(evs.filter((e) => e.type === 'swing').map((e) => (e as { ability: string }).ability)).toEqual(['attack']);
+    expect(evs.filter((e) => e.type === 'cooldown').map((e) => (e as { ability: string }).ability)).toEqual(['b-class-warrior-a5']);
+    expect((p.skillBuffs['b-class-warrior-a5'] ?? 0) > 0, 'бафф встал').toBe(true);
   });
 });
 
@@ -1853,5 +1997,128 @@ describe('⚠ R6-26: добыча и стена', () => {
     p.pos = { x: beyond.x + 20, y: beyond.y + 5 };            // по ту сторону, рядом с обоими
     expect(s.openChest('p1', 1)).toBe(true);
     expect(s.openLever('p1', 1)).toBe(1);
+  });
+});
+
+/**
+ * ⚠ R7-01: ОГРОМНЫЙ ВЗГЛЯД — НЕ КРУГ 360°. Изменённый клиент слал `facing: 1e17` (конечное число — проверку провода проходило),
+ * ядро клало его в `p.facing` как есть, а `wrapAngle(угол − 1e17)` на такой величине точности не имеет и отдаёт 0 для ЛЮБОГО
+ * угла: каждый взмах и каждое ударное умение били всех в досягаемости со всех сторон, на арене — и игроков за спиной.
+ * Ядро приводит взгляд само (боты и сим идут мимо провода), провод — тоже (`validateInput`).
+ */
+describe('⚠ R7-01: взгляд любой величины бьёт конусом, а не кругом', () => {
+  /** Воин в центре, восемь неубиваемых монстров кольцом на 40 px (в досягаемости взмаха); сколько разных задето за 1 с. */
+  function ring(facing: number): number {
+    const r = reg();
+    const s = new GameSession(r, 7, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const c = cellToWorld(10, 10);
+    const at = (k: number) => ({ x: c.x + Math.cos((k / 8) * Math.PI * 2) * 40, y: c.y + Math.sin((k / 8) * Math.PI * 2) * 40 });
+    s.enterFloor(1, { grid: openField(20, 20), spawn: c, monsters: Array.from({ length: 8 }, (_, k) => tankMon(r, at(k).x, at(k).y, 'undead')) });
+    const hit = new Set<string | number>();
+    for (let i = 0; i < 30; i++) {
+      s.world.monsters.forEach((m, k) => { m.pos = at(k); m.vel = { x: 0, y: 0 }; m.windup = null; });   // стоят на местах
+      p.pos = { ...c }; p.hp = p.maxHp;
+      for (const e of s.tick(1 / 30, { p1: { ...idle, facing, attack: true } })) {
+        if (e.type === 'hit' && e.target === 'monster' && e.by === 'p1') hit.add(e.id);
+      }
+    }
+    return hit.size;
+  }
+
+  it('⭐ взмах с facing 1e17 / 1e20 / 1e300 / 2^60 задевает столько же, сколько честный прицел в ту же сторону', () => {
+    const honest = ring(0);
+    expect(honest, 'контроль: конус задевает часть кольца').toBeGreaterThan(0);
+    expect(honest, 'контроль: конус — не круг').toBeLessThan(8);
+    for (const f of [1e17, 1e20, 1e300, 2 ** 60, -1e17]) {
+      const n = ring(f);
+      expect(n, `facing ${f}: было 8 из 8`).toBeLessThan(8);
+      expect(n, `facing ${f}`).toBe(ring(Math.atan2(Math.sin(f), Math.cos(f))));
+    }
+  });
+
+  it('⭐ арена: игрок за спиной не ранен ни при каком facing', () => {
+    for (const f of [0, 1e17, 1e20, 1e300, 2 ** 60]) {
+      const r = reg();
+      const s = new GameSession(r, 42, 'normal');
+      const p1 = s.addPlayer('p1', newBotSave(r, 'warrior'));
+      const p2 = s.addPlayer('p2', newBotSave(r, 'warrior'));
+      s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(8, 6), monsters: [], pvp: true });
+      const c = cellToWorld(8, 6);
+      // Прицел «в спину» соседу: он стоит по направлению, противоположному приведённому взгляду.
+      const aim = Math.atan2(Math.sin(f), Math.cos(f));
+      const behind = { x: c.x - Math.cos(aim) * 30, y: c.y - Math.sin(aim) * 30 };
+      const hits: SessionEvent[] = [];
+      for (let i = 0; i < 60; i++) {
+        p1.pos = { ...c }; p2.pos = { ...behind }; p1.hp = p1.maxHp; p2.spawnImmuneUntil = 0;
+        hits.push(...s.tick(1 / 30, { p1: { ...idle, facing: f, attack: true }, p2: idle }).filter((e) => e.type === 'hit' && e.target === 'player' && e.id === 'p2'));
+      }
+      expect(hits.length, `facing ${f}: удар в спину`).toBe(0);
+      // Контроль: тот же сосед спереди — задет.
+      const front = { x: c.x + Math.cos(aim) * 30, y: c.y + Math.sin(aim) * 30 };
+      let got = 0;
+      for (let i = 0; i < 60; i++) {
+        p1.pos = { ...c }; p2.pos = { ...front }; p2.hp = p2.maxHp; p2.spawnImmuneUntil = 0;
+        got += s.tick(1 / 30, { p1: { ...idle, facing: f, attack: true }, p2: idle }).filter((e) => e.type === 'hit' && e.target === 'player' && e.id === 'p2').length;
+      }
+      expect(got, `facing ${f}: контроль — спереди бьёт`).toBeGreaterThan(0);
+    }
+  });
+
+  it('ядро приводит взгляд само: в `p.facing` — угол в [−π, π] того же направления', () => {
+    const r = reg();
+    const s = new GameSession(r, 3, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(8, 6), monsters: [] });
+    for (const f of [1e17, -1e300, 7]) {
+      s.tick(1 / 30, { p1: { ...idle, facing: f } });
+      expect(p.facing).toBe(Math.atan2(Math.sin(f), Math.cos(f)));
+    }
+    s.tick(1 / 30, { p1: { ...idle, facing: 1.25 } });
+    expect(p.facing, 'честный угол — бит в бит').toBe(1.25);
+  });
+});
+
+/**
+ * ⚠ R7-19: УНИК С ТЕЛА НЕ ЛОМАЕТСЯ. Трофей ломался с `brokenChance` без оглядки на редкость, и ~1,9 % трофеев выпадали
+ * сломанными униками (комнаты боссов их форсят), а уник кузницу не проходит вовсе (docs/ECONOMY.md §1: «Нашёл — носи как
+ * есть») — чинился он за одно золото. Теперь уник падает целым; прочие трофеи ломаются как прежде (и тем же броском `rng`).
+ */
+describe('⚠ R7-19: уник-трофей падает целым', () => {
+  /** Трофеи с тел при шансах 1: вещь всегда, трофей всегда, сломан всегда; `rarity` — какую редкость форсить порогами. */
+  function trophies(rarity: 'unique' | 'rare', seed: number): Item[] {
+    const r = reg();
+    const loot = r.get('balance').loot as { dropChance: number; trophyChance: number; brokenChance: number; goldChance: number };
+    loot.dropChance = 1; loot.trophyChance = 1; loot.brokenChance = 1; loot.goldChance = 0;
+    for (const x of r.get('rarities')) (x as { threshold: number }).threshold = x.id === rarity ? 1e9 : 0;   // бросок любой — эта редкость
+    const s = new GameSession(r, seed, 'normal', { rewards: true });
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
+    const monsters = Array.from({ length: 12 }, (_, k) => {
+      const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId, depth: 3 }, createRng(seed * 10 + k));
+      def.hp = 1; def.armor = 0; def.evade = 0;
+      const at = cellToWorld(7, 6);
+      return { def, x: at.x, y: at.y };
+    });
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters });
+    const out: Item[] = [];
+    for (let i = 0; i < 600 && s.monstersAlive > 0; i++) {
+      const m = s.world.monsters.find((x) => x.alive)!;
+      m.pos = cellToWorld(7, 6);
+      p.pos = cellToWorld(6, 6); p.hp = p.maxHp;
+      for (const e of s.tick(1 / 30, { p1: { ...idle, facing: 0, attack: true } })) {
+        if (e.type === 'item-dropped' && e.from === 'monster' && e.item.kind !== 'consumable') out.push(e.item);   // колбы — свой канал
+      }
+    }
+    return out;
+  }
+
+  it('⭐ форсированный уник при brokenChance 1 — ни одного сломанного; контроль: редкий трофей ломается', () => {
+    const u = [...trophies('unique', 1), ...trophies('unique', 2)];
+    expect(u.filter((it) => it.rarity === 'unique').length, 'сторож не выродился').toBeGreaterThan(10);
+    expect(u.filter((it) => it.rarity === 'unique' && it.broken).length, 'было: каждый сломан').toBe(0);
+    const rare = trophies('rare', 3);
+    expect(rare.length).toBeGreaterThan(5);
+    expect(rare.every((it) => it.rarity === 'rare' && it.broken), 'прочие трофеи — сломаны, как прежде').toBe(true);
   });
 });

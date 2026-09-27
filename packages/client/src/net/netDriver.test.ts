@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NetDriver } from './netDriver.js';
 import { InputPacer, INPUT_PERIOD_MS } from './inputPacer.js';
 import { KeyNode, phaserKeyboard } from './phaserKeyboardHarness.js';
+import { beginHold, clearHeld, type HeldFrom } from '../modules/inventory/heldItem.js';
 
 /**
  * ⭐ R3-08: 2D-КЛИЕНТ ШЛЁТ ВВОД С ЧАСТОТОЙ ТИКА СЕРВЕРА, А НЕ КАДРОВ. `NetDriver.update` зовётся каждый кадр Phaser
@@ -47,7 +48,7 @@ function rig() {
   const player = { facing: 0 };
   const driver = new NetDriver(scene as never, app as never, player as never);
   const inputs = (): Sent[] => sent.filter((f) => f.t === 'input');
-  return { driver, keys, inputs };
+  return { driver, keys, inputs, app };
 }
 
 describe('⭐ R3-08: ввод 2D-клиента — с частотой тика, а не кадров', () => {
@@ -148,5 +149,158 @@ describe('⭐ R6-03: клавиши драйвера не перехватыва
     expect(r.kb.captures(), 'было: [W, A, S, D, SHIFT, SPACE, ALT, E, Q] до перезагрузки страницы').toEqual([]);
     const typed = [...'swordfish qed'].filter((ch) => !r.kb.press(r.input, ch === ' ' ? 32 : ch.toUpperCase().charCodeAt(0), ch).defaultPrevented).join('');
     expect(typed, 'было: «orfih»').toBe('swordfish qed');
+  });
+});
+
+/**
+ * ⚠ R8-15: ОТКАТ БАФФА — НЕ УДАР. R6-15 слал на каст баффа `swing` с нулевым локом: клиент ставил им общий attack-лок в
+ * «сейчас» (бафф посреди замаха — слоты атак переставали сереть при идущем серверном локе) и рисовал форму удара. Теперь
+ * бафф шлёт `cooldown`: только заливка слота.
+ */
+describe('⚠ R8-15: событие отката баффа', () => {
+  it('⭐ заливает откат своего слота, общий attack-лок и замах не трогает; чужое — мимо', () => {
+    netHandlers.clear();
+    const { driver, app } = rig();
+    driver.setMyId('p1');
+    const a = app as unknown as { attackLockUntil: number; actionCooldowns: Record<string, { start: number; until: number }> };
+    a.actionCooldowns = {};
+    const lock = performance.now() + 900;    // идёт серверный лок удара
+    a.attackLockUntil = lock;
+    const emit = (events: unknown[]): void => { for (const cb of netHandlers.get('events')!) cb({ t: 'events', events } as never); };
+    // Замах драйвер рисует через `PlayerVfx.startSwing` — у подмены его нет: позови его обработчик — тест упадёт.
+    emit([{ type: 'cooldown', playerId: 'p1', ability: 'b-class-warrior-a5', cooldownMs: 12_000 }]);
+    expect(a.attackLockUntil, 'лок удара цел').toBe(lock);
+    const cd = a.actionCooldowns['b-class-warrior-a5'];
+    expect(cd && cd.until - cd.start, 'откат слота залит').toBe(12_000);
+    emit([{ type: 'cooldown', playerId: 'p2', ability: 'x', cooldownMs: 5_000 }]);
+    expect(a.actionCooldowns.x, 'откат чужого героя — не мой слот').toBeUndefined();
+  });
+
+  it('3D-клиент: ветка `cooldown` не бьёт куклой, не рисует «слэш» и не пишет attack-лок', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../render3d/online3d.ts', import.meta.url), 'utf8');
+    const at = src.indexOf("e.type === 'cooldown'");
+    expect(at, 'ветка есть').toBeGreaterThan(0);
+    const branch = src.slice(at, src.indexOf('} else if', at));
+    expect(branch).toContain('actionCooldowns[e.ability]');
+    for (const bad of ['.attack(', 'vfx.slash', 'attackLockUntil']) expect(branch, bad).not.toContain(bad);
+  });
+});
+
+/**
+ * ⭐ R8-11: КЛИК, КОТОРЫМ БРОСАЮТ ПРЕДМЕТ С КУРСОРА, — НЕ УДАР. Предмет «на курсоре» (D2) роняется кликом по холсту
+ * (`heldItem.onWorldClick` → `drop`, из сундука — отмена), но тот же `pointerdown` холста поднимал `leftHeld`: сэмплер
+ * видел фронт ЛКМ и слал `attack:true` или скилл ЛКМ (маг с огнешаром на ЛКМ тратил ману и откат, удар тянул мобов, на
+ * арене бил соперника). Веб-3D это гасил давно (`online3d.pumpInput`: `L: !holding && lmb`), 2D — нет.
+ *
+ * Драйвер и «предмет на курсоре» — настоящие; DOM — заглушка (`window`/`document`), Phaser подменён выше.
+ */
+describe('⭐ R8-11: бросок предмета с курсора — не удар и не каст', () => {
+  type Frame = { t: string; cmd?: string; input?: { attack: boolean; cast: string | null } };
+  const G = globalThis as unknown as { document?: unknown; window?: unknown };
+  let winClick: ((e: unknown) => void)[] = [];
+  beforeEach(() => {
+    winClick = [];
+    G.document = {
+      createElement: () => ({ style: {}, remove: () => {} }), body: { appendChild: () => {} },
+      addEventListener: () => {}, removeEventListener: () => {}, hidden: false,
+    };
+    G.window = {
+      addEventListener: (t: string, cb: (e: unknown) => void) => { if (t === 'click') winClick.push(cb); },
+      removeEventListener: (t: string, cb: (e: unknown) => void) => { if (t === 'click') winClick = winClick.filter((f) => f !== cb); },
+    };
+  });
+  afterEach(() => { clearHeld(); delete G.document; delete G.window; });
+
+  const ITEM = { uid: 'it-1', name: 'Меч', gridW: 1, gridH: 3, rarity: 'normal', kind: 'weapon', slot: 'weapon' };
+  const btn = (left: boolean, right = false) => ({ leftButtonDown: () => left, rightButtonDown: () => right });
+
+  function heldRig(binds: { mouseLeft: string | null; mouseRight?: string | null }) {
+    const on = new Map<string, (p: unknown) => void>();
+    const scene = {
+      input: {
+        keyboard: { addKey: () => ({ isDown: false }), addCapture: () => {}, removeCapture: () => {} },
+        mouse: { disableContextMenu: () => {} },
+        on: (t: string, cb: (p: unknown) => void) => { on.set(t, cb); }, off: () => {}, hitTestPointer: () => [],
+      },
+      time: { now: 0 },
+    };
+    const sent: Frame[] = [];
+    const app = {
+      net: { on: () => () => {}, send: (f: Frame) => { sent.push(f); } },
+      state: { save: { mouseLeft: binds.mouseLeft, mouseRight: binds.mouseRight ?? null, hotbar: [null, null, null] } },
+      config: { get: () => undefined },
+      bus: { emit: () => {} },
+      sendCmd: (c: { cmd: string }) => { sent.push({ t: 'cmd', cmd: c.cmd }); return 1; },
+    };
+    const driver = new NetDriver(scene as never, app as never, { facing: 0 } as never);
+    const frames = (n: number): void => { for (let i = 0; i < n; i++) driver.update(1000 / 60); };
+    frames(10);                     // ровный ход: ничего не зажато
+    sent.length = 0;
+    /** Клик по земле, как в браузере: mousedown → ~100 мс кадров → mouseup → DOM-`click` окна (тут роняется предмет). */
+    const clickGround = (right = false): void => {
+      on.get('pointerdown')!(right ? btn(false, true) : btn(true));
+      frames(6);
+      on.get('pointerup')!(btn(false));
+      for (const cb of [...winClick]) cb({ target: { tagName: 'CANVAS', closest: () => ({}) } });
+      frames(3);
+    };
+    const hold = (from: HeldFrom): void => beginHold(app as never, ITEM as never, 0, 0, from);
+    const inputs = (): Frame[] => sent.filter((f) => f.t === 'input');
+    return { on, frames, clickGround, hold, sent, inputs };
+  }
+
+  it('⭐ из инвентаря: уходит `drop`, а удара нет (было: `attack:true` на каждый выброс)', () => {
+    const r = heldRig({ mouseLeft: 'attack' });
+    r.hold('inv');
+    r.clickGround();
+    expect(r.sent.filter((f) => f.t === 'cmd').map((f) => f.cmd)).toEqual(['drop']);
+    expect(r.inputs().length, 'ввод идёт своим темпом').toBeGreaterThan(0);
+    expect(r.inputs().filter((f) => f.input!.attack), 'было: взмах на каждый выброс').toEqual([]);
+  });
+
+  it('⭐ скилл на ЛКМ не кастуется (было: маг с огнешаром тратил ману и откат)', () => {
+    const r = heldRig({ mouseLeft: 'fireball-node' });
+    r.hold('inv');
+    r.clickGround();
+    expect(r.sent.some((f) => f.t === 'cmd' && f.cmd === 'drop')).toBe(true);
+    expect(r.inputs().filter((f) => f.input!.cast != null), 'было: cast=fireball-node').toEqual([]);
+  });
+
+  it('из сундука клик по холсту — отмена взятия: ни команды, ни удара', () => {
+    const r = heldRig({ mouseLeft: 'attack' });
+    r.hold({ tab: 0 });
+    r.clickGround();
+    expect(r.sent.filter((f) => f.t === 'cmd')).toEqual([]);
+    expect(r.inputs().filter((f) => f.input!.attack)).toEqual([]);
+  });
+
+  it('ПКМ с предметом на курсоре — тоже не каст (правило веб-3D: `R: !holding && rmb`)', () => {
+    const r = heldRig({ mouseLeft: null, mouseRight: 'fireball-node' });
+    r.hold('inv');
+    r.clickGround(true);
+    expect(r.inputs().filter((f) => f.input!.cast != null)).toEqual([]);
+  });
+
+  it('удержание, поднятое ДО взятия предмета, на время курсора гаснет', () => {
+    const r = heldRig({ mouseLeft: 'attack' });
+    r.on.get('pointerdown')!(btn(true));   // ЛКМ зажата (отпущена над окном — `pointerupoutside` драйверу не приходит)
+    r.frames(3);
+    expect(r.inputs().some((f) => f.input!.attack), 'контроль: без предмета бьёт').toBe(true);
+    r.hold('inv');
+    r.sent.length = 0;
+    r.frames(12);
+    expect(r.inputs().length).toBeGreaterThan(0);
+    expect(r.inputs().filter((f) => f.input!.attack), 'предмет на курсоре — не бьём').toEqual([]);
+  });
+
+  it('контроль: без предмета на курсоре тот же клик — удар и каст, как прежде', () => {
+    const a = heldRig({ mouseLeft: 'attack' });
+    a.clickGround();
+    expect(a.sent.some((f) => f.t === 'cmd')).toBe(false);
+    expect(a.inputs().some((f) => f.input!.attack)).toBe(true);
+    const c = heldRig({ mouseLeft: 'fireball-node' });
+    c.clickGround();
+    expect(c.inputs().some((f) => f.input!.cast === 'fireball-node')).toBe(true);
   });
 });

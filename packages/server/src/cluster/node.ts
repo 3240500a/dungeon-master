@@ -66,6 +66,12 @@ export async function joinCluster(
     const hz = rs > 0 ? (counters.ticks - lastTicks) / rs : 0;
     lastTicks = counters.ticks; lastRoomSeconds = counters.roomSeconds; lastAt = now;
 
+    // ⭐ R7-09: СПЕРВА ПРОДЛИТЬ СВОИХ, ПОТОМ СЕРДЦЕ. Закрепление держится, пока на последнем ударе сердца нода держала героя
+    // (`claimForJoin`): сердце раньше продления после долгого простоя базы — окно, где нода «жива», а герой «давно не
+    // продлевался», и вход на соседнюю ноду забирал его вместе с правдой, которую нода держит недописанной копией. Продление
+    // упало — сердце не бьётся: нода, не подтвердившая своих героев, живой их хозяйкой не выглядит.
+    const held = charIds();
+    const kept = await touchClaims(held, nodeId);
     await heartbeat(nodeId, url, {
       players: g.players, rooms: g.rooms,
       cpuSeconds: (cpu.user + cpu.system) / 1e6,
@@ -75,8 +81,6 @@ export async function joinCluster(
       draining,
     });
     loop.reset();
-    const held = charIds();
-    const kept = await touchClaims(held, nodeId);
     // ⭐ R2-05: закрепление героя у другой ноды, а сессия здесь — проигравшая копия (нода подвисла, и её
     // закрепление забрали). Снимаем её, а не играем дальше: иначе две живые копии одного героя.
     const lost = held.filter((id) => !kept.has(id));

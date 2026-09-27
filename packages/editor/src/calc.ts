@@ -1,5 +1,5 @@
 import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, microFightStats, type MicroFightStats, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType, shapeFoundWeapon } from '@dm/shared';
-import { makeHarness } from './gameHarness.js';
+import { followHarness, makeHarness } from './gameHarness.js';
 import type { App } from '@dm/client/core/app.js';
 import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
 import { characterPanel } from '@dm/client/modules/progression/panels.js';
@@ -137,6 +137,8 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
     hkey = key;
   }
   const app = harness;
+  // R7-15: мост — без сервера и без канала «Применить»; правка в редакторе доходит до него из тех же данных (билд цел).
+  followHarness(app, data);
 
   page.appendChild(h('div', 'font-size:15px;font-weight:600;color:#e8e8f0;margin:2px 0 10px', '🧮 Калькулятор персонажа (1:1 с игрой)'));
   const wrap = h('div', 'display:flex;gap:16px;align-items:flex-start');

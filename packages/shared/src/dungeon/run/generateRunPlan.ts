@@ -2,6 +2,7 @@ import type { ConfigRegistry } from '../../config/registry.js';
 import type { RunModifier, RunNodeType, RunTemplate, Biome, Floor, FloorRole } from '../../config/schemas.js';
 import { createRng, type Rng } from '../../formulas/rng.js';
 import { resolveFloorSpec, pickFloorForRole, pickFloor, availableRoles } from '../floorSpec.js';
+import { pickRunModifiers } from './runModifiers.js';
 import type { RunConfig, RunNode, RunPlan } from './types.js';
 
 /** Взвешенный выбор из [{item, weight}] по rng. Возвращает null для пустого/нулевого. */
@@ -50,7 +51,9 @@ export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan
   const typeWeights = config.nodeTypeWeights ?? (tpl?.nodeTypeWeights as Record<string, number>) ?? { combat: 6, elite: 2, treasure: 1, event: 1, shop: 1 };
 
   const nodeMods = mods.filter((m) => m.scope === 'node' && m.enabled !== false);
-  const runModIds = config.modifiers.filter((id) => mods.some((m) => m.id === id && m.scope === 'run' && m.enabled !== false));
+  // ⭐ R8-12: то же правило, что у сервера на старте забега (`pickRunModifiers`): действующие, без дублей, благо — в паре с
+  // опасностью. И для забега, продолженного из сейва: записанное до правки (32 копии, одни блага) в план не доедет.
+  const runModIds = pickRunModifiers(mods, tpl?.allowedModifiers, config.modifiers);
 
   // Доступные роли = у которых есть этаж-член шаблона в этом биоме.
   const avail = availableRoles(biome.id, floors, templateId);
@@ -152,6 +155,17 @@ export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan
     nodes,
     runModifiers: runModIds,
   };
+}
+
+/**
+ * Самый глубокий узел, до которого доходит забег по ВКЛЮЧЁННЫМ шаблонам: слои 1..L (L ≤ `length.max`) + финал на L+1.
+ * Нет включённых — первый шаблон, как берёт сервер (`Room.buildRunConfig`). ⭐ R8-13: глубина узла — единственный источник
+ * прогресса сложности, поэтому порог тира выше этого числа не откроется никогда (`lockedDifficulties`).
+ */
+export function runMaxDepth(templates: readonly RunTemplate[]): number {
+  const live = templates.filter((t) => t.enabled !== false);
+  const pool = live.length ? live : templates.slice(0, 1);
+  return Math.max(0, ...pool.map((t) => t.length.max + (t.finale ? 1 : 0)));
 }
 
 /** RunConfig по умолчанию из шаблона (для алтаря редактора / старта забега).

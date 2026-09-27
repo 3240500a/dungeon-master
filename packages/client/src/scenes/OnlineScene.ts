@@ -12,6 +12,7 @@ import { dismissAsk } from '../ui/kit.js';
 import { EntryFlow } from '../net/entryFlow.js';
 import { routeToNode } from '../net/netClient.js';
 import { entryScreens } from '../ui/entryScreens.js';
+import { voteQuestion, type VoteStartFrame } from '../ui/voteText.js';
 import { TILE, Cell, gridSize, type FloorInit, type Grid } from '@dm/shared';
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
@@ -87,7 +88,7 @@ export class OnlineScene extends Phaser.Scene {
     this.app.net.on('areaChanged', (f) => { this.closeDeathModal(); this.buildArea(f.floor); }); // возрождение = смена области
     this.app.net.on('doorOpened', (f) => this.openDoor(f.doorId));
     this.app.net.on('died', (f) => this.showDeathModal(f)); // окно смерти (потери + режим возрождения)
-    this.app.net.on('voteStart', (f) => this.showVote(f.kind, f.by));
+    this.app.net.on('voteStart', (f) => this.showVote(f));
     this.app.net.on('voteUpdate', (f) => { if (this.voteBox) this.voteBox.querySelector('.tally')!.textContent = `${f.yes}/${f.total}`; });
     this.app.net.on('voteEnd', () => this.closeVote());
 
@@ -152,13 +153,17 @@ export class OnlineScene extends Phaser.Scene {
     // ⭐ R3-24: область — и в состоянии игры: по ней инвентарь предлагает разбор в поле, а тот перепроверяет «не в
     // городе». Раньше её ставил только 3D-клиент, и в 2D-подземелье `area` навсегда оставалась 'town'.
     if (this.app.state) this.app.state.area = floor.area;
+    // ⭐ R7-11: вне города окна объектов города (лавка, кузница, мастер, сундук, алтарь) закрываются (`DomUi`): открытые
+    // в городе, пока хост вёл пати вниз, они слали из подземелья команды, которые сервер там не исполняет.
+    this.app.bus.emit('area:entered', { area: floor.area });
 
     const rendered = renderGrid(this, floor.grid);
     this.walls = rendered.walls;
     this.worldObjs.push(...rendered.objects); // тайлы пола/стен — уничтожатся при следующей пересборке
     this.area = floor.area;
 
-    // Декор (факелы — анимированные со светом; портал/сундук/лавка узла забега — интерактивные).
+    // Декор (факелы — анимированные со светом; портал/лавка узла забега — интерактивные). Сундука аккаунта в подземелье
+    // нет (R7-11): сервер открывает его только в городе, и генератор его на этаж не ставит.
     // Финальный узел (нет выходов) → портал завершает забег; иначе (rest) → возврат в город.
     const isFinale = floor.area === 'dungeon' && (floor.exits?.length ?? 0) === 0;
     for (const d of floor.decor) {
@@ -166,8 +171,7 @@ export class OnlineScene extends Phaser.Scene {
       const img = this.add.image(d.x, d.y, `decor-${d.kind}`).setDepth(d.kind === 'arena' ? -8 : 1);
       if (d.kind === 'arena') img.setAlpha(0.4);
       this.worldObjs.push(img);
-      if (d.kind === 'stash') this.interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Общий сундук', run: () => this.app.bus.emit('ui:open', { panel: 'stash' }) });
-      else if (d.kind === 'shop') this.interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => this.app.bus.emit('ui:open', { panel: 'shop' }) });
+      if (d.kind === 'shop') this.interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => this.app.bus.emit('ui:open', { panel: 'shop' }) });
       else if (d.kind === 'portal') this.interactables.push(isFinale
         ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => this.app.net.send({ t: 'descend' }) }
         : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => this.app.net.send({ t: 'return' }) });
@@ -222,10 +226,13 @@ export class OnlineScene extends Phaser.Scene {
         this.interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => this.app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });
       }
       this.app.state!.depth = floor.depth;
+      this.app.state!.challengeLevel = floor.challengeLevel ?? null;   // R8-10: «вызов ур.» — как узел заселил сервер
+      if (floor.difficultyId) this.app.state!.difficultyId = floor.difficultyId;
     } else {
       this.app.run = null; // город — забега нет (мог остаться от завершённого/бросенного)
       this.addTownDecor(floor);
       this.app.state!.depth = 0;
+      this.app.state!.challengeLevel = null;
     }
 
     // Динамический свет (город и данж): тьма растёт с глубиной (конфиг balance.lighting).
@@ -322,18 +329,18 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   // ── Голосование ─────────────────────────────────────────────────────────────
-  private showVote(kind: 'descend' | 'town' | 'arena', by: string): void {
+  private showVote(f: VoteStartFrame): void {
     if (this.voteBox) return;
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#171b24;border:1px solid #6f9bcf;border-radius:8px;padding:12px 16px;color:#e6ddc9;text-align:center';
-    const q = kind === 'town' ? 'Вернуться в город?' : kind === 'arena' ? 'Войти в PvP-арену?' : 'Спуск на след. этаж?';
+    // ⭐ R9-08: спуск из города — с тем, что начнётся (тир, шаблон, биом, модификаторы, чьё продолжение), `voteQuestion`.
+    const q = voteQuestion(f, this.app.config, this.app.state?.save.difficultyProgress);
     box.innerHTML = `<div style="margin-bottom:8px">${q} <b class="tally">1/1</b></div>
       <button data-v="1" style="margin:0 4px;padding:6px 14px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Принять</button>
       <button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Отмена</button>`;
     root.appendChild(box);
     this.voteBox = box;
-    void by;
     box.querySelector('[data-v="1"]')!.addEventListener('click', () => this.app.net.send({ t: 'vote', accept: true }));
     box.querySelector('[data-v="0"]')!.addEventListener('click', () => this.app.net.send({ t: 'vote', accept: false }));
   }

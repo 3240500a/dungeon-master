@@ -13,9 +13,15 @@ import { craftMeshConfigVersion } from './craftMesh/configVersion.js';
  *
  * Состояние окна (выбор деталей, скованная вещь, «куём…») живёт ЗДЕСЬ, на уровне модуля: тело кузницы
  * перерисовывается на каждый кадр сейва, а закрыть и открыть кузницу — не повод терять сборку.
+ *
+ * ⭐ R7-22: но оно ЧЬЁ-ТО — аккаунта и героя (`owner`). Страница без перезагрузки входит другим аккаунтом или героем
+ * (R4-22 / R5-17), и новый видел строку прежнего «Скована: … бросок N %» (имя его вещи, бросок) и его сборку: `App`
+ * забывал сундук, прилавок и доску (`forgetSession`), а это окно — нет. Другой владелец — окно с чистого листа.
  */
 
 let st: CraftWindowState | null = null;
+/** R7-22: чьё окно — `userId|charId`; другой — состояние прочь. */
+let owner = '';
 /**
  * Стенд последней сборки: одинаковую сборку заново не строим — модель мигала бы на каждый кадр сейва. В ключе и
  * версия конфига модели: правка детали (конфиг сервера, live-apply редактора) приходит в тот же реестр (R1-22).
@@ -33,6 +39,8 @@ function startClass(app: App): string {
 
 export function renderCraftTab(app: App, body: HTMLElement): void {
   const reg = app.config;
+  const who = `${app.auth?.userId ?? ''}|${app.state?.save.charId ?? ''}`;
+  if (who !== owner) { st = null; owner = who; }
   if (!st) st = initialCraftState(reg, startClass(app));
   const row = mk('div', 'display:flex;gap:10px;align-items:flex-start');
   const winBox = mk('div', 'flex:1;min-width:0');

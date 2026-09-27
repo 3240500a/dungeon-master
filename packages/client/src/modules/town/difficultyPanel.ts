@@ -1,4 +1,4 @@
-import { effectiveLevel, startChallenge, isDifficultyUnlocked } from '@dm/shared';
+import { effectiveLevel, carriedGear, startChallenge, isDifficultyUnlocked, altarModifiers } from '@dm/shared';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { COLORS, mk, button } from '../../ui/kit.js';
 
@@ -32,7 +32,7 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
   function draw(body: HTMLElement): void {
     const state = app.state!;
     const diffs = app.config.get('difficulties');
-    const pw = effectiveLevel(state.save, app.config.get('balance').power);
+    const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save));   // R8-10: как меряет сервер — с запасом
     const biomes = app.config.get('biomes').filter((b) => b.enabled !== false);
     const templates = app.config.get('run-templates').filter((t) => t.enabled !== false);
     const runMods = app.config.get('run-modifiers');
@@ -79,11 +79,15 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
     }
 
     // ── Run-модификаторы (реликвии/невзгоды) ──
+    // ⚠ R8-12: только ДЕЙСТВУЮЩИЕ (`altarModifiers` — тот же отбор, что у сервера): эффекты модификаторов игра пока не
+    // применяет, и алтарь обещал «+10% здоровья» за ничто. Нет действующих — секции нет.
     const tpl = templates.find((t) => t.id === selTpl);
-    const allowed = tpl?.allowedModifiers ?? [];
-    const mods = runMods.filter((m) => m.enabled !== false && m.scope === 'run' && (allowed.length === 0 || allowed.includes(m.id)));
+    const mods = altarModifiers(runMods, tpl?.allowedModifiers);
+    for (const id of [...selMods]) if (!mods.some((m) => m.id === id)) selMods.delete(id);   // выбор под прежний шаблон
     if (mods.length) {
       body.append(sectionLabel('Модификаторы'));
+      body.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:4px;font-style:italic`,
+        'Благо — только в паре с опасностью: лишние блага алтарь отбросит.'));
       const row = mk('div', 'display:flex;flex-wrap:wrap;gap:6px');
       for (const m of mods) {
         row.append(chip(m.name, selMods.has(m.id), () => { if (selMods.has(m.id)) selMods.delete(m.id); else selMods.add(m.id); redraw(); }, m.desc || undefined));

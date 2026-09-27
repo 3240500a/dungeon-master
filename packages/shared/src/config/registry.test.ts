@@ -155,3 +155,23 @@ describe('⚠ R6-17: цена узла древа скилов', () => {
     expect(withCost({ type: 'points', amount: 1 })).not.toThrow();
   });
 });
+
+/**
+ * ⚠ R7-20: ОКНО РЕКОННЕКТА — НЕ ДОЛЬШЕ ТАЙМЕРА NODE. Окно заводит `setTimeout` комнаты, а он держит не больше 2^31−1 мс
+ * (~24,8 суток): дольше — срабатывание через 1 мс, и щедрое окно «на 30 суток» из редактора хоронило каждого отвалившегося
+ * в подземелье сразу (штраф смерти, снятый забег). Схема держит потолок 2 000 000 с (~23 суток).
+ */
+describe('⚠ R7-20: потолок окна реконнекта', () => {
+  const withGrace = (sec: number) => {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    return () => r.reload({ balance: { ...r.get('balance'), reconnectGraceSec: sec } });
+  };
+  it('⭐ 3 000 000 и 30 суток — отказ валидации; ровно 2 000 000 и час из данных — можно', () => {
+    expect(withGrace(3_000_000)).toThrow();
+    expect(withGrace(30 * 24 * 3600)).toThrow();
+    expect(withGrace(2_000_000)).not.toThrow();
+    expect(withGrace(3600)).not.toThrow();
+    expect(2_000_000 * 1000, 'потолок схемы укладывается в таймер Node').toBeLessThanOrEqual(2 ** 31 - 1);
+  });
+});

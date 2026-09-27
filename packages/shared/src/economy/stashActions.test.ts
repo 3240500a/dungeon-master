@@ -28,6 +28,13 @@ describe('sanitizeStash', () => {
     sanitizeStash(reg, stashWith([a, b]));
     expect(a.pos).not.toEqual(b.pos);
   });
+  it('⚠ R7-19: сломанный уник в сундуке (сейв старше R7-19) — цел после загрузки; прочий сломанный трофей — как был', () => {
+    const u = { ...mkItem('u', 1, 1, 0, 0), rarity: 'unique' as const, broken: true };
+    const r = { ...mkItem('r', 1, 1, 1, 0), rarity: 'rare' as const, broken: true };
+    sanitizeStash(reg, stashWith([], [u, r]));
+    expect(u.broken).toBeUndefined();
+    expect(r.broken).toBe(true);
+  });
   it('emptyStash даёт нужное число пустых вкладок', () => {
     expect(emptyStash(reg).tabs.length).toBe(2);
   });

@@ -8,19 +8,21 @@ import pg from 'pg';
  * через 10 с получают 57014 на `pg_advisory_lock` и падают кругом перезапусков; а часть схемы дольше 10 с (индекс по
  * растущему журналу вещей) не применяется никогда — ни одна нода, ни одиночный процесс не поднимаются.
  *
- * Против НАСТОЯЩЕЙ базы `dungeon_test` (как `items.test.ts`); без базы тест пропускается. Ключи блокировок — свои (не ключ
- * схемы): соседние файлы поднимают схему в то же время, и держать её ключ дольше их потолка ожидания хука нельзя.
+ * Против НАСТОЯЩЕЙ базы `dungeon_test` в своей схеме (как `items.test.ts`, см. `testDb.ts`); без базы тест пропускается.
+ * Ключи блокировок — свои (не ключ схемы): консультативные блокировки — на всю базу, соседние файлы поднимают схему в то же
+ * время, и держать её ключ дольше их потолка ожидания хука нельзя.
  */
-vi.hoisted(() => { process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test'; });
+const tdb = await vi.hoisted(async () => (await import('./testDb.js')).testDb('poolschema'));
 
 type SchemaApi = { withSchemaLock?: (key: number, fn: (c: pg.ClientBase) => Promise<void>) => Promise<void> };
 let pool: typeof import('./pool.js');
 let alive = false;
 beforeAll(async () => {
+  alive = await tdb.open();
   pool = await import('./pool.js');
-  try { await pool.initSchema(); alive = true; } catch { alive = false; }
+  if (alive) await pool.initSchema();
 });
-afterAll(async () => { if (alive) await pool.closePool(); });
+afterAll(async () => { if (alive) { await pool.closePool(); await tdb.drop(); } });
 
 const KEY_WAIT = 947_213_091;
 const KEY_SLOW = 947_213_092;

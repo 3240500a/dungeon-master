@@ -8,6 +8,9 @@ import { limits } from './rateLimit.js';
  * замена начатого задания доски только с согласия игрока (R6-13). Сокет — фейковый, база — заглушка (запись не нужна).
  */
 vi.mock('../db/db.js', () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   putCharacter: (_c: string, _u: string, _d: SaveState, v: number) => Promise.resolve(v + 1),
   putCharacterWithStash: () => Promise.resolve({ ok: false, conflict: 'stash' }),
   getCharacter: () => Promise.resolve(null),

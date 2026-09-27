@@ -70,14 +70,14 @@ describe('generateRunPlan — структура забега', () => {
     }
   });
 
-  it('rest-узел = town-этаж (портал+сундук, без монстров-замка), boss = locked', () => {
+  it('rest-узел = town-этаж (портал в город, без сундука — R7-11, без монстров-замка), boss = locked', () => {
     const r = reg();
     const plan = generateRunPlan(r, { ...defaultRunConfig(r, 'dungeon-standard', 7), length: 12 });
     const rest = plan.nodes.find((n) => n.type === 'rest')!;
     expect(rest.floorSpec.kind).toBe('town');
     const L = generateFloor(rest.floorSpec);
     expect(L.decor.some((d) => d.kind === 'portal')).toBe(true);
-    expect(L.decor.some((d) => d.kind === 'stash')).toBe(true);
+    expect(L.decor.some((d) => d.kind === 'stash'), 'сундук аккаунта — только в городе').toBe(false);
     const boss = plan.nodes.find((n) => n.type === 'boss');
     if (boss) expect(boss.floorSpec.locked).toBe(true);
   });
@@ -141,13 +141,16 @@ describe('generateRunPlan — структура забега', () => {
     expect(dense.length).toBeGreaterThan(mons.length);
   });
 
-  it('выбранные run-модификаторы прокидываются в план и в floorSpec узлов', () => {
+  it('⚠ R8-12: выбранные run-модификаторы, чей эффект игра не применяет, в план и floorSpec не едут; граф забега — тот же', () => {
     const r = reg();
-    const cfg = { ...defaultRunConfig(r, 'dungeon-standard', 3), modifiers: ['greedy-vault', 'hardened-foes'] };
-    const plan = generateRunPlan(r, cfg);
-    expect(plan.runModifiers).toContain('greedy-vault');
+    const base = defaultRunConfig(r, 'dungeon-standard', 3);
+    const plan = generateRunPlan(r, { ...base, modifiers: ['greedy-vault', 'hardened-foes'] });
+    expect(plan.runModifiers, 'подписи без действия — обман').toEqual([]);
     const sample = plan.nodes.find((n: RunNode) => n.type === 'combat')!;
-    expect(sample.floorSpec.modifiers).toEqual(expect.arrayContaining(['greedy-vault', 'hardened-foes']));
+    expect(sample.floorSpec.modifiers).not.toContain('greedy-vault');
+    // Выбор алтаря случайности плана не тратит: граф с ним и без — один (забег из сейва регенерится тем же).
+    const bare = generateRunPlan(r, base);
+    expect(plan.nodes.map((n) => [n.id, n.type, n.edges.map((e) => e.to), n.floorSpec.seed])).toEqual(bare.nodes.map((n) => [n.id, n.type, n.edges.map((e) => e.to), n.floorSpec.seed]));
   });
 
   it('план честно следует шаблону+членству: returnEvery/bossEvery=0 → нет rest/boss; вес=0 → нет роли; финал уважает членство', () => {

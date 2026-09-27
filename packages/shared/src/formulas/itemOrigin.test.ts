@@ -10,7 +10,7 @@ import { bladeStats } from './bladeStats.js';
 import { bakedExtras, generateItem, itemFromBase, itemFromBaseId } from './itemgen.js';
 import { generateMonster } from './monstergen.js';
 import { createRng } from './rng.js';
-import { canUpgradeItem, craftAction, forgeSalvage, forgeUpgrade, unequip, upgradedItem } from '../economy/townActions.js';
+import { canUpgradeItem, craftAction, forgeReroll, forgeSalvage, forgeUpgrade, unequip, upgradedItem } from '../economy/townActions.js';
 import { newCharacterSave } from '../economy/newCharacter.js';
 import { acceptQuest, trackObjective, turnInQuest } from '../economy/questLogic.js';
 import { emptyStash } from '../economy/stashActions.js';
@@ -572,5 +572,59 @@ describe('⚠ R6-10: подъём найденного меча с выключ�
       const base = r.get('items.base').find((b) => b.id === it.baseId)!;
       expect(bakedExtras(base.baseStats, up.baseStats), 'в статах — только база').toEqual([]);
     }
+  });
+});
+
+/**
+ * ⚠ R7-17: ПЕРЕКАТКА НЕ ВЫБИРАЕТ ДЕТАЛЬ ПОДЪЁМА. Держак или обвязка, не дотянувшиеся до ступени подъёма, заменяются другим
+ * вариантом той же семьи по частоте (R5-09) — с сидом «от самой вещи». В сид входили аффиксы и имя, а перекатка у кузнеца
+ * их меняет: смотришь предпросмотр (чистая функция, у изменённого клиента под рукой), катаешь до редкой детали (3 перекатки
+ * дают 2–4 разных исхода в 93 % таких вещей), поднимаешь, разбираешь — и находка открывает в журнале выбранную за золото
+ * редкую деталь. Сид замены — только из того, что у вещи не меняется после рождения, и из её записанных деталей.
+ */
+describe('⚠ R7-17: перекатка аффиксов не меняет детали, которые подставит подъём', () => {
+  it('⭐ найденная магическая/редкая: после каждой из трёх перекаток подъём подставляет те же детали', () => {
+    const tiers = craftTiers(reg);
+    let cases = 0, rerolled = 0;
+    for (const b of weapons) {
+      for (let seed = 1; seed <= 40; seed++) {
+        const t = tiers[(seed % 5) + 1]!;
+        const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+          dropBias: 1, itemLevel: t.minItemLevel + 5, tierLevel: t.minItemLevel, baseId: b.id, tiers: reg.get('item-tiers'),
+          rarities: reg.get('rarities'), forceRarity: seed % 2 ? 'magic' : 'rare', maxReqTotal: reg.get('balance').maxTotalRequirement,
+          baseRoll: ROLL, origin: 'drop',
+        }, createRng(seed * 31 + b.id.length)));
+        if (!it.foundParts) continue;
+        const up0 = upgradedItem(reg, it);
+        if (!up0 || restepParts(reg, it.foundParts, tierIndex(reg, up0.tier!))) continue;   // замена не нужна
+        cases++;
+        const save = { gold: 1e12, inventory: [{ ...structuredClone(it), pos: { x: 0, y: 0 } }] } as unknown as SaveState;
+        for (let k = 0; k < 3; k++) {
+          const affixes = JSON.stringify(save.inventory[0]!.affixes);
+          expect(forgeReroll(reg, save, it.uid, createRng(seed * 1000 + k)).ok, `${b.id}#${seed}`).toBe(true);
+          if (JSON.stringify(save.inventory[0]!.affixes) !== affixes) rerolled++;
+          expect(upgradedItem(reg, save.inventory[0]!)!.foundParts, `${b.id}#${seed}: перекатка ${k + 1}`).toEqual(up0.foundParts);
+        }
+      }
+    }
+    expect(cases, 'сторож не выродился: находок, которым подъём подставляет детали').toBeGreaterThan(30);
+    expect(rerolled, 'перекатки действительно меняли аффиксы').toBeGreaterThan(cases);
+  });
+
+  it('сид замены помнит цепочку: поднятая дважды — те же детали, что у того же пути без перекаток', () => {
+    let checked = 0;
+    for (const b of weapons) {
+      for (let seed = 1; seed <= 40 && checked < 20; seed++) {
+        const t = craftTiers(reg)[(seed % 4) + 1]!;
+        const it = shapeFoundWeapon(reg, drop(b.id, t.minItemLevel, seed * 97 + 3, 'drop', seed % 2 ? 'magic' : 'rare'));
+        const up1 = it.foundParts ? upgradedItem(reg, it) : undefined;
+        const up2 = up1 ? upgradedItem(reg, up1) : undefined;
+        if (!up2) continue;
+        const clone = upgradedItem(reg, upgradedItem(reg, structuredClone(it))!)!;
+        expect(clone.foundParts, `${b.id}#${seed}`).toEqual(up2.foundParts);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(5);
   });
 });

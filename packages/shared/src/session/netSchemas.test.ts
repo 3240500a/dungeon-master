@@ -53,6 +53,25 @@ describe('validateInput', () => {
     expect(validateInput({ ...goodInput, useBelt: 1.5 })).toBeNull();
     expect(validateInput({ ...goodInput, useBelt: 3 })!.useBelt).toBe(3);
   });
+
+  /**
+   * ⚠ R7-01: ОГРОМНЫЙ, НО КОНЕЧНЫЙ ВЗГЛЯД. `1e17` проходил «конечное число» и уезжал в ядро как есть, а `wrapAngle` на таких
+   * величинах точности не имеет и отдаёт 0 для любой разницы углов: каждый взмах бил по кругу 360° (и в PvP — в спину).
+   * Не отказ, а приведение: Unity и прочие клиенты вправе слать неприведённый угол.
+   */
+  it('⭐ R7-01: взгляд любой конечной величины приводится в [−π, π] — тем же направлением', () => {
+    for (const f of [1e17, -1e17, 1e20, 1e300, -1e300, 2 ** 60, 7, -4, 1e6]) {
+      const r = validateInput({ ...goodInput, facing: f });
+      expect(r, `${f}`).not.toBeNull();
+      expect(Math.abs(r!.facing), `${f}`).toBeLessThanOrEqual(Math.PI);
+      expect(r!.facing, `${f}`).toBe(Math.atan2(Math.sin(f), Math.cos(f)));
+    }
+    // Честный взгляд (`atan2` клиента) — бит в бит прежний.
+    for (const f of [0, 1.2, -3, Math.PI, -Math.PI]) expect(validateInput({ ...goodInput, facing: f })!.facing).toBe(f);
+    // И тот же путь у кадра целиком.
+    const fr = parseClientFrame(JSON.stringify({ t: 'input', seq: 1, input: { ...goodInput, facing: 1e17 } }));
+    expect(fr?.t === 'input' && Math.abs(fr.input.facing)).toBeLessThanOrEqual(Math.PI);
+  });
 });
 
 describe('parseClientFrame', () => {

@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
+import { request as httpRequest, validateHeaderName, validateHeaderValue, type IncomingMessage } from 'node:http';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { installShutdown, frameFailed } from './wsServer.js';
@@ -43,6 +43,13 @@ interface UwsRes {
   writeStatus(status: string): UwsRes;
   writeHeader(key: string, value: string): UwsRes;
   end(body?: string | ArrayBufferView, closeConnection?: boolean): void;
+  /** R7-10: кусок тела без длины (chunked); `false` — у сокета обратное давление (uWS держит кусок у себя). */
+  write(chunk: ArrayBufferView): boolean;
+  /** R7-10: кусок тела известной длины `total`: [взят целиком, ответ окончен]. Не взят — дописать остаток в `onWritable`. */
+  tryEnd(chunk: ArrayBufferView, total: number): [boolean, boolean];
+  getWriteOffset(): number;
+  onWritable(cb: (offset: number) => boolean): void;
+  close(): void;
   getRemoteAddressAsText(): ArrayBuffer;
   upgrade(userData: { ip: string }, key: string, protocol: string, extensions: string, context: unknown): void;
 }
@@ -253,10 +260,17 @@ export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void
   // onAborted ОБЯЗАТЕЛЕН до первого await/асинхронного шага: без него uWS роняет процесс,
   // если клиент отвалился раньше ответа.
   let aborted = false;
-  res.onAborted(() => { aborted = true; });
+  // R7-10: клиент ушёл — бросить и запрос к express (обработчик у uWS один: остальные — списком).
+  const onAbort: (() => void)[] = [];
+  /** R7-10: ответ express уже пошёл клиенту (`relayResponse`) — свой отказ прокси поверх него не пишет. */
+  let relayed = false;
+  res.onAborted(() => {
+    aborted = true;
+    for (const f of onAbort.splice(0)) { try { f(); } catch (e) { frameFailed(e); } }
+  });
   /** Отказ от самого прокси (ответ ровно один: дальше `res` не трогаем); `close` — закрыть и соединение. */
   const refuse = (status: string, body: string, close = false): void => {
-    if (aborted) return;
+    if (aborted || relayed) return;
     aborted = true;
     try { res.cork(() => { res.writeStatus(status).writeHeader('content-type', 'application/json').end(body, close); }); } catch { /* сокет уже закрыт */ }
   };
@@ -265,7 +279,7 @@ export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void
     refuse('400 Bad Request', '{"error":"Неверный запрос"}', true);
   };
   try {
-    forwardRequest(res, req, httpPort, () => aborted, refuse, badRequest);
+    forwardRequest(res, req, httpPort, () => aborted, refuse, badRequest, (f) => { onAbort.push(f); }, () => { relayed = true; });
   } catch (e) {
     badRequest(e);
   }
@@ -275,6 +289,7 @@ export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void
 function forwardRequest(
   res: UwsRes, req: UwsReq, httpPort: number, isAborted: () => boolean,
   refuse: (status: string, body: string, close?: boolean) => void, badRequest: (e?: unknown) => void,
+  onAbort: (f: () => void) => void, relaying: () => void,
 ): void {
   const method = req.getMethod().toUpperCase();
   const query = req.getQuery();
@@ -291,33 +306,15 @@ function forwardRequest(
   //    собеседник — доверенный прокси, и справа). Заголовок есть — служебные ручки закрыты (`localCaller`).
   const peer = dec.decode(res.getRemoteAddressAsText());
   if (!isLoopback(peer) || PROXY_HEADERS.some((h) => headers[h] !== undefined)) headers['x-forwarded-for'] = clientIp(headers, peer);
-  // Тело собираем целиком: через прокси идут только запросы аккаунтов/конфига и загрузка
-  // моделей из редактора — редкие и обозримые. Игровой трафик сюда не попадает.
+  // Тело ЗАПРОСА собираем целиком (под потолком пути, R4-11): через прокси идут только запросы аккаунтов/конфига и загрузка
+  // моделей из редактора — редкие и обозримые. Игровой трафик сюда не попадает. ⭐ R7-10: а ОТВЕТ течёт клиенту потоком
+  // (`relayResponse`): он бывает и мегабайтами (статика `/assets`, конфиг), и копить его целиком прокси не может.
   const forward = (body: Buffer): void => {
     const upstream = httpRequest(
       { host: '127.0.0.1', port: httpPort, path, method, headers },
-      (up) => {
-        const out: Buffer[] = [];
-        up.on('data', (d: Buffer) => out.push(d));
-        up.on('end', () => {
-          if (isAborted()) return;
-          const payload = Buffer.concat(out);
-          // R5-01: колбэк события — бросок и отсюда был бы необработанным исключением процесса.
-          try {
-            res.cork(() => {
-              res.writeStatus(`${up.statusCode ?? 500} ${up.statusMessage ?? ''}`.trim());
-              for (const [k, v] of Object.entries(up.headers)) {
-                // Длину и кодирование считает сам uWS — свои значения тут только всё сломают.
-                if (k === 'content-length' || k === 'transfer-encoding' || k === 'connection') continue;
-                if (Array.isArray(v)) for (const one of v) res.writeHeader(k, one);
-                else if (v != null) res.writeHeader(k, String(v));
-              }
-              res.end(payload);
-            });
-          } catch (e) { frameFailed(e); }
-        });
-      },
+      (up) => relayResponse(res, up, method, isAborted, onAbort, relaying),
     );
+    onAbort(() => upstream.destroy());   // R7-10: клиент ушёл — запрос к express больше не нужен
     upstream.on('error', (e) => { refuse('502 Bad Gateway', JSON.stringify({ error: `прокси не достучался до express: ${e.message}` })); });
     if (body.length) upstream.write(body);
     upstream.end();
@@ -345,4 +342,84 @@ function forwardRequest(
       if (isLast) forward(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks));
     } catch (e) { badRequest(e); }
   });
+}
+
+/**
+ * ⭐ R7-10: ОТВЕТ express — КЛИЕНТУ ПОТОКОМ, С ОБРАТНЫМ ДАВЛЕНИЕМ. Раньше прокси собирал ответ целиком (`Buffer.concat`) и
+ * отдавал одним куском: аноним, запросивший 13 МБ GLB из `/assets` (или конфиг, ~0,5 МБ) и не читающий ответ, держал на ноде
+ * весь файл, а поток таких запросов раздувал память ноды на «размер × число запросов» (и ещё стоил цикла событий). Теперь
+ * кусок ответа уходит клиенту, как только пришёл; не взял сокет — прокси перестаёт читать у express (`pause`), пока клиент не
+ * разгребёт (`onWritable`). Длина известна — `tryEnd` (uWS сам ставит `Content-Length`, клиент видит прогресс загрузки);
+ * нет — куски без длины (`write`). Клиент ушёл — ответ express брошен (`onAbort`), а не дочитан в память.
+ *
+ * R5-01: колбэки событий и нативные колбэки uWS — бросок из них был бы выходом процесса: всё, что трогает `res`, — под `try`.
+ */
+function relayResponse(
+  res: UwsRes, up: IncomingMessage, method: string, isAborted: () => boolean,
+  onAbort: (f: () => void) => void, relaying: () => void,
+): void {
+  onAbort(() => up.destroy());
+  if (isAborted()) { up.destroy(); return; }
+  relaying();
+  const code = up.statusCode ?? 500;
+  const bodiless = method === 'HEAD' || code === 204 || code === 304 || code < 200;
+  const declared = Number(up.headers['content-length']);
+  const total = !bodiless && up.headers['content-length'] !== undefined && Number.isSafeInteger(declared) && declared >= 0 ? declared : -1;
+  let headed = false;
+  /** Ответ окончен или оборван — `res` больше не трогаем. */
+  let over = false;
+  /** Кусок, который uWS не взял целиком (`tryEnd` при обратном давлении), и смещение ответа, с которого он начинался. */
+  let pending: Buffer | null = null;
+  let pendingAt = 0;
+  const head = (): void => {
+    if (headed) return;
+    headed = true;
+    res.writeStatus(`${code} ${up.statusMessage ?? ''}`.trim());
+    for (const [k, v] of Object.entries(up.headers)) {
+      // Длину и кодирование считает сам uWS — свои значения тут только всё сломают.
+      if (k === 'content-length' || k === 'transfer-encoding' || k === 'connection') continue;
+      if (Array.isArray(v)) for (const one of v) res.writeHeader(k, one);
+      else if (v != null) res.writeHeader(k, String(v));
+    }
+  };
+  /** Вне колбэков uWS запись в `res` — только внутри `cork` (иначе uWS шлёт каждый кусок отдельным пакетом и шумит в лог). */
+  const corked = (f: () => void): void => {
+    if (over || isAborted()) return;
+    try { res.cork(f); } catch (e) { over = true; up.destroy(); frameFailed(e); }
+  };
+  /** Ответ express оборвался посреди тела — клиенту обрыв соединения, а не «успех» с дырой. */
+  const cut = (): void => {
+    if (over || isAborted()) return;
+    over = true;
+    try { res.close(); } catch { /* уже закрыт */ }
+  };
+  res.onWritable((offset) => {
+    if (over || isAborted()) return true;
+    try {
+      if (total < 0) { up.resume(); return true; }   // без длины кусок держит сам uWS — читать дальше
+      if (!pending) return true;
+      const [ok, done] = res.tryEnd(pending.subarray(offset - pendingAt), total);
+      if (done) { over = true; pending = null; } else if (ok) { pending = null; up.resume(); }
+      return ok;
+    } catch (e) { over = true; up.destroy(); frameFailed(e); return true; }
+  });
+  up.on('data', (chunk: Buffer) => corked(() => {
+    head();
+    if (total < 0) { if (!res.write(chunk)) up.pause(); return; }
+    // Кусок пришёл, пока прошлый ждёт дописки (на паузе так не бывает, но порядок байт дороже): в хвост ждущего.
+    if (pending) { pending = Buffer.concat([pending, chunk]); up.pause(); return; }
+    pendingAt = res.getWriteOffset();
+    const [ok, done] = res.tryEnd(chunk, total);
+    if (done) over = true;
+    else if (!ok) { pending = chunk; up.pause(); }
+  }));
+  up.on('end', () => {
+    if (over || isAborted()) return;
+    // Длина объявлена: конец ответа — последний `tryEnd` (или его дописка в `onWritable`); кончилось раньше длины — обрыв.
+    if (total > 0) { if (!pending) cut(); return; }
+    corked(() => { head(); over = true; res.end(); });
+  });
+  up.on('aborted', cut);
+  up.on('error', cut);
+  up.on('close', () => { if (!up.complete) cut(); });   // соединение с express порвалось посреди ответа (любая версия Node)
 }

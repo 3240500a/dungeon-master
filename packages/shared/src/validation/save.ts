@@ -118,6 +118,8 @@ export const saveStateSchema = z.object({
     seed: z.number().int(),
     level: z.number().int().min(0),
     bought: z.array(z.number().int().min(0)),
+    // R9-13: сид доски квестов поколения (нет — из `seed`).
+    board: z.number().int().optional(),
   }).optional(),
   maxDepth: z.number().int().min(0),
   difficultyProgress: z.record(z.string(), z.number()).default({}),
@@ -131,6 +133,8 @@ export const saveStateSchema = z.object({
         biomeId: z.string(),
         tier: z.string(),
         seed: z.number(),
+        // R9-01: личность забега — ключ свода записей в базе (пишет только сервер).
+        id: z.string().optional(),
         length: z.number().optional(),
         widthMax: z.number().optional(),
         branching: z.number().optional(),
@@ -146,6 +150,8 @@ export const saveStateSchema = z.object({
       node: runNodeStateSchema.optional(),
       // R4-04: и на каждом пройденном узле — отмотанный назад указатель не давал пройденный узел свежим.
       nodes: z.array(runNodeStateSchema).optional(),
+      // R8-04: наибольшая мощь героя в этом забеге — новый узел заселяется не слабее (пишет только сервер).
+      peak: z.number().optional(),
     })
     .optional(),
 }).passthrough();

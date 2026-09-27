@@ -6,7 +6,7 @@ import {
 import type { App } from '@dm/client/core/app.js';
 import { craftWindow, cardWith, type CraftWindowState, initialCraftState } from '@dm/client/modules/town/craftPanel.js';
 import { sandboxHost } from './craftSandboxHost.js';
-import { makeHarness } from './gameHarness.js';
+import { followHarness, makeHarness } from './gameHarness.js';
 import { renderCraftGrid } from './craftGrid.js';
 import { renderCraftCatalog } from './craftCatalog.js';
 import { renderCraftBlades } from './craftBlades.js';
@@ -243,6 +243,8 @@ export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>
     sb.fight = null; sb.drop = null;
   }
   const app = harness;
+  // R7-15: мост — без сервера и без канала «Применить»; правка в редакторе доходит до него из данных песочницы (с её оверрайдами).
+  followHarness(app, sdata);
   const reg = app.config;
   const save = heroSave!;
   if (!sb.win) sb.win = initialCraftState(reg, 'sword');

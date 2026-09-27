@@ -14,6 +14,9 @@ import {
  * База замокана, как в `room.run.test.ts`: комнате нужны только записи сейва и сундука.
  */
 vi.mock('../db/db.js', () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   putCharacter: (_c: string, _u: string, _d: SaveState, v: number) => Promise.resolve(v + 1),
   putCharacterWithStash: (_c: string, _u: string, _d: SaveState, v: number, _s: AccountStash, sv: number) =>
     Promise.resolve({ ok: true, version: v + 1, stashVersion: sv + 1 }),

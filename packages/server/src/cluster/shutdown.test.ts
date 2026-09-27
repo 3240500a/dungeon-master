@@ -33,8 +33,23 @@ vi.mock('./registry.js', () => ({
 }));
 vi.mock('../db/db.js', () => ({}));
 vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
+// Менеджер комнат здесь не нужен (`installShutdown` получает подделку с `flushAll`), а его граф — вся игра (shared целиком):
+// импорт `wsServer.js` внутри теста под нагрузкой полного прогона съедал 5 с теста, и тест падал по таймауту.
+vi.mock('../net/roomManager.js', () => ({ RoomManager: class {} }));
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+/**
+ * Дождаться выхода процесса (мок `process.exit` пишет «exit…»), а за ним — короткой тишины: второй выход, будь он, пришёл бы из
+ * того же слива следом. Раньше тесты спали 300 мс «на всё»: под нагрузкой полного прогона слив не успевал, тест падал, а его
+ * слив доигрывал уже в СЛЕДУЮЩЕМ тесте — и тот видел два выхода.
+ */
+async function exited(): Promise<void> {
+  await vi.waitFor(() => {
+    if (!reg.order.some((s) => s.startsWith('exit'))) throw new Error(`выхода ещё нет: ${reg.order.join(' → ')}`);
+  }, { timeout: 10_000, interval: 5 });
+  await new Promise((r) => setTimeout(r, 50));
+}
 
 describe('слив ноды (R3-12)', () => {
   it('⭐ SIGTERM в роли node: объявить слив, дописать, снять ноду из реестра — и выйти ОДИН раз, после releaseNode', async () => {
@@ -63,7 +78,9 @@ describe('слив ноды (R3-12)', () => {
     reg.order.length = 0;
 
     for (const fn of handlers.get('SIGTERM') ?? []) fn();
-    await new Promise((r) => setTimeout(r, 300));
+    // Транспортный обработчик уступает сливу ноды СРАЗУ, на самом сигнале: его запись сейвов (и её выход) не начиналась.
+    expect(reg.order, 'транспорт не пишет и не выходит сам').not.toContain('flush transport start');
+    await exited();
 
     const exits = reg.order.filter((s) => s.startsWith('exit'));
     expect(exits, `выход ровно один: ${reg.order.join(' → ')}`).toEqual(['exit 0']);
@@ -98,7 +115,7 @@ describe('сердцебиение и снятие ноды (R4-28)', () => {
       reg.order.length = 0;
       vi.advanceTimersByTime(2_000);                        // удар по расписанию ушёл в базу…
       for (const fn of handlers) fn();                      // …и тут пришёл SIGTERM
-      await new Promise((r) => setTimeout(r, 300));
+      await exited();
       const rel = reg.order.indexOf('releaseNode');
       expect(rel, reg.order.join(' → ')).toBeGreaterThanOrEqual(0);
       expect(reg.order.slice(rel).filter((x) => x.startsWith('beat') || x === 'touch'), `после снятия ноды — ни удара, ни продления: ${reg.order.join(' → ')}`).toEqual([]);
@@ -116,9 +133,11 @@ describe('сердцебиение и снятие ноды (R4-28)', () => {
     let held = ['c1', 'c2'];
     reg.onTouch = () => { held = ['c2']; };                // c1 вышел, пока продление шло в базу, — его снятие уже прошло
     const gone: string[][] = [];
+    // Удары по расписанию не нужны (проверяется первый) — и не должны стучать в `reg.order` следующих тестов каждые 2 с.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       await joinCluster('node-r428b', 'ws://127.0.0.1:1/ws', () => held, loop, undefined, (ids: string[]) => { gone.push(ids); });
-    } finally { reg.onTouch = null; loop.disable(); }
+    } finally { vi.useRealTimers(); reg.onTouch = null; loop.disable(); }
     expect(gone).toEqual([['c1']]);
   });
 });
@@ -141,18 +160,22 @@ describe('⭐ R5-08: второй SIGTERM во время слива', () => {
     try {
       installShutdown({ flushAll: () => Promise.resolve() } as never);
       await joinCluster('node-r508', 'ws://127.0.0.1:1/ws', () => [], loop);
+      // Запись сейвов держит затвор: второй сигнал приходит ГАРАНТИРОВАННО посреди неё, а не «через 10 мс, если успеем».
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
       installNodeShutdown('node-r508', async () => {
         reg.order.push('flush start');
-        await new Promise((r) => setTimeout(r, 40));
+        await gate;
         reg.order.push('flush done');
       });
       reg.order.length = 0;
       process.emit('SIGTERM' as never);
       expect(process.listenerCount('SIGTERM'), 'первый сигнал обработчики не снял').toBeGreaterThan(before.get('SIGTERM')!.length);
-      await new Promise((r) => setTimeout(r, 10));
+      expect(reg.order, 'запись сейвов идёт').toContain('flush start');
       process.emit('SIGTERM' as never);                     // второй — посреди записи
       process.emit('SIGINT' as never);
-      await new Promise((r) => setTimeout(r, 300));
+      release();
+      await exited();
       expect(reg.order.filter((s) => s.startsWith('exit')), reg.order.join(' → ')).toEqual(['exit 0']);
       expect(reg.order.filter((s) => s === 'flush start'), 'слив начат один раз').toHaveLength(1);
       expect(reg.order.indexOf('flush done')).toBeLessThan(reg.order.indexOf('releaseNode'));

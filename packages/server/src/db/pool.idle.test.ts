@@ -12,11 +12,11 @@ import { ConfigRegistry, newCharacterSave, uuidv7 } from '@dm/shared';
  * Пул ставит `idle_in_transaction_session_timeout`: игровые транзакции короче секунды, и база сама закрывает
  * соединение, простоявшее в транзакции дольше предела, — блокировки уходят вместе с ним. Здесь предел — 1 с.
  *
- * Против НАСТОЯЩЕЙ базы `dungeon_test` (как `items.test.ts`); без базы тест пропускается.
+ * Против НАСТОЯЩЕЙ базы `dungeon_test` в своей схеме (как `items.test.ts`, см. `testDb.ts`); без базы тест пропускается.
  */
-vi.hoisted(() => {
-  process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
+const tdb = await vi.hoisted(async () => {
   process.env.DM_PG_IDLE_TX_MS = '1000';
+  return (await import('./testDb.js')).testDb('poolidle');
 });
 
 let db: typeof import('./db.js');
@@ -25,19 +25,15 @@ let alive = false;
 let cfg: ConfigRegistry;
 
 beforeAll(async () => {
+  alive = await tdb.open();
   pool = await import('./pool.js');
-  try {
-    await pool.initSchema();
-    alive = true;
-  } catch {
-    alive = false;   // базы нет — тесты ниже пропустятся
-    return;
-  }
+  if (!alive) return;   // базы нет — тесты ниже пропустятся
+  await pool.initSchema();
   db = await import('./db.js');
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
-afterAll(async () => { if (alive) await pool.closePool(); });
+afterAll(async () => { if (alive) { await pool.closePool(); await tdb.drop(); } });
 
 describe.runIf(process.env.DM_SKIP_PG !== '1')('простой в транзакции (R3-13)', () => {
   it('соединение пула несёт предел простоя в транзакции', async () => {

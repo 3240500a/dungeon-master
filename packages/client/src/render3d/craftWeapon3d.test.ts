@@ -40,6 +40,9 @@ const SWORD_B: WeaponLookHand = handOf('sword', 1, 5);   // тот же клас
 const DAGGER = handOf('dagger', 1, 2);
 
 describe('модель ковки в руке (D22)', () => {
+  // Потолок 30 с: первый тест грузит построитель (`import()` модулей ковки, их разбор идёт через общий для всех процессов
+  // vite) — под нагрузкой полного прогона дольше умолчания 5 с. Упав по времени, тест доигрывал в следующих — и те видели
+  // чужие ссылки на модель («refs: 3, ждали 2»).
   it('до загрузки построителя — процедурный меш; после — модель ковки в ТОЙ ЖЕ группе, хват не тронут', async () => {
     const h = buildHumanoid({});
     const [g] = attachWeapons(h, 'sword', { main: 'glb-sword' }, { reg, look: { main: SWORD } });
@@ -59,7 +62,7 @@ describe('модель ковки в руке (D22)', () => {
     expect(g!.scale.x, 'масштаб — на посреднике, группа держит 1 (hostWeaponOnHand)').toBe(1);
     disposeWeaponGroup(g!);
     expect(craftMeshCacheStats()).toEqual({ models: 0, refs: 0 });
-  });
+  }, 30_000);
 
   it('см → юниты ×0.32 (TILE = 32 u = 1 м)', async () => {
     const lib = (await loadCraftMeshLib())!;

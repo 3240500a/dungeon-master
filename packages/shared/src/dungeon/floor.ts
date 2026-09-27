@@ -14,6 +14,17 @@ function firstFloorCell(grid: DungeonLayout['grid'], r: DungeonLayout['rooms'][n
 }
 
 /**
+ * ⭐ R8-10: УРОВЕНЬ ВЫЗОВА ЭТАЖА — по нему `spawnPacksEl` заселяет узел: мощь узла (`el`) → старт тира → рамп за глубину.
+ * Одна формула для заселения и для строки «вызов ур.» клиента (её везёт `FloorInit.challengeLevel`): свою мощь клиент
+ * меряет без снаряжения напарников, а узел заселён по сильнейшему и мог быть заселён раньше (продолжение узла).
+ */
+export function floorChallengeLevel(reg: ConfigRegistry, el: number, difficultyId: string, depth: number): number {
+  const diffs = reg.get('difficulties');
+  const diff = diffs.find((d) => d.id === difficultyId) ?? diffs.find((d) => d.id === 'normal') ?? diffs[0]!;
+  return challengeAtFloor(startChallenge(el, diff), diff, depth);
+}
+
+/**
  * Ядро спавна пачек по ЭФФ. УРОВНЮ игрока (`el` = «мощь»: уровень + гир + пассивы) — без `SaveState`.
  * Позволяет редактору/симу задать мощь напрямую (слайдер), а `spawnPacks` считает `el` из сейва.
  * Пул монстров по умолчанию — из первого биома (`biomes[0]`); `poolOverride` перекрывает (биом узла).
@@ -42,10 +53,8 @@ export function spawnPacksEl(
   const monsterUniques = reg.get('monster-uniques'); // пул имён уникальных монстров (иначе дженерик «Уникальный X»)
   const packs = reg.get('packs');
 
-  const diffs = reg.get('difficulties');
-  const diff = diffs.find((d) => d.id === difficultyId) ?? diffs.find((d) => d.id === 'normal') ?? diffs[0]!;
   const balance = reg.get('balance');
-  const floorCL = challengeAtFloor(startChallenge(el, diff), diff, depth);
+  const floorCL = floorChallengeLevel(reg, el, difficultyId, depth);
   const uniqueXpMult = balance.uniqueXpMult;
 
   // Монстры пула, сгруппированные по РОЛИ (для состава пачки); фолбэк — любой из пула.

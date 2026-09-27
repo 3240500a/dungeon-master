@@ -18,6 +18,14 @@
 - Выходы этажа (`FloorInit.exits[i]`) соответствуют рёбрам узла (`node.edges[i]`). Рендер выходов
   (2D `OnlineScene.buildArea`, 3D `online3d.buildArea`) шлёт `descend{targetNodeId: edges[i].to}`.
 - Алтарь забега — `modules/town/difficultyPanel.ts` (биом/шаблон/модификаторы/тир → `descend{runConfig}`).
+  ⚠ R8-12: модификаторы — только действующие (`altarModifiers`; эффекты `run-modifiers` пока не подключены — секции нет),
+  сервер и план берут выбор одним правилом `pickRunModifiers` (без дублей, благо — в паре с опасностью). Узловые модификаторы
+  (★ на карте) эффектов тоже пока не имеют.
+- ⭐ R8-10: `FloorInit.challengeLevel`/`difficultyId` — уровень заселения узла и тир для строки «вызов ур.» HUD.
+- ⭐ R9-08: голосование за спуск из города (`voteStart`) несёт то, что начнётся: `difficultyId`, `templateId`, `biomeId`,
+  `modifiers` и `resume{host, depth}` (продолжение чьего забега). Текст окна — `ui/voteText.ts` (`voteQuestion`, одна истина
+  для `OnlineScene` и `online3d`), закрытый своему герою тир — «вам ещё не открыта». Сменилось, пока голосовали, — сервер
+  отменяет (`voteEnd{passed:false}` + `error{code:'vote'}`). Тест — `ui/voteText.test.ts`.
 
 ## Тесты
 Логику жизненного цикла (старт → ветки → финал → город; контракт exits==edges; алтарь) покрывает

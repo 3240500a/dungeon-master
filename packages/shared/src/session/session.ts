@@ -1,4 +1,4 @@
-import { vecLen, wrapAngle } from '../world/fastMath.js';
+import { vecLen, wrapAngle, normalizeAngle } from '../world/fastMath.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
 import type { Item, AttackType } from '../types/items.js';
@@ -170,6 +170,9 @@ export type SessionEvent =
   // ему свою анимацию и звук, но заливку-откат слота НЕ перезапускает (иначе она дёргалась бы назад
   // на каждом взмахе, хотя откат идёт себе с первого).
   | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; lockMs: number; x: number; y: number; facing: number; chain?: boolean }
+  // ⭐ R8-15: применено действие БЕЗ удара (бафф) — клиенту только залить откат слота `ability` на cooldownMs. Не свинг:
+  // свинг клиенты играют ударом оружия (кукла, «слэш», свист) и ставят им общий attack-лок — бафф посреди замаха обнулял лок.
+  | { type: 'cooldown'; playerId: string; ability: string; cooldownMs: number }
   // Старт замаха монстра — клиент рисует телеграф-вспышку на время windupMs в сторону facing.
   | { type: 'monster-swing'; id: number; windupMs: number; x: number; y: number; facing: number }
   // Уклонение игрока (dodge-рывок) — клиент проигрывает VFX/SFX рывка в сторону dir.
@@ -257,9 +260,16 @@ export class GameSession {
    */
   readonly saveHeld = new Set<string>();
 
-  constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean } = {}) {
+  /**
+   * ⭐ R9-02: `rng` — источник бросков сессии; нет — сидовый mulberry32 (`seed`), как у сима, ботов, тестов и клиента. Сервер
+   * даёт криптоисточник (`sessionRng`): у mulberry32 состояние — 32 бита, и выход потока виден с первого снимка (взгляд каждого
+   * монстра заселения — `rng.float(0, 2π)`, урон и криты в событиях), так что состояние подбиралось перебором за секунды, а
+   * дальше изменённый клиент считал сундук и дроп наперёд этим же кодом и крутил их ударами в воздух (удар — один бросок).
+   * Непредсказуемый сид (D10) этого не закрывал: утекал сам поток.
+   */
+  constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean; rng?: Rng } = {}) {
     this.cfg = cfg;
-    this.rng = createRng((seed >>> 0) || 1);
+    this.rng = opts.rng ?? createRng((seed >>> 0) || 1);
     this.world = newWorldState([], seed, 0, difficultyId);
     this.rewards = opts.rewards ?? true;
     this.sustain = opts.sustain ?? this.rewards;
@@ -549,7 +559,9 @@ export class GameSession {
     // а не колом («идти медленно и бить»). Facing обновляется в любом случае (целишься на ходу).
     const attacking = !!p.windup || p.attackCd > 0;
     const moveMult = stunned ? 0 : attacking ? snap.derived.attackMoveMult : 1;   // per-класс замедление при атаке (из класс-scaling)
-    if (input && !stunned) p.facing = input.facing;
+    // ⚠ R7-01: взгляд — в [−π, π] и здесь, не только на проводе: боты и сим идут мимо `validateInput`, а `wrapAngle` конуса
+    // удара на 1e17 отдаёт 0 для любого угла (взмах по кругу 360°).
+    if (input && !stunned) p.facing = normalizeAngle(input.facing);
     const len = input ? vecLen(input.move.x, input.move.y) : 0;
     let want = { x: 0, y: 0 };
     if (input && moveMult > 0 && len > 0) {
@@ -791,7 +803,7 @@ export class GameSession {
         return;
       // Временный бафф: стат-моды за ресурс на durationSec; не рефрешим, пока активен.
       // ⚠ R6-15: и свой ОТКАТ, как у прочих активок: у всех баффов игры он длиннее действия, и без него повтор в кадр
-      // истечения держал бафф 100 % времени. Свинг без замаха и без лока — клиенту залить откат слота.
+      // истечения держал бафф 100 % времени. ⚠ R8-15: клиенту — событие отката (залить слот), НЕ свинг: свинг — удар.
       case 'buff': {
         if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
         if ((p.skillCd[nodeId] ?? 0) > 0) return;
@@ -799,7 +811,7 @@ export class GameSession {
         this.spend(p, active, res.extraCost);
         p.skillBuffs[nodeId] = active.durationSec;
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
-        this.emitSwing(p, nodeId, 0, p.skillCd[nodeId] ?? 0, 0);
+        this.events.push({ type: 'cooldown', playerId: p.id, ability: nodeId, cooldownMs: (p.skillCd[nodeId] ?? 0) * 1000 });
         return;
       }
       // Атака: делит ОБЩИЙ attack-таймер (лок), тайминг от скорости атаки.
@@ -1613,15 +1625,22 @@ export class GameSession {
     return false;
   }
 
-  /** R5-06: запомнить, кто повесил урон-по-времени вида `kind` (прочие статусы не убивают — их не помним). */
+  /** R5-06: запомнить, кто повесил урон-по-времени вида `kind` (прочие статусы не убивают — их не помним). R7-07: и чей он герой. */
   private noteDot(m: MonsterEntity, kind: DebuffKind, by: PlayerEntity): void {
-    if (isDotKind(kind)) (m.dotBy ??= {})[kind] = by.id;
+    if (!isDotKind(kind)) return;
+    (m.dotBy ??= {})[kind] = by.id;
+    (m.dotHero ??= {})[kind] = by.save.charId;
   }
 
   /**
    * ⚠ R5-06: КОМУ ДОБИТОЕ СТАТУСОМ. Хозяин статуса, чей вклад в смертельный тик больше (стаки × сила), а если он ушёл из
    * комнаты — следующий по вкладу, кто ещё здесь. Никого — никому: убийство без награды честнее, чем подарок первому в
    * комнате (раньше так и было — опыт, «Уничтожить N» и лечение за убийство уходили простаивающему или мёртвому альту).
+   * Добыча при этом падает (R9-06, `killMonster`): она не награда убийцы, а то, что с монстра достаётся партии.
+   * ⚠ R7-07: «ещё здесь» — это ГЕРОЙ, а не id входа. Комната даёт каждому входу новый id, и вернувшийся реконнектом хозяин
+   * статуса по старому id не находился: добитое уходило никому, а запись узла помечала монстра убитым навсегда. Сперва —
+   * по id (при хозяине на месте ничего не меняется, и боты сима с общим charId «bot» не путаются), потом — по charId.
+   * Ушедший насовсем в мире не значится ни под каким id — ему по-прежнему ничего.
    */
   private dotOwner(m: MonsterEntity): PlayerEntity | undefined {
     const kinds = (Object.keys(m.debuffs) as DebuffKind[]).filter(isDotKind);
@@ -1631,12 +1650,20 @@ export class GameSession {
       const id = m.dotBy?.[k];
       const p = id !== undefined ? this.world.players[id] : undefined;
       if (p) return p;
+      const hero = m.dotHero?.[k];
+      const back = hero !== undefined ? Object.values(this.world.players).find((x) => x.save.charId === hero) : undefined;
+      if (back) return back;
     }
     return undefined;
   }
 
   // ── Смерть монстра: события + золото + дроп + XP ───────────
-  /** `killer` нет (статус того, кто ушёл из комнаты) — смерть без наград: ни опыта, ни дропа, ни лечения. */
+  /**
+   * `killer` нет (статус того, кто ушёл из комнаты) — смерть без НАГРАД убийцы: ни опыта, ни лечения за убийство, ни
+   * «Уничтожить N» (событие без `by`). ⚠ R9-06: но ДОБЫЧА падает — та же и тем же порядком бросков: раньше без убийцы не
+   * падало ничего, а запись узла помечала монстра убитым навсегда — партия в комнате теряла добычу босса, и лишить её было
+   * можно нарочно (повесил яд — вышел). Разлёт «прочь от убийцы» тогда — в случайную сторону (`spawnDrop`).
+   */
   private killMonster(m: MonsterEntity, killer: PlayerEntity | undefined): void {
     if (!m.alive) return;
     m.alive = false;
@@ -1653,7 +1680,7 @@ export class GameSession {
       }
     }
     if (!this.economy) return; // клиент: золото/XP/дроп делают обработчики шины; сим-микробой: не нужны (и левелап-хил испортил бы TTK)
-    if (!reward) return;
+    const away = reward?.pos;   // R9-06: убийцы нет — добыча всё равно падает, разлёт в случайную сторону
 
     const diff = this.currentDifficulty();
     const level = m.def.level;
@@ -1666,7 +1693,7 @@ export class GameSession {
     // и копится быстрее, чем тратится (`loot.goldChance`).
     if (this.rng.chance(loot.goldChance)) {
       const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult));
-      this.spawnDrop(m.pos, { kind: 'gold', gold }, reward.pos);
+      this.spawnDrop(m.pos, { kind: 'gold', gold }, away);
     }
 
     // ── Материалы: основной поток наград (docs/ECONOMY.md) ──
@@ -1698,7 +1725,7 @@ export class GameSession {
           if (n > 0) gains[id] = n; else delete gains[id];
         }
       }
-      if (Object.keys(gains).length) this.spawnDrop(m.pos, { kind: 'materials', mats: gains }, reward.pos);
+      if (Object.keys(gains).length) this.spawnDrop(m.pos, { kind: 'materials', mats: gains }, away);
     }
 
     // ⭐ Расходники своим каналом: трофей с тела их исключает (`monsterTrophyBase`), а при
@@ -1707,7 +1734,7 @@ export class GameSession {
       const pots = this.cfg.get('items.base').filter((b) => b.kind === 'consumable' && b.enabled !== false);
       if (pots.length) {
         const item = itemFromBase(this.rng.pick(pots), undefined, 'drop');
-        const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, reward.pos);
+        const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, away);
         this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
       }
     }
@@ -1760,12 +1787,14 @@ export class GameSession {
       // Снято с трупа — значит в негодном виде: чинить у кузнеца или разбирать (docs/ECONOMY.md, Ч4).
       // Сломанными падают ТОЛЬКО трофеи: обычная находка не снята с тела и цела, иначе
       // надеть в забеге было бы нечего вовсе.
-      if (baseId && this.rng.chance(loot.brokenChance)) item.broken = true;
-      const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, reward.pos);
+      // ⚠ R7-19: кроме УНИКА — он кузницу не проходит вовсе («нашёл — носи как есть»), и сломанным его не починить
+      // (`canRepairItem`). Бросок — тот же и для уника: поток `rng` дальше не сдвигается.
+      if (baseId && this.rng.chance(loot.brokenChance) && item.rarity !== 'unique') item.broken = true;
+      const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, away);
       this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
     }
 
-    this.awardXp(reward, m.def.xp); // опыт монстра уже отскейлен по его уровню
+    if (reward) this.awardXp(reward, m.def.xp); // опыт монстра уже отскейлен по его уровню
   }
 
   /**

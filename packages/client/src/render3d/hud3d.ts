@@ -5,7 +5,7 @@
  * индикаторы досоздаёт в DOM. Читает `app.state` (авторитетный с сервера через online3d).
  */
 import type { App } from '../core/app.js';
-import { effectiveLevel, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, debuffLabel, type DebuffKind } from '@dm/shared';
+import { effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, debuffLabel, type DebuffKind } from '@dm/shared';
 
 export interface Hud3d { update(): void; }
 
@@ -85,8 +85,8 @@ export function mountHud3d(app: App): Hud3d {
       if (st.area === 'dungeon') {
         const diffs = app.config.get('difficulties');
         const diff = diffs.find((x) => x.id === st.difficultyId) ?? diffs.find((x) => x.id === 'normal') ?? diffs[0]!;
-        const elv = effectiveLevel(st.save, app.config.get('balance').power).total;
-        const cl = challengeAtFloor(startChallenge(elv, diff), diff, st.depth);
+        // R8-10: уровень, по которому сервер заселил узел; нет его (старый сервер) — своя мера по надетому и запасу.
+        const cl = st.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(st.save, app.config.get('balance').power, carriedGear(st.save)).total, diff), diff, st.depth);
         loc = `этаж ${st.depth} · ${diff.name} · вызов ур.${cl}`;
       }
       if (info) info.textContent = `Ур. ${lvl}  ·  ${loc}  ·  Золото ${st.save.gold}  ·  Очки: атр ${st.save.unspentAttributePoints} / скилл ${st.save.unspentSkillPoints}`;

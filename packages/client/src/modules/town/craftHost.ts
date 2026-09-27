@@ -117,7 +117,7 @@ export function gameCraftHost(link: ForgeLink, memo: CraftMemo = pageMemo): Craf
     journal: () => link.stash?.forgeJournal ?? emptyJournal(),
     save,
     find: (uid) => (link.state ? findOwned(save(), uid) : null),
-    craft: (input, maxGold) => {
+    craft: (input, maxGold, maxMaterials) => {
       if (memo.busy) return { ok: false, reason: BUSY };
       // Без связи заявка не уйдёт — и ключа ей не заводим: пустой ключ только вытеснил бы ждущий (R2-33).
       if (!link.net.connected) return { ok: false, reason: OFFLINE };
@@ -129,9 +129,10 @@ export function gameCraftHost(link: ForgeLink, memo: CraftMemo = pageMemo): Craf
         for (const old of memo.open.keys()) { if (memo.open.size <= CRAFT_OPEN_KEEP) break; memo.open.delete(old); }
       }
       const sent = nonce;
-      // R5-15: цена окна — в заявку: дороже сервер не скуёт, а ответит «Цена изменилась: N золота». Повтор ключа (он не
-      // платит) проходит при любой цене.
-      return send({ cmd: 'craft', nonce: sent, input: wireInput(input), ...(maxGold !== undefined ? { maxGold } : {}) }, (r) => {
+      // R5-15: цена окна — в заявку: дороже сервер не скуёт, а ответит «Цена изменилась: N золота». R8-14: и сырьё окна.
+      // Повтор ключа (он не платит) проходит при любой цене.
+      return send({ cmd: 'craft', nonce: sent, input: wireInput(input), ...(maxGold !== undefined ? { maxGold } : {}),
+        ...(maxMaterials !== undefined ? { maxMaterials } : {}) }, (r) => {
         if (!r.ok) return { ok: false, reason: r.reason ?? 'Кузнец отказал' };
         // ⚠ Ключ сгорает ТОЛЬКО на подтверждённом успехе — и только СВОЙ: ключи других ждущих сборок живут дальше.
         if (memo.open.get(sig) === sent) memo.open.delete(sig);

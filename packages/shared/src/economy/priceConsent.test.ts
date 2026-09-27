@@ -8,8 +8,9 @@ import { createRng } from '../formulas/rng.js';
 import { newBotSave } from '../sim/playerBot.js';
 import { parseTownCommand } from '../session/netSchemas.js';
 import {
-  allocPassive, buyItem, craftAction, enchantAction, forgeGold, forgeRepair, forgeReroll, forgeUpgrade, passiveRespecFee, respec,
-  respecPassives, respecSkills, sellItem, shopBuyPrice, shopSellPrice, skillRespecFee,
+  allocPassive, buyItem, craftAction, enchantAction, fieldSalvage, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade,
+  passiveRespecFee, repairCost, respec, respecPassives, respecSkills, salvageRange, sellItem, shopBuyPrice, shopSellPrice, skillRespecFee,
+  upgradeCost,
 } from './townActions.js';
 import { emptyStash } from './stashActions.js';
 import type { AccountStash } from '../types/stash.js';
@@ -244,5 +245,124 @@ describe('⚠ R6-16: мастерство, покупка и продажа — 
     const bad = heroIn(cheaper);
     bad.inventory = [{ ...it }];
     expect(sellItem(cheaper, bad, it.uid, Number.NaN).ok, 'кривой `minGold` — отказ').toBe(false);
+  });
+});
+
+/**
+ * ⚠ R8-14: СОГЛАСИЕ БЫЛО ТОЛЬКО НА ЗОЛОТО. Правка сырья из редактора живьём (`craft.cost.units`, строка формы,
+ * `upgradeMaterials`/`repairMaterials`, доводка) оставляла золото тем же — `maxGold` проходил, и ядро молча брало из сумки и
+ * кошелька сундука больше, чем показала карточка (окно ковки: железо 24 — взято 35; улучшение: кожа 20 — взято 40). Разбор
+ * согласия не нёс вовсе: вещь уничтожалась за меньшее, чем обещала вилка «от–до». Теперь карточка шлёт сырьё
+ * (`maxMaterials`) и нижнюю границу выхода (`minYield`); больше показанного сырья или меньше обещанного выхода — отказ до
+ * траты, и клиент по «Цена изменилась» перечитывает конфиг.
+ */
+describe('⚠ R8-14: сырьё и выход разбора — по тому, что показала карточка', () => {
+  type Bal = {
+    craft: { cost: { units: Record<string, number> }; salvage: { units: Record<string, number> } };
+    forgePrices: { upgradeMaterials: Record<string, number>; repairMaterials: Record<string, number> };
+  };
+  const was = regWith();
+  const dearer = regWith((d) => {
+    const b = d.balance as unknown as Bal;
+    b.craft.cost.units = { strike: 24, grip: 12, bind: 12, head: 12 };
+    b.forgePrices.upgradeMaterials = { tier1: 40, tier2: 10, tier3: 4 };
+    b.forgePrices.repairMaterials = { tier1: 30, tier2: 4, tier3: 2 };
+  });
+  const leaner = regWith((d) => { (d.balance as unknown as Bal).craft.salvage.units = { strike: 1, grip: 1, bind: 0, head: 0 }; });
+  const heroIn = (r: ConfigRegistry): SaveState => { const s = newBotSave(r, r.get('classes')[0]!.id); s.gold = 1_000_000; return s; };
+  const walletIn = (r: ConfigRegistry): Record<string, number> => Object.fromEntries(r.get('craft-materials').map((m) => [m.id, 999]));
+  const stashIn = (r: ConfigRegistry): AccountStash => ({ ...emptyStash(r), materials: walletIn(r), forgeJournal: fullJournal(r) });
+  const mins = (r: ConfigRegistry, it: Item, inField: boolean): Record<string, number> =>
+    Object.fromEntries(Object.entries(salvageRange(r, it, inField).range).map(([id, v]) => [id, v.min]));
+  const total = (m: Record<string, number>): number => Object.values(m).reduce((a, b) => a + b, 0);
+
+  it('⭐ ковка: окно показало сырьё старого конфига (золото то же) — отказ байт в байт; по новому — ковка', () => {
+    const shown = craftWeapon(was, INPUT, { journal: fullJournal(was) }).cost!;
+    const real = craftWeapon(dearer, INPUT, { journal: fullJournal(dearer) }).cost!;
+    expect(real.gold, 'золото правка не тронула — `maxGold` пропускал').toBe(shown.gold);
+    const save = heroIn(dearer), stash = stashIn(dearer);
+    const snap = frozen(save, stash);
+    const r = craftAction(dearer, save, stash, 'pc-mat-0001', INPUT, createRng(3), { maxGold: shown.gold, maxMaterials: shown.materials });
+    expect(r.ok, 'было: ковка шла, сырья взято больше показанного').toBe(false);
+    expect(r.reason).toMatch(/^Цена изменилась: /);
+    expect(frozen(save, stash), 'отказ — до любой траты').toBe(snap);
+    const ok = craftAction(dearer, save, stash, 'pc-mat-0002', INPUT, createRng(3), { maxGold: real.gold, maxMaterials: real.materials });
+    expect(ok.ok, ok.reason).toBe(true);
+  });
+
+  it('⭐ улучшение и починка: сырьё карточки старого конфига — отказ байт в байт; по новому — проходит', () => {
+    for (const [op, broken] of [['upgrade', false], ['repair', true]] as const) {
+      const run = (r: ConfigRegistry, save: SaveState, w: Record<string, number>, mats: Record<string, number>): { ok: boolean; reason?: string } => {
+        const gold = forgeGold(r, save.inventory[0]!, op);
+        return op === 'upgrade' ? forgeUpgrade(r, save, 'pc-item', w, gold, mats) : forgeRepair(r, save, 'pc-item', w, gold, mats);
+      };
+      const cost = op === 'upgrade' ? upgradeCost : repairCost;
+      const save = heroIn(dearer); save.inventory = [found(broken)];
+      const w = walletIn(dearer);
+      const shown = cost(was, save.inventory[0]!), real = cost(dearer, save.inventory[0]!);
+      expect(total(real), `${op}: правка подняла сырьё`).toBeGreaterThan(total(shown));
+      const snap = frozen(save, w);
+      const r = run(dearer, save, w, shown);
+      expect(r.ok, `${op}: было — молча брал больше`).toBe(false);
+      expect(r.reason).toMatch(/^Цена изменилась: /);
+      expect(frozen(save, w), `${op}: отказ до траты`).toBe(snap);
+      const ok = run(dearer, save, w, real);
+      expect(ok.ok, `${op}: ${ok.reason}`).toBe(true);
+    }
+  });
+
+  it('⭐ разбор у кузнеца и в поле: вилка старого конфига, выход меньше — отказ, вещь цела; по новой — разбор', () => {
+    const it0 = found();
+    const shown = mins(was, it0, false), real = mins(leaner, it0, false);
+    expect(total(real), 'правка опустила выход').toBeLessThan(total(shown));
+    const save = heroIn(leaner); save.inventory = [{ ...it0 }];
+    const stash = stashIn(leaner);
+    const snap = frozen(save, stash);
+    const r = forgeSalvage(leaner, save, stash, 'pc-item', createRng(1), shown);
+    expect(r.ok, 'было: вещь уничтожалась за меньшее').toBe(false);
+    expect(r.reason).toMatch(/^Цена изменилась: /);
+    expect(frozen(save, stash)).toBe(snap);
+    expect(forgeSalvage(leaner, save, stash, 'pc-item', createRng(1), real).ok).toBe(true);
+    const field = heroIn(leaner); field.inventory = [{ ...it0 }];
+    const fSnap = frozen(field);
+    expect(fieldSalvage(leaner, field, 'pc-item', createRng(1), mins(was, it0, true)).ok).toBe(false);
+    expect(frozen(field)).toBe(fSnap);
+    expect(fieldSalvage(leaner, field, 'pc-item', createRng(1), mins(leaner, it0, true)).ok).toBe(true);
+  });
+
+  it('сырья меньше показанного, выход больше обещанного — не отказ; без полей (Unity, старая вкладка) — как раньше; кривые — отказ', () => {
+    const cheap = heroIn(was); cheap.inventory = [found()];
+    expect(forgeUpgrade(was, cheap, 'pc-item', walletIn(was), undefined, upgradeCost(dearer, cheap.inventory[0]!)).ok, 'дешевле показанного').toBe(true);
+    const rich = heroIn(was); rich.inventory = [found()];
+    expect(forgeSalvage(was, rich, stashIn(was), 'pc-item', createRng(1), mins(leaner, rich.inventory[0]!, false)).ok, 'выход больше обещанного').toBe(true);
+    const legacy = heroIn(dearer); legacy.inventory = [found()];
+    expect(forgeUpgrade(dearer, legacy, 'pc-item', walletIn(dearer)).ok, 'без `maxMaterials`').toBe(true);
+    const legacy2 = heroIn(leaner); legacy2.inventory = [found()];
+    expect(forgeSalvage(leaner, legacy2, stashIn(leaner), 'pc-item', createRng(1)).ok, 'без `minYield`').toBe(true);
+    const bad = heroIn(was); bad.inventory = [found()];
+    const snap = frozen(bad);
+    const id = Object.keys(upgradeCost(was, bad.inventory[0]!))[0]!;
+    expect(forgeUpgrade(was, bad, 'pc-item', walletIn(was), undefined, { [id]: Number.NaN }).ok, 'NaN').toBe(false);
+    expect(forgeUpgrade(was, bad, 'pc-item', walletIn(was), undefined, {}).ok, 'сырьё не показано вовсе').toBe(false);
+    expect(frozen(bad)).toBe(snap);
+  });
+
+  it('на проводе: `maxMaterials` — у ковки, улучшения и починки; `minYield` — у разборов; целые ≥ 0; чужим командам — отказ схемы', () => {
+    const mats = { 'iron-1': 20, 'hide-2': 5 };
+    for (const c of [{ cmd: 'forgeUpgrade', uid: 'u' }, { cmd: 'forgeRepair', uid: 'u' }, { cmd: 'craft', nonce: 'nonce-0001', input: INPUT }]) {
+      expect(parseTownCommand({ ...c, maxMaterials: mats }).ok, c.cmd).toBe(true);
+      expect(parseTownCommand({ ...c, maxMaterials: {} }).ok, c.cmd).toBe(true);
+      for (const bad of [{ 'iron-1': -1 }, { 'iron-1': 1.5 }, { 'iron-1': '3' }, [1], 'x', null]) {
+        expect(parseTownCommand({ ...c, maxMaterials: bad }).ok, `${c.cmd} ${JSON.stringify(bad)}`).toBe(false);
+      }
+      expect(parseTownCommand({ ...c, minYield: mats }).ok, `${c.cmd}: «пол» выхода чужой`).toBe(false);
+    }
+    for (const c of [{ cmd: 'forgeSalvage', uid: 'u' }, { cmd: 'salvage', uid: 'u' }]) {
+      expect(parseTownCommand({ ...c, minYield: mats }).ok, c.cmd).toBe(true);
+      for (const bad of [{ 'iron-1': -1 }, { 'iron-1': 0.5 }, 'x']) expect(parseTownCommand({ ...c, minYield: bad }).ok, `${c.cmd} ${JSON.stringify(bad)}`).toBe(false);
+      expect(parseTownCommand({ ...c, maxMaterials: mats }).ok, `${c.cmd}: потолок сырья чужой`).toBe(false);
+    }
+    const many = Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`m-${i}`, 1]));
+    expect(parseTownCommand({ cmd: 'forgeUpgrade', uid: 'u', maxMaterials: many }).ok, 'раздутый словарь — отказ').toBe(false);
   });
 });

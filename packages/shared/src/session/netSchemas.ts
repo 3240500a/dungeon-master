@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { CRAFT_NONCE_RE, MATERIAL_STEPS } from '../formulas/craft.js';
+import { normalizeAngle } from '../world/fastMath.js';
 import type { ClientFrame, TownCommand } from './netTypes.js';
 import type { PlayerInput } from './session.js';
 import {
-  ALLOC_ATTR_MAX, WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX,
+  ALLOC_ATTR_MAX, WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_MATERIALS_MAX,
   WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN, isWireText,
 } from './wireLimits.js';
 
@@ -70,6 +71,21 @@ const cell = z.number().int().min(0).max(WIRE_CELL_MAX);
 const maxGold = z.number().int().min(0).optional();
 /** ⭐ R6-16: у продажи — НИЖНЯЯ граница, «+N» подписи: лавка даёт меньше — отказ (`priceDropped`). Та же рамка числа. */
 const minGold = maxGold;
+/**
+ * ⭐ R8-14: сырьё, которое показала карточка (`maxMaterials`: ковка, улучшение, починка — больше сервер не берёт,
+ * `materialsRaised`), и нижняя граница выхода разбора (`minYield`: меньше — отказ, `yieldDropped`). id материала → целое ≥ 0,
+ * не длиннее `WIRE_MATERIALS_MAX`. Необязательные: Unity и старые вкладки их не шлют.
+ */
+const materialAmounts = z.record(cfgId, z.number().int().min(0))
+  .refine((r) => Object.keys(r).length <= WIRE_MATERIALS_MAX, 'слишком много материалов').optional();
+const maxMaterials = materialAmounts;
+const minYield = materialAmounts;
+/**
+ * ⭐ R9-04: средний выход разбора, который показала карточка (`salvageMean`): у дробной доли низ вилки — 0 при любой правке,
+ * а среднее видит и её (меньше — отказ, `yieldDropped`). Дробное ≥ 0 (`finite` отсекает `Infinity`), та же рамка словаря.
+ */
+const avgYield = z.record(cfgId, z.number().finite().min(0))
+  .refine((r) => Object.keys(r).length <= WIRE_MATERIALS_MAX, 'слишком много материалов').optional();
 
 /**
  * ⭐ ЗАЯВКА НА КОВКУ (D2). Строгая на КАЖДОМ уровне вложенности: лишний ключ в заявке, в наборе деталей
@@ -92,17 +108,17 @@ export const craftInputSchema = z.object({
 export const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('buy'), uid, maxGold }).strict(),
   z.object({ cmd: z.literal('sell'), uid, minGold }).strict(),
-  z.object({ cmd: z.literal('forgeUpgrade'), uid, maxGold }).strict(),
+  z.object({ cmd: z.literal('forgeUpgrade'), uid, maxGold, maxMaterials }).strict(),
   z.object({ cmd: z.literal('forgeReroll'), uid, maxGold }).strict(),
-  z.object({ cmd: z.literal('forgeSalvage'), uid }).strict(),
-  z.object({ cmd: z.literal('forgeRepair'), uid, maxGold }).strict(),
+  z.object({ cmd: z.literal('forgeSalvage'), uid, minYield, avgYield }).strict(),
+  z.object({ cmd: z.literal('forgeRepair'), uid, maxGold, maxMaterials }).strict(),
   // Ключ заявки — тот же алфавит и длина, что проверяет ядро (`CRAFT_NONCE_RE`): 8–64 символа [A-Za-z0-9_-].
-  z.object({ cmd: z.literal('craft'), nonce: z.string().regex(CRAFT_NONCE_RE), input: craftInputSchema, maxGold }).strict(),
+  z.object({ cmd: z.literal('craft'), nonce: z.string().regex(CRAFT_NONCE_RE), input: craftInputSchema, maxGold, maxMaterials }).strict(),
   z.object({ cmd: z.literal('forgeEnchant'), uid, rarity: z.enum(['magic', 'rare']), maxGold }).strict(),
   // R3-11: эскиз — на деталь по id конфига; можно ли, решает ядро (`sketchAction`).
   z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId }).strict(),
   z.object({ cmd: z.literal('depositMaterials') }).strict(),
-  z.object({ cmd: z.literal('salvage'), uid }).strict(),
+  z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield }).strict(),
   z.object({ cmd: z.literal('equip'), uid }).strict(),
   z.object({ cmd: z.literal('unequip'), slot: wireText(1, 32) }).strict(),
   // R2-15: `n` — сколько очков разом (нет — одно, как шлёт Unity и «+»). Пачка очков — одна команда, а не n кадров.
@@ -196,7 +212,7 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
  * если кадр непригоден. Ключевое: любое нечисло (`NaN`, `Infinity`, строка) отбрасывается
  * до попадания в симуляцию, а вектор движения ограничивается единичной длиной — скорость
  * всё равно берётся из серверных статов, но нечего пускать в математику величины произвольного
- * масштаба.
+ * масштаба. По той же причине взгляд приводится в [−π, π] (R7-01).
  */
 export function validateInput(v: unknown): PlayerInput | null {
   if (typeof v !== 'object' || v === null) return null;
@@ -229,7 +245,9 @@ export function validateInput(v: unknown): PlayerInput | null {
 
   return {
     move: { x: mx * k, y: my * k },
-    facing,
+    // ⚠ R7-01: взгляд — в [−π, π]. «Конечное» пропускало 1e17, и `wrapAngle` ядра отдавал на нём 0 для любого угла:
+    // взмах бил по кругу 360°. Не отказ, а приведение — Unity и прочие клиенты вправе слать неприведённый угол.
+    facing: normalizeAngle(facing),
     attack: o.attack,
     cast: (o.cast as string | null) ?? null,
     interact: o.interact,

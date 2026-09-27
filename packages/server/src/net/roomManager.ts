@@ -2,11 +2,12 @@ import { z } from 'zod';
 import { randomInt } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
-  levelForXp, packInventory, applyDeathPenalty, validateInput, clientFrameSchema, ROOM_CODE_LEN, ROOM_CODE_ALPHABET,
-  type ConfigRegistry, type ClientFrame, type SaveState,
+  packInventory, applyDeathPenalty, validateInput, clientFrameSchema, ROOM_CODE_LEN, ROOM_CODE_ALPHABET, mendBrokenUniques,
+  foldRunRecords, runRecords, putRunRecords,
+  type ConfigRegistry, type ClientFrame, type SaveState, type RunNodeState,
 } from '@dm/shared';
-import { getSession, getCharacter, putCharacter } from '../db/db.js';
-import { Room, townRng, type Farewell } from './room.js';
+import { getSession, getCharacter, putCharacter, getRunLedger } from '../db/db.js';
+import { Room, townRng, runLedgerKey, runLedgerSettled, type Farewell } from './room.js';
 import { limits, ipBucket } from './rateLimit.js';
 import { counters, setGaugeProvider } from './metrics.js';
 import { tickScheduler } from './scheduler.js';
@@ -87,6 +88,20 @@ const INPUT_FRAME_MAX = 1024;
  */
 const FRAME_BRACKETS_MAX = 64;
 /**
+ * ⭐ R8-09: ДВОЕТОЧИЙ (а значит, и ключей объектов: у каждого ключа — своё) в кадре — не больше. У честного кадра их меньше
+ * шестидесяти: больше всех у ковки — 24 и до 32 строк согласия по сырью (`WIRE_MATERIALS_MAX`). Потолок скобок держал глубину,
+ * но не ширину: плоский объект из 2600 ключей влезал в 16 КБ одной скобкой и стоил 0,5–1,2 мс главного потока — разбор в
+ * словарь, обход массивов (`overLong`), строгая схема с перечнем лишних ключей в сообщении и чистка сообщения для лога. Счёт — до
+ * разбора, тем же проходом, что скобки.
+ */
+const FRAME_KEYS_MAX = 128;
+/**
+ * ⭐ R8-09: ПОТОЛОК КАДРА ДО ВХОДА, знаков: честные кадры лобби (вход, статус забега, «Завершить», пинг) — около 200 знаков. До
+ * входа кадр 16 КБ никому не нужен, а разбирать его — время ноды без сессии и без лимита команд. Кадры вдогонку `join` (вход ещё
+ * в очереди) — под общим потолком, как и прежде.
+ */
+const LOBBY_FRAME_MAX = 1024;
+/**
  * ⭐ R6-09: сколько раз соединение может предъявить сессию, которой нет, — дальше оно закрывается (4008). Поток кадров лобби
  * с чужими токенами стоит сокетов, а не общего бакета адреса, в котором стоят и соседи по NAT.
  */
@@ -148,12 +163,32 @@ const frameGate = z.discriminatedUnion('t', [
 /** Кадры лобби: клиент ждёт на них ответа — кривой получает `error`, а не вечное «Подключение…». */
 const LOBBY_FRAMES: ReadonlySet<unknown> = new Set(['join', 'runStatus', 'abandon']);
 
-/** ⭐ R6-05: скобок в кадре больше `FRAME_BRACKETS_MAX` — разбирать его не стоит (см. там). */
+/**
+ * ⭐ R7-04: МАССИВ В КАДРЕ — НЕ ДЛИННЕЕ. Самый длинный честный — модификаторы алтаря (`WIRE_RUN_MODIFIERS_MAX`, 32). Схема
+ * (zod) разбирает КАЖДЫЙ элемент массива и на каждый кривой заводит запись об ошибке, даже когда длина уже сверх потолка:
+ * плоский массив из тысяч нулей в 16 КБ стоил ~8 мс главного потока за кадр — и не платил ни скобками (`overBracketed`),
+ * ни потолком ввода, и до проверки входа. Длина — до схемы.
+ */
+const FRAME_ARRAY_MAX = 64;
+
+/** ⭐ R7-04: где-то в кадре массив длиннее `FRAME_ARRAY_MAX`. Глубину кадра уже держит `overBracketed`. */
+function overLong(v: unknown): boolean {
+  if (Array.isArray(v)) return v.length > FRAME_ARRAY_MAX || v.some(overLong);
+  if (v && typeof v === 'object') for (const k in v) if (overLong((v as Record<string, unknown>)[k])) return true;
+  return false;
+}
+
+/**
+ * ⭐ R6-05: скобок в кадре больше `FRAME_BRACKETS_MAX` — разбирать его не стоит (см. там). ⭐ R8-09: и двоеточий больше
+ * `FRAME_KEYS_MAX` — ключей в нём больше, чем бывает у честного кадра.
+ */
 function overBracketed(raw: string): boolean {
   let n = 0;
+  let keys = 0;
   for (let i = 0; i < raw.length; i++) {
     const ch = raw.charCodeAt(i);
     if ((ch === 91 || ch === 123) && ++n > FRAME_BRACKETS_MAX) return true;   // '[' и '{'
+    if (ch === 58 && ++keys > FRAME_KEYS_MAX) return true;                    // ':'
   }
   return false;
 }
@@ -229,6 +264,8 @@ export class RoomManager {
   private connSeq = 0;
   /** ⭐ R6-09: сколько раз соединение предъявило сессию, которой нет (`authOwner`, `lobbyIpOk`). */
   private authFails = new WeakMap<GameConn, number>();
+  /** ⭐ R7-04: сколько кадров входа соединения стоит в его очереди (кадры игры без входа до схемы не доходят, см. `onMessage`). */
+  private joinsQueued = new WeakMap<GameConn, number>();
 
   /** Имена персонажей с живой сессией — для продления закрепления в реестре (Ф4). */
   liveChars(): IterableIterator<string> { return this.live.keys(); }
@@ -286,6 +323,9 @@ export class RoomManager {
       // ронял ноду: `JSON.parse` вложенность держит, а `JSON.stringify` понга — нет. Любой такой бросок гасит кадр.
       try {
         this.onMessage(ws, raw, (clean) => {
+          // R7-04: вход в очереди — кадры игры, пришедшие за ним, ждут его, а не отбрасываются до схемы (см. `onMessage`).
+          const join = clean.t === 'join';
+          if (join) this.joinsQueued.set(ws, (this.joinsQueued.get(ws) ?? 0) + 1);
           chain = chain.then(() => this.onFrame(ws, clean)).catch((e: unknown) => {
             // ⭐ R3-14: сбой ПОСЛЕ схемы (база не ответила на сессию, персонажа, закрепление) — лог через общий глушитель,
             // а не стеком на каждый кадр: поток кадров лобби без входа раньше топил лог и не получал ответа вовсе.
@@ -295,6 +335,10 @@ export class RoomManager {
             if (LOBBY_FRAMES.has(clean.t)) {
               try { ws.send(JSON.stringify(BUSY_ERROR)); } catch { /* сокет уже закрыт */ }
             }
+          }).finally(() => {
+            if (!join) return;
+            const n = (this.joinsQueued.get(ws) ?? 1) - 1;
+            if (n > 0) this.joinsQueued.set(ws, n); else this.joinsQueued.delete(ws);
           });
         });
       } catch (e) {
@@ -307,8 +351,28 @@ export class RoomManager {
     ws.onClose(() => {
       chain = chain.then(() => { this.onClose(ws); }).catch((e: unknown) => {
         console.error('[room] отказ при закрытии соединения:', e);
-      });
+      }).finally(() => { this.forgetConn(ws); });
     });
+  }
+
+  /**
+   * ⭐ R9-11: СОЕДИНЕНИЕ ЗАКРЫТО — ЕГО БАКЕТЫ ЧАСТОТЫ СНИМАЮТСЯ. Ключ соединения (`connKey`) одноразовый: новый сокет — новый
+   * ключ, закрытый больше не придёт. А бакеты под ним (потолок кадров и ввода, кадры лобби, промахи кода `conn:`) жили до
+   * подметания — десять минут простоя: поток анонимных «открыл — кадр — закрыл» копил их (≈290 Б на соединение в каждой карте),
+   * и раз в минуту главный поток обходил их все. Сбросить бакет ЗАКРЫТОГО соединения — не подарок: ключ больше не предъявит
+   * никто. Зовётся только настоящим закрытием и в конце очереди кадров: кадры, стоявшие в ней, бакеты ещё трогают (выход кадром
+   * `leave` и отказ по лимиту — не здесь: сокет ещё открыт, и его кадры платят свой потолок дальше).
+   */
+  private forgetConn(ws: GameConn): void {
+    const k = this.connKeys.get(ws);
+    this.inputRate.delete(ws);
+    if (!k) return;
+    limits.wsFrames.reset(k);
+    limits.wsInput.reset(k);
+    limits.lobbyConn.reset(k);
+    limits.roomCodeMiss.reset(`conn:${k}`);
+    // Адреса нет — «сеть адреса» соединения и есть его ключ (`netOf`): такие бакеты тоже одноразовые.
+    if (!ws.ip) { limits.lobbyIp.reset(`ip:${k}`); limits.roomCodeMissIp.reset(`ip:${k}`); }
   }
 
   /** Лог кадров, погашенных исключением, — не чаще раза в 10 с (R2-01): поток таких кадров не топит лог. */
@@ -348,11 +412,16 @@ export class RoomManager {
       conn.room.setInput(conn.pid, input);
       return;
     }
+    // ⭐ R7-04: кадр игры (не лобби) без входа — никому не нужен (`onFrame` его и так отбросит), и схему ради него не зовём. Вход
+    // ещё в очереди — ждём его: кадр, посланный вдогонку `join`, исполняется после входа, как и прежде.
+    const lobby = LOBBY_FRAMES.has((frame as { t?: unknown }).t);
+    if (!lobby && !this.conns.has(ws) && !this.joinsQueued.has(ws)) return;
     // R1-19: остальное — через схему (см. `frameGate`). Кривой кадр — счётчик, и всё: он ничего не сделал.
-    const gated = frameGate.safeParse(frame);
-    if (!gated.success) {
+    // R7-04: массив длиннее честного — кривой ДО схемы (см. `FRAME_ARRAY_MAX`).
+    const gated = overLong(frame) ? null : frameGate.safeParse(frame);
+    if (!gated?.success) {
       counters.framesInvalid++;
-      if (LOBBY_FRAMES.has((frame as { t?: unknown }).t)) ws.send(JSON.stringify({ t: 'error', code: 'bad-frame', msg: 'Неверный запрос' }));
+      if (lobby) ws.send(JSON.stringify({ t: 'error', code: 'bad-frame', msg: 'Неверный запрос' }));
       return;
     }
     enqueue(gated.data as ClientFrame);
@@ -388,7 +457,10 @@ export class RoomManager {
         return undefined;
       }
     }
-    if (overBracketed(raw)) { counters.framesInvalid++; return undefined; }   // R6-05: вложенность — до разбора
+    if (overBracketed(raw)) { counters.framesInvalid++; return undefined; }   // R6-05: вложенность, R8-09: ширина — до разбора
+    // ⭐ R8-09: до входа (и без входа в очереди) — только кадр размера лобби: большой отбрасывается, не разбирая. Молча, как кадр
+    // игры без входа (R7-04): честный клиент такого не шлёт, а ответ на каждый стоил бы исходящего трафика.
+    if (raw.length > LOBBY_FRAME_MAX && !this.conns.has(ws) && !this.joinsQueued.has(ws)) return undefined;
     let frame: ClientFrame;
     try { frame = JSON.parse(raw) as ClientFrame; } catch { return undefined; }
     // Оплачен как ввод — обязан им быть: JSON берёт последний из повторённых ключей, и `{"t":"input","t":"join",…}`
@@ -489,7 +561,9 @@ export class RoomManager {
           ws.send(JSON.stringify(NO_ROOM));
           return;
         }
-        if (room.seatsTaken(frame.charId) >= MAX_PARTY) { ws.send(JSON.stringify(ROOM_FULL)); return; }
+        // ⭐ R7-16: своя грейс-комната — возвращение, а не вход: мест оно не спрашивает (как `join`, `home`). Раньше проверка мест
+        // шла и ему: пати ушла в город (его место свободно, R6-14), пятый вошёл — и свой код отвечал «нет мест».
+        if (this.graceByChar.get(frame.charId) !== room && room.seatsTaken(frame.charId) >= MAX_PARTY) { ws.send(JSON.stringify(ROOM_FULL)); return; }
       }
       await this.serial(frame.charId, async () => {
         await this.join(ws, userId, frame);
@@ -552,6 +626,7 @@ export class RoomManager {
       const owned = await this.ownedSave(userId, frame.charId);
       if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
       const { save, version } = await migrateLegacyWallet(userId, owned.save, owned.version, this.cfg);   // R1-06
+      await this.foldRunLedger(save);   // R9-01: что взято на узлах забега без него — из свода в базе
       if (this.farewellMoved(frame.charId, graceBefore)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
       if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
       const graceRoom = this.graceByChar.get(frame.charId);
@@ -576,7 +651,8 @@ export class RoomManager {
     // его брошенным (штраф) ДО чтения сейва, чтобы новый вход взял уже урезанный сейв из БД.
     const graceRoom = this.graceByChar.get(frame.charId);
     if (graceRoom) {
-      await this.track(frame.charId, graceRoom.abandonAsDead(frame.charId));
+      // R7-03: страховка — забег, который пати уже увела в город, она отпускает без штрафа (`abandonAsDead`, `insurance`).
+      await this.track(frame.charId, graceRoom.abandonAsDead(frame.charId, true));
       // R2-08: штраф не лёг — вход по сейву из базы начал бы новую комнату с тем же забегом и без штрафа.
       if (!(await this.settleFarewell(frame.charId))) { ws.send(JSON.stringify(SAVING_ERROR)); return; }
     }
@@ -585,6 +661,7 @@ export class RoomManager {
     if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
     // ⚠ R1-06: переезд старого кошелька — ДО входа в комнату, пока сейв ещё ничей (см. `migrateLegacyWallet`).
     const { save, version } = await migrateLegacyWallet(userId, owned.save, owned.version, this.cfg);
+    await this.foldRunLedger(save);   // R9-01: припаркованный забег — с тем, что взято на его узлах без героя
     if (this.farewellMoved(frame.charId, graceNow)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
     if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
     let room: Room;
@@ -600,6 +677,28 @@ export class RoomManager {
     const pid = room.addPlayer(ws, userId, save, version);
     this.conns.set(ws, { pid, room });
     this.live.set(save.charId, ws);
+  }
+
+  /**
+   * ⭐ R9-01: ЗАБЕГ ГЕРОЯ — СО ВСЕМ, ЧТО ВЗЯТО НА ЕГО УЗЛАХ, ГДЕ БЫ ЭТО НИ ВЗЯЛИ. Записи узлов жили только в сейвах участников, и
+   * копия, выброшенная одним (финал, «Завершить», вайп), уносила взятое на узлах, куда другой не доходил: «якорь» (второй герой
+   * пати, альт, друг) выходил из города на глубине d, напарник один проходил d+1…финал и бросал копию, — а «Продолжить» якоря и
+   * вход напарника по коду давали те же узлы свежими: сундуки, боссы, опыт, глубина сложности — по кругу, пока жива старая
+   * копия. Теперь каждый вход сейва с забегом вливает в него свод этого забега из базы (`run_ledger`, пишут комнаты,
+   * `Room.flushLedger`), ДО комнаты: продолжение, вход по коду и возврат собирают такие узлы взятыми (и как «не новые» — ни
+   * глубины, ни квестов этажа, R8-02, R3-10). Записи, которые этот процесс ещё несёт в базу, вход дожидается
+   * (`runLedgerSettled`). База не ответила — вход отказывает «занято» (кадр лобби ждёт ответа), а не входит со старой копией.
+   */
+  private async foldRunLedger(save: SaveState): Promise<void> {
+    const run = save.run;
+    if (!run?.config) return;
+    const key = runLedgerKey(run.config);
+    await runLedgerSettled(key);
+    const stored = await getRunLedger(key);
+    if (!stored.length) return;
+    const all = new Map<string, RunNodeState>();
+    foldRunRecords(all, runRecords(run, run.config));
+    if (foldRunRecords(all, stored)) putRunRecords(run, all.values());
   }
 
   /**
@@ -765,9 +864,18 @@ export class RoomManager {
     return true;
   }
 
-  /** R6-06: забыть копию героя, которого держит нода `owner` (см. `claimLost`). */
+  /**
+   * R6-06: забыть копию героя, которого держит нода `owner` (см. `claimLost`). ⭐ R7-09: это ИНЦИДЕНТ, а не штатный случай.
+   * Копия — единственная запись того, что герой успел отдать (выбросил соседу по аккаунту, запись соседа легла): забытая, она
+   * оставляет вещь и в строке героя, и у соседа. Штатно закрепление не уходит от ноды, пока её сердцебиение моложе
+   * `NODE_DEAD_SEC` (`registry.ts`: база лежала, нода молчала — её героев не забирают); сюда доходит только отказ базы
+   * дольше этого срока. Счётчик `dm_farewell_forgotten_total` и строка «ИНЦИДЕНТ» — разбор человеком (дюп найдёт и аудит).
+   */
   private forgetUnsaved(charId: string, owner: string): void {
-    if (this.unsaved.delete(charId)) console.warn(`[room] героя ${charId} держит нода ${owner} — недописанная копия здесь забыта`);
+    if (this.unsaved.delete(charId)) {
+      counters.farewellForgotten++;
+      console.error(`[room] ИНЦИДЕНТ: героя ${charId} держит нода ${owner} — недописанная копия здесь забыта; отданное ею могло остаться у двоих`);
+    }
     this.unsavedBackoff.delete(charId);
   }
 
@@ -975,14 +1083,24 @@ export class RoomManager {
     return { save: this.sanitize(character.data), version: character.version };
   }
 
-  /** Лёгкий анти-чит поверх сохранённого сейва: уровень из опыта, золото ≥0 (полный объект, без стрипа). */
+  /**
+   * Лёгкий анти-чит поверх сохранённого сейва: уровень — целый и не ниже первого, золото ≥0 (полный объект, без стрипа).
+   *
+   * ⭐ R9-05: УРОВЕНЬ ИЗ ОПЫТА БОЛЬШЕ НЕ ПЕРЕСЧИТЫВАЕТСЯ ВНИЗ. Это было против сейва, который писал клиент (до Ф0); теперь сейв
+   * пишет только сервер, а уровень растёт только в `gainXp` — вместе с очками за каждый уровень. Пересчёт же опускал героя при
+   * КАЖДОМ входе после правки баланса: кривая опыта медленнее (`xpTable` — ручка темпа, docs/BALANCE.md) или потолок уровня
+   * ниже — и герой 50-го входил 48-м с очками за 50, а добирая опыт до 50-го, получал очки двух уровней второй раз (срезать
+   * потолок и вернуть — то же для верхних уровней). Опыт ниже порога своего уровня — просто нет нового уровня, пока опыт не
+   * догонит (`gainXp` поднимает только выше текущего).
+   */
   private sanitize(save: SaveState): SaveState {
-    const xpTable = this.cfg.get('balance').xpTable;
-    save.level = Math.min(save.level, levelForXp(save.xp, xpTable) || 1);
+    save.level = Math.max(1, Math.floor(save.level) || 1);
     save.gold = Math.max(0, Math.floor(save.gold));
     // Одноразовое лечение битой/налагающейся раскладки старых сейвов: сохраняет валидные
     // позиции, переставляет только сломанные. Дальше раскладку держит валидной сервер (moveItem).
     packInventory(save.inventory, this.cfg.get('balance').inventory);
+    // R7-19: сломанный уник старого сейва — цел (уник кузнец не чинит; сундук аккаунта лечит `sanitizeStash`).
+    mendBrokenUniques([...Object.values(save.equipment ?? {}), ...save.inventory, ...(save.belt ?? []), ...(save.stash ?? [])]);
     return save;
   }
 }

@@ -35,6 +35,14 @@ interface Held {
 let held: Held | null = null;
 let lastPointer = { x: 0, y: 0 };
 
+/**
+ * ПОВЕРХНОСТЬ МИРА — куда клик держимым роняет предмет: `<div id="game">` 2D (Phaser кладёт в него свой холст) и
+ * `<canvas id="app">` веб-3D, метка стоит в разметке страниц (`index.html`, `game3d.html`). ⚠ R9-09: раньше миром был
+ * ЛЮБОЙ `<canvas>` — и 3D-стенд сборки в окне кузницы (его тянут мышью, чтобы повернуть) молча ронял оружие с курсора
+ * на землю, где его мог унести напарник, а смена области стирала.
+ */
+export const WORLD_SURFACE = '[data-dm-world]';
+
 export function getHeld(): { item: Item; grabOx: number; grabOy: number; from: HeldFrom } | null {
   return held;
 }
@@ -89,10 +97,10 @@ export function beginHold(app: App, item: Item, grabOx: number, grabOy: number, 
   const onMove = (e: MouseEvent): void => { lastPointer = { x: e.clientX, y: e.clientY }; positionGhost(); };
   const onWorldClick = (e: MouseEvent): void => {
     if (!held) return;
-    // Роняем ТОЛЬКО при попадании по игровому холсту (#game/canvas) — узлы UI после ре-рендера
-    // отсоединяются, «не в окне» ложно срабатывало бы как выброс.
+    // Роняем ТОЛЬКО при попадании по поверхности мира (`WORLD_SURFACE`) — узлы UI после ре-рендера
+    // отсоединяются, «не в окне» ложно срабатывало бы как выброс; холст интерфейса (стенд кузницы) — не мир.
     const t = e.target as HTMLElement | null;
-    if (t && (t.closest('#game') || t.tagName === 'CANVAS')) dropHeldToWorld(app);
+    if (t && t.closest(WORLD_SURFACE)) dropHeldToWorld(app);
   };
   held = { item, grabOx, grabOy, from, ghost: makeGhost(item), onMove, onWorldClick };
   positionGhost();

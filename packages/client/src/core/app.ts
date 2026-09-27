@@ -7,6 +7,7 @@ import { setDamageTypeMeta } from './damageTypes.js';
 import { setRarityMeta } from '../modules/loot/rarity.js';
 import { NetClient } from '../net/netClient.js';
 import { CmdReplies, type CmdReply } from '../net/cmdReplies.js';
+import { PROTOCOL_STALE } from '../net/entryFlow.js';
 import type { AuthSession } from '../modules/auth/authApi.js';
 import type { GameLog } from '../ui/gameLog.js';
 
@@ -163,10 +164,20 @@ export class App {
     this.run = null;
   }
 
-  constructor() {
+  /**
+   * ⭐ R7-15: `App` БЕЗ СЕРВЕРА — мост редактора (`gameHarness`): калькулятор и песочница ковки строят его из своих данных
+   * «что, если». Такой не тянет `/api/config` (ни в конструкторе, ни в `syncConfig`) и не слушает канал правок редактора:
+   * раньше серверный конфиг через миллисекунды ложился поверх песочницы, а каждый мост держал свой канал навсегда.
+   */
+  private readonly offline: boolean;
+
+  constructor(opts: { offline?: boolean } = {}) {
+    this.offline = opts.offline === true;
     this.config.loadAll(); // встроенные дефолты — мгновенный фолбэк до ответа сервера
-    void this.syncConfig(); // единая истина: эффективный конфиг с сервера (и на каждом входе в мир — R5-15)
-    this.listenConfigChannel();
+    if (!this.offline) {
+      void this.syncConfig(); // единая истина: эффективный конфиг с сервера (и на каждом входе в мир — R5-15)
+      this.listenConfigChannel();
+    }
     this.refreshLabelResolvers();
     // Авторитетный сток магазина с сервера (и его цены, R4-37) → перерисовать открытую панель.
     this.net.on('shop', (f) => { this.shopStock = f.items; this.shopPrices = f.prices ?? {}; this.bus.emit('state:changed', {}); });
@@ -221,6 +232,11 @@ export class App {
 
   /** R5-15: ETag применённого серверного конфига ('' — ещё ни одного): с ним запрос условный, неизменный — 304. */
   private configEtag = '';
+  /**
+   * R7-14: ETag серверного конфига, который эта вкладка НЕ РАЗОБРАЛА (null — такого нет). Игроку о нём уже сказано, и
+   * запрос условный по нему: тот же негодный — 304 без тела и без второй строки в логе.
+   */
+  private configStale: string | null = null;
   /** R5-15: номер запроса конфига — ответ, обогнанный следующим запросом, не применяется. */
   private configSeq = 0;
 
@@ -233,21 +249,41 @@ export class App {
    * скупки и сбросов, гашение карточек, «аура ли это» оставались до деплоя, а сервер брал новые; неудача на старте
    * (страница открылась во время перезапуска) не повторялась никогда. Запрос условный (`If-None-Match` с ETag сервера,
    * `configEtag.ts`): неизменный конфиг — 304 без тела и без перерисовки.
+   *
+   * ⭐ R7-14: КОНФИГ, КОТОРЫЙ ВКЛАДКА НЕ РАЗБИРАЕТ (деплой со сменой схемы — новая таблица, переименованное поле, — а вкладка
+   * старая), не ложится вовсе (`reload` — всё или ничего): раньше ложилась половина, а ошибка глоталась — карточки считали цену
+   * по смеси двух конфигов, сервер отказывал «Цена изменилась», отказ звал сюда же, и игрок застревал на отказах молча. Теперь
+   * прежний конфиг цел, а игроку — «перезагрузите страницу» (`PROTOCOL_STALE`), один раз на этот ETag.
    */
   async syncConfig(): Promise<void> {
+    if (this.offline) return;
     const seq = ++this.configSeq;
+    let res: Response;
+    let snapshot: Parameters<ConfigRegistry['reload']>[0];
     try {
-      const res = await fetch('/api/config', { cache: 'no-cache', ...(this.configEtag ? { headers: { 'if-none-match': this.configEtag } } : {}) });
+      const inm = this.configStale ?? this.configEtag;   // R7-14: негодный уже разобран — тот же вернётся 304-м
+      res = await fetch('/api/config', { cache: 'no-cache', ...(inm ? { headers: { 'if-none-match': inm } } : {}) });
       if (seq !== this.configSeq || !res.ok) return;   // 304 — тот же конфиг; обогнал следующий запрос — применит он
-      const snapshot = (await res.json()) as Parameters<ConfigRegistry['reload']>[0];
-      if (seq !== this.configSeq) return;
-      this.config.reload(snapshot);
-      this.configEtag = res.headers.get('etag') ?? '';
-      this.refreshLabelResolvers();
-      this.bus.emit('state:changed', {});
+      snapshot = (await res.json()) as Parameters<ConfigRegistry['reload']>[0];
     } catch {
-      /* сервер недоступен (или прислал негодное) — остаёмся на том, что есть; следующий вход спросит снова */
+      return;   // сервер недоступен (или прислал не JSON) — остаёмся на том, что есть; следующий вход спросит снова
     }
+    if (seq !== this.configSeq) return;
+    const etag = res.headers.get('etag') ?? '';
+    try {
+      this.config.reload(snapshot);
+    } catch (e) {
+      if (etag !== this.configStale) {
+        this.configStale = etag;
+        console.warn('[config] конфиг сервера не разобран — вкладка старше сервера:', e instanceof Error ? e.message : e);
+        this.bus.emit('log:message', { text: PROTOCOL_STALE, kind: 'system' });
+      }
+      return;
+    }
+    this.configEtag = etag;
+    this.configStale = null;
+    this.refreshLabelResolvers();
+    this.bus.emit('state:changed', {});
   }
 
   /** Живой приём изменений из HTML-редактора (BroadcastChannel). */

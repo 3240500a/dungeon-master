@@ -1,6 +1,6 @@
 import type { App } from '../../core/app.js';
-import { skillRespecFee, type SkillTreeNode } from '@dm/shared';
-import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
+import { skillRespecFee, type SaveState, type SkillTreeNode } from '@dm/shared';
+import { COLORS, askHere, mk, attachTooltip } from '../../ui/kit.js';
 import { activeTreeFor } from '../skills-active/allocate.js';
 import { elementOf, elementColor, elementLabel } from './skillIcon.js';
 
@@ -31,6 +31,29 @@ function sideColor(resource: string, group: string): string {
 /** Сброс вида (напр. при смене персонажа). */
 export function resetSkillTreeView(): void {
   view.inited = false;
+}
+
+/** Сколько очков скиллов вернёт сброс (Σ вложенных рангов). */
+const skillRanks = (save: SaveState): number => Object.values(save.skills).reduce((a, r) => a + (r > 0 ? r : 0), 0);
+
+/**
+ * «Сбросить скиллы» — вопрос и команда. ⭐ R7-12: окно скилов (K) открывается и в подземелье, а `respecSkills` сервер
+ * исполняет везде — вне города вопрос В ИГРЕ (`askHere`), а не `window.confirm`: замороженная страница оставляла героя под
+ * ударами (R1-14). Пока висел вопрос, игра шла — после «да» перепроверка: сбрасывать ещё есть что, комиссия не выросла
+ * (иначе сервер отказал бы «Цена изменилась» и клиент зря перечитал бы конфиг) и золота на неё хватает. Снятый игрой вопрос
+ * (`dismissAsk`) — «нет», лог молчит. `true` — команда ушла.
+ */
+async function respecSkillsAsk(app: App, ranks: number, fee: number): Promise<boolean> {
+  const state = app.state;
+  if (!state || ranks === 0 || state.save.gold < fee) return false;
+  if (!(await askHere(state.area === 'town', `Сбросить ВСЕ скиллы?\nВернётся ${ranks} очков скиллов, комиссия ${fee} зол.\nБинды скиллов будут очищены.`))) return false;
+  const now = app.state;
+  const feeNow = now ? skillRespecFee(app.config, now.save) : fee;
+  const why = !now ? 'герой не в игре' : skillRanks(now.save) === 0 ? 'сбрасывать уже нечего'
+    : feeNow > fee ? `комиссия выросла до ${feeNow} зол. — нажми снова` : now.save.gold < feeNow ? 'не хватает золота' : '';
+  if (why) { app.bus.emit('log:message', { text: `Сброс отменён: ${why}`, kind: 'system' }); return false; }
+  app.sendCmd({ cmd: 'respecSkills', maxGold: fee });   // R5-15: комиссия, названная в вопросе, — дороже сервер не возьмёт
+  return true;
 }
 
 /**
@@ -68,7 +91,7 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   body.appendChild(header);
 
   // Сброс дерева скилов за золото: возвращает ВСЕ очки скиллов, берёт комиссию (за вложенное очко).
-  const ranks = Object.values(state.save.skills).reduce((a, r) => a + (r > 0 ? r : 0), 0);
+  const ranks = skillRanks(state.save);
   const fee = skillRespecFee(app.config, state.save);
   const reset = mk('button',
     'margin-bottom:8px;padding:6px 12px;font-size:12px;border-radius:6px;cursor:pointer;' +
@@ -76,11 +99,7 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   reset.textContent = `Сбросить скиллы · вернёт ${ranks} очк., комиссия ${fee} зол.`;
   reset.disabled = ranks === 0 || state.save.gold < fee;
   if (reset.disabled) { reset.style.opacity = '0.5'; reset.style.cursor = 'default'; }
-  reset.addEventListener('click', () => {
-    if (ranks === 0 || state.save.gold < fee) return;
-    if (!window.confirm(`Сбросить ВСЕ скиллы?\nВернётся ${ranks} очков скиллов, комиссия ${fee} зол.\nБинды скиллов будут очищены.`)) return;
-    app.sendCmd({ cmd: 'respecSkills', maxGold: fee });   // R5-15: комиссия, названная в вопросе, — дороже сервер не возьмёт
-  });
+  reset.addEventListener('click', () => { void respecSkillsAsk(app, ranks, fee); });
   body.appendChild(reset);
 
   const wrap = mk('div',

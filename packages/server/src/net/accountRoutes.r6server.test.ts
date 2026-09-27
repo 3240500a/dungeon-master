@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { ConfigRegistry } from '@dm/shared';
 
 /**
@@ -135,18 +134,24 @@ describe('⭐ R6-04: тело запроса — только там, где о�
     expect(src).not.toMatch(/app\.use\(\s*express\.(json|raw|text|urlencoded)\(/);
   });
 
-  it('прямо в express (транспорт ws): 10 × 2 МБ вложенного JSON на вход — 413, ручка не вызвана, цикл не стоит', async () => {
+  it('прямо в express (транспорт ws): 10 × 2 МБ вложенного JSON на вход — 413, ручка не вызвана, тело не разобрано', async () => {
     const { limits } = await import('./rateLimit.js');
     const port = await listen(await accountApp());
-    const take = vi.spyOn(limits.login, 'take');
-    const lag = monitorEventLoopDelay({ resolution: 1 });
-    lag.enable();
+    const take = vi.spyOn(limits.login, 'peek');   // R7-13: ручка входа первым делом спрашивает бакет адреса (платит — неудача)
+    const parse = vi.spyOn(JSON, 'parse');
+    // Цикл «не стоит» — без настенных часов: раньше здесь был худший лаг цикла < 50 мс, и под нагрузкой полного прогона
+    // (процесс ждёт своей очереди на ядро) он давал 51–104 мс на исправном коде. Прямо: тело больше потолка НЕ РАЗБИРАЕТСЯ
+    // (разбор — это те ~115 мс на запрос), и процессорного времени на десять запросов уходит меньше, чем стоил бы один разбор
+    // каждого (≈1,2 с) — хоть клиент в том же процессе и сам готовит по 2 МБ.
+    const cpu0 = process.cpuUsage();
     const statuses: number[] = [];
     for (let i = 0; i < 10; i++) statuses.push((await post(port, '/api/login', NESTED).catch(() => ({ status: -1, body: '' }))).status);
-    lag.disable();
+    const cpu = process.cpuUsage(cpu0);
     expect(statuses).toEqual(Array(10).fill(413));
     expect(take, 'до ручки входа не дошло').not.toHaveBeenCalled();
-    expect(lag.max / 1e6, 'худший лаг цикла, мс').toBeLessThan(50);
+    expect(parse.mock.calls.filter(([s]) => typeof s === 'string' && s.length > 8 * 1024), 'тело больше потолка не разбиралось').toEqual([]);
+    expect((cpu.user + cpu.system) / 1000, 'процессорное время на 10 запросов, мс').toBeLessThan(600);
+    parse.mockRestore();
     take.mockRestore();
   });
 
@@ -167,7 +172,7 @@ describe('⭐ R6-04: тело запроса — только там, где о�
         uwsToken = t; resolve(u.us_socket_local_port(t));
       });
     });
-    const take = vi.spyOn(limits.login, 'take');
+    const take = vi.spyOn(limits.login, 'peek');   // R7-13: ручка входа первым делом спрашивает бакет адреса (платит — неудача)
     const r = await post(uwsPort, '/api/login', NESTED).catch(() => ({ status: -1, body: '' }));
     expect(r.status).toBe(413);
     expect(reached, 'express запроса не видел').not.toContain('/api/login');

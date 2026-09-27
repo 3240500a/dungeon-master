@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ConfigRegistry, canRerollItem, craftAction, createRng, defaultParts, emptyStash, enchantAction, enchantCost, forgeGold, forgeRepair,
-  forgeReroll, forgeSalvage, forgeUpgrade, fullJournal, generateItem, newBotSave, retierItem, shapeFoundWeapon,
+  forgeReroll, forgeSalvage, forgeUpgrade, fullJournal, generateItem, itemFromBaseId, newBotSave, retierItem, salvageMean, shapeFoundWeapon,
   type AccountStash, type Item, type SaveState,
 } from '@dm/shared';
 import { benchActions, benchTarget, diffStrings, type BenchAction } from './forgeActions.js';
@@ -96,6 +96,18 @@ describe('benchActions — цена построчно', () => {
     expect(sv.lines.every((l) => l.state === 'gain')).toBe(true);
   });
 
+  it('⭐ R9-04: пояс и перчатки — вилка «0–2», а не пустая карточка; в команду — низ вилки и средний выход', () => {
+    for (const baseId of ['leather-belt', 'leather-gloves']) {
+      const it0 = { ...itemFromBaseId(reg.get('items.base'), baseId, reg.get('item-tiers'), 'drop')!, uid: `sv-${baseId}` };
+      const sv = benchActions(reg, it0, 99999, [], RICH).find((x) => x.id === 'salvage')!;
+      expect(sv.enabled, baseId).toBe(true);
+      expect(sv.lines.map((l) => l.text), `${baseId}: было — ни строки выхода`).toEqual([`${reg.get('craft-materials').find((m) => m.id === 'hide-1')!.name} 0–2`]);
+      expect(sv.minYield).toEqual({ 'hide-1': 0 });
+      expect(sv.avgYield, 'R9-04: у дробного выхода низ правку не видит — среднее видит').toEqual(salvageMean(reg, it0, false));
+      expect(sv.avgYield!['hide-1']).toBeCloseTo(1, 9);
+    }
+  });
+
   it('R3-04: стартовое кузнец не разбирает — карточка разбора гаснет тем же правилом, что отказ сервера', () => {
     const it0 = gearItem();
     expect(it0.origin).toBe('start');
@@ -155,10 +167,11 @@ describe('⭐ R2-12: карточка верстака ≡ ответ серве
     const s = structuredClone(save), st = structuredClone(stash);
     const w = st.materials ?? (st.materials = {});
     switch (a.cmd) {
-      case 'forgeUpgrade': return forgeUpgrade(reg, s, uid, w, a.gold).ok;
-      case 'forgeRepair': return forgeRepair(reg, s, uid, w, a.gold).ok;
+      // R8-14: и со сырьём карточки (`materials`) и низом вилки разбора (`minYield`) — как их шлёт верстак. R9-04: и средним выходом.
+      case 'forgeUpgrade': return forgeUpgrade(reg, s, uid, w, a.gold, a.materials).ok;
+      case 'forgeRepair': return forgeRepair(reg, s, uid, w, a.gold, a.materials).ok;
       case 'forgeReroll': return forgeReroll(reg, s, uid, createRng(1), a.gold).ok;
-      case 'forgeSalvage': return forgeSalvage(reg, s, st, uid, createRng(1)).ok;
+      case 'forgeSalvage': return forgeSalvage(reg, s, st, uid, createRng(1), a.minYield, a.avgYield).ok;
       // R3-09: сервер отказывает зачарованию и при закрытой ковке (`balance.craft.live`) — до ядра.
       case 'forgeEnchant': return reg.get('balance').craft.live && enchantAction(reg, s, uid, a.rarity!, createRng(1), a.gold).ok;
     }
@@ -302,6 +315,28 @@ describe('⭐ R3-09: зачарование скованной — с верст
     }
     expect(checked).toBeGreaterThan(200);
     expect(enabled, 'свойство не пустое').toBeGreaterThan(30);
+  });
+});
+
+/**
+ * ⚠ R7-19: СЛОМАННЫЙ УНИК КУЗНЕЦ НЕ ЧИНИТ (уник кузницу не проходит вовсе) — карточка «Починить» гаснет ТЕМ ЖЕ правилом, что
+ * отказ сервера (`canRepairItem`), и говорит почему. Прежде горела с ценой в одно золото, и сервер её исполнял.
+ */
+describe('⚠ R7-19: сломанный уник — карточка «Починить» погашена, как отказ сервера', () => {
+  it('⭐ карточка погашена с причиной, предпросмотра починки нет; сервер на том же сейве отказывает', () => {
+    const it = { ...generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+      dropBias: 1, itemLevel: 30, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'unique',
+      maxReqTotal: reg.get('balance').maxTotalRequirement, origin: 'drop',
+    }, createRng(5)), broken: true, pos: { x: 0, y: 0 } } as Item;
+    const a = benchActions(reg, it, 10_000_000, [], RICH);
+    const rep = a.find((x) => x.id === 'repair')!;
+    expect(rep.primary, 'на своём месте').toBe(true);
+    expect(rep.enabled, 'было: горела за одно золото').toBe(false);
+    expect(rep.gold).toBeUndefined();
+    expect(rep.lines.map((l) => l.text)).toEqual(['Уникальную вещь кузнец не чинит']);
+    expect(benchTarget(reg, it), 'шапка и карточка говорят одно').toBeUndefined();
+    const save = { gold: 10_000_000, inventory: [it] } as unknown as SaveState;
+    expect(forgeRepair(reg, save, it.uid, { ...RICH }).ok).toBe(false);
   });
 });
 

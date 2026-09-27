@@ -1,4 +1,5 @@
 import { q, q1, closePool, initSchema } from './pool.js';
+import { initClusterSchema } from '../cluster/registry.js';
 import { revokeItem } from './items.js';
 import { runAudit, formatAudit, saveAuditRun } from './audit.js';
 import { planRollback, applyRollback } from './rollback.js';
@@ -112,8 +113,11 @@ async function rollback(userId: string, to: string, reason: string): Promise<voi
 
 async function main(): Promise<void> {
   // Схема идемпотентна и берётся под блокировкой — инструмент не должен зависеть от того,
-  // перезапускали ли сервер после появления новой таблицы.
+  // перезапускали ли сервер после появления новой таблицы. И схема кластера: аудит читает закрепления за нодами
+  // (проверка 6), а на базе, где сервер ещё не стартовал (завели админа `create-admin` и сразу аудит), их таблиц нет —
+  // аудит падал в самом конце на «отношение char_claims не существует».
   await initSchema();
+  await initClusterSchema();
   const cmd = process.argv[2];
   const id = arg('id') ?? '';
   if (cmd === 'audit') await audit();

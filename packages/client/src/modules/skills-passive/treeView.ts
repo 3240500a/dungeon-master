@@ -1,5 +1,6 @@
 import type { App } from '../../core/app.js';
-import { passiveRespecFee, passiveEntriesFor } from '@dm/shared';
+import type { CmdReply } from '../../net/cmdReplies.js';
+import { passiveRespecFee, passiveEntriesFor, type TownCommand } from '@dm/shared';
 import { isAllocatable, passiveNodeCost } from './allocate.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 
@@ -10,6 +11,31 @@ const view = { scale: 0, tx: 0, ty: 0, inited: false };
 
 function commit(app: App): void {
   app.bus.emit('state:changed', {}); // онлайн: сейв авторитетен на сервере
+}
+
+/** R7-21: узлы, чей ранг в полёте, — по приложению: окно перерисовывается и собирает узлы заново. */
+const allocInFlight = new WeakMap<object, Set<string>>();
+
+/**
+ * ⭐ R7-21: РАНГ УЗЛА — ОДНА ЗАЯВКА ЗА РАЗ. Цена карточки (`maxGold`, R6-16) считается от ранга, с которым окно нарисовано,
+ * а перерисовывается окно только сейвом: двойной клик быстрее ответа уходил ДВУМЯ командами с ценой ранга r — сервер
+ * поднимал ранг первой, а вторую отказывал «Цена изменилась» (ранг r+1 вдвое дороже): ложный отказ и зря перечитанный
+ * конфиг. Теперь клик по узлу, чей ранг в полёте, молчит; ответ сервера идёт ПОСЛЕ сейва — окно уже нарисовано по новому
+ * рангу, и следующий клик несёт его цену. Ответ-отказ — строкой в лог (ждущему окну `App` его не пишет); ответа нет — узел
+ * снова кликается. Другие узлы не ждут: цена каждого — от его собственного ранга.
+ */
+function allocOnce(app: App, command: Extract<TownCommand, { cmd: 'allocPassive' }>): void {
+  let busy = allocInFlight.get(app);
+  if (!busy) allocInFlight.set(app, (busy = new Set()));
+  if (busy.has(command.nodeId)) return;
+  const nodes = busy;
+  nodes.add(command.nodeId);
+  let reply: Promise<CmdReply | null>;
+  try { reply = app.request(command); } catch { reply = Promise.resolve(null); }
+  void reply.catch(() => null).then((r) => {
+    nodes.delete(command.nodeId);
+    if (r && !r.ok && r.reason) app.bus.emit('log:message', { text: `Не вышло: ${r.reason}`, kind: 'system' });
+  });
 }
 
 function svg<K extends keyof SVGElementTagNameMap>(
@@ -145,7 +171,8 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
       e.stopPropagation();
       if (dragMoved) return;
       // R6-16: цена карточки «след. ранг» — дороже сервер не возьмёт (отказ «Цена изменилась», клиент перечитает конфиг).
-      app.sendCmd({ cmd: 'allocPassive', nodeId: node.id, maxGold: passiveNodeCost(node.cost.amount, rank, mult) });
+      // R7-21: пока ранг этого узла в полёте, второй клик молчит (`allocOnce`).
+      allocOnce(app, { cmd: 'allocPassive', nodeId: node.id, maxGold: passiveNodeCost(node.cost.amount, rank, mult) });
     });
     g.appendChild(circle);
   }

@@ -20,6 +20,12 @@ export interface SaveState {
   xp: number;
   gold: number;
   attributes: Attributes;
+  /**
+   * ⭐ R8-10: ПОКОМПОНЕНТНЫЙ МАКСИМУМ АТРИБУТОВ, С КОТОРЫХ ГЕРОЙ СБРАСЫВАЛ ОЧКИ (`respec`). Мощь (`effectiveLevel`) берёт
+   * вещь запаса, только если требования закрыты — и сверяет их не ниже этого: иначе «снял, сбросил, вложил мимо — спустился —
+   * сбросил и надел» заселял узел слабее за два сброса. Пишет только `respec`. Необязательное: нет поля — сброса не было.
+   */
+  respecPeak?: Attributes;
   unspentAttributePoints: number;
   unspentSkillPoints: number;
   /** Нераспределённые очки пассивных навыков (пассивы тратят их + золото). */
@@ -79,7 +85,9 @@ export interface SaveState {
 /**
  * ⭐ R5-22: сток кузницы в сейве. `at` — когда катали (он же поколение доски, R4-33), `seed` — сид броска снаряжения,
  * `level` — уровень героя, под который катали (R3-17), `bought` — номера купленных вещей в списке броска.
+ * ⭐ R9-13: `board` — сид доски квестов поколения. Нет — доска из `seed`; пишется, когда `seed` перекатывается по уровню
+ * (R3-17): снаряжение новое, а доска и срок — прежние.
  */
-export interface TownStockRef { at: number; seed: number; level: number; bought: number[] }
+export interface TownStockRef { at: number; seed: number; level: number; bought: number[]; board?: number }
 
 export const SAVE_VERSION = 3;

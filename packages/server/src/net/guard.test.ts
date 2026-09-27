@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import {
+  ConfigRegistry, generateRunPlan, defaultRunConfig, generateFloor, resolveFloorSpec,
+  type DungeonLayout, type TownCommand,
+} from '@dm/shared';
 import { cmdAllowedIn, CommandDedup } from './guard.js';
 
 /**
@@ -48,6 +52,59 @@ describe('место команды', () => {
   it('неизвестная команда считается городской — строгая сторона по умолчанию', () => {
     expect(cmdAllowedIn('чего-то новое' as never, 'dungeon')).toBe(false);
     expect(cmdAllowedIn('чего-то новое' as never, 'town')).toBe(true);
+  });
+});
+
+/**
+ * ⭐ R7-11: ОБЪЕКТ ГОРОДА В ПОДЗЕМЕЛЬЕ — ЛОЖНАЯ КНОПКА И ЛОЖНЫЙ СИГНАЛ ЧИТА. Карта мест выше закрывает сундук вне города, а
+ * генератор ставил его на каждый rest-узел забега (`townFloor` — всегда, `features.stash` четырёх этажей-привалов — ещё
+ * и в данных): оба клиента рисовали «[E] Общий сундук», окно слало `stashOpen`, сервер отвечал «только в городе» и
+ * считал каждый честный клик в `dm_cmd_out_of_place_total` — сигнал, который по замыслу честный клиент не зажигает.
+ * Правило одно: объект, чьи команды в подземелье закрыты, в подземелье не рождается. Сверка — по живому конфигу: каждый
+ * узел каждого включённого шаблона в каждом включённом биоме и каждый включённый этаж.
+ */
+describe('⭐ R7-11: объекты города не рождаются там, где их команды закрыты', () => {
+  /** Декор-объект → команды его окна (сундук — открыть, переложить, сдать сырьё; лавка — прилавок). */
+  const OBJECT_CMDS: Record<string, readonly TownCommand['cmd'][]> = {
+    stash: ['stashOpen', 'stashMove', 'depositMaterials'],
+    shop: ['buy', 'sell'],
+  };
+  let reg: ConfigRegistry;
+  beforeAll(() => { reg = new ConfigRegistry(); reg.loadAll(); });
+  /** Объекты этажа, у которых хоть одна команда в подземелье закрыта. */
+  const closed = (L: DungeonLayout): string[] =>
+    L.decor.filter((d) => (OBJECT_CMDS[d.kind] ?? []).some((c) => !cmdAllowedIn(c, 'dungeon'))).map((d) => d.kind);
+
+  it('ни на одном узле забега; rest-узел — портал в город, а сундук — в городе', () => {
+    let rests = 0;
+    for (const tpl of reg.get('run-templates').filter((t) => t.enabled !== false)) {
+      for (const biome of reg.get('biomes').filter((b) => b.enabled !== false)) {
+        for (const seed of [1, 2]) {
+          const plan = generateRunPlan(reg, { ...defaultRunConfig(reg, tpl.id, seed), biomeId: biome.id });
+          for (const n of plan.nodes) {
+            const L = generateFloor(n.floorSpec);
+            const at = `${tpl.id}/${biome.id}/${seed}/${n.id} (${n.type}, ${n.floorSpec.floorId})`;
+            expect(closed(L), at).toEqual([]);
+            if (n.type === 'rest') {
+              rests++;
+              expect(L.decor.some((d) => d.kind === 'portal'), `${at}: дорога к сундуку — портал в город`).toBe(true);
+            }
+          }
+        }
+      }
+    }
+    expect(rests, 'тест имеет смысл, только пока привалы в забегах есть').toBeGreaterThan(0);
+  });
+
+  it('ни на одном включённом этаже, какой бы роли он ни был', () => {
+    for (const f of reg.get('floors').filter((x) => x.enabled !== false)) {
+      const biome = reg.get('biomes').find((b) => b.id === f.biomeId);
+      if (!biome) continue;
+      for (const exitCount of [0, 1, 2]) {
+        const L = generateFloor(resolveFloorSpec(biome, f, f.minDepth, 7, [], { exitCount }));
+        expect(closed(L), `${f.id} (${f.role}), выходов ${exitCount}`).toEqual([]);
+      }
+    }
   });
 });
 

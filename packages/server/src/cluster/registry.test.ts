@@ -2,13 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 
 /**
  * Закрепления персонажей за нодами (Ф4, R1-08) — против НАСТОЯЩЕЙ базы: здесь проверяется ровно SQL, и мок
- * проверил бы только сам себя. Без базы тест пропускается — `DM_PG` или локальный PostgreSQL на 5432.
+ * проверил бы только сам себя. Без базы тест пропускается — `DM_PG_TEST` или локальный PostgreSQL на 5432 (`dungeon_test`).
  *
- * ⚠ Адрес базы — в `vi.hoisted`, до импортов (см. `items.test.ts`): иначе пул открылся бы на DEV-базе.
+ * ⚠ Адрес базы — в `vi.hoisted`, до импортов (см. `items.test.ts`): иначе пул открылся бы на DEV-базе. Схема — своя на файл
+ * (`db/testDb.ts`): живые ноды и закрепления соседних файлов сюда не попадают.
  */
-vi.hoisted(() => {
-  process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
-});
+const tdb = await vi.hoisted(async () => (await import('../db/testDb.js')).testDb('registry'));
 
 let reg: typeof import('./registry.js');
 let pool: typeof import('../db/pool.js');
@@ -22,15 +21,11 @@ const ownerOf = async (charId: string): Promise<string | null> =>
   (await pool.q1<{ node_id: string }>('SELECT node_id FROM char_claims WHERE char_id = $1', [charId]))?.node_id ?? null;
 
 beforeAll(async () => {
+  alive = await tdb.open();
   pool = await import('../db/pool.js');
   reg = await import('./registry.js');
-  try {
-    await reg.initClusterSchema();
-    alive = true;
-  } catch {
-    alive = false;
-    return;
-  }
+  if (!alive) return;   // базы нет — тесты ниже пропустятся
+  await reg.initClusterSchema();
   await reg.heartbeat(nodeA, 'ws://a', beat);
   await reg.heartbeat(nodeB, 'ws://b', beat);
   // Мёртвая нода: была в реестре, но давно молчит.
@@ -39,9 +34,8 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   if (!alive) return;
-  await pool.q('DELETE FROM char_claims WHERE char_id LIKE $1', [`${tag}-%`]);
-  await pool.q('DELETE FROM cluster_nodes WHERE id LIKE $1', [`${tag}-%`]);
   await pool.closePool();
+  await tdb.drop();
 });
 
 describe.runIf(process.env.DM_SKIP_PG !== '1')('R1-08: закрепления за нодами', () => {
@@ -98,7 +92,8 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 2: гонка вхо�
     return c;
   }
   const hasLiveAt = async (): Promise<boolean> =>
-    (await pool.q(`SELECT 1 FROM information_schema.columns WHERE table_name = 'char_claims' AND column_name = 'live_at'`)).length > 0;
+    (await pool.q(`SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'char_claims' AND column_name = 'live_at'`)).length > 0;
 
   it('⭐ R2-05: две ноды входят одновременно — вторая видит закрепление первой, а не «строки нет, значит наше»', async () => {
     if (!alive) return;

@@ -14,11 +14,18 @@ import { reflowOnFontsReady } from './ui/fonts.js';
 export class ClassSelectScene extends Phaser.Scene {
   private nameInput?: HTMLInputElement;
   private errText?: Phaser.GameObjects.Text;
-  private busy = false;
+  /**
+   * «Запрос создания в пути» — флаг ПОКАЗА сцены, а не экземпляра (как `busy` в `screens3d.showCreate`). ⚠ R9-15: Phaser
+   * держит один экземпляр сцены на страницу, `scene.start` лишь заново зовёт `create()` — поле-флаг переживало показ, и
+   * после успеха (мир → возврат R4-22) или 401 («Вход» → снова сюда) все карточки молча не делали ничего до F5.
+   * Новый показ — новый флаг; ответ запроса прошлого показа снимает только свой.
+   */
+  private req = { busy: false };
 
   constructor() { super('ClassSelect'); }
 
   create(): void {
+    this.req = { busy: false };
     const app = App.from(this);
     if (!app.auth) { this.scene.start('Login'); return; }
     const { width, height } = this.scale;
@@ -82,10 +89,11 @@ export class ClassSelectScene extends Phaser.Scene {
   }
 
   private async startNewGame(cls: ClassDef): Promise<void> {
-    if (this.busy) return;
+    const req = this.req;
+    if (req.busy) return;
     const app = App.from(this);
     const name = this.nameInput?.value.trim() || 'Герой';
-    this.busy = true;
+    req.busy = true;
     this.errText?.setText('');
     try {
       const ch = await createCharacter(app.auth!.token, cls.id, name); // сервер строит авторитетный сейв
@@ -95,7 +103,7 @@ export class ClassSelectScene extends Phaser.Scene {
       const msg = (e as Error).message;
       if (/вход|401/i.test(msg)) { app.clearAuth(); this.scene.start('Login'); return; }
       this.errText?.setText(msg);
-      this.busy = false;
+      req.busy = false;
     }
   }
 }

@@ -1,7 +1,7 @@
 import { questRival, type QuestDef, type QuestProgress } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { PanelFactory } from '../../ui/domUi.js';
-import { button } from '../../ui/kit.js';
+import { askHere, button } from '../../ui/kit.js';
 
 /**
  * Журнал квестов (клавиша J) — ЧИСТЫЙ ВЬЮ. Активные/к сдаче читаются из авторитетного
@@ -40,11 +40,29 @@ function questBlock(def: QuestDef, prog: QuestProgress | undefined): HTMLElement
 /**
  * ⭐ R6-13: «Взять» задание доски. Начатое задание того же вида (`questRival`) новым пропало бы — сперва спросить; согласие
  * уходит флагом `replace`. Без флага сервер начатое не трогает и отказывает с его именем (так и у Unity, пока он флаг не шлёт).
+ *
+ * ⭐ R7-12: журнал (J) открывается и в подземелье, доска там жива, и `acceptQuest` сервер исполняет везде — вопрос вне
+ * города задаётся В ИГРЕ (`askHere`), а не `window.confirm`: замороженная страница оставляла героя под ударами (R1-14).
+ * Пока висел вопрос, игра шла — после «да» перепроверка: задание ещё на доске, и прежнее — то самое, о котором спросили
+ * (новая доска, прежнее выполнено или сменилось — строка в логе, а не молчание). Снятый игрой вопрос (`dismissAsk`: смена
+ * области, потеря связи) — это «нет», и лог молчит. `true` — команда ушла.
  */
-export function takeQuest(app: Pick<App, 'state' | 'sendCmd'>, def: QuestDef): void {
-  const rival = questRival(app.state!.save, def);
-  if (rival && !window.confirm(`У тебя уже есть «${rival.name}» (${rival.progress}).\nВзять новое — прежнее пропадёт вместе с прогрессом и наградой?`)) return;
+export async function takeQuest(
+  app: Pick<App, 'state' | 'sendCmd' | 'questBoard' | 'bus'>, def: QuestDef, ask?: (msg: string) => Promise<boolean>,
+): Promise<boolean> {
+  const state = app.state;
+  if (!state) return false;
+  const rival = questRival(state.save, def);
+  if (rival) {
+    if (!(await askHere(state.area === 'town', `У тебя уже есть «${rival.name}» (${rival.progress}).\nВзять новое — прежнее пропадёт вместе с прогрессом и наградой?`, ask))) return false;
+    const now = app.state;
+    const why = !now ? 'герой не в игре'
+      : !app.questBoard.some((d) => d.id === def.id) ? `«${def.name}» уже нет на доске`
+      : questRival(now.save, def)?.questId !== rival.questId ? `«${rival.name}» изменилось, пока висел вопрос — нажми «Взять» снова` : '';
+    if (why) { app.bus.emit('log:message', { text: `Задание не взято: ${why}`, kind: 'system' }); return false; }
+  }
   app.sendCmd({ cmd: 'acceptQuest', questId: def.id, ...(rival ? { replace: true as const } : {}) });
+  return true;
 }
 
 export const questLogPanel: PanelFactory = (app: App) => ({
@@ -79,7 +97,7 @@ export const questLogPanel: PanelFactory = (app: App) => ({
     }
     for (const def of app.questBoard) {
       const block = questBlock(def, undefined);
-      const btn = button('Взять', () => takeQuest(app, def));
+      const btn = button('Взять', () => { void takeQuest(app, def); });
       btn.style.marginTop = '6px';
       block.appendChild(btn);
       body.appendChild(block);

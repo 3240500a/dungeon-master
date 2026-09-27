@@ -146,3 +146,69 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     expect(h.logs.some((t) => /перезагрузите/i.test(t))).toBe(false);
   });
 });
+
+/**
+ * ⭐ R7-14: КОНФИГ СЕРВЕРА ЛОЖИТСЯ ЦЕЛИКОМ ИЛИ НИКАК. Деплой без перезагрузки вкладки (R5-15) со сменой схемы — новая
+ * таблица, переименованное поле — и старая вкладка не может разобрать ОДНУ таблицу. Реестр клал таблицы по одной: те, что
+ * до негодной, уже новые, она и дальше — старые; ошибку `syncConfig` глотал молча. Карточки кузницы и лавки считали цену
+ * по смеси двух конфигов, сервер отказывал «Цена изменилась», отказ снова звал `syncConfig` — та же смесь, тишина, и
+ * игрок застревал на отказах, не зная, что нужна перезагрузка. Теперь: негодный — прежний конфиг цел, и игроку ОДИН раз
+ * (на этот ETag) «перезагрузите страницу».
+ */
+describe('⭐ R7-14: серверный конфиг, который старая вкладка не разбирает', () => {
+  const G = globalThis as unknown as { fetch?: unknown };
+  let saved: unknown;
+  /** Ответ `/api/config`: тело (в порядке ключей схемы, как у сервера) и ETag. */
+  let reply: { body: unknown; etag: string };
+  let calls = 0;
+  beforeEach(() => {
+    saved = G.fetch;
+    calls = 0;
+    G.fetch = async (url: string, init?: { headers?: Record<string, string> }): Promise<unknown> => {
+      if (url !== '/api/config') throw new Error(`не ждали ${url}`);
+      calls++;
+      const { body, etag } = reply;
+      if (init?.headers?.['if-none-match'] === etag) return { ok: false, status: 304, headers: { get: () => etag }, json: async () => { throw new Error('304 без тела'); } };
+      return { ok: true, status: 200, headers: { get: (h: string) => (h.toLowerCase() === 'etag' ? etag : null) }, json: async () => JSON.parse(JSON.stringify(body)) as unknown };
+    };
+  });
+  afterEach(() => { G.fetch = saved; });
+
+  /** Снимок нового сервера: `balance` (первый ключ) изменён и годен; дальше — таблица, которой старая вкладка не знает. */
+  function newServer(): Record<string, unknown> {
+    const d = structuredClone(defaultConfigData) as unknown as Record<string, unknown>;
+    (d.balance as { respecCost: number }).respecCost = 777;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(d)) {
+      out[k] = v;
+      if (k === 'item-tiers') out['craft-new-table'] = [{ id: 'x' }];   // деплой, добавивший таблицу
+    }
+    (out.rarities as { name: string }[])[0]!.name = 'NEW-NAME';
+    return out;
+  }
+
+  it('⭐ ни одной таблицы нового конфига (было: `balance` новый, `rarities` старый); игроку — «перезагрузите», один раз на ETag', async () => {
+    reply = { body: newServer(), etag: 'W/"v2"' };
+    const app = new App();
+    const logs: string[] = [];
+    app.bus.on('log:message', (m) => { logs.push(m.text); });
+    await flush();
+    const def = new ConfigRegistry(); def.loadAll();
+    expect(app.config.get('balance').respecCost, 'было: 777 — половина нового конфига').toBe(def.get('balance').respecCost);
+    expect(app.config.get('rarities')[0]!.name).toBe(def.get('rarities')[0]!.name);
+    expect(logs.filter((t) => /перезагрузите страницу/i.test(t)), logs.join(' | ')).toHaveLength(1);
+
+    await app.syncConfig();                           // отказ «Цена изменилась» / новый вход — тот же сервер
+    await app.syncConfig();
+    expect(calls).toBe(3);
+    expect(logs.filter((t) => /перезагрузите/i.test(t)), 'тот же ETag — второй раз не твердим').toHaveLength(1);
+    expect(app.config.get('balance').respecCost).toBe(def.get('balance').respecCost);
+
+    // Сервер откатили (или вкладка того же выпуска): годный конфиг ложится, как раньше.
+    const ok = structuredClone(defaultConfigData) as unknown as { balance: { respecCost: number } };
+    ok.balance.respecCost = 555;
+    reply = { body: ok, etag: 'W/"v3"' };
+    await app.syncConfig();
+    expect(app.config.get('balance').respecCost).toBe(555);
+  });
+});

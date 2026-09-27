@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { levelForXp, xpForLevel, effectiveLevel, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
+import { levelForXp, xpForLevel, effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
 import { App } from '../core/app.js';
 import { ActionBar } from '../ui/actionBar.js';
 import { BeltBar } from '../ui/beltBar.js';
@@ -161,8 +161,8 @@ export class UIScene extends Phaser.Scene {
     if (state.depth > 0) {
       const diffs = this.app.config.get('difficulties');
       const diff = diffs.find((dd) => dd.id === state.difficultyId) ?? diffs.find((dd) => dd.id === 'normal') ?? diffs[0]!;
-      const el = effectiveLevel(state.save, this.app.config.get('balance').power).total;
-      const cl = challengeAtFloor(startChallenge(el, diff), diff, state.depth);
+      // R8-10: уровень, по которому сервер заселил узел; нет его (старый сервер) — своя мера по надетому и запасу.
+      const cl = state.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(state.save, this.app.config.get('balance').power, carriedGear(state.save)).total, diff), diff, state.depth);
       loc = `Этаж ${state.depth} · ${diff.name} · вызов ур.${cl}`;
     }
     this.label.setText(

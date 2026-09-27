@@ -575,12 +575,17 @@ export function decorate(r: Room, out: DecorObject[], rng: Rng, grid: Grid): voi
  *
  * Сокровищница получает сундук ВСЕГДА (иначе комната-награда стоит пустой), остальные
  * расходятся по случайным комнатам, кроме входа: сундук у входа не заставляет никуда идти.
+ * ⚠ R9-16: `blocked(x, y)` — точка мира под преградой декора (его ставят РАНЬШЕ, и резерв декора сундуков не знает). Центр
+ * под ней — сундук встаёт на ближайшую свободную клетку пола той же комнаты: высокая колонна на центре прятала его в свой
+ * коллайдер, а открывается сундук только в прямой видимости (R6-26) — отрезок к нему кончался внутри колонны с любой стороны.
+ * Свободной нет — сундука в комнате нет (как у нерегулярной комнаты). Бросков это не трогает: поток тот же.
  */
 export function placeChests(
   L: DungeonLayout,
   rng: Rng,
   tiers: readonly { id: string; enabled?: boolean; weight?: number }[],
   count: { min: number; max: number },
+  blocked: (x: number, y: number) => boolean = () => false,
 ): void {
   const pool = tiers.filter((t) => t.enabled !== false && (t.weight ?? 0) > 0);
   if (!pool.length) return;
@@ -596,11 +601,31 @@ export function placeChests(
   for (let i = rest.length - 1; i > 0; i--) { const j = rng.int(0, i); [rest[i], rest[j]] = [rest[j]!, rest[i]!]; }
   const want = Math.max(0, rng.int(count.min, Math.max(count.min, count.max)));
   const chosen = [...treasure, ...rest].slice(0, Math.max(treasure.length, want));
+  const free = (cx: number, cy: number): boolean => {
+    const w = cellToWorld(cx, cy);
+    return L.grid[cy]?.[cx] === Cell.Floor && !blocked(w.x, w.y);
+  };
   for (const r of chosen) {
     const c = roomCenter(r);
     if (L.grid[c.cy]?.[c.cx] !== Cell.Floor) continue;     // центр нерегулярной комнаты бывает стеной
-    L.chests.push({ id: L.chests.length + 1, ...cellToWorld(c.cx, c.cy), tier: pickTier() });
+    const at = free(c.cx, c.cy) ? c : nearestFree(r, c, free);
+    if (!at) continue;
+    L.chests.push({ id: L.chests.length + 1, ...cellToWorld(at.cx, at.cy), tier: pickTier() });
   }
+}
+
+/** Ближайшая к `c` свободная клетка комнаты (не у стены), по кольцам; порядок обхода фиксирован — этаж тот же на том же сиде. */
+function nearestFree(r: Room, c: { cx: number; cy: number }, free: (cx: number, cy: number) => boolean): { cx: number; cy: number } | null {
+  const reach = Math.max(r.w, r.h);
+  for (let d = 1; d <= reach; d++) {
+    for (let dy = -d; dy <= d; dy++) for (let dx = -d; dx <= d; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+      const cx = c.cx + dx, cy = c.cy + dy;
+      if (cx < r.x + 1 || cy < r.y + 1 || cx > r.x + r.w - 2 || cy > r.y + r.h - 2) continue;
+      if (free(cx, cy)) return { cx, cy };
+    }
+  }
+  return null;
 }
 
 /**

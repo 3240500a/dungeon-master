@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { craftWeapon, keyVariantsByBase, partsOf, shapeFoundWeapon, variantsFor, type CraftInput } from '../formulas/craft.js';
 import { CRAFT_SLOT_LIST, keySlotOf } from '../formulas/craftType.js';
@@ -11,6 +11,12 @@ import type { PlayerEntity } from '../world/state.js';
 import type { PeerInfo } from './netTypes.js';
 import { peerInfoOf } from './serialize.js';
 import { weaponLookOf, weaponLookSig } from './weapon3d.js';
+
+// Вывод деталей старой вещи перебором (`partsOf`) — под счётчиком: память вывода проверяется числом переборов, а не часами.
+vi.mock('../formulas/craft.js', async (orig) => {
+  const m = await orig<typeof import('../formulas/craft.js')>();
+  return { ...m, partsOf: vi.fn(m.partsOf) };
+});
 
 /**
  * ⭐ ДРУГИЕ ИГРОКИ ВИДЯТ СКОВАННОЕ (D22, К6). Кадр `peerInfo` несёт вид оружия — базу и четыре детали
@@ -145,17 +151,18 @@ describe('weaponLook: из чего сделано оружие в руках (D
 
   it('выведенные детали старой вещи запоминаются: рассылка после каждой команды не перебирает ступени', () => {
     const olds = Array.from({ length: 8 }, (_, i) => dropped('long-sword', 100 + i));
-    const t0 = performance.now();
+    // Переборы — счётом: раньше здесь было «тёплый проход впятеро быстрее холодного» по часам, и под нагрузкой полного прогона
+    // (процесс ждёт своей очереди на ядро) тёплый проход выходил медленнее — на исправной памяти.
+    const derive = vi.mocked(partsOf);
+    derive.mockClear();
     const first = olds.map((o) => weaponLookOf(reg, o, undefined));
-    const cold = performance.now() - t0;
-    const t1 = performance.now();
+    expect(derive, 'холодный проход — по перебору на вещь').toHaveBeenCalledTimes(olds.length);
     for (let k = 0; k < 50; k++) for (let i = 0; i < olds.length; i++) expect(weaponLookOf(reg, olds[i], undefined)).toEqual(first[i]);
-    const warm = (performance.now() - t1) / 50;
-    // Тёплый проход по восьми вещам — в разы дешевле холодного: вывод не повторялся (замер: ×50–100; без памяти ≈ ×1).
-    expect(warm).toBeLessThan(cold / 5);
+    expect(derive, 'пятьдесят тёплых проходов — ни одного перебора').toHaveBeenCalledTimes(olds.length);
     // Память — по содержимому вещи, не по объекту: сейв клиента приходит новым JSON каждый раз.
     const clone = JSON.parse(JSON.stringify(olds[0])) as Item;
     expect(weaponLookOf(reg, clone, undefined)).toEqual(first[0]);
+    expect(derive, 'копия той же вещи — из памяти').toHaveBeenCalledTimes(olds.length);
     // Другая ступень у той же вещи — другой вывод (ключ памяти её учитывает).
     const tiers = reg.get('item-tiers').filter((t) => t.enabled !== false);
     const other = tiers.find((t) => t.id !== olds[0]!.tier)!;

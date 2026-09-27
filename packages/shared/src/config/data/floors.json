@@ -28,7 +28,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -68,7 +67,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -108,7 +106,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -151,7 +148,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": true,
       "uniqueRooms": 0,
@@ -194,7 +190,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -234,7 +229,6 @@
     },
     "features": {
       "portal": true,
-      "stash": true,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -268,7 +262,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -302,7 +295,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -336,7 +328,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": true,
       "uniqueRooms": 0,
@@ -370,7 +361,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -409,7 +399,6 @@
     },
     "features": {
       "portal": true,
-      "stash": true,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -441,7 +430,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -473,7 +461,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -505,7 +492,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": true,
       "uniqueRooms": 0,
@@ -537,7 +523,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -576,7 +561,6 @@
     },
     "features": {
       "portal": true,
-      "stash": true,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -616,7 +600,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -656,7 +639,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -696,7 +678,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": true,
       "uniqueRooms": 0,
@@ -736,7 +717,6 @@
     },
     "features": {
       "portal": false,
-      "stash": false,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,
@@ -775,7 +755,6 @@
     },
     "features": {
       "portal": true,
-      "stash": true,
       "shop": false,
       "bossRoom": false,
       "uniqueRooms": 0,

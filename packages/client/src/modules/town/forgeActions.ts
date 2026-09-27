@@ -1,5 +1,5 @@
 import {
-  upgradeCost, repairCost, upgradedItem, salvageRange, canSalvageItem, canRerollItem, canUpgradeItem, canEnchantItem, canAffordBoth,
+  upgradeCost, repairCost, upgradedItem, salvageMean, salvageRange, canSalvageItem, canRerollItem, canUpgradeItem, canEnchantItem, canRepairItem, canAffordBoth,
   availableMaterials, nextTierOf, forgeGold, enchantCost, type ConfigRegistry, type Item,
 } from '@dm/shared';
 
@@ -32,6 +32,12 @@ export interface BenchAction {
    * конфиг мог уйти вперёд клиентского). Нет — действие бесплатно (разбор) или недоступно.
    */
   gold?: number;
+  /** ⭐ R8-14: сырьё строк карточки (улучшение, починка) — в команду `maxMaterials`: больше сервер не возьмёт. */
+  materials?: Record<string, number>;
+  /** ⭐ R8-14: низ вилки «от–до» разбора — в команду `minYield`: меньше сервер не даст, вещь останется цела. */
+  minYield?: Record<string, number>;
+  /** ⭐ R9-04: средний выход разбора — в команду `avgYield`: у дробной доли низ вилки — 0 при любой правке выхода. */
+  avgYield?: Record<string, number>;
 }
 
 /**
@@ -40,7 +46,9 @@ export interface BenchAction {
  * целой — улучшение. `undefined` — менять нечего.
  */
 export function benchTarget(reg: ConfigRegistry, item: Item): Item | undefined {
-  return item.broken ? { ...item, broken: false } : upgradedItem(reg, item);
+  // R7-19: сломанное, которое кузнец не чинит (уник), — предпросмотра нет: шапка и карточка говорят одно.
+  if (item.broken) return canRepairItem(reg, item).ok ? { ...item, broken: false } : undefined;
+  return upgradedItem(reg, item);
 }
 
 /**
@@ -116,7 +124,10 @@ export function benchActions(
   const out: BenchAction[] = [];
 
   if (item.broken) {
-    const cost = repairCost(reg, item);
+    // ⚠ R7-19: гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canRepairItem`: уник кузнец не чинит), и говорит почему.
+    // Прежде карточка у сломанного уника горела с ценой в одно золото (его лестница сырья пуста), и сервер её исполнял.
+    const can = canRepairItem(reg, item);
+    const cost = can.ok ? repairCost(reg, item) : {};
     // ⚠ Цена считается ТОЙ ЖЕ `forgeGold`, которой её считает сервер: она зависит от ступени и
     // редкости вещи, и своя формула здесь молча разошлась бы с отказом сервера.
     const price = forgeGold(reg, item, 'repair');
@@ -124,8 +135,8 @@ export function benchActions(
     const matsOk = !Object.keys(cost).length || canAffordBoth(inventory, stashWallet, cost);
     out.push({
       id: 'repair', cmd: 'forgeRepair', title: '🔧 Починить', sub: 'снимет «сломано»',
-      primary: true, enabled: goldOk && matsOk, gold: price,
-      lines: [
+      primary: true, enabled: can.ok && goldOk && matsOk, gold: can.ok ? price : undefined, materials: can.ok ? cost : undefined,
+      lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }] : [
         { text: `${price} золота`, state: goldOk ? 'ok' : 'miss' },
         ...costLines(cost, have, nameOf),
       ],
@@ -143,7 +154,7 @@ export function benchActions(
       sub: item.parts ? 'скованная вещь' : nt ? `до «${nt.name}»` : 'вещь на потолке',
       primary: true,
       enabled: can.ok && goldOk && canAffordBoth(inventory, stashWallet, cost),
-      gold: can.ok ? price : undefined,
+      gold: can.ok ? price : undefined, materials: can.ok ? cost : undefined,
       tip: can.ok ? 'Кузнечная вещь требует меньше атрибутов, чем найденная того же тира' : undefined,
       lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }]
         : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(cost, have, nameOf)],
@@ -192,6 +203,8 @@ export function benchActions(
   out.push({
     id: 'salvage', cmd: 'forgeSalvage', title: '♻ Разобрать', sub: 'вещь исчезнет',
     primary: false, enabled: can.ok,
+    minYield: can.ok ? Object.fromEntries(Object.entries(rng.range).map(([id, r]) => [id, r.min])) : undefined,
+    avgYield: (can.ok && salvageMean(reg, item, false)) || undefined,
     lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }]
       : Object.entries(rng.range).map(([id, r]) => ({
         text: `${nameOf(id)} ${r.min === r.max ? r.min : `${r.min}–${r.max}`}`,

@@ -5,6 +5,11 @@ import { ConfigRegistry, newCharacterSave, type ServerFrame, type SaveState } fr
 import { counters } from './metrics.js';
 import { limits } from './rateLimit.js';
 
+// Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
+// таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
+// потолок не прячет — они падают утверждением, а не временем.
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * Раунд 6 (сервер), граница менеджера комнат: кадр ввода не разбирается до входа и не бывает большим (R6-05); копия
  * героя, закреплённого за чужой нодой, не пишет штраф в его строку (R6-06); поток кадров лобби без входа не запирает
@@ -24,6 +29,9 @@ const db = vi.hoisted(() => ({
   log: [] as { charId: string; v: number; ok: boolean }[],
 }));
 vi.mock('../db/db.js', () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   getSession: async (token: string) => { db.sessionReads++; return db.sessions.get(token) ?? null; },
   getCharacter: async (charId: string) => {
     const r = db.chars.get(charId);
@@ -139,7 +147,12 @@ beforeAll(async () => {
   ({ RoomManager: RM } = await import('./roomManager.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
-  rm = new RM(cfg);
+  // ⚠ БЕЗ ФОНОВОЙ ДОПИСИ ПО ТАЙМЕРУ (R3-19): менеджер раз в 5 с НАСТОЯЩЕГО времени сам дописывает копии из `unsaved`, а
+  // тесты R6-06 держат копию «на дописать» между шагами и дописывают её сами (`retryUnsaved`, статус забега, слив). Под
+  // нагрузкой полного прогона фон попадал в окно теста: штраф ложился раньше, чем тест подменял строку героя, — «штраф ждёт
+  // дописи: false». Интервал заводится на поддельных часах и с ними же пропадает; сам фон проверяет `roomManager.test.ts`.
+  vi.useFakeTimers({ toFake: ['setInterval'] });
+  try { rm = new RM(cfg); } finally { vi.useRealTimers(); }
 });
 beforeEach(() => { freshIp('127.0.0.1'); });
 afterEach(() => { db.failFor = null; reg.owner = null; vi.restoreAllMocks(); });
@@ -154,11 +167,13 @@ describe('⭐ R6-05: кадр ввода — не разбирается до в
   it('соединение без входа: 300 «кадров ввода» по 64 КБ — ни одного разбора JSON, главный поток свободен', () => {
     const ws = connFrom('198.51.100.5');
     const parse = vi.spyOn(JSON, 'parse');
-    const t0 = performance.now();
+    // Время процессора, а не часов: под нагрузкой полного прогона процесс вытесняют, и настенные 50 мс «съедало» ожидание
+    // своей очереди на ядро. Разбор такого кадра — ~3 мс процессора, 300 разборов — около секунды; без разбора — единицы мс.
+    const cpu0 = process.cpuUsage();
     for (let i = 0; i < 300; i++) ws.push(NESTED_INPUT);
-    const ms = performance.now() - t0;
+    const cpu = process.cpuUsage(cpu0);
     expect(bigParses(parse), 'разборов').toBe(0);
-    expect(ms, 'синхронное время на 300 кадров, мс').toBeLessThan(50);
+    expect((cpu.user + cpu.system) / 1000, 'процессорное время на 300 кадров, мс').toBeLessThan(250);
     ws.close();
   });
 
@@ -343,6 +358,8 @@ describe('⭐ R6-09: поток кадров лобби без входа не �
     const friend = seedChar('r609f'), attacker = seedChar('r609a'), victim = seedChar('r609v');
     const wf = await joined(friend, { fresh: true }, '198.51.100.20');
     const code = roomOf(friend.charId).code;
+    // Часы бакетов стоят: «пять промахов — и хватит» не зависит от того, успел ли бакет пополниться под нагрузкой (1 за 2 с).
+    vi.spyOn(performance, 'now').mockReturnValue(performance.now());
     const atk = connFrom(ip);
     for (let i = 0; i < 6; i++) atk.push({ t: 'join', token: attacker.token, charId: attacker.charId, roomCode: `AZ${i}ZZZZZ` });
     await settle(20);

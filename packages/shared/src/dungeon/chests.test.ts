@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { generateFloorParams } from './generateFloor.js';
-import { Cell, cellToWorld, makeGrid, type Grid } from '../world/grid.js';
+import { Cell, TILE, cellToWorld, makeGrid, worldToCell, type Grid } from '../world/grid.js';
+import { hasLineOfSight } from '../world/lineOfSight.js';
+import { pushOutObstacle } from '../world/movement.js';
 import { GameSession, type PlayerInput, type SessionEvent } from '../session/session.js';
 import { newBotSave } from '../sim/playerBot.js';
+import { obstaclesFromDecor, type DecorSpec } from './decor.js';
 
 /**
  * ⭐ Сундук — второй источник добычи, с ритмом, противоположным монстрам: вещь ГАРАНТИРОВАННО,
@@ -103,5 +106,66 @@ describe('сундуки на этаже', () => {
     let rare = 0;
     for (let seed = 1; seed <= 20; seed++) { plain += count('plain', seed); rare += count('rare', seed); }
     expect(rare).toBeGreaterThan(plain);
+  });
+});
+
+/**
+ * ⚠ R9-16: СУНДУК НЕ ПОД ПРЕГРАДОЙ ДЕКОРА. Сундук ставится в центр комнаты ПОСЛЕ декора, а резерв декора сундуков не знает:
+ * колонна пола (`blocks` + `blocksSight`, объект конфига — один переключатель в редакторе) на клетке центра прятала сундук в
+ * свой коллайдер. С R6-26 сундук открывается только в прямой видимости, а отрезок к нему всегда кончается внутри колонны —
+ * ни с одной стороны не открыть, хотя клиенты его рисуют.
+ */
+describe('⚠ R9-16: высокий декор не запирает сундук', () => {
+  const tall: DecorSpec = {
+    id: 'r9-tall-column', footprint: { w: 1, h: 1 }, weight: 1, spawnChance: 1, surface: 'floor',
+    coversFloor: false, blocks: true, blocksSight: true, collider: { shape: 'circle', r: 0.4 },
+  };
+  const byId = new Map([[tall.id, tall]]);
+  const N8: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+  it('⭐ каждый сундук — вне коллайдера декора, и к нему есть клетка рядом в прямой видимости; сессия его открывает', () => {
+    let chests = 0, opened = 0;
+    const bad: string[] = [];
+    for (const floor of reg.get('floors')) {
+      for (let seed = 1; seed <= 60; seed++) {
+        const L = generateFloorParams(floor.algoParams, seed, { chests: chestOpts, decorSpecs: [tall] });
+        const obstacles = obstaclesFromDecor(L.decor, byId);
+        for (const ch of L.chests) {
+          chests++;
+          if (obstacles.some((o) => pushOutObstacle(ch.x, ch.y, 0, o) !== null)) { bad.push(`${floor.id} #${seed}: сундук ${ch.id} внутри колонны`); continue; }
+          const c = worldToCell(ch.x, ch.y);
+          const stand = N8.map(([dx, dy]) => cellToWorld(c.cx + dx, c.cy + dy)).find((p) => {
+            const pc = worldToCell(p.x, p.y);
+            return L.grid[pc.cy]?.[pc.cx] === Cell.Floor && !obstacles.some((o) => pushOutObstacle(p.x, p.y, 10, o) !== null)
+              && Math.hypot(p.x - ch.x, p.y - ch.y) <= 56 && hasLineOfSight(L.grid, p.x, p.y, ch.x, ch.y, obstacles);
+          });
+          if (!stand) { bad.push(`${floor.id} #${seed}: к сундуку ${ch.id} не подойти на виду`); continue; }
+          // Сквозная проверка — та же сессия, что у сервера: герой рядом, [E] по id.
+          if (opened < 40) {
+            const s = new GameSession(reg, seed, 'normal');
+            s.addPlayer('p1', newBotSave(reg, 'warrior'));
+            s.enterFloor(1, { grid: L.grid, spawn: stand, monsters: [], obstacles, chests: [{ id: ch.id, x: ch.x, y: ch.y, tier: ch.tier }] });
+            if (!s.openChest('p1', ch.id)) bad.push(`${floor.id} #${seed}: сессия не открыла сундук ${ch.id}`);
+            opened++;
+          }
+        }
+      }
+    }
+    expect(bad, bad.slice(0, 10).join('\n')).toEqual([]);
+    expect(chests, 'сторож видел сундуки').toBeGreaterThan(100);
+  });
+
+  it('без преград декора сундук стоит, где стоял: центр комнаты (сдвиг — только из-под колонны)', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const plain = generateFloorParams(params, seed, { chests: chestOpts });
+      const low = generateFloorParams(params, seed, { chests: chestOpts, decorSpecs: [{ ...tall, blocks: false, blocksSight: false }] });
+      expect(low.chests, `сид ${seed}: низкий декор сундуки не двигает`).toEqual(plain.chests);
+      for (const ch of plain.chests) {
+        const c = worldToCell(ch.x, ch.y);
+        const room = plain.rooms.find((r) => c.cx >= r.x && c.cx < r.x + r.w && c.cy >= r.y && c.cy < r.y + r.h)!;
+        expect({ cx: c.cx, cy: c.cy }).toEqual({ cx: Math.floor(room.x + room.w / 2), cy: Math.floor(room.y + room.h / 2) });
+      }
+    }
+    expect(TILE).toBe(32);
   });
 });

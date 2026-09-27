@@ -1,5 +1,5 @@
 import {
-  ConfigRegistry, generateRunPlan, generateFloor, resolveMonsterPool, spawnPacksEl, createRng,
+  ConfigRegistry, generateRunPlan, generateFloor, resolveMonsterPool, spawnPacksEl, createRng, runModifierLive,
   Cell, TILE, type RunConfig, type RunPlan, type RunNode, type RunModifier, type RunTemplate, type Biome,
   type DungeonLayout, type MonsterSpawn,
 } from '@dm/shared';
@@ -412,7 +412,9 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     cb.addEventListener('change', () => { if (cb.checked) t.modifiers.add(m.id); else t.modifiers.delete(m.id); });
     const txt = document.createElement('span');
     const kindColor = m.kind === 'affliction' || m.kind === 'suffix' ? '#e05a5a' : m.kind === 'boon' || m.kind === 'prefix' ? '#4ade80' : '#caa64b';
-    txt.innerHTML = `<span style="color:${kindColor}">${m.name}</span> <span style="color:#7a7a8a">${modEffectText(m)}</span>`;
+    // ⚠ R8-12: эффект, который игра не применяет, — пометка: алтарь игры такой не предлагает, и в план он не попадёт.
+    const dead = runModifierLive(m) ? '' : ' <span style="color:#d0a060" title="Эффект не подключён: игра его не применяет, алтарь не предлагает, в план не попадёт">⚠ не действует</span>';
+    txt.innerHTML = `<span style="color:${kindColor}">${m.name}</span> <span style="color:#7a7a8a">${modEffectText(m)}</span>${dead}`;
     lbl.append(cb, txt); altar.append(lbl);
   }
   if (!runMods.length) { const e = document.createElement('div'); e.textContent = 'Нет доступных модификаторов.'; e.style.cssText = 'color:#666;font-size:12px'; altar.append(e); }
@@ -496,12 +498,12 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
       `<span>Комнат: ${L.rooms.length}</span>` +
       `<span>Двери: ${L.doors.length}${node.floorSpec.locked ? ' 🔒' : ''}</span>` +
       `<span>Выходов: <b>${L.exits.length}</b></span>` +
-      (isTown ? '<span style="color:#8a5cff">🏚 Город: портал + сундук</span>' : `<span>Монстры: <b>${monsters.length}</b> (ур.~${avgLvl}${uniques ? `, уник. ${uniques}` : ''})</span>`) +
+      (isTown ? '<span style="color:#8a5cff">🏚 Привал: портал в город</span>' : `<span>Монстры: <b>${monsters.length}</b> (ур.~${avgLvl}${uniques ? `, уник. ${uniques}` : ''})</span>`) +
       `<span style="color:#4ade80">Проходим ✓</span>`;
     preview.appendChild(info);
     const f = node.floorSpec.features;
     const featList = [
-      f.portal && '🌀 портал', f.stash && '📦 сундук', f.shop && '🛒 лавка', f.bossRoom && '☠ босс-комната',
+      f.portal && '🌀 портал', f.shop && '🛒 лавка', f.bossRoom && '☠ босс-комната',
       f.uniqueRooms ? `★ уники ×${f.uniqueRooms}` : '', f.treasureRooms ? `◆ сокровищницы ×${f.treasureRooms}` : '',
     ].filter(Boolean);
     const meta = document.createElement('div');

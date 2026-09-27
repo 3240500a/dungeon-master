@@ -58,6 +58,8 @@ export class LoadBot {
   private pingSentAt = new Map<number, number>();
   private pingId = 0;
   private seq = 0;
+  /** Открыл комнату сам (хост пати или соло) — только он зовёт спуск, остальные голосуют. */
+  private leads = false;
 
   constructor(private readonly o: BotOptions) {}
 
@@ -114,7 +116,8 @@ export class LoadBot {
     });
     ws.on('message', (data: Buffer, isBinary: boolean) => this.onMessage(data, group, isBinary));
 
-    this.send({ t: 'join', token, charId: character.charId, ...(isHost || !code ? { fresh: true } : { roomCode: code }) });
+    this.leads = isHost || !code;
+    this.send({ t: 'join', token, charId: character.charId, ...(this.leads ? { fresh: true } : { roomCode: code }) });
 
     this.inputTimer = setInterval(() => this.sendInput(), 1000 / this.o.inputHz);
     this.pingTimer = setInterval(() => {
@@ -167,7 +170,10 @@ export class LoadBot {
       case 'joined':
         this.o.roomCodes.set(group, frame.roomCode);
         // Спуск идёт голосованием: хост инициирует, остальные голосуют «за» по `voteStart`.
-        if (this.o.descend) setTimeout(() => this.send({ t: 'descend', difficultyId: 'normal' }), 1500 + Math.random() * 1500);
+        // ⚠ Только хост (тот, кто открыл комнату): спуск от каждого бота пати сервер честно отклонял — «Уже идёт
+        // голосование» пока оно шло и «Подождите немного» в паузе после перехода, — и стенд с `--group` получал
+        // ошибки от самого себя, вердикт ✗ при здоровом сервере (E2E 27.09).
+        if (this.o.descend && this.leads) setTimeout(() => this.send({ t: 'descend', difficultyId: 'normal' }), 1500 + Math.random() * 1500);
         break;
       case 'voteStart':
         setTimeout(() => this.send({ t: 'vote', accept: true }), 100);

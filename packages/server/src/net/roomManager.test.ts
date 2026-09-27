@@ -4,6 +4,11 @@ import { ConfigRegistry, newCharacterSave, type ServerFrame, type SaveState, typ
 import { counters } from './metrics.js';
 import { limits } from './rateLimit.js';
 
+// Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
+// таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
+// потолок не прячет — они падают утверждением, а не временем.
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * Сетевая граница (D11) целиком: кадр приходит СТРОКОЙ, как из сокета, и проходит весь путь
  * менеджера — разбор, лимиты, очередь соединения, комнату. Проверяем, что мусор в кадре ввода
@@ -63,6 +68,9 @@ const pg = vi.hoisted(() => ({
  */
 const reg = vi.hoisted(() => ({ calls: [] as string[], owner: null as string | null, dbAheadMs: 0, draining: false, claimGate: null as Promise<void> | null }));
 vi.mock('../db/db.js', async () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   getSession: async (token: string) => {
     db.sessionReads++;
     pg.text(token);
@@ -221,13 +229,23 @@ function hold(): () => void {
   db.gate = new Promise<void>((r) => { open = r; });
   return () => { db.gate = null; open(); };
 }
+/**
+ * Часы бакетов лимитов стоят до конца теста (снимает `afterEach`): бакет пополняется по монотонным часам (1 токен за 0,5–2 с),
+ * и тест, считающий «пятый прошёл, шестой — "Слишком часто"», под нагрузкой полного прогона ловил пополнение посреди пачки.
+ * Комнаты при этом не тикают — планировщику тоже нужны часы.
+ */
+function freezeBuckets(): void { vi.spyOn(performance, 'now').mockReturnValue(performance.now()); }
 
 beforeAll(async () => {
   ({ RoomManager: RM } = await import('./roomManager.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
   db.chars.set('char-rm', { data: newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Граница', 'char-rm') as SaveState, version: 1 });
-  rm = new RM(cfg);
+  // ⚠ БЕЗ ФОНОВОЙ ДОПИСИ ПО ТАЙМЕРУ (R3-19): раз в 5 с НАСТОЯЩЕГО времени менеджер сам дописывает копии из `unsaved` — и под
+  // нагрузкой попадал в окно теста, забирая «следующую запись упадёт» и дописывая копию раньше проверки. Тесты дописывают
+  // сами (`retryUnsaved`); интервал заводится на поддельных часах и пропадает с ними. Сам фон — последний тест файла.
+  vi.useFakeTimers({ toFake: ['setInterval'] });
+  try { rm = new RM(cfg); } finally { vi.useRealTimers(); }
 });
 // Все герои теста — одного аккаунта: лимит создания комнат (Ф0.5) не должен путать сценарии.
 beforeEach(() => {
@@ -995,6 +1013,9 @@ describe('RoomManager — раунд 4: вход, выход и лимиты (R4
     const wsAlt = await joined(alt);
     const code = roomOf(alt).code;
     const ws = await joined(main, { roomCode: code });
+    // Часы бакетов стоят с первой команды: «вышел-зашёл — лимит тот же» не должно зависеть от того, прошли ли за выход и вход
+    // полсекунды (разбор пополняется 2 в секунду) — под нагрузкой полного прогона проходили, и седьмой разбор пропускался.
+    freezeBuckets();
     const salvage = (id: number): void => ws.push({ t: 'cmd', command: { cmd: 'salvage', uid: `no-such-${id}` }, id });
     const limited = (): number => ws.frames.filter((f) => f.t === 'cmdResult' && f.reason === 'Слишком часто').length;
     for (let i = 1; i <= 6; i++) salvage(i);
@@ -1009,9 +1030,7 @@ describe('RoomManager — раунд 4: вход, выход и лимиты (R4
     await settle(10);
     expect(ws.last('cmdResult'), 'вышел-зашёл — лимит тот же').toMatchObject({ id: 7, ok: false, reason: 'Слишком часто' });
     lim.roomJoin?.reset('user-rm');
-    // Одиннадцать входов «в одну секунду»: монотонные часы стоят, пока тест ждёт мок базы.
-    const frozen = performance.now();
-    vi.spyOn(performance, 'now').mockReturnValue(frozen);
+    // Одиннадцать входов «в одну секунду»: монотонные часы стоят (с начала теста), пока тест ждёт мок базы.
     let rate = 0;
     for (let i = 0; i < 11; i++) {
       ws.push({ t: 'leave' });
@@ -1028,6 +1047,7 @@ describe('RoomManager — раунд 4: вход, выход и лимиты (R4
 
   it('⭐ R4-18: промахи кода комнаты упираются в лимит; исчерпан — до базы не доходят (R5-25: сами промахи — после сессии)', async () => {
     const a = seedChar('r418');
+    freezeBuckets();
     const ws = new FakeConn();
     rm.handleConnection(ws);
     const s0 = db.sessionReads, r0 = db.reads;
@@ -1268,6 +1288,7 @@ describe('RoomManager — раунд 5: вход, слив и лимиты ло�
   it('⭐ R5-12: 5 сокетов × 50 кадров статуса забега — чтения базы под потолком аккаунта, лишнее — «rate»', async () => {
     const a = seedChar('r512');
     freshLobby();
+    freezeBuckets();
     const socks = [0, 1, 2, 3, 4].map(() => { const w = new FakeConn(); rm.handleConnection(w); return w; });
     const r0 = db.reads;
     for (let i = 0; i < 50; i++) for (const w of socks) w.push({ t: 'runStatus', token: TOK, charId: a });
@@ -1326,6 +1347,7 @@ describe('RoomManager — раунд 5: вход, слив и лимиты ло�
   it('⭐ R5-25: промахи кода с двух адресов одной IPv6-сети /64 — один бакет; и аккаунт платит сам', async () => {
     const a = seedChar('r525b');
     freshLobby();
+    freezeBuckets();
     const keys = ['ip:2001:db8:1:2::/64', 'ip:2001:db8:9:0::/64'];
     try {
       const w1 = connFrom('2001:db8:1:2::1');

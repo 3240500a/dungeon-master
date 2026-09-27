@@ -6,17 +6,18 @@ import { itemsOfSave, itemsOfStash } from './items.js';
  * Леджер предметов и журнал происхождения (Ф2) — против НАСТОЯЩЕЙ базы.
  *
  * Мокать здесь нечего: проверяется ровно то, что делает Postgres (транзакция, первичный ключ,
- * триггер запрета переписывания журнала). Без базы тест пропускается — `DM_PG` или локальный
- * PostgreSQL на 5432, см. `loadtest/README.md`.
+ * триггер запрета переписывания журнала). Без базы тест пропускается — `DM_PG_TEST` или локальный
+ * PostgreSQL на 5432 с базой `dungeon_test`, см. `loadtest/README.md`.
  *
  * ⚠ АДРЕС БАЗЫ — В `vi.hoisted`, до всех импортов. Статический `import './items.js'` выше тянет
  * `pool.js`, а тот читает `DM_PG` в момент загрузки; импорты в ESM исполняются ДО тела модуля.
  * Пока присваивание стояло обычной строкой, пул успевал открыться на DEV-базе (`dungeon`), и
  * тесты писали пользователей, персонажей и подсаженные «дюпы» прямо в базу разработки.
+ *
+ * ⭐ СВОЯ СХЕМА НА ФАЙЛ (`testDb.ts`): аудит здесь читает всю базу, и в общей схеме дюпы соседних файлов и упавших
+ * прогонов вытесняли из десяти примеров находки дюп этого теста — он падал «сам по себе», в том числе поодиночке.
  */
-vi.hoisted(() => {
-  process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
-});
+const tdb = await vi.hoisted(async () => (await import('./testDb.js')).testDb('items'));
 
 let db: typeof import('./db.js');
 let pool: typeof import('./pool.js');
@@ -24,19 +25,17 @@ let alive = false;
 let cfg: ConfigRegistry;
 
 beforeAll(async () => {
+  alive = await tdb.open();
   pool = await import('./pool.js');
-  try {
-    await pool.initSchema();
-    alive = true;
-  } catch {
-    alive = false;   // базы нет — тесты ниже пропустятся
-    return;
-  }
+  if (!alive) return;   // базы нет — тесты ниже пропустятся
+  // Обе схемы, как у процессов, гоняющих аудит (гейтвей, `items:audit`): аудит читает и закрепления кластера.
+  await pool.initSchema();
+  await (await import('../cluster/registry.js')).initClusterSchema();
   db = await import('./db.js');
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
-afterAll(async () => { if (alive) await pool.closePool(); });
+afterAll(async () => { if (alive) { await pool.closePool(); await tdb.drop(); } });
 
 /** Свежий аккаунт с персонажем: у него уже есть стартовый комплект вещей. */
 async function freshChar(): Promise<{ userId: string; charId: string; save: SaveState }> {
@@ -259,14 +258,22 @@ const uidsOf = (s: SaveState): string[] => [
   ...s.inventory.map((i) => i.uid),
   ...s.belt.filter(Boolean).map((i) => i!.uid),
 ];
-/** Дождаться, пока чей-то запрос встанет в ожидание блокировки строки. */
-async function lockWait(ms = 3000): Promise<boolean> {
+/**
+ * Сколько сеансов ЭТОГО файла сейчас ждут блокировку. Свои — по `application_name` (имя схемы файла, `testDb.ts`): база
+ * общая, и ожидание блокировки в соседнем файле раньше давало ложное «отзыв уже ждёт».
+ */
+async function ourLockWaiters(): Promise<number> {
+  const r = await pool.q1<{ n: number }>(
+    `SELECT count(*)::int AS n FROM pg_stat_activity
+     WHERE datname = current_database() AND application_name = current_setting('application_name')
+       AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`);
+  return r?.n ?? 0;
+}
+/** Дождаться, пока запрос этого файла встанет в ожидание блокировки строки. */
+async function lockWait(ms = 10_000): Promise<boolean> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
-    const r = await pool.q1<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_stat_activity
-       WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`);
-    if ((r?.n ?? 0) > 0) return true;
+    if (await ourLockWaiters() > 0) return true;
     await new Promise((res) => setTimeout(res, 20));
   }
   return false;
@@ -500,19 +507,24 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 2: журнал ве�
     try {
       await reader.query('BEGIN');
       await reader.query('SELECT count(*) FROM account_stash');     // долгий читатель — ночной аудит
-      let inited = false;
-      const init = pool.initSchema().then(() => { inited = true; });
-      await new Promise((r) => setTimeout(r, 100));
-      const t0 = Date.now();
-      await db.getAccountStash('нет-такого-аккаунта');
-      expect(Date.now() - t0, 'чтение сундука не ждёт ALTER, стоящий за читателем').toBeLessThan(500);
-      await Promise.race([init, new Promise((r) => setTimeout(r, 1000))]);
-      expect(inited, 'старт не ждёт читателя').toBe(true);
+      // Без часов: ALTER правки схемы встал бы в ожидание блокировки за читателем (до `lock_timeout`, и так пять попыток),
+      // а чтение сундука — за ним. Наблюдатель опрашивает, не ждёт ли блокировку хоть один сеанс файла, пока старт и
+      // чтение идут; читатель держит транзакцию всё это время — закончиться «после него» им не дано.
+      let waited = 0, done = false;
+      const watch = (async () => {
+        while (!done) { waited = Math.max(waited, await ourLockWaiters()); await new Promise((r) => setTimeout(r, 20)); }
+      })();
+      const work = Promise.all([pool.initSchema(), db.getAccountStash('нет-такого-аккаунта')]);
+      const finished = await Promise.race([work.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))]);
+      done = true;
+      await watch;
+      expect(finished, 'старт и чтение сундука закончились, пока долгий читатель держит транзакцию').toBe(true);
+      expect(waited, 'ни старт, ни чтение сундука не ждали блокировку за читателем').toBe(0);
     } finally {
       await reader.query('ROLLBACK').catch(() => undefined);
       await reader.end();
     }
-  }, 15_000);
+  }, 30_000);
 });
 
 describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 4: одновременные записи героев аккаунта, потолок ростера', () => {

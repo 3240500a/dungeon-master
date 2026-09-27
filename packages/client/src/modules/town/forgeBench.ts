@@ -83,12 +83,17 @@ function runAction(app: App, o: BenchOpts, item: Item, a: BenchAction): void {
   // Без связи команда не уйдёт (`send` мёртвого сокета молчит) — сказать это, а не «нет ответа… могло пройти» (R4-23).
   if (!app.net.connected) { o.setNote?.(`⚠ ${OFFLINE}`); app.bus.emit('state:changed', {}); return; }
   if (a.id === 'salvage' && !confirmAll(disposePrompts(app.config, item, 'forge', app.stash?.forgeJournal))) return;
-  // ⭐ R5-15: цена карточки — в команду (`maxGold`): дороже неё сервер не возьмёт, а откажет с новой ценой.
+  // ⭐ R5-15: цена карточки — в команду (`maxGold`): дороже неё сервер не возьмёт, а откажет с новой ценой. R8-14: и её
+  // сырьё (`maxMaterials`), а разбор — с низом вилки выхода (`minYield`): меньше сервер не даст, вещь останется цела.
+  // R9-04: и со средним выходом (`avgYield`) — низ дробной доли правку выхода не видит.
   const price = a.gold !== undefined ? { maxGold: a.gold } : {};
+  const mats = a.materials !== undefined ? { maxMaterials: a.materials } : {};
   const command: TownCommand = a.cmd === 'forgeEnchant'
     ? { cmd: 'forgeEnchant', uid: item.uid, rarity: a.rarity ?? 'magic', ...price }
-    : a.cmd === 'forgeSalvage' ? { cmd: 'forgeSalvage', uid: item.uid }
-    : { cmd: a.cmd, uid: item.uid, ...price };
+    : a.cmd === 'forgeSalvage' ? { cmd: 'forgeSalvage', uid: item.uid, ...(a.minYield !== undefined ? { minYield: a.minYield } : {}),
+      ...(a.avgYield !== undefined ? { avgYield: a.avgYield } : {}) }
+    : a.cmd === 'forgeReroll' ? { cmd: 'forgeReroll', uid: item.uid, ...price }
+    : { cmd: a.cmd, uid: item.uid, ...price, ...mats };
   const key = actionKey(a);
   const slot = `${item.uid}|${key}`;
   const look = itemLook(item);
@@ -252,7 +257,7 @@ export function forgeBench(app: App, o: BenchOpts): HTMLElement {
   const target = benchTarget(app.config, item);
   const rows = target ? diffStrings(baseLines(item), baseLines(target)) : [];
   info.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:2px`,
-    item.broken ? 'после починки' : target ? 'после улучшения'
+    item.broken ? (target ? 'после починки' : 'кузнец не чинит') : target ? 'после улучшения'
     : item.parts ? 'скованную поднимает замена детали' : 'улучшать больше некуда'));
   info.append(rows.length
     ? previewBlock(rows)

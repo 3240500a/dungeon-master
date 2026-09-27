@@ -56,6 +56,58 @@ export function priceDropped(gold: number, minGold: number | undefined): ActionR
   return Number.isFinite(minGold) && gold >= minGold ? null : { ok: false, reason: `${PRICE_CHANGED}: лавка даст ${gold} золота` };
 }
 
+/** Сколько `id` в словаре согласия: только своё поле объекта и только конечное число ≥ 0, иначе `NaN` (согласия нет). */
+function consentOf(shown: Record<string, number>, id: string): number {
+  if (!Object.prototype.hasOwnProperty.call(shown, id)) return 0;
+  const n = shown[id];
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : Number.NaN;
+}
+const consentBroken = (shown: unknown): boolean =>
+  !shown || typeof shown !== 'object' || Array.isArray(shown) || Object.keys(shown).some((id) => Number.isNaN(consentOf(shown as Record<string, number>, id)));
+
+/**
+ * ⭐ R8-14: СОГЛАСИЕ НА СЫРЬЁ — зеркало `priceRaised` для материалов. `maxMaterials` — сырьё, которое показала карточка
+ * (ковка, улучшение, починка). Берёт ядро по СВОЕМУ конфигу, и правка из редактора живьём (`craft.cost.units`, строка формы,
+ * доводка, `upgradeMaterials`/`repairMaterials`) поднимала сырьё молча: золото то же — `maxGold` проходил, а из сумки и
+ * кошелька сундука уходило больше показанного. Любого материала нужно больше, чем в карточке (или его там не было), — отказ
+ * до траты, с ценой в причине. Меньше — не отказ. Нет поля — прежнее поведение (Unity, старые вкладки); кривое — отказ.
+ */
+export function materialsRaised(reg: ConfigRegistry, cost: MaterialCost, maxMaterials: Record<string, number> | undefined): ActionResult | null {
+  if (maxMaterials === undefined) return null;
+  const raised = consentBroken(maxMaterials)
+    || Object.entries(cost).some(([id, n]) => n > 0 && !(n <= consentOf(maxMaterials, id)));
+  return raised ? { ok: false, reason: `${PRICE_CHANGED}: ${describeCost(reg, cost)}` } : null;
+}
+
+/**
+ * ⭐ R8-14: СОГЛАСИЕ НА ВЫХОД РАЗБОРА — зеркало `priceDropped`. `minYield` — нижняя граница вилки «от–до», которую показал
+ * верстак (или меню разбора в поле): разбор уничтожает вещь, и после правки выхода живьём (`craft.salvage.units`, правила
+ * разбора, `fieldYield`) он молча давал меньше обещанного. Меньше показанного по любому материалу — отказ, вещь цела.
+ * Больше — не отказ. Сверка — по НИЖНЕЙ границе этого же расчёта (`salvageRange`): бросок выхода случаен.
+ * ⭐ R9-04: и по СРЕДНЕМУ (`avgYield`, `salvageMean`). Низ дробной доли — 0 при любой правке: пояс в поле, обычное оружие
+ * (0.3 × 1–3 единицы детали) показывали «0–1» и до правки `fieldYield` 0.3 → 0.05, и после — согласие по низу пропускало
+ * разбор за шестую часть обещанного. Среднее меньше показанного по любому материалу — тот же отказ. Своего среднего сервер
+ * не посчитал (исходов больше предела) — сверка только по низу.
+ */
+export function yieldDropped(
+  reg: ConfigRegistry, item: Item, inField: boolean, minYield: Record<string, number> | undefined, avgYield?: Record<string, number>,
+): ActionResult | null {
+  if (minYield === undefined && avgYield === undefined) return null;
+  const range = salvageRange(reg, item, inField).range;
+  const low: MaterialCost = {};
+  for (const [id, r] of Object.entries(range)) low[id] = r.min;
+  const own = (m: MaterialCost, id: string): number => (Object.prototype.hasOwnProperty.call(m, id) ? m[id]! : 0);
+  const lowDropped = minYield !== undefined
+    && (consentBroken(minYield) || Object.keys(minYield).some((id) => consentOf(minYield, id) > own(low, id)));
+  const mean = avgYield !== undefined ? salvageMean(reg, item, inField) : null;
+  // Допуск — шум плавающей точки: тот же конфиг даёт то же число до бита, правка доли — в разы.
+  const avgDropped = avgYield !== undefined
+    && (consentBroken(avgYield) || (mean !== null && Object.keys(avgYield).some((id) => consentOf(avgYield, id) > own(mean, id) + 1e-9)));
+  if (!lowDropped && !avgDropped) return null;
+  const avg = mean ? `, в среднем ${describeCost(reg, Object.fromEntries(Object.entries(mean).map(([id, n]) => [id, Math.round(n * 100) / 100]))) || 'ничего'}` : '';
+  return { ok: false, reason: `${PRICE_CHANGED}: разбор даст от ${describeCost(reg, low) || 'ничего'}${avg}` };
+}
+
 /** Живые витальные поля цели зелья (общий тип для клиента-GameState и серверного PlayerEntity). */
 export interface Vitals { hp: number; mana: number; debuffs: DebuffState; }
 
@@ -300,7 +352,7 @@ function materialLadder(reg: ConfigRegistry, item: Item, need: readonly number[]
  * улучшение» невозможно, а не ограничено бюджетом. Статы и требования пересчитываются ОТ БАЗЫ,
  * так что кузнечный «Отличный» равен найденному «Отличному» — иначе тир перестал бы значить.
  */
-export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number): ActionResult {
+export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number, maxMaterials?: Record<string, number>): ActionResult {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   const item = save.inventory[idx];
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
@@ -312,7 +364,7 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   const next = upgradedItem(reg, item)!;   // `canUpgradeItem` уже отказал бы без неё
   const gold = forgeGold(reg, item, 'upgrade');
   const mats = upgradeCost(reg, item);
-  const raised = priceRaised(gold, maxGold);   // R5-15: цена карточки устарела — отказ до траты
+  const raised = priceRaised(gold, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14: цена карточки устарела — отказ до траты
   if (raised) return raised;
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
   if (!canAffordBoth(save.inventory, wallet, mats)) {
@@ -446,6 +498,8 @@ export function upgradedItem(reg: ConfigRegistry, item: Item): Item | undefined 
 export function salvageRange(
   reg: ConfigRegistry, item: Item, inField: boolean,
 ): ActionResult & { range: Record<string, { min: number; max: number }> } {
+  // R9-04: пустой низ — это «от 0», а не «вилки нет»: отказ `salvageYield` решает лучший бросок (R9-03), и пустая вилка
+  // бывает только у вещи, которая не даст ничего никогда. Раньше мелочь в поле (пояс, перчатки, обычное оружие) шла с `{}`.
   const lo = salvageYield(reg, item, ROLL_LO, inField);
   if (!lo.ok) return { ...lo, range: {} };
   const hi = salvageYield(reg, item, ROLL_HI, inField);
@@ -455,6 +509,60 @@ export function salvageRange(
     range[id] = { min, max: Math.max(hi.gains[id] ?? 0, min) };
   }
   return { ok: true, range };
+}
+
+/** Предел исходов перебора в `salvageMean`. Правило разбора из конфига — 1–2 строки с вилкой в 1–2 единицы: ≤ 16 исходов. */
+const MEAN_RUNS_MAX = 4096;
+/** Сигналы перебора: бросок дошёл до развилки, которой ещё нет в пути; исходов больше предела. */
+const MEAN_FORK = Symbol('развилка');
+const MEAN_OVER = Symbol('перебор');
+
+/**
+ * ⭐ R9-04: СРЕДНИЙ ВЫХОД РАЗБОРА — ожидание НАСТОЯЩЕГО броска (`salvageYield`), как вилка — его крайности, а не своя формула.
+ * Перебираются все исходы кубика: `int` — каждое значение поровну, `chance(p)` — «да» с весом p и «нет» с весом 1 − p; выход
+ * исхода идёт в сумму со своим весом. Нужен согласию (`yieldDropped`): низ вилки дробной доли — 0 при любой правке выхода,
+ * а среднее видит и её (`fieldYield` 0.3 → 0.05 — вилка «0–1» та же, среднее вшестеро меньше). Не разбирается — `null`;
+ * исходов больше предела (правило из редактора с вилкой в сотни единиц) — тоже `null`: сверять не по чему.
+ */
+export function salvageMean(reg: ConfigRegistry, item: Item, inField: boolean): Record<string, number> | null {
+  if (!salvageYield(reg, item, ROLL_HI, inField).ok) return null;
+  type Pick = { v: number; p: number };
+  const sum: Record<string, number> = {};
+  let runs = 0;
+  // Путь — выборы кубика по порядку. Бросок дальше пути бросает `MEAN_FORK` с вариантами — и перебор идёт по каждому.
+  const walk = (path: readonly Pick[], weight: number): void => {
+    if (++runs > MEAN_RUNS_MAX) throw MEAN_OVER;
+    const st: { at: number; fork: Pick[] } = { at: 0, fork: [] };
+    const take = (opts: () => Pick[]): number => {
+      if (st.at < path.length) return path[st.at++]!.v;
+      st.fork = opts();
+      throw MEAN_FORK;
+    };
+    const rng: SalvageRng = {
+      int: (a, b) => take(() => {
+        const n = b - a + 1;
+        if (n > MEAN_RUNS_MAX) throw MEAN_OVER;
+        return n <= 1 ? [{ v: a, p: 1 }] : Array.from({ length: n }, (_, k) => ({ v: a + k, p: 1 / n }));
+      }),
+      chance: (p) => take(() => (p >= 1 ? [{ v: 1, p: 1 }] : p <= 0 ? [{ v: 0, p: 1 }] : [{ v: 1, p }, { v: 0, p: 1 - p }])) === 1,
+    };
+    let gains: MaterialCost;
+    try {
+      gains = salvageYield(reg, item, rng, inField).gains;
+    } catch (e) {
+      if (e !== MEAN_FORK) throw e;
+      for (const o of st.fork) walk([...path, o], weight * o.p);
+      return;
+    }
+    for (const [id, n] of Object.entries(gains)) sum[id] = (sum[id] ?? 0) + n * weight;
+  };
+  try {
+    walk([], 1);
+  } catch (e) {
+    if (e === MEAN_OVER) return null;
+    throw e;
+  }
+  return sum;
 }
 
 /**
@@ -550,13 +658,16 @@ export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, r
  * ⚠ Все отказы — ДО разбора: он уничтожает вещь, и «правила нет» не должно съедать её впустую.
  */
 export function forgeSalvage(
-  reg: ConfigRegistry, save: SaveState, stash: AccountStash, uid: string, rng: SalvageRng,
+  reg: ConfigRegistry, save: SaveState, stash: AccountStash, uid: string, rng: SalvageRng, minYield?: Record<string, number>,
+  avgYield?: Record<string, number>,
 ): ActionResult & { unlocked?: string[] } {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
   const item = save.inventory[idx]!;
   const out = salvageYield(reg, item, rng, false);
   if (!out.ok) return { ok: false, reason: out.reason };
+  const dropped = yieldDropped(reg, item, false, minYield, avgYield);   // R8-14, R9-04: вилка верстака устарела — вещь цела
+  if (dropped) return dropped;
   const unlock = out.source === 'parts' ? salvageIntoJournal(reg, normalizeJournal(stash.forgeJournal), item) : null;
   // ── Проверки позади: дальше только запись, отказать она уже не может ──
   save.inventory.splice(idx, 1);
@@ -591,11 +702,15 @@ function unlockLabels(reg: ConfigRegistry, u: SalvageUnlock, item: Item): string
  * ⚠ Сундука в поле нет: не влезшее в сумку сырьё пропало бы вместе с вещью. Поэтому сперва примерка на
  * копии сумки — не влезает целиком, значит отказ, и вещь цела.
  */
-export function fieldSalvage(reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng): ActionResult {
+export function fieldSalvage(
+  reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng, minYield?: Record<string, number>, avgYield?: Record<string, number>,
+): ActionResult {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
   const out = salvageYield(reg, save.inventory[idx]!, rng, true);
   if (!out.ok) return { ok: false, reason: out.reason };
+  const dropped = yieldDropped(reg, save.inventory[idx]!, true, minYield, avgYield);   // R8-14, R9-04
+  if (dropped) return dropped;
   const defs = reg.get('craft-materials');
   const probe = bagCopy(save.inventory);
   probe.splice(idx, 1);
@@ -683,19 +798,26 @@ export function salvageYield(
 ): ActionResult & { gains: Record<string, number>; source?: SalvageSource } {
   const plan = salvagePlan(reg, item, inField);
   if (!plan.ok) return { ok: false, reason: plan.reason, gains: {} };
+  // ⚠ R9-03: «НИЧЕГО НЕ ДАЛ БЫ» — ПО ЛУЧШЕМУ БРОСКУ, А НЕ ПО ВЫПАВШЕМУ. Отказ решался после броска и оставлял вещь в сумке,
+  // а повтор катал заново (`townRng()` на команду): пояс в поле (0.24–0.36 единицы) отказывал в 70 % бросков, и «жми, пока
+  // не выйдет» давало ровно единицу вместо трети — правило «поле — 30 % от кузницы» не держалось (у кузнеца перчатки и пояс
+  // так же поднимали выход на 11 %). Теперь отказ — только вещи, которой и лучший бросок не дал бы ничего; иначе пустой
+  // бросок разбирает её в ничто — вилка «0–1» (`salvageRange`) ровно это и обещает.
+  if (!Object.keys(rollSalvage(reg, item, plan, ROLL_HI, inField)).length) return { ok: false, reason: 'Разбор ничего не дал бы', gains: {} };
+  return { ok: true, gains: rollSalvage(reg, item, plan, rng, inField), source: plan.source };
+}
+
+/** Бросок выхода по уже выбранному пути (`salvagePlan`). Пусто — бросок не дал ничего. */
+function rollSalvage(
+  reg: ConfigRegistry, item: Item, plan: { source: SalvageSource; base: MaterialCost }, rng: SalvageRng, inField: boolean,
+): MaterialCost {
   const tuning = reg.get('balance').salvage;
-  let gains: MaterialCost;
-  if (plan.source === 'rules') {
-    const mats = reg.get('craft-materials');
-    gains = knownOnly(reg, salvageFromItem(item, weaponClassOf(reg, item), reg.get('salvage-rules'), tuning, rng, {
-      inField,
-      knownMaterial: (id) => mats.some((c) => c.id === id && c.enabled),
-    }));
-  } else {
-    gains = inField ? shareOf(plan.base, tuning.fieldYield, rng) : { ...plan.base };
-  }
-  if (!Object.keys(gains).length) return { ok: false, reason: 'Разбор ничего не дал бы', gains: {} };
-  return { ok: true, gains, source: plan.source };
+  if (plan.source !== 'rules') return inField ? shareOf(plan.base, tuning.fieldYield, rng) : { ...plan.base };
+  const mats = reg.get('craft-materials');
+  return knownOnly(reg, salvageFromItem(item, weaponClassOf(reg, item), reg.get('salvage-rules'), tuning, rng, {
+    inField,
+    knownMaterial: (id) => mats.some((c) => c.id === id && c.enabled),
+  }));
 }
 
 /**
@@ -703,8 +825,9 @@ export function salvageYield(
  * двум местам, кнопка будет предлагать то, что сервер отклоняет.
  */
 export function canSalvageItem(reg: ConfigRegistry, item: Item, inField: boolean): ActionResult {
-  const plan = salvagePlan(reg, item, inField);
-  return plan.ok ? { ok: true } : { ok: false, reason: plan.reason };
+  // R9-03: и отказ «ничего не дал бы» — тот же, что у разбора: по лучшему броску, от кубика не зависит.
+  const hi = salvageYield(reg, item, ROLL_HI, inField);
+  return hi.ok ? { ok: true } : { ok: false, reason: hi.reason };
 }
 
 /**
@@ -725,19 +848,46 @@ export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
 }
 
 /**
+ * МОЖНО ЛИ ПОЧИНИТЬ — ОДИН ответ для карточки верстака и для отказа сервера (как `canUpgradeItem`, `canRerollItem`).
+ * Золото и сырьё — не здесь: их не хватает «пока», и карточка показывает это построчно.
+ * ⚠ R7-19: УНИК КУЗНЕЦ НЕ ЧИНИТ — кузницу он не проходит вовсе (docs/ECONOMY.md §1: «Нашёл — носи как есть»), и лестница сырья
+ * у него пуста: пустая — это ОТКАЗ, а не «бесплатно» (`materialLadder`). Прежде `forgeRepair` на пустой цене проверку сырья
+ * пропускал, и сломанный уник чинился за одно золото, когда редкий той же базы платил железом трёх ступеней. Сломанным уник
+ * больше и не падает (`GameSession.killMonster`), а сломанный из старого сейва цел на входе (`mendBrokenUniques`).
+ */
+export function canRepairItem(_reg: ConfigRegistry, item: Item): ActionResult {
+  if (!item.broken) return { ok: false, reason: 'Вещь цела' };
+  if (item.rarity === 'unique') return { ok: false, reason: 'Уникальную вещь кузнец не чинит' };
+  return { ok: true };
+}
+
+/**
+ * ⚠ R7-19: СЛОМАННЫЙ УНИК ИЗ СЕЙВА СТАРШЕ R7-19 — ЦЕЛ. Тогда трофей ломался без оглядки на редкость; теперь уник не чинится
+ * (`canRepairItem`), не разбирается и сломанным не надевается — лежал бы мёртвым грузом. Снимаем флаг на загрузке: сейв —
+ * `roomManager` (как раскладку сумки), сундук — `sanitizeStash`. Чинить было нечего: уник «носи как есть». Мутирует на месте,
+ * возвращает, сколько вещей вылечено.
+ */
+export function mendBrokenUniques(items: Iterable<Item | null | undefined>): number {
+  let n = 0;
+  for (const it of items) if (it?.broken && it.rarity === 'unique') { delete it.broken; n++; }
+  return n;
+}
+
+/**
  * ПОЧИНКА СЛОМАННОГО ТРОФЕЯ — золото + материалы. После неё это обычная вещь своего тира,
- * её можно носить и улучшать.
+ * её можно носить и улучшать. Все отказы вещи — `canRepairItem` (R7-19: уник — отказ), до платы.
  *
  * ⚠ Чинить дороже, чем даёт разбор той же вещи: иначе разбор не выбирали бы никогда.
  * Платим за ВЕЩЬ, а не за материалы в ней.
  */
-export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number): ActionResult {
+export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number, maxMaterials?: Record<string, number>): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
-  if (!item.broken) return { ok: false, reason: 'Вещь цела' };
+  const can = canRepairItem(reg, item);
+  if (!can.ok) return can;
   const gold = forgeGold(reg, item, 'repair');
   const mats = repairCost(reg, item);
-  const raised = priceRaised(gold, maxGold);   // R5-15
+  const raised = priceRaised(gold, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
   if (Object.keys(mats).length && !canAffordBoth(save.inventory, wallet, mats)) {
@@ -765,11 +915,12 @@ export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, w
  *
  * `fullJournal` — флаг разработчика (DM_CRAFT_FULL_JOURNAL; сервер передаёт его только вне продакшена,
  * `server/src/net/devFlags.ts`): ворота журнала открыты, но в сохранённый журнал это не пишется. `allowDisabledMaterials` — ТОЛЬКО песочница редактора; сервер его не передаёт.
- * `maxGold` — цена в золоте, которую показало окно ковки (R5-15, `priceRaised`); повтор ключа её не проверяет: он не платит.
+ * `maxGold` — цена в золоте, которую показало окно ковки (R5-15, `priceRaised`), `maxMaterials` — его сырьё (R8-14,
+ * `materialsRaised`); повтор ключа их не проверяет: он не платит.
  */
 export function craftAction(
   reg: ConfigRegistry, save: SaveState, stash: AccountStash, nonce: unknown, input: unknown, rng: Rng,
-  opts: { fullJournal?: boolean; allowDisabledMaterials?: boolean; maxGold?: number } = {},
+  opts: { fullJournal?: boolean; allowDisabledMaterials?: boolean; maxGold?: number; maxMaterials?: Record<string, number> } = {},
 ): ActionResult & { uid?: string } {
   if (!isCraftNonce(nonce)) return { ok: false, reason: 'Неверный ключ заявки' };
   const seen = normalizeCraftNonces(stash.craftNonces).find((e) => e.n === nonce);
@@ -784,7 +935,8 @@ export function craftAction(
   });
   if (!pv.ok || !pv.item || !pv.cost) return { ok: false, reason: pv.reason ?? 'Этого кузнец не скуёт' };
   const { item, cost } = pv;
-  const raised = priceRaised(cost.gold, opts.maxGold);   // R5-15: окно показало другую цену — отказ до траты
+  // R5-15, R8-14: окно показало другую цену (золото или сырьё) — отказ до траты.
+  const raised = priceRaised(cost.gold, opts.maxGold) ?? materialsRaised(reg, cost.materials, opts.maxMaterials);
   if (raised) return raised;
   const wallet = stash.materials ?? {};
   const lack = craftMissing(availableMaterials(save.inventory, wallet), 0, cost).materials;
@@ -995,6 +1147,10 @@ export function respec(reg: ConfigRegistry, save: SaveState, maxGold?: number): 
   // ⚠ R4-08: надетое, что держится на вложенных очках, после сброса висело бы без опоры (очки ушли бы в другое).
   const broken = wornBroken(save, base, equippedItems(save));
   if (broken) return { ok: false, reason: `После сброса не хватит атрибутов на «${broken.name}» — сперва сними её` };
+  // ⭐ R8-10: мощь узла сверяет требования вещей запаса не ниже атрибутов до сброса — сброс их не прячет (`effectiveLevel`).
+  const peak = { ...save.attributes };
+  for (const a of ATTRIBUTES) peak[a] = Math.max(peak[a], save.respecPeak?.[a] ?? 0);
+  save.respecPeak = peak;
   save.attributes = { ...base };
   save.unspentAttributePoints += refunded;
   save.gold -= cost;

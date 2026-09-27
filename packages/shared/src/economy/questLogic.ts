@@ -44,10 +44,14 @@ export function questFromTemplate(tpl: RandomQuestTemplate, rng: Rng, uid: strin
   };
 }
 
-/** Генерирует доску случайных квестов (по одному на ВКЛЮЧЁННЫЙ шаблон). */
-export function generateBoard(reg: ConfigRegistry, rng: Rng): QuestDef[] {
+/**
+ * Генерирует доску случайных квестов (по одному на ВКЛЮЧЁННЫЙ шаблон). ⭐ R9-13: `stamp` — метка в id заданий (сервер даёт
+ * поколение доски, `townStock.at`): тот же сид и та же метка собирают ту же доску с теми же id на любой ноде. Нет — часы.
+ */
+export function generateBoard(reg: ConfigRegistry, rng: Rng, stamp: number = Date.now()): QuestDef[] {
   const templates = (reg.get('quests.random') as RandomQuestTemplate[]).filter((t) => (t as { enabled?: boolean }).enabled !== false);
-  return templates.map((t, i) => questFromTemplate(t, rng, `${Date.now().toString(36)}${i}`));
+  const tag = Math.max(0, Math.floor(stamp)).toString(36);
+  return templates.map((t, i) => questFromTemplate(t, rng, `${tag}${i}`));
 }
 
 /** Шаблон, из которого собран квест доски (`rnd_<шаблон>_<метка>`, `questFromTemplate`); не с доски — `undefined`. */

@@ -135,14 +135,14 @@ describe('v2.2 — замки, выходы, town', () => {
     }
   });
 
-  it('town-этаж компактный: 1 вход + N выходов, портал+сундук, без промежуточных комнат', () => {
+  it('town-этаж компактный: 1 вход + N выходов, портал в город (сундука нет — R7-11), без промежуточных комнат', () => {
     for (const exitCount of [1, 2, 3]) {
       for (let seed = 1; seed <= 30; seed++) {
         const L = generateFloorParams(ROOMS, seed, { town: true, exitCount });
         expect(L.rooms.length, `n=${exitCount} seed=${seed}`).toBe(1 + exitCount); // вход + по комнате на выход
         expect(L.exits.length).toBe(exitCount);
         expect(L.decor.some((d) => d.kind === 'portal')).toBe(true);
-        expect(L.decor.some((d) => d.kind === 'stash')).toBe(true);
+        expect(L.decor.some((d) => d.kind === 'stash'), 'сундук аккаунта — только в городе').toBe(false);
         expect(L.doors.length).toBe(0);
         expect(validate(L)).toBe(true);
       }

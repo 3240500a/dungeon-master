@@ -42,9 +42,10 @@ export interface CraftHost {
   save(): SaveState;
   /**
    * Песочница отвечает сразу, игра — промисом ответа сервера. ⭐ R5-15: `maxGold` — цена в золоте, которую показало окно:
-   * игра шлёт её в команде, и дороже сервер не возьмёт (его конфиг мог уйти вперёд клиентского).
+   * игра шлёт её в команде, и дороже сервер не возьмёт (его конфиг мог уйти вперёд клиентского). ⭐ R8-14: `maxMaterials` —
+   * так же его сырьё (строки «Цена»).
    */
-  craft(input: CraftInput, maxGold?: number): CraftReply | Promise<CraftReply>;
+  craft(input: CraftInput, maxGold?: number, maxMaterials?: Record<string, number>): CraftReply | Promise<CraftReply>;
   enchant(item: Item, rarity: Rarity, maxGold?: number): CraftReply | Promise<CraftReply>;
   /** Надеть скованное на героя (песочница — сразу, игра — командой экипировки). */
   equip?(item: Item): void | CraftReply | Promise<CraftReply>;
@@ -522,7 +523,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
 
     const btns = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:10px');
     const verdict = pv; // предпросмотр в момент клика: вилка для строки «куда лёг бросок»
-    const doCraft = (): void => act('craft', () => host.craft(input, verdict.cost?.gold), (r) => {
+    const doCraft = (): void => act('craft', () => host.craft(input, verdict.cost?.gold, verdict.cost?.materials), (r) => {
       if (r.ok && r.item) st.crafted = r.item;
       st.message = r.ok
         ? r.item ? `Скована: ${r.item.name}${rollVerdict(r.item, verdict.ranges, verdict.cost?.finish?.floor ?? 0)}` : r.reason ?? 'Скована'

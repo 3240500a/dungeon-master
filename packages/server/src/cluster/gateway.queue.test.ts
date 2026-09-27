@@ -4,17 +4,18 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 /**
- * ⭐ R6-08: ОЧЕРЕДЬ НА ВХОД ГЕЙТВЕЯ — ПО МЕСТУ В НЕЙ. Против НАСТОЯЩЕЙ базы `dungeon_test` (таблица `login_queue` и её SQL —
- * настоящие, без базы тест пропускается); подменены только сессия, персонаж и реестр нод (их игроки и живые закрепления).
+ * ⭐ R6-08: ОЧЕРЕДЬ НА ВХОД ГЕЙТВЕЯ — ПО МЕСТУ В НЕЙ. Против НАСТОЯЩЕЙ базы `dungeon_test` в своей схеме (`db/testDb.ts`;
+ * таблица `login_queue` и её SQL — настоящие, без базы тест пропускается); подменены только сессия, персонаж и реестр нод
+ * (их игроки и живые закрепления).
  *
  * Было: `admit` звался только на потолке и получал «свободных мест» ≤ 0 — по месту не пускали никого; продление билета
  * `SET at = at` ничего не продлевало, и через минуту честного ожидания билет исчезал («1 из N» навсегда); освободившееся
  * место брал первый пришедший, а не голова очереди; реконнект к своей грейс-комнате и вход к другу по коду стояли в общей
  * очереди, хотя нода держит для них запас сверху.
  */
-vi.hoisted(() => {
-  process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
+const tdb = await vi.hoisted(async () => {
   process.env.DM_MAX_PLAYERS = '1';
+  return (await import('../db/testDb.js')).testDb('gatewayqueue');
 });
 const st = vi.hoisted(() => ({
   /** Игроков на единственной ноде (по реестру). */
@@ -50,14 +51,11 @@ let server: Server | undefined;
 let base = '';
 let pool: typeof import('../db/pool.js');
 beforeAll(async () => {
+  alive = await tdb.open();
   pool = await import('../db/pool.js');
-  try {
-    const reg = await import('./registry.js');
-    await reg.initClusterSchema();
-    alive = true;
-  } catch {
-    return;   // базы нет — тесты ниже пропустятся
-  }
+  if (!alive) return;   // базы нет — тесты ниже пропустятся
+  const reg = await import('./registry.js');
+  await reg.initClusterSchema();
   const { installGatewayRoutes } = await import('./gateway.js');
   const app = express();
   installGatewayRoutes(app);
@@ -66,12 +64,12 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   server?.close();
-  if (alive) { await pool.q('DELETE FROM login_queue WHERE user_id LIKE $1', ['r608-%']); await pool.closePool(); }
+  if (alive) { await pool.closePool(); await tdb.drop(); }
 });
 beforeEach(async () => {
   if (!alive) return;
   st.players = 0; st.live.clear();
-  await pool.q('DELETE FROM login_queue');   // база тестовая: очередь — только этого файла
+  await pool.q('DELETE FROM login_queue');   // схема своя (`testDb.ts`): очередь — только этого файла
 });
 
 async function route(x: string, extra = ''): Promise<{ status: number; json: { url?: string; queue?: { ticket: string; position: number; total: number } } }> {

@@ -1,11 +1,12 @@
 import { createRng, type Rng } from '../formulas/rng.js';
-import { Cell, cellToWorld, worldToCell } from '../world/grid.js';
+import { Cell, TILE, cellToWorld, worldToCell } from '../world/grid.js';
 import type { FloorAlgoParams, FloorFeatures, RoomPrefab } from '../config/schemas.js';
 import { type DungeonLayout, type Room, validate, roomCenter } from './floorCommon.js';
 import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
 import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
-import { placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
+import { obstaclesFromDecor, placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
+import { pushOutObstacle } from '../world/movement.js';
 import { placeChests } from './floorCommon.js';
 import type { FloorSpec } from './run/types.js';
 
@@ -15,7 +16,7 @@ export interface GenFloorOpts {
   lock?: boolean;
   /** Сколько выходов на следующие этажи (развилка). По умолчанию 1. */
   exitCount?: number;
-  /** Town-этаж (rest): портал в город + сундук, без замка. */
+  /** Town-этаж (rest): портал в город, без замка (сундук аккаунта — только в городе, R7-11). */
   town?: boolean;
   /** Фичи этажа (портал/сундук/лавка/босс-комната/чемпионы/сокровищницы). */
   features?: FloorFeatures;
@@ -78,13 +79,12 @@ function tagRooms(L: DungeonLayout, content: NonNullable<Room['content']>, count
   return out;
 }
 
-/** Применяет фичи этажа: декор портал/сундук/лавка + тег комнат (босс/чемпионы/сокровищницы). */
+/** Применяет фичи этажа: декор портал/лавка + тег комнат (босс/чемпионы/сокровищницы). Сундука аккаунта нет (R7-11: только в городе). */
 function applyFeatures(L: DungeonLayout, f: FloorFeatures | undefined, rng: Rng): void {
   if (!f) return;
   const entrance = L.rooms.find((r) => r.type === 'entrance') ?? L.rooms[0];
   const ec = entrance ? roomCenter(entrance) : null;
   if (f.portal && !L.decor.some((d) => d.kind === 'portal')) L.decor.push({ ...L.stairsDown, kind: 'portal' });
-  if (f.stash && ec) L.decor.push({ ...cellToWorld(ec.cx + 1, ec.cy), kind: 'stash' });
   if (f.shop && ec) L.decor.push({ ...cellToWorld(ec.cx - 1, ec.cy), kind: 'shop' });
   if (f.bossRoom) { const br = roomAt(L, L.stairsDown); if (br) br.content = 'boss'; }
   tagRooms(L, 'unique', f.uniqueRooms, rng);
@@ -153,7 +153,11 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   }
   // Сундуки — СВОЙ поток rng, как у декора: добавление сундуков не должно сдвигать всё остальное.
   if (opts.chests && !opts.town) {
-    placeChests(result, createRng(((seed ^ 0xc4e5) >>> 0) || 1), opts.chests.tiers, opts.chests.perFloor);
+    // ⚠ R9-16: не под преградой декора — те же коллайдеры, что получит сессия (`obstaclesFromDecor`), с запасом в четверть
+    // клетки, чтобы сундук не врастал в колонну. Декора с преградой нет — сундук там же, где и был.
+    const blockers = obstaclesFromDecor(result.decor, new Map((opts.decorSpecs ?? []).map((s) => [s.id, s])));
+    const blocked = (x: number, y: number): boolean => blockers.some((o) => pushOutObstacle(x, y, TILE / 4, o) !== null);
+    placeChests(result, createRng(((seed ^ 0xc4e5) >>> 0) || 1), opts.chests.tiers, opts.chests.perFloor, blocked);
   }
   return result;
 }

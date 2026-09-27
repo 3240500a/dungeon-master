@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   ConfigRegistry, craftAction, createRng, defaultParts, emptyStash, enchantCost, forgeGold, fullJournal, newBotSave,
-  type Item, type SaveState, type TownCommand,
+  repairCost, salvageMean, salvageRange, upgradeCost, type Item, type SaveState, type TownCommand,
 } from '@dm/shared';
 import type { CmdReply } from '../../net/cmdReplies.js';
 import { forgeBench } from './forgeBench.js';
@@ -126,7 +126,7 @@ describe('⭐ R5-15: платное действие верстака несёт
   beforeEach(() => { G.document = { createElement: (t: string) => new El(t), body: new El('body') }; });
   afterEach(() => { delete G.document; });
 
-  it('«Улучшить», «Реролл», «Починить» — с `maxGold` строки цены; разбор бесплатен — без неё', async () => {
+  it('«Улучшить», «Реролл», «Починить» — с `maxGold` строки цены и (R8-14) `maxMaterials` строк сырья; разбор — с низом вилки выхода', async () => {
     const item = magicWeapon();
     const b = bench(item);
     b.render().card('Улучшить')!.click();
@@ -137,10 +137,24 @@ describe('⭐ R5-15: платное действие верстака несёт
     broken.render().card('Починить')!.click();
     await broken.reply(reply('forgeRepair', true));
     expect(b.requests, 'было: без цены — сервер брал по своему конфигу, какой бы ни видел игрок').toEqual([
-      { cmd: 'forgeUpgrade', uid: 'bench-x', maxGold: forgeGold(reg, item, 'upgrade') },
+      { cmd: 'forgeUpgrade', uid: 'bench-x', maxGold: forgeGold(reg, item, 'upgrade'), maxMaterials: upgradeCost(reg, item) },
       { cmd: 'forgeReroll', uid: 'bench-x', maxGold: forgeGold(reg, item, 'reroll') },
     ]);
-    expect(broken.requests).toEqual([{ cmd: 'forgeRepair', uid: 'bench-br', maxGold: forgeGold(reg, { ...item, broken: true }, 'repair') }]);
+    expect(broken.requests).toEqual([{ cmd: 'forgeRepair', uid: 'bench-br', maxGold: forgeGold(reg, { ...item, broken: true }, 'repair'),
+      maxMaterials: repairCost(reg, { ...item, broken: true }) }]);
+    // Разбор: вещь исчезнет — в команде нижняя граница вилки «от–до», которую показала карточка.
+    const W = globalThis as unknown as { window?: unknown };
+    W.window = { confirm: () => true };
+    try {
+      const s = bench({ ...magicWeapon(), uid: 'bench-sv' });
+      s.render().card('Разобрать')!.click();
+      await s.reply(reply('forgeSalvage', true));
+      const low = Object.fromEntries(Object.entries(salvageRange(reg, { ...item, uid: 'bench-sv' }, false).range).map(([id, r]) => [id, r.min]));
+      expect(Object.keys(low).length, 'вилка есть').toBeGreaterThan(0);
+      // R9-04: и средний выход карточки — у дробной доли низ вилки правку выхода не видит.
+      const avg = salvageMean(reg, { ...item, uid: 'bench-sv' }, false)!;
+      expect(s.requests).toEqual([{ cmd: 'forgeSalvage', uid: 'bench-sv', minYield: low, avgYield: avg }]);
+    } finally { delete W.window; }
   });
 });
 
@@ -198,7 +212,7 @@ describe('⭐ R4-23: повтор после «нет ответа» не пла
     await b.reply(null);                                // 8 с тишины: `request` ответил «неизвестно»
     expect(b.note()).toContain('Нет ответа');
     b.render().card('Улучшить')!.click();              // вещь не изменилась — игрок жмёт ещё раз
-    const up = { cmd: 'forgeUpgrade', uid: 'r423-up', maxGold: forgeGold(reg, weapon('r423-up'), 'upgrade') };
+    const up = { cmd: 'forgeUpgrade', uid: 'r423-up', maxGold: forgeGold(reg, weapon('r423-up'), 'upgrade'), maxMaterials: upgradeCost(reg, weapon('r423-up')) };
     expect(b.requests).toEqual([up, up]);
     expect(b.ids[1], 'было: новый номер — повтор уходил мимо дедупа и покупал вторую ступень').toBe(b.ids[0]);
     await b.reply(reply('forgeUpgrade', true));

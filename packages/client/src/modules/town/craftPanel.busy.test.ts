@@ -91,11 +91,12 @@ describe('⭐ R5-15: ковка и зачарование уходят с цен
   it('«Ковать» — со строкой «Золото — N» окна; «✦ Редкий» — с ценой на кнопке', async () => {
     const save = newBotSave(reg, 'warrior');
     const prices: (number | undefined)[] = [];
+    const mats: (Record<string, number> | undefined)[] = [];
     let crafted!: Item;
     const host: CraftHost = {
       wallet: rich, gold: () => 9_999_999, journal: () => fullJournal(reg), save: () => save,
-      craft: (input, maxGold) => {
-        prices.push(maxGold);
+      craft: (input, maxGold, maxMaterials) => {
+        prices.push(maxGold); mats.push(maxMaterials);
         crafted = craftWeapon(reg, input, { journal: fullJournal(reg), rng: createRng(5) }).item!;
         return { ok: true, item: crafted };
       },
@@ -109,6 +110,8 @@ describe('⭐ R5-15: ковка и зачарование уходят с цен
     root.button('Ковать')!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(prices, 'было: ковка уходила без цены — сервер брал по своему конфигу').toEqual([shown]);
+    const shownMats = craftWeapon(reg, { weaponClass: st.weaponClass, hands: st.hands, parts: st.parts, finish: st.finish }, { journal: fullJournal(reg) }).cost!.materials;
+    expect(mats, 'R8-14: и сырьё строк «Цена» — было: сервер брал сырьё по своему конфигу').toEqual([shownMats]);
     const rare = root.button('Редкий')!;
     const label = Number(/· (\d+) з\./.exec(rare.textContent)?.[1]);
     rare.click();

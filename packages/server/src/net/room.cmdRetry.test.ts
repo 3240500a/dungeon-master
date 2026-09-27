@@ -2,6 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { GameConn } from './conn.js';
 import { ConfigRegistry, newCharacterSave, generateItem, createRng, forgeGold, type ServerFrame, type SaveState, type Item } from '@dm/shared';
 
+// Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
+// таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
+// потолок не прячет — они падают утверждением, а не временем.
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * ⭐ R4-23: ПОВТОР КОМАНДЫ ТЕМ ЖЕ НОМЕРОМ, ПОКА ПЕРВАЯ ЕЩЁ В ОЧЕРЕДИ. Клиент ждёт ответа 8 с, а сервер при медленной базе
  * держит команду дольше: она стоит в очереди записей игрока за автосейвом. Верстак кузницы после «нет ответа» шлёт
@@ -17,6 +22,9 @@ const db = vi.hoisted(() => ({
   gate: null as Promise<void> | null,
 }));
 vi.mock('../db/db.js', () => ({
+  // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+  getRunLedger: () => Promise.resolve([]),
+  mergeRunLedger: () => Promise.resolve(),
   getSession: async () => 'user-r423',
   getCharacter: async (charId: string) => {
     const r = db.chars.get(charId);

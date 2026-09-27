@@ -14,16 +14,19 @@ export class ConfigRegistry {
     this.bus = bus;
   }
 
-  /** Загружает и валидирует все конфиги из сырых данных (по умолчанию — встроенные). */
+  /** Загружает и валидирует все конфиги из сырых данных (по умолчанию — встроенные). Негодное — прежнее цело (R7-14). */
   loadAll(raw: Record<string, unknown> = defaultConfigData): void {
-    const store = this.data as Record<string, unknown>;
+    const staged: Record<string, unknown> = {};
     for (const key of Object.keys(configSchemas) as ConfigKey[]) {
-      store[key] = this.parse(key, raw[key]);
+      staged[key] = this.parse(key, raw[key]);
     }
+    Object.assign(this.data, staged);
   }
 
   private parse<K extends ConfigKey>(key: K, value: unknown): ConfigShapes[K] {
-    const result = configSchemas[key].safeParse(value);
+    const schema = configSchemas[key];
+    if (!schema) throw new Error(`Неизвестный конфиг "${key}" — такой таблицы в схеме нет`);
+    const result = schema.safeParse(value);
     if (!result.success) {
       throw new Error(
         `Конфиг "${key}" не прошёл валидацию:\n${result.error.toString()}`,
@@ -40,15 +43,19 @@ export class ConfigRegistry {
     return value;
   }
 
-  /** Частичное обновление (для live-apply из редактора). Эмитит config:reloaded. */
+  /**
+   * Частичное обновление (для live-apply из редактора). Эмитит config:reloaded.
+   *
+   * ⭐ R7-14: ВСЁ ИЛИ НИЧЕГО. Таблицы сперва разбираются в сторонке и кладутся, только если годны ВСЕ: раньше они клались по
+   * одной, и первая негодная (неизвестная таблица, переименованное поле — деплой со сменой схемы при старой вкладке)
+   * бросала, когда таблицы до неё уже стояли новые, — реестр оставался смесью двух конфигов. Ошибка — та же, с именем таблицы.
+   */
   reload(partial: Partial<Record<ConfigKey, unknown>>): void {
+    const staged: [ConfigKey, unknown][] = [];
+    for (const key of Object.keys(partial) as ConfigKey[]) staged.push([key, this.parse(key, partial[key])]);
     const store = this.data as Record<string, unknown>;
-    const keys: string[] = [];
-    for (const key of Object.keys(partial) as ConfigKey[]) {
-      store[key] = this.parse(key, partial[key]);
-      keys.push(key);
-    }
-    this.bus?.emit('config:reloaded', { keys });
+    for (const [key, value] of staged) store[key] = value;
+    this.bus?.emit('config:reloaded', { keys: staged.map(([key]) => key) });
   }
 
   /** Возвращает сырые данные (для экспорта из редактора). */

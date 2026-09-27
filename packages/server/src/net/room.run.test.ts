@@ -10,6 +10,11 @@ import {
 import { counters } from './metrics.js';
 import { limits } from './rateLimit.js';
 
+// Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
+// таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
+// потолок не прячет — они падают утверждением, а не временем.
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * E2E (headless) серверного жизненного цикла забега v2 (Ф4.2/4.4). Гоняем реальную `Room`
  * с фейковым ws, читаем ИСХОДЯЩИЕ кадры как чёрный ящик: старт из города → RunPlan → узлы с
@@ -116,6 +121,9 @@ vi.mock('../db/db.js', async () => {
       return row ? { data: structuredClone(row.data), version: row.version } : null;
     },
     putAccountStash: () => Promise.resolve(),
+    // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
+    getRunLedger: () => Promise.resolve([]),
+    mergeRunLedger: () => Promise.resolve(),
   };
 });
 vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
@@ -166,6 +174,11 @@ function makeRoom(userId = 'user-1'): { room: Room; ws: FakeWs; pid: string; sav
 }
 /** Дать отработать фоновым записям (вход, вливание кошелька): мок базы отвечает сразу. */
 const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+/**
+ * R9-01: продолжение из города ждёт свод забега из базы (у мока — готовые промисы): дождаться одних микрозадач, без оборотов
+ * таймеров — иначе планировщик успел бы сдвинуть монстров, а тесты сверяют заселение как есть.
+ */
+const drained = async (): Promise<void> => { for (let i = 0; i < 500; i++) await Promise.resolve(); };
 /** Индекс последнего кадра типа `t` — для проверки ПОРЯДКА кадров. */
 const lastIdx = (ws: FakeWs, t: ServerFrame['t']): number => ws.frames.map((f) => f.t).lastIndexOf(t);
 const countOf = (ws: FakeWs, t: ServerFrame['t']): number => ws.frames.filter((f) => f.t === t).length;
@@ -516,6 +529,31 @@ describe('Room — команды города: ответы, схема, лим
     expect(ws.last('cmdResult')).toMatchObject({ id: 21, cmd: 'stashOpen', ok: false });
     expect(ws.last('cmdResult')!.reason).toMatch(/только в городе/);
     expect(ws.last('stash'), 'сундук из подземелья не открылся').toBeUndefined();
+  });
+
+  /**
+   * ⭐ R7-11: ПРИВАЛ ЗАБЕГА (rest-узел) НЕ ЗОВЁТ К СУНДУКУ, КОТОРЫЙ СЕРВЕР НЕ ОТКРОЕТ. Город-хаб привала ставил декор
+   * `stash`, оба клиента рисовали из него «[E] Общий сундук», окно слало `stashOpen` — и каждый честный клик получал
+   * «только в городе» и шёл в `cmdOutOfPlace` (телеметрия чита). Сундук остаётся в городе (правило против мула,
+   * `guard.ts`), а дорога к нему с привала — портал.
+   */
+  it('⭐ R7-11: привал — портал в город, а сундука в кадре области нет', () => {
+    const { room, ws, pid } = makeRoom();
+    room.descend(pid, 'normal', undefined, { templateId: 'dungeon-standard' });
+    for (let g = 0; g < 40; g++) {
+      const r = runOf(room);
+      const node = nodeOf(r.runPlan!, r.runNodeId!);
+      if (node.type === 'rest' || !node.edges.length) break;
+      ready(room);
+      toExit(room, pid);
+      room.descend(pid, undefined, node.edges[0]!.to);
+    }
+    const r = runOf(room);
+    expect(nodeOf(r.runPlan!, r.runNodeId!).type, 'стандартный забег доходит до привала').toBe('rest');
+    const floor = ws.last('areaChanged')!.floor;
+    expect(floor.area).toBe('dungeon');
+    expect(floor.decor.map((d) => d.kind), 'кнопки «Общий сундук» клиенту не из чего строить').not.toContain('stash');
+    expect(floor.decor.some((d) => d.kind === 'portal'), 'портал в город — на месте').toBe(true);
   });
 
   it('⭐ исключение в обработчике — отказ и счётчик, НЕ проброс; сейв откатан к снимку', async () => {
@@ -1097,8 +1135,8 @@ describe('Room — ковка на сервере: ковка, зачарова�
     await room.handleCmd(pid, craftCmd('melt-nonce-02', s.input), 3);
     const uid2 = ws.last('cmdResult')!.uid!;
     expect(uid2).toBeTruthy();
-    // Полевая доля катается (0.3 с вероятностным остатком) и изредка не даёт ничего — тогда вещь цела
-    // и разбор повторяют. Нам важна причина записи удачного разбора.
+    // Полевая доля катается (0.3 с вероятностным остатком); с R9-03 пустой бросок тоже разбирает вещь (в ничто), так что
+    // повтор — только страховка. Нам важна причина записи удачного разбора.
     let r2 = ws.last('cmdResult')!;
     for (let i = 0; i < 30; i++) {
       limits.forgeCmd.reset(userOf(pid));
@@ -1731,6 +1769,7 @@ describe('Room — раунд 3: случайные квесты доски (R3-
     expect(ws.last('cmdResult')).toMatchObject({ id: 1, ok: true });
 
     ready(room); room.descend(pid);
+    await drained();   // R9-01: продолжение из города — после чтения свода забега из базы
     expect(ws.last('runPlan')!.currentNodeId, 'спуск из города продолжил тот же узел').toBe(parked);
     expect(statusOf(save, delve.id), 'возврат на пройденный этаж — не достижение').toBe('active');
     await room.handleCmd(pid, { cmd: 'turnInQuest', questId: delve.id }, 2);
@@ -2090,6 +2129,7 @@ describe('Room — раунд 3: спуск, финал и грейс (R3-01, R3
     expect(areaOf(a.room)).toBe('town');
     ready(a.room);
     a.room.descend(a.pid);
+    await drained();   // R9-01: продолжение из города — после чтения свода забега из базы
     expect(nodeNow(a.ws).id, 'продолжили тот же узел').toBe(node);
     const ws2 = new FakeWs();
     const pidB = a.room.reconnect(ws2 as unknown as GameConn, 'user-r416-b', structuredClone(db.data.get(b.save.charId)!), db.saves.get(b.save.charId)!);
@@ -2241,6 +2281,18 @@ describe('Room — раунд 4: узел забега не фармится в�
   /** Подпись монстра заселения — что и где стоит (id сущности — сквозной счётчик мира, по нему не сравнить). */
   const sig = (m: MonIn): string => `${m.def.id}/${m.def.rarity}/${m.def.level}@${Math.round(m.pos.x)},${Math.round(m.pos.y)}`;
   const aliveSigs = (room: Room): string[] => wOf(room).monsters.filter((m) => m.alive).map(sig).sort();
+  /**
+   * Заселение без убитых — разность МУЛЬТИМНОЖЕСТВ: подпись не уникальна (члены пачки встают на клетку вожака — два
+   * одинаковых зомби в одной точке). Фильтр «подписи нет среди убитых» выбрасывал и живого близнеца убитого, и тест
+   * падал на случайном сиде (~1 из 30): «лишний» зомби, которого на деле никто не воскрешал.
+   */
+  const withoutKilled = (all: readonly string[], killed: readonly string[]): string[] => {
+    const out = [...all];
+    for (const k of killed) { const i = out.indexOf(k); if (i >= 0) out.splice(i, 1); }
+    return out;
+  };
+  /** Сколько раз подпись встречается в списке. */
+  const countSig = (list: readonly string[], s: string): number => list.filter((x) => x === s).length;
   const itemDrops = (room: Room): number => wOf(room).drops.filter((d) => d.kind === 'item').length;
   /**
    * Убить монстров САМОЙ СИМУЛЯЦИЕЙ (смертельный DoT, как у игроков в тестах вайпа): смерть, награды, событие и запись узла —
@@ -2262,10 +2314,11 @@ describe('Room — раунд 4: узел забега не фармится в�
     room.returnTown(pid);
     expect(areaOf(room), 'вышли в город').toBe('town');
   }
-  /** Спуск из города — продолжение припаркованного забега. */
-  function resume(room: Room, pid: string): void {
+  /** Спуск из города — продолжение припаркованного забега (R9-01: после чтения свода забега из базы). */
+  async function resume(room: Room, pid: string): Promise<void> {
     ready(room);
     room.descend(pid);
+    await drained();
     expect(areaOf(room), 'спустились').toBe('dungeon');
   }
   /** Спуск по первому ребру (у его выхода), пока узел не подойдёт; `null` — дошли до финала, не найдя. */
@@ -2301,7 +2354,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     toTown(room, pid);
     await settle();
     expect(db.data.get(save.charId)?.run?.node?.chests, 'и в базу — с возвратом в город').toContain(chest.id);
-    resume(room, pid);
+    await resume(room, pid);
     expect(nodeNow(ws).id, 'продолжили тот же узел').toBe(node);
     expect(ws.last('areaChanged')!.floor.chests.map((c) => c.id), 'открытый сундук клиенту не приходит').not.toContain(chest.id);
     expect(wOf(room).chests.map((c) => c.id).sort(), 'сундуки узла те же').toEqual([...all].sort());
@@ -2318,7 +2371,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     expect(save.run?.node?.chests.filter((id) => id === chest.id), 'запись без повторов').toHaveLength(1);
   });
 
-  it('⭐ убитые уник и босс не встают: продолжение узла — без них, и повтор круга награды не даёт', () => {
+  it('⭐ убитые уник и босс не встают: продолжение узла — без них, и повтор круга награды не даёт', async () => {
     let tried = 0;
     for (const templateId of ['dungeon-standard', 'deep-expedition']) {
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -2335,10 +2388,10 @@ describe('Room — раунд 4: узел забега не фармится в�
         for (let loop = 0; loop < 3; loop++) {
           toTown(room, pid);
           const xp0 = save.xp, drops0 = itemDrops(room);
-          resume(room, pid);
+          await resume(room, pid);
           expect(nodeNow(ws).id).toBe(node);
           expect(hasUnique(), `круг ${loop + 1}: уник/босс не встал`).toBe(false);
-          expect(aliveSigs(room), 'живые — ровно те же, что были, без убитых').toEqual(before.filter((s) => !dead.includes(s)));
+          expect(aliveSigs(room), 'живые — ровно те же, что были, без убитых').toEqual(withoutKilled(before, dead));
           room.step(false);
           expect(save.xp, 'опыта за убитых второй раз нет').toBe(xp0);
           expect(itemDrops(room), 'добычи за убитых второй раз нет').toBe(drops0);
@@ -2349,7 +2402,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     expect(tried, 'встретился узел с уником или боссом').toBeGreaterThan(0);
   });
 
-  it('⭐ честное продолжение: живые монстры и целые сундуки на месте, заселение то же при выросшем герое, дальше — свежий узел', () => {
+  it('⭐ честное продолжение: живые монстры и целые сундуки на месте, заселение то же при выросшем герое, дальше — свежий узел', async () => {
     const { room, ws, pid, save } = makeRoom('user-r401-honest');
     room.descend(pid);
     const node = nodeNow(ws);
@@ -2361,9 +2414,9 @@ describe('Room — раунд 4: узел забега не фармится в�
     toTown(room, pid);
     // Герой вырос в городе — узел заселяется ровно так же, как на первом входе (мощь узла записана с ним).
     save.level = 40;
-    resume(room, pid);
+    await resume(room, pid);
     expect(nodeNow(ws).id).toBe(node.id);
-    expect(aliveSigs(room), 'заселение то же, минус убитый').toEqual(first.filter((s) => !dead.includes(s)));
+    expect(aliveSigs(room), 'заселение то же, минус убитый').toEqual(withoutKilled(first, dead));
     expect(wOf(room).chests.filter((c) => !c.opened).map((c) => c.id).sort(), 'сундуки целы').toEqual(chests0);
     // Живого монстра по-прежнему можно убить — и это тоже запишется.
     const more = slay(room, (m) => m.alive);
@@ -2386,7 +2439,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     room.openChest(pid, chest.id);
     const before = aliveSigs(room);
     const dead = slay(room, (m) => m.def.rarity !== 'normal');
-    const left = before.filter((s) => !dead.includes(s));
+    const left = withoutKilled(before, dead);
     toTown(room, pid);
     await room.removePlayer(pid);                           // из города — чистый выход, комнаты больше нет
     await settle();
@@ -2399,10 +2452,10 @@ describe('Room — раунд 4: узел забега не фармится в�
     expect(ws2.last('runPlan')!.currentNodeId, 'продолжение — тот же узел').toBe(node);
     expect(wOf(fresh).chests.find((c) => c.id === chest.id)?.opened, 'сундук открыт').toBe(true);
     expect(aliveSigs(fresh), 'живые — те же, убитые не встали').toEqual(left);
-    expect(dead.every((d) => !aliveSigs(fresh).includes(d))).toBe(true);
+    expect(dead.every((d) => countSig(aliveSigs(fresh), d) === countSig(left, d)), 'убитые не встали (близнецы в пачке — живы)').toBe(true);
   });
 
-  it('дёрнутый рычаг остаётся дёрнутым: дверь открыта и после продолжения', () => {
+  it('дёрнутый рычаг остаётся дёрнутым: дверь открыта и после продолжения', async () => {
     let seen = 0;
     for (let attempt = 0; attempt < 8 && !seen; attempt++) {
       const { room, ws, pid, save } = makeRoom('user-r401-lever');
@@ -2416,7 +2469,7 @@ describe('Room — раунд 4: узел забега не фармится в�
       expect(ws.last('doorOpened')?.doorId).toBe(door.id);
       expect(save.run?.node?.levers).toContain(lever.id);
       toTown(room, pid);
-      resume(room, pid);
+      await resume(room, pid);
       const floor = ws.last('areaChanged')!.floor;
       expect(floor.levers.map((l) => l.id), 'рычаг не предлагается снова').not.toContain(lever.id);
       expect(floor.doors.map((d) => d.id), 'дверь не рисуется запертой').not.toContain(door.id);
@@ -2449,7 +2502,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     a.room.castVote(b.pid, true);
     expect(areaOf(a.room)).toBe('town');
     await a.room.removePlayer(a.pid);                       // хозяин ушёл — хозяином стал сосед
-    resume(a.room, b.pid);
+    await resume(a.room, b.pid);
     expect(nodeNow(b.ws).id, 'сосед продолжил тот же узел').toBe(node);
     expect(wOf(a.room).chests.find((c) => c.id === chest.id)?.opened, 'сундук открыт').toBe(true);
     expect(wOf(a.room).monsters.filter((m) => m.alive), 'зачищенный узел пуст').toHaveLength(0);
@@ -2478,6 +2531,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     const pidB = a.room.reconnect(ws2 as unknown as GameConn, 'user-r401-grace-b', fromDb, db.saves.get(b.save.charId)!);
     ready(a.room);
     a.room.descend(pidB);
+    await drained();   // R9-01: продолжение из города — после чтения свода забега из базы
     expect(ws2.last('runPlan')!.currentNodeId).toBe(node);
     expect(wOf(a.room).chests.find((c) => c.id === chest.id)?.opened, 'сундук, открытый без B, открыт и для B').toBe(true);
     expect(wOf(a.room).monsters.filter((m) => m.alive).length, 'убитые без B не встали').toBe(0);
@@ -2646,6 +2700,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     ready(d.room);
     d.room.descend(d.pid);                                  // хозяин D (указатель X) зовёт спуск
     d.room.castVote(pidB, true);
+    await drained();   // R9-01: продолжение из города — после чтения свода забега из базы
     expect(areaOf(d.room)).toBe('dungeon');
     expect(nodeNow(d.ws).id, 'продолжили с Y — самого глубокого указателя').toBe(y);
     expect(playerSave(d.room, pidB).run?.currentNodeId, 'B не отмотан').toBe(y);
@@ -2737,6 +2792,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     ready(h.room); h.room.castVote(pidF, false);
     await h.room.removePlayer(pidF);
     ready(h.room); h.room.descend(h.pid);
+    await drained();   // R9-01: продолжение из города — после чтения свода забега из базы
     expect(areaOf(h.room)).toBe('dungeon');
     const ws2 = new FakeWs();
     const k = fromDb(f.save.charId);

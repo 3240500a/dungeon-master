@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { vecLen, dist, dist2, wrapAngle } from './fastMath.js';
+import { vecLen, dist, dist2, wrapAngle, normalizeAngle } from './fastMath.js';
 
 /**
  * Быстрая математика горячих циклов (Ф0.11). Главное требование: результат совпадает
@@ -46,6 +46,18 @@ describe('fastMath', () => {
       if (Math.abs(Math.abs(wrapAngle(a)) - Math.PI) < 1e-6) continue;
       expect(wrapAngle(a)).toBeCloseTo(Math.atan2(Math.sin(a), Math.cos(a)), 9);
     }
+  });
+
+  /** ⚠ R7-01: `wrapAngle` на |a| ≳ 1e16 отдаёт 0 для любого направления — угол извне приводит `normalizeAngle`. */
+  it('⭐ R7-01: normalizeAngle — любая конечная величина в [−π, π] тем же направлением; честный угол как есть', () => {
+    expect(wrapAngle(1e17 + 1), 'грабля, которую закрывает normalizeAngle').toBe(0);
+    for (const a of [1e17, -1e17, 1e20, 1e300, -1e300, 2 ** 60, 1e6, 7, -4]) {
+      const n = normalizeAngle(a);
+      expect(Math.abs(n), `${a}`).toBeLessThanOrEqual(Math.PI);
+      expect(n, `${a}`).toBe(Math.atan2(Math.sin(a), Math.cos(a)));
+    }
+    for (const a of [0, -0, 1.2, -3, Math.PI, -Math.PI]) expect(Object.is(normalizeAngle(a), a), `${a}`).toBe(true);
+    expect(normalizeAngle(NaN)).toBeNaN();
   });
 
   it('нулевой вектор не даёт NaN', () => {

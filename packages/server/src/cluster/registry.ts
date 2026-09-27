@@ -1,4 +1,5 @@
 import { q, q1, applySchema, withSchemaLock } from '../db/pool.js';
+import { NODE_DEAD_SEC, CLAIM_IDLE_SEC, claimHeldSql, claimHeldParams } from './claimRule.js';
 
 /**
  * Реестр кластера (Ф4.2): кто из процессов жив, сколько на нём народу и за какой нодой
@@ -29,6 +30,13 @@ export interface NodeRow {
   rss_bytes: string;
   loop_p99_ms: number;
   tick_hz: number;
+  /**
+   * ⭐ E2E 27.09: время последнего сердцебиения по часам БАЗЫ, мс. Гейтвей по нему снимает свою поправку «направлен, но ещё
+   * не учтён» — когда сердцебиение точно видит направленных (`gateway.ts`, `settleIssued`). Сравниваются только значения
+   * этого же поля между собой: часы гейтвея с часами базы не смешиваются. Нет поля (старая строка, мок) — поправку снимает
+   * запасной срок.
+   */
+  beat_ms?: number;
 }
 
 /** Сколько нода может молчать, прежде чем её перестанут считать живой. */
@@ -39,13 +47,8 @@ const NODE_STALE_SEC = 10;
  * на ТУ ЖЕ ноду, где висит его комната, иначе забег потеряется.
  */
 const CLAIM_STALE_SEC = 300;
-/**
- * ⭐ R2-17: сколько закрепление ВХОДА держит героя без продления. Нода продлевает своих (живых, в грейсе, с
- * прощальной записью в полёте) каждые две секунды — `live_at`; полминуты без продления значат, что за
- * закреплением никакой сессии нет (вход сорвался, «Завершить» без сессии, снятие не нашло строку). Закрепление
- * маршрута (гейтвей, `claimChar`) `live_at` не ставит вовсе: оно — подсказка, куда вести, а не живой герой.
- */
-const CLAIM_IDLE_SEC = 30;
+// Срок смерти ноды (`NODE_DEAD_SEC`, R7-09) и простоя закрепления входа (`CLAIM_IDLE_SEC`, R2-17) — в `claimRule.ts`: по ним же
+// сбрасывает забеги старт ноды (R8-06).
 
 /** Тот же ключ, что у основной схемы: процессы кластера стартуют одновременно. */
 const SCHEMA_LOCK = 947_213_002;
@@ -116,16 +119,20 @@ export async function heartbeat(
 /** Живые узлы (те, что подавали признаки жизни недавно). */
 export async function liveNodes(): Promise<NodeRow[]> {
   return q<NodeRow>(
-    `SELECT id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz
+    `SELECT id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz,
+            (extract(epoch FROM beat_at) * 1000)::float8 AS beat_ms
      FROM cluster_nodes WHERE beat_at > now() - ($1 || ' seconds')::interval
      ORDER BY id`, [String(NODE_STALE_SEC)]);
 }
 
-/** Убрать из реестра узлы, которые давно молчат (упали или сняты с деплоя). */
+/**
+ * Убрать из реестра узлы, которые давно молчат (упали или сняты с деплоя). ⭐ R7-09: не раньше `NODE_DEAD_SEC` — снятая строка
+ * отдаёт героев ноды любому входу (`claimForJoin`), и уборка на 60-й секунде обходила бы срок смерти.
+ */
 export async function sweepNodes(): Promise<number> {
   const rows = await q<{ id: string }>(
     `DELETE FROM cluster_nodes WHERE beat_at < now() - ($1 || ' seconds')::interval RETURNING id`,
-    [String(NODE_STALE_SEC * 6)]);
+    [String(Math.max(NODE_STALE_SEC * 6, NODE_DEAD_SEC))]);
   return rows.length;
 }
 
@@ -156,10 +163,17 @@ export async function claimChar(charId: string, preferred: string): Promise<stri
  * кластере». Гейтвей закрепляет на маршрутизации, но вход по коду комнаты идёт по букве кода мимо закрепления:
  * без этой проверки герой, живой на ноде A, заходил ещё и на ноду B к другу.
  *
- * Забираем закрепление, если его нет, оно наше, протухло, его нода не подаёт признаков жизни (упала — иначе
- * игрок ждал бы пять минут) или за ним нет живого героя (R2-17: маршрут гейтвея, сорванный вход — `live_at`).
- * Чужое живое закрепление не трогаем и НЕ продлеваем. Возвращает ноду-владельца: эту — вход разрешён, чужую —
+ * Забираем закрепление, если его нет, оно наше, за ним нет живого героя (R2-17: маршрут гейтвея — `live_at` пуст; нода
+ * жива, а героя давно не продлевает — сорванный вход, «Завершить» без сессии) или его нода мертва (упала — иначе игрок ждал
+ * бы пять минут). Чужое живое закрепление не трогаем и НЕ продлеваем. Возвращает ноду-владельца: эту — вход разрешён, чужую —
  * отказ; не смогли выяснить — бросок (вход ответит «сервер занят»), но НИКОГДА не «значит, наше».
+ *
+ * ⭐ R7-09: «МЕРТВА» — ЭТО `NODE_DEAD_SEC`, А НЕ `NODE_STALE_SEC`. Раньше хватало 10 с молчания: база легла — сердцебиение ноды
+ * не проходило, и вход на соседнюю ноду в окне после подъёма базы забирал героя, чью правду нода держала недописанной копией
+ * (дюп через соседа по аккаунту). Теперь закрепление держится, если на ПОСЛЕДНЕМ ударе сердца (не старше срока смерти) нода
+ * держала героя: продлила его не раньше чем за `CLAIM_IDLE_SEC` до удара (нода продлевает своих перед ударом, `node.ts`).
+ * Молчит — удары не идут, и этот признак не стареет, сколько бы база ни лежала. Нода снята (штатно или уборкой) или молчит
+ * дольше срока смерти — закрепление переходит.
  *
  * ⭐ R2-05: ДВА ЗАПРОСА, А НЕ ОДИН. Раньше владельца при отказе читал тот же запрос — со снимком, взятым ДО того,
  * как соседняя нода зафиксировала вставку, на которой наша вставка ждала: строки в снимке «не было», и ответ
@@ -171,13 +185,11 @@ export async function claimForJoin(charId: string, nodeId: string): Promise<stri
       `INSERT INTO char_claims (char_id, node_id, touched_at, live_at) VALUES ($1, $2, now(), now())
        ON CONFLICT (char_id) DO UPDATE SET node_id = excluded.node_id, touched_at = now(), live_at = now()
          WHERE char_claims.node_id = excluded.node_id
-            OR char_claims.touched_at < now() - ($3 || ' seconds')::interval
             OR char_claims.live_at IS NULL
-            OR char_claims.live_at < now() - ($5 || ' seconds')::interval
             OR NOT EXISTS (SELECT 1 FROM cluster_nodes n
-                           WHERE n.id = char_claims.node_id AND n.beat_at > now() - ($4 || ' seconds')::interval)
+                           WHERE n.id = char_claims.node_id AND ${claimHeldSql('char_claims', 'n', 3, 4)})
        RETURNING node_id`,
-      [charId, nodeId, String(CLAIM_STALE_SEC), String(NODE_STALE_SEC), String(CLAIM_IDLE_SEC)]);
+      [charId, nodeId, ...claimHeldParams()]);   // R8-06: то же правило — у сброса забегов на старте ноды
     if (up) return up.node_id;
     const owner = await claimOwner(charId);
     if (owner) return owner;

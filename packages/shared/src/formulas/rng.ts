@@ -7,15 +7,11 @@ export interface Rng {
   chance(p: number): boolean;
 }
 
-export function createRng(seed: number): Rng {
-  let a = seed >>> 0;
-  const next = (): number => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+/**
+ * Броски поверх ЛЮБОГО источника чисел [0, 1) — те же `int`/`float`/`pick`/`chance`, что у сидового `createRng`.
+ * ⭐ R9-02: сервер кормит сессию комнаты криптоисточником (`sessionRng`), а формулы и сессия не знают, откуда число.
+ */
+export function rngFrom(next: () => number): Rng {
   return {
     next,
     int: (min, max) => Math.floor(next() * (max - min + 1)) + min,
@@ -23,4 +19,15 @@ export function createRng(seed: number): Rng {
     pick: (arr) => arr[Math.floor(next() * arr.length)]!,
     chance: (p) => next() < p,
   };
+}
+
+export function createRng(seed: number): Rng {
+  let a = seed >>> 0;
+  return rngFrom((): number => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  });
 }

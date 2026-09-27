@@ -182,13 +182,13 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
   };
   const scrap = (it: Item): DropResult => {
     const r = sellOrSalvage(reg, save, it);
-    return { equipped: false, sold: r.sold, salvaged: r.mats, salvagedItems: r.mats > 0 ? 1 : 0 };
+    return { equipped: false, sold: r.sold, salvaged: r.mats, salvagedItems: r.took ? 1 : 0 };
   };
   // Скованное в сумке (сейв из игры): переплавка на месте, а не вышло (сумка полна) — несём кузнецу.
   // В золото — никогда: `sellForGold` на нём бросает.
   const meltOrCarry = (it: Item): DropResult => {
     const mats = fieldSalvage(reg, save, it);
-    return mats > 0 ? { equipped: false, sold: 0, salvaged: mats, melted: 1 } : { equipped: false, sold: 0, kept: true };
+    return mats !== null ? { equipped: false, sold: 0, salvaged: mats, melted: 1 } : { equipped: false, sold: 0, kept: true };
   };
 
   // ⚠ СТЕК СЫРЬЯ НЕСЁМ ДОМОЙ. Без этой ветки бот продавал бы его как вещь без слота — сим
@@ -205,7 +205,7 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
     if (item.parts) return meltOrCarry(item);
     if (carry && carryToForge(reg, item, carry, true)) return { equipped: false, sold: 0, kept: true };
     const mats = fieldSalvage(reg, save, item);
-    return { equipped: false, sold: 0, salvaged: mats, salvagedItems: mats > 0 ? 1 : 0 };
+    return { equipped: false, sold: 0, salvaged: mats ?? 0, salvagedItems: mats !== null ? 1 : 0 };
   }
 
   // Расходники бот не экипирует — сразу в золото (нет слота).
@@ -216,16 +216,16 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
     // (сумка полна под выход) — остаётся в руках до кузницы, а находка идёт своим путём.
     if (cur?.parts) {
       const mats = fieldSalvage(reg, save, cur);
-      if (mats > 0) {
+      if (mats !== null) {
         save.equipment[item.slot] = item;
         return { equipped: true, sold: 0, salvaged: mats, melted: 1 };
       }
     } else {
       // ⚠ Заменённую вещь НЕ продаём вслепую: разобрать её на месте выгоднее по смыслу игры
       // (материалы дефицитны, золото — нет), а уники разбору не поддаются вовсе.
-      const r = cur ? sellOrSalvage(reg, save, cur) : { sold: 0, mats: 0 };
+      const r = cur ? sellOrSalvage(reg, save, cur) : { sold: 0, mats: 0, took: false };
       save.equipment[item.slot] = item;
-      return { equipped: true, sold: r.sold, salvaged: r.mats, salvagedItems: r.mats > 0 ? 1 : 0 };
+      return { equipped: true, sold: r.sold, salvaged: r.mats, salvagedItems: r.took ? 1 : 0 };
     }
   }
   if (item.parts) return meltOrCarry(item);
@@ -242,25 +242,26 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
  * иначе бот копил бы золото, которого в игре и так избыток, и не копил бы материалы.
  * Возвращает выручку золотом (0, если ушло в материалы) и сколько единиц сырья вышло.
  */
-function sellOrSalvage(reg: ConfigRegistry, save: SaveState, item: Item): { sold: number; mats: number } {
+function sellOrSalvage(reg: ConfigRegistry, save: SaveState, item: Item): { sold: number; mats: number; took: boolean } {
   const mats = fieldSalvage(reg, save, item);
-  if (mats > 0) return { sold: 0, mats };
-  return { sold: sellForGold(reg, save, item), mats: 0 };
+  if (mats !== null) return { sold: 0, mats, took: true };
+  return { sold: sellForGold(reg, save, item), mats: 0, took: false };
 }
 
 /** Единиц сырья в сумке — разбор кладёт выход именно туда (стеками), а не в кошелёк сейва. */
 const bagUnits = (save: SaveState): number => Object.values(carriedMaterials(save.inventory)).reduce((a, b) => a + b, 0);
 
 /**
- * Разбор на месте через АВТОРИТЕТНОЕ действие: цены и правила одни с игрой. Сколько единиц вышло.
+ * Разбор на месте через АВТОРИТЕТНОЕ действие: цены и правила одни с игрой. Сколько единиц вышло; `null` — отказ (вещь цела).
  * ⚠ Мерить — по СУМКЕ. Раньше мерили `totalMaterials(save)` — старый кошелёк сейва, куда разбор больше
  * не кладёт: выходил 0, и `sellOrSalvage` уже разобранную вещь ЕЩЁ И продавал — двойной выход в симе.
+ * ⚠ R9-03: 0 единиц — не отказ: пустой бросок разбирает вещь в ничто (как в игре), и продать её после этого уже нечего.
  */
-function fieldSalvage(reg: ConfigRegistry, save: SaveState, item: Item): number {
+function fieldSalvage(reg: ConfigRegistry, save: SaveState, item: Item): number | null {
   const before = bagUnits(save);
   save.inventory.push(item);
   const r = doFieldSalvage(reg, save, item.uid, createRng(((item.uid.length * 2654435761) ^ save.gold) >>> 0 || 1));
-  if (!r.ok) { save.inventory = save.inventory.filter((i) => i.uid !== item.uid); return 0; }
+  if (!r.ok) { save.inventory = save.inventory.filter((i) => i.uid !== item.uid); return null; }
   return bagUnits(save) - before;
 }
 

@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { allocAttr, respec, attrRespecRefund, forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, unequip, socketInsert, socketClear } from './townActions.js';
+import { allocAttr, respec, attrRespecRefund, forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, unequip, socketInsert, socketClear, canRepairItem, mendBrokenUniques } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { emptyStash } from './stashActions.js';
 import { createRng } from '../formulas/rng.js';
 import { carriedMaterials } from './materials.js';
 import { generateItem, itemFromBaseId } from '../formulas/itemgen.js';
 import { shapeFoundWeapon } from '../formulas/craft.js';
+import { effectiveLevel } from '../formulas/power.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -882,6 +883,34 @@ describe('⚠ R6-11: сброс атрибутов — отказ, когда с
   });
 });
 
+/**
+ * ⭐ R8-10: мощь узла берёт вещь запаса, только если герою её надеть (`effectiveLevel`). Сброс атрибутов — везде, и без
+ * `respecPeak` «снял меч, сбросил, вложил мимо — спустился — сбросил снова и надел» заселял узел без меча.
+ */
+describe('⭐ R8-10: сброс атрибутов не прячет снаряжение от мощи узла', () => {
+  it('снял меч на вложенной Силе, сбросил, вложил в Интеллект — мощь по запасу та же, что в мече', () => {
+    const power = { ...reg.get('balance').power, gearDivisor: 1, gearMax: 99 };
+    const s = newCharacterSave(reg, 'warrior', 'Хитрец', 'r810');
+    s.equipment = {}; s.belt = []; s.gold = 100_000; s.level = 12;
+    const str0 = s.attributes.strength;
+    s.inventory = [{ uid: 'w', baseId: 'b', name: 'Меч', slot: 'weapon', rarity: 'rare', itemLevel: 12, requirements: { strength: str0 + 10 },
+      affixes: [], baseStats: [], gridW: 1, gridH: 1, pos: { x: 0, y: 0 } }];
+    s.unspentAttributePoints = 10;
+    expect(allocAttr(s, 'strength', 10).ok).toBe(true);
+    expect(equip(reg, s, 'w').ok).toBe(true);
+    const geared = effectiveLevel(s, power).total;
+    expect(unequip(reg, s, 'weapon').ok).toBe(true);
+    expect(respec(reg, s).ok).toBe(true);
+    expect(s.respecPeak?.strength, 'пик — атрибуты до сброса').toBe(str0 + 10);
+    expect(allocAttr(s, 'intelligence', 10).ok).toBe(true);
+    expect(equip(reg, s, 'w').reason, 'сейчас меч не надеть').toBe('Недостаточно атрибутов');
+    expect(effectiveLevel(s, power, s.inventory).total, 'а в подземелье — сбросить и надеть').toBe(geared);
+    // Второй сброс пик не опускает: покомпонентный максимум.
+    expect(respec(reg, s).ok).toBe(true);
+    expect(s.respecPeak).toMatchObject({ strength: str0 + 10, intelligence: s.attributes.intelligence + 10 });
+  });
+});
+
 /** ⚠ R6-17: вложил — сбросил — очков скилов ровно столько же, сколько было до вложения (не больше и не меньше). */
 describe('⚠ R6-17: сброс дерева скилов возвращает ровно вложенное', () => {
   it('⭐ каждый вход ветки без класса: вложить до потолка ранга, сбросить — очки как до вложения, золото — только пошлина', () => {
@@ -902,5 +931,67 @@ describe('⚠ R6-17: сброс дерева скилов возвращает �
       n++;
     }
     expect(n).toBeGreaterThan(3);
+  });
+});
+
+/**
+ * ⚠ R7-19: УНИК КУЗНИЦУ НЕ ПРОХОДИТ ВОВСЕ — И ПОЧИНКУ ТОЖЕ (docs/ECONOMY.md §1: «Нашёл — носи как есть»). Трофей с тела
+ * ломался без оглядки на редкость, а у уника лестница сырья пуста (`materialLadder`: пустая — это ОТКАЗ, а не «бесплатно»),
+ * и `forgeRepair` пропускал проверку сырья на пустой цене: сломанный уник чинился за одно золото, когда редкий той же базы
+ * платил железом трёх ступеней. Теперь уник не чинится (`canRepairItem` — и верстак, и сервер), сломанным не падает
+ * (`GameSession`), а сломанный из старого сейва — цел на входе (`mendBrokenUniques`).
+ */
+describe('⚠ R7-19: сломанный уник — кузнец не чинит', () => {
+  const unique = (seed: number): Item => {
+    const it = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+      dropBias: 1, itemLevel: 30, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'unique',
+      maxReqTotal: reg.get('balance').maxTotalRequirement, origin: 'drop',
+    }, createRng(seed));
+    return { ...it, broken: true, pos: { x: 0, y: 0 } };
+  };
+  const save = (it: Item): SaveState => ({ gold: 1_000_000, inventory: [it], equipment: {}, belt: [],
+    attributes: { strength: 500, dexterity: 500, intelligence: 500, vitality: 500 }, level: 99, skills: {}, masteries: {} } as unknown as SaveState);
+
+  it('⭐ пустой кошелёк сырья, золота вдоволь — отказ; золото на месте, вещь сломана, надеть нельзя', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const it = unique(seed);
+      expect(it.rarity).toBe('unique');
+      const s = save(it);
+      const r = forgeRepair(reg, s, it.uid, {});
+      expect(r.ok, `${it.name}: было — починка за одно золото`).toBe(false);
+      expect(r.reason).toBe('Уникальную вещь кузнец не чинит');
+      expect(s.gold).toBe(1_000_000);
+      expect(it.broken).toBe(true);
+      expect(canRepairItem(reg, it)).toEqual(r);
+      // И с полным кошельком — тоже: отказ не про цену.
+      expect(forgeRepair(reg, s, it.uid, { ...wallet }).ok).toBe(false);
+    }
+  });
+
+  it('прочие редкости чинятся как прежде: сырьё по лестнице + золото', () => {
+    for (const rarity of ['normal', 'magic', 'rare'] as const) {
+      const it = { ...generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+        dropBias: 1, itemLevel: 30, baseId: 'short-sword', tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rarity,
+        maxReqTotal: reg.get('balance').maxTotalRequirement, origin: 'drop',
+      }, createRng(9)), broken: true, pos: { x: 0, y: 0 } } as Item;
+      expect(canRepairItem(reg, it), rarity).toEqual({ ok: true });
+      expect(Object.keys(repairCost(reg, it)).length, `${rarity}: сырьё по лестнице`).toBeGreaterThan(0);
+      const s = save(it);
+      expect(forgeRepair(reg, s, it.uid, wallet).ok, rarity).toBe(true);
+      expect(it.broken).toBeUndefined();
+    }
+    expect(canRepairItem(reg, { ...unique(1), broken: undefined })).toEqual({ ok: false, reason: 'Вещь цела' });
+  });
+
+  it('⭐ старый сейв: сломанный уник — цел (надевается); сломанный редкий — как был', () => {
+    const u = unique(7);
+    const rare = { ...u, uid: 'rare-1', rarity: 'rare' as const };
+    const s = save(u);
+    s.inventory.push(rare);
+    expect(mendBrokenUniques([...s.inventory, null, undefined])).toBe(1);
+    expect(u.broken).toBeUndefined();
+    expect(rare.broken, 'трофей прочей редкости — решение игрока, не трогаем').toBe(true);
+    expect(equip(reg, s, u.uid).ok).toBe(true);
+    expect(mendBrokenUniques(s.inventory), 'второй раз лечить нечего').toBe(0);
   });
 });

@@ -5,15 +5,15 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
 import { ConfigRegistry, configSchemas } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
 import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
 import {
-  getSession, listAllCharacters, getCharacter,
+  listAllCharacters, getCharacter,
   getUserById,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
-  getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
+  getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions, sweepRunLedger,
   getUserRole,
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
@@ -23,9 +23,10 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { renderMetrics } from './net/metrics.js';
 import { originAllowed, parseOrigins, keyMatches } from './net/adminAccess.js';
 import { installInternalRoutes, internalReader, drainProcess, installCrashDrain } from './net/internalRoutes.js';
-import { installAccountRoutes, bearer, isSessionToken, isCharId } from './net/accountRoutes.js';
-import { ah, httpErrors } from './net/asyncRoute.js';
-import { cachedJson } from './net/cachedJson.js';
+import { installAccountRoutes, bearer, isCharId } from './net/accountRoutes.js';
+import { sessionUser } from './net/authSession.js';
+import { installContentReads, assetStats } from './net/contentRoutes.js';
+import { ah, httpErrors, queryText } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -83,6 +84,9 @@ async function boot(): Promise<void> {
     await initClusterSchema();
     const wiped = await clearAllRuns(process.env.DM_NODE_ID ?? 'node-0');
     if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`);
+    // R9-01: свод записей забегов (`run_ledger`) — только свежий: забеги рестарт не переживают, строки — неделю.
+    const stale = await sweepRunLedger();
+    if (stale) console.log(`[dm-server] убрано старых записей узлов забегов: ${stale}`);
   }
 
   // Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы
@@ -197,9 +201,10 @@ async function devGuard(req: Request, res: Response): Promise<boolean> {
   const token = bearer(req);
   if (!token) { res.status(401).json({ error: 'Требуется вход' }); return false; }
   if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return true;
-  // Не ключ процессов и не токен сессии по виду — в базу незачем (R4-02).
-  const userId = isSessionToken(token) ? await getSession(token) : null;
-  if (!userId) { res.status(401).json({ error: 'Требуется вход' }); return false; }
+  // Не ключ процессов и не токен сессии по виду — в базу незачем (R4-02). ⭐ R9-12: сессии нет — неудача платит бакет сети
+  // адреса до базы (`sessionUser`).
+  const userId = await sessionUser(req, res, token);
+  if (!userId) return false;
   if (await getUserRole(userId) !== 'admin') {
     console.warn(`[dm-server] отказ dev-роута ${req.path}: у ${userId} нет прав администратора`);
     res.status(403).json({ error: 'Нужны права администратора' });
@@ -336,20 +341,16 @@ app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
 // ── Контент 3D поз-редактора (единая истина: сервер) ─────────────────────────────
 // GET — весь авторский контент (pe_gait/clips/sway/phys/ragdoll/chars); грузят и редактор, и игра
 // (кэшируют в localStorage). POST — правки редактора, DEV-only (в проде клиент не переписывает контент).
-// ⭐ R6-20: тело — из кэша (`cachedJson`), с ETag. Раньше каждый анонимный GET читал из базы весь `pose_store` (сотни КБ) и
-// сериализовал его заново. Сброс — при записи этим процессом (`/api/dev/pose`), срок — для записей соседних процессов.
-const POSE_CACHE_MS = 5_000;
-const poseBody = cachedJson(() => getPoseStore(), POSE_CACHE_MS);
-app.get('/api/pose', ah(async (req, res) => {
-  const { body, etag } = await poseBody.get();
-  res.setHeader('ETag', etag);
-  if (req.headers['if-none-match'] === etag) return res.status(304).end();
-  res.type('application/json').send(body);
-}));
-// Ревизии без тел: редактор зовёт их на каждой загрузке, чтобы понять, ушёл ли сервер вперёд.
-app.get('/api/pose/rev', ah(async (_req, res) => {
-  res.json(await getPoseRevs());
-}));
+// ⭐ R6-20, R9-12: `GET /api/pose`, `/api/pose/rev` и `/api/assets/stats` — из кэша, с ETag (`net/contentRoutes.ts`). Раньше
+// каждый анонимный GET читал базу (`pose_store`) или обходил всё дерево ассетов на главном потоке. Сброс — при записи этим
+// процессом (`/api/dev/pose`, заливка ассета), срок — для записей соседних процессов.
+const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
+if (!existsSync(ASSETS_DIR)) mkdirSync(ASSETS_DIR, { recursive: true });
+const content = installContentReads(app, {
+  poseStore: () => getPoseStore(),
+  poseRevs: () => getPoseRevs(),
+  assetStats: () => assetStats(ASSETS_DIR),
+});
 /**
  * Публикация рабочей копии редактора. `__baseRev` — ревизии, НА КОТОРЫХ основана присланная копия.
  * Если на сервере ключ новее, вся публикация отклоняется (409) и НИЧЕГО не пишется.
@@ -373,20 +374,18 @@ app.post('/api/dev/pose', devGate, devJson, ah(async (req, res) => {
   const rev: Record<string, number> = {};
   try {
     for (const k of keys) rev[k] = await setPoseStore(k, body[k]);
-  } finally { poseBody.invalidate(); }   // R6-20: и упавшая на середине запись могла лечь частью
+  } finally { content.invalidatePose(); }   // R6-20: и упавшая на середине запись могла лечь частью
   res.json({ ok: true, saved: keys, rev });
 }));
 app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
   if (!await devGuard(req, res)) return;
-  try { await deletePoseStore(req.params.key); } finally { poseBody.invalidate(); }
+  try { await deletePoseStore(req.params.key); } finally { content.invalidatePose(); }
   res.json({ ok: true, deleted: req.params.key });
 }));
 
 // ── Dev: ассеты 3D-моделей (GLB) — импорт из поз-редактора (FBX→настройка→экспорт GLB), раздача в игру ──
 // GLB — бинарь, в pose_store НЕ кладём (там мелкие JSON); файлы на диске, мелкий конфиг (карта костей/тип/хват)
 // — в pose_store (pe_models). Раздача статикой /assets/<id>.glb; в проде запись отключена (DEV_CONFIG_APPLY).
-const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
-if (!existsSync(ASSETS_DIR)) mkdirSync(ASSETS_DIR, { recursive: true });
 // DEV: ЖЁСТКО без кэша — `no-store` + БЕЗ etag/last-modified (никаких 304). Браузер НИКОГДА не хранит и не
 // ревалидирует: перезалил модель/текстуру под тем же именем → свежие байты сразу (без Ctrl+Shift+R, без залипания).
 // ПРОД: часовой кэш (GLB крупные). Вернуть кэш = запустить с NODE_ENV=production.
@@ -402,36 +401,7 @@ app.use('/assets', express.static(ASSETS_DIR, {
 // Нет такого файла → честный 404 (перехват ДО общего catch-all, иначе отсутствующий ассет отдавал HTML-заглушку со
 // статусом 200, и игра парсила её как GLB/PNG). Заодно чистка битых ссылок в редакторе может достоверно определить «нет файла».
 app.use('/assets', (_req, res) => { res.status(404).json({ error: 'asset not found' }); });
-/**
- * СТАТИСТИКА ФАЙЛОВ АССЕТОВ — для вкладки «Роадмап» в редакторе: сколько моделей, текстур и звуков
- * реально лежит на сервере. Это позволяет пунктам роадмапа СЧИТАТЬ СЕБЯ САМИМ («звуков 0 из 200»),
- * вместо ручных галок, которые устаревают.
- *
- * Роут ЧИТАЮЩИЙ и без авторизации — в отличие от загрузки (`POST /api/dev/assets`): он отдаёт только
- * агрегаты (счётчики и суммарный объём), без имён файлов и содержимого.
- */
-function assetStats(): { byExt: Record<string, number>; byDir: Record<string, number>; bytes: number } {
-  const byExt: Record<string, number> = {};
-  const byDir: Record<string, number> = {};
-  let bytes = 0;
-  const walk = (abs: string, rel: string): void => {
-    let entries: string[];
-    try { entries = readdirSync(abs); } catch { return; }        // папку могли удалить между вызовами — не 500-им из-за этого
-    for (const name of entries) {
-      const full = join(abs, name);
-      let st;
-      try { st = statSync(full); } catch { continue; }
-      if (st.isDirectory()) { walk(full, rel ? rel + '/' + name : name); continue; }
-      const ext = (name.split('.').pop() ?? '').toLowerCase();
-      byExt[ext] = (byExt[ext] ?? 0) + 1;
-      if (rel) byDir[rel] = (byDir[rel] ?? 0) + 1;
-      bytes += st.size;
-    }
-  };
-  walk(ASSETS_DIR, '');
-  return { byExt, byDir, bytes };
-}
-app.get('/api/assets/stats', (_req, res) => { res.json(assetStats()); });
+// Статистика файлов ассетов (`GET /api/assets/stats`, «Роадмап» редактора) — из кэша, см. `installContentReads` выше.
 
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
@@ -446,7 +416,8 @@ app.post('/api/dev/assets/:id', devGate, express.raw({ type: Object.keys(ASSET_E
   // ?strip=1 (GLB) — вырезать вшитые текстуры, оставив геометрию+развёртку. Пайплайн: экспорт «с текстурами» держит UV,
   // но весит мегабайты; тут срезаем картинки (материал в игре всё равно из конфига). Только окружение/объекты (см. glbStrip).
   let stripNote = '';
-  if (ext === 'glb' && /^(1|true|yes)$/i.test(String(req.query.strip ?? ''))) {
+  // R7-05: значение запроса — только строкой (`queryText`): `?strip[toString]=1` — объект, и `String()` на нём бросал.
+  if (ext === 'glb' && /^(1|true|yes)$/i.test(queryText(req.query.strip) ?? '')) {
     const before = buf.length;
     const r = stripGlbTextures(buf);
     buf = r.out; stripNote = r.note;
@@ -454,11 +425,14 @@ app.post('/api/dev/assets/:id', devGate, express.raw({ type: Object.keys(ASSET_E
   }
   // ?dir=<подпапка> — раскладка ассетов по папкам (напр. "crypt_tile_set" или "crypt_tile_set/textures"). Санитайз:
   // сегменты из латинских букв/цифр/_/-, без ".." и абсолютных путей → защита от path-traversal (только ASCII-имена).
-  const dirSegs = String(req.query.dir ?? '').split(/[\\/]+/).map((s) => s.trim().replace(/[^a-zA-Z0-9_-]/g, '')).filter(Boolean);
+  const dir = queryText(req.query.dir);
+  if (dir === undefined) return res.status(400).json({ error: 'bad dir' });   // R7-05: не строка — отказ, а не бросок
+  const dirSegs = dir.split(/[\\/]+/).map((s) => s.trim().replace(/[^a-zA-Z0-9_-]/g, '')).filter(Boolean);
   const relPath = [...dirSegs, id + '.' + ext].join('/');
   const absPath = join(ASSETS_DIR, ...dirSegs, id + '.' + ext);
   mkdirSync(dirname(absPath), { recursive: true });
   writeFileSync(absPath, buf);
+  content.invalidateAssets();   // R9-12: счётчики ассетов — из кэша; своя заливка видна сразу
   // Коллайдер из невидимого меша `collider*` (GLB): габариты → форма коллизии (в долях тайла). Редактор пишет в models[].collider.
   const collider = ext === 'glb' ? extractColliderFromGlb(buf) : null;
   if (collider) console.log(`[assets] коллайдер ${id}: ${JSON.stringify(collider)}`);
@@ -495,8 +469,8 @@ app.get('/api/me', ah(async (req, res) => {
   if (!token) return res.status(401).json({ error: 'Требуется вход' });
   // Ключ процессов — не человек: имени у него нет, права админские.
   if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return res.json({ role: 'admin', via: 'key' });
-  const userId = isSessionToken(token) ? await getSession(token) : null;   // R4-02: кривой токен — без базы
-  if (!userId) return res.status(401).json({ error: 'Требуется вход' });
+  const userId = await sessionUser(req, res, token);   // R4-02: кривой токен — без базы; R9-12: неудачи — под бакетом адреса
+  if (!userId) return;
   const user = await getUserById(userId);
   if (!user) return res.status(401).json({ error: 'Требуется вход' });
   res.json({ userId, username: user.username, role: user.role, via: 'session' });

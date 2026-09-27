@@ -1,9 +1,10 @@
 import { randomUUID, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import type { SaveState, AccountStash } from '@dm/shared';
+import { normalizeNodeState, RUN_NODES_MAX, type SaveState, type AccountStash, type RunNodeState } from '@dm/shared';
 import { q, q1, tx } from './pool.js';
 import { syncItems } from './items.js';
 import { CommitUnknown } from './errors.js';
+import { claimHeldSql, claimHeldParams } from '../cluster/claimRule.js';
 
 /**
  * Хранилище: Postgres (`db/pool.ts`). Аккаунты — `users` (логин+хеш пароля), `sessions`
@@ -335,6 +336,11 @@ export async function countCharacters(userId: string): Promise<number> {
  * отказ по версии, и сессии снимались (R1-01) пачками посреди забега. Живой — значит закреплён за другой нодой,
  * которая подаёт признаки жизни (`self` — эта нода: её прежние закрепления с прошлого запуска — её хвосты).
  * Таблицы кластера к этому моменту обязаны быть созданы (`initClusterSchema`).
+ *
+ * ⭐ R8-06: «живой на другой ноде» — ПО ПРАВИЛУ ВХОДА (`claimHeldSql`, R7-09): нода замолчала меньше срока смерти, а героя держала
+ * на последнем ударе. Раньше хватало 10 с молчания: база легла, нода стартовала в этом окне — и снимала забег и версию героям,
+ * которых вход ещё отдавал замолчавшей ноде (её сессии — 4009 пачкой, недописанная прощальная копия пропадала «конфликтом»).
+ * Закрепление ноды, ударившей за `nodeStaleSec`, щадится, как и прежде, — и маршрут гейтвея к ней тоже.
  */
 export async function clearAllRuns(self: string, nodeStaleSec = 10): Promise<number> {
   // `data - 'run'` — удаление ключа из jsonb прямо в базе: разбирать сейвы в Node незачем.
@@ -343,9 +349,50 @@ export async function clearAllRuns(self: string, nodeStaleSec = 10): Promise<num
      WHERE data ? 'run'
        AND NOT EXISTS (SELECT 1 FROM char_claims cc JOIN cluster_nodes n ON n.id = cc.node_id
                        WHERE cc.char_id = characters.char_id AND cc.node_id <> $1
-                         AND n.beat_at > now() - ($2 || ' seconds')::interval)
-     RETURNING char_id`, [self, String(nodeStaleSec)]);
+                         AND (n.beat_at > now() - ($2 || ' seconds')::interval OR (${claimHeldSql('cc', 'n', 3, 4)})))
+     RETURNING char_id`, [self, String(nodeStaleSec), ...claimHeldParams()]);
   return rows.length;
+}
+
+// ── Свод записей забегов (R9-01, `pool.ts` — `run_ledger`) ───────────────────────
+/** Номер в списке записи узла — целый в пределах `integer` базы: иной (порча) в строку не идёт, а не роняет запись всего свода. */
+const ledgerIds = (list: readonly number[]): number[] => list.filter((n) => Number.isSafeInteger(n) && n >= 0 && n <= 2_147_483_647);
+
+/**
+ * ⭐ R9-01: записи узлов забега `runKey` из базы — проверенные (`normalizeNodeState`), не больше потолка узлов забега. Нет — пусто.
+ */
+export async function getRunLedger(runKey: string): Promise<RunNodeState[]> {
+  const rows = await q<{ id: string; el: number; chests: number[]; killed: number[]; levers: number[] }>(
+    'SELECT node_id AS id, el, chests, killed, levers FROM run_ledger WHERE run_key = $1 ORDER BY node_id LIMIT $2',
+    [runKey, RUN_NODES_MAX]);
+  return rows.map((r) => normalizeNodeState(r)).filter((r): r is RunNodeState => !!r);
+}
+
+/**
+ * ⭐ R9-01: влить записи узлов в свод забега `runKey` — ОБЪЕДИНЕНИЕМ, одним запросом: списки только растут (взятое кем-либо
+ * взято для всех), мощь узла — первой записи. Строку одного узла две комнаты пишут по очереди (блокировка строки на
+ * `ON CONFLICT`), и объединение не теряет ни одной.
+ */
+export async function mergeRunLedger(runKey: string, records: readonly RunNodeState[]): Promise<void> {
+  if (!records.length) return;
+  const rows = records.map((r) => ({ id: r.id, el: r.el, chests: ledgerIds(r.chests), killed: ledgerIds(r.killed), levers: ledgerIds(r.levers) }));
+  const union = (col: string): string => `ARRAY(SELECT DISTINCT x FROM unnest(run_ledger.${col} || excluded.${col}) AS x ORDER BY x)`;
+  const list = (col: string): string => `ARRAY(SELECT jsonb_array_elements_text(r.${col})::int)`;
+  await q(
+    `INSERT INTO run_ledger (run_key, node_id, el, chests, killed, levers, updated_at)
+     SELECT $1, r.id, r.el, ${list('chests')}, ${list('killed')}, ${list('levers')}, now()
+     FROM jsonb_to_recordset($2::jsonb) AS r(id text, el double precision, chests jsonb, killed jsonb, levers jsonb)
+     ON CONFLICT (run_key, node_id) DO UPDATE SET
+       chests = ${union('chests')}, killed = ${union('killed')}, levers = ${union('levers')}, updated_at = now()`,
+    [runKey, JSON.stringify(rows)]);
+}
+
+/** ⭐ R9-01: выбросить записи забегов, которых не трогали `days` дней (забеги рестарт ноды не переживают). Зовётся на старте. */
+export async function sweepRunLedger(days = 7): Promise<number> {
+  const r = await q1<{ n: string }>(
+    `WITH gone AS (DELETE FROM run_ledger WHERE updated_at < now() - ($1 || ' days')::interval RETURNING 1)
+     SELECT count(*) AS n FROM gone`, [String(days)]);
+  return Number(r?.n ?? 0);
 }
 
 // ── Оверрайды конфигов (единая серверная истина: редактор пишет, игра+редактор читают) ──
