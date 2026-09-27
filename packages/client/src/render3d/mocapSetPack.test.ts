@@ -29,7 +29,8 @@ const D = 180 / Math.PI;
 /** Замеренные скорости съёма ядра (u/с, наши юниты) — полоса ±3 % на случай правок ретаргета. */
 const CORE_SPEED: Record<string, number> = {
   walk_fwd: 55.7, walk_back: 55.7, walk_strafe_L: 55.7, walk_strafe_R: 55.7,
-  run_fwd: 121.1, run_back: 74.0, run_strafe_L: 72.4, run_strafe_R: 75.8,
+  // ⚠ Стороны идут за клипами: `RunLtLoop` (72.4) — это шаг в СВОЮ ЛЕВУЮ, то есть наш `run_strafe_R`.
+  run_fwd: 121.1, run_back: 74.0, run_strafe_R: 72.4, run_strafe_L: 75.8,
 };
 /**
  * Замеренные углы поворотов (°, наша конвенция: L отрицательный). Снимаются ИЗ ОПОРНОЙ СТОПЫ — в корне их нет.
@@ -154,6 +155,42 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
       }
     }
     expect(seen.sort(), 'проверены все шесть').toEqual(['turn_L_180', 'turn_L_45', 'turn_L_90', 'turn_R_180', 'turn_R_45', 'turn_R_90']);
+  }, 900000);
+
+  /**
+   * ⭐⭐ СТОРОНА КЛИПА — ПО ЗАМЕРУ ТРАВЕЛА, А НЕ ПО БУКВАМ ИМЕНИ. На этом и сломалось: у Kubold
+   * `StrafeLeftLoop` — шаг В СВОЮ ЛЕВУЮ, то есть ход в +X, а наши имена зеркальны анатомии
+   * («strafe_R = ход в +X = в СВОЮ ЛЕВУЮ», `poseRuntime.ts` / `locoBlend.ts` / `gaitKnobs.ts`).
+   * Перенос по буквам положил клип в противоположный слот, и замер рантайма дал расхождение 178.6°
+   * между ходом тела и переступанием ног — это и есть «ноги перекручиваются».
+   * Сверка имён такую ошибку не видит ПО ПОСТРОЕНИЮ: обе стороны написаны правдоподобно.
+   */
+  it('⭐⭐ СТОРОНА СТРАЙФА СОВПАДАЕТ С КОНВЕНЦИЕЙ РАНТАЙМА (замер травела, не имена)', () => {
+    const want: Record<string, number> = { walk_strafe_R: +1, run_strafe_R: +1, walk_strafe_L: -1, run_strafe_L: -1 };
+    const seen: string[] = [];
+    for (const { src } of opened) {
+      for (const t of matchMocapSet(src.animations.map((a) => a.name)).core) {
+        const sign = want[t.clip];
+        if (sign === undefined || seen.includes(t.clip)) continue;
+        seen.push(t.clip);
+        const i = src.animations.findIndex((a) => a.name === t.take);
+        const dur = src.animations[i]!.duration;
+        const r = bakeFromSource(src, {
+          character: 'mocap', weapon: 'none', animationIndex: i, name: t.clip, loop: t.cyclic,
+          locoSet: true, bakeId: 1, anchorIdle: false, fps: 60, epsDeg: 3,
+          hips: 'full', ground: true, head: 'mocap', rootPos: true,
+          startSec: t.trim ? t.trim[0] * dur : undefined, endSec: t.trim ? t.trim[1] * dur : undefined,
+        });
+        const k = r.clip.keys;
+        const a0 = k[0]!.pose['__rootP'] ?? [0, 0, 0], a1 = k[k.length - 1]!.pose['__rootP'] ?? [0, 0, 0];
+        const dx = a1[0] - a0[0], dz = a1[2] - a0[2];
+        expect(Math.abs(dx), `${t.clip} (${t.take}): это не ход вбок — травел по X ${dx.toFixed(1)}, по Z ${dz.toFixed(1)}`)
+          .toBeGreaterThan(Math.abs(dz));
+        expect(Math.sign(dx), `${t.clip} (${t.take}): сторона перепутана — травел по X ${dx.toFixed(1)}, нужен знак ${sign}`)
+          .toBe(sign);
+      }
+    }
+    expect(seen.sort(), 'проверены все четыре клипа страйфа').toEqual(['run_strafe_L', 'run_strafe_R', 'walk_strafe_L', 'walk_strafe_R']);
   }, 900000);
 
   /** Запечь тейк ровно так, как это делает кнопка переноса набора в панели импорта. */

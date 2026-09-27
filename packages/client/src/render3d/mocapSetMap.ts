@@ -8,6 +8,15 @@
  *
  * Модуль ЧИСТЫЙ (данные + разбор имён, без THREE и DOM) — тестируется в node.
  *
+ * ⚠⚠ СТОРОНЫ У KUBOLD И У НАС НАЗЫВАЮТСЯ ЗЕРКАЛЬНО — И ПЕРЕНОС ПО БУКВАМ ИМЕНИ ЛОМАЕТ НОГИ.
+ * У Kubold `StrafeLeftLoop` — шаг В СВОЮ ЛЕВУЮ, то есть ход в +X (замер травела: +90.0°). А наши имена
+ * зеркальны анатомии и это записано в коде: `poseRuntime.ts` — «strafe_R = ход в +X = в СВОЮ ЛЕВУЮ»
+ * (то же `locoBlend.ts`, таблица истины `gaitKnobs.ts`). Значит `StrafeLeftLoop` обязан лечь в `walk_strafe_R`.
+ * Переименовать наши имена нельзя — они опубликованы.
+ * ⚠ ЦЕНА ОШИБКИ ИЗМЕРЕНА: при перепутанных сторонах тело едет в +X, а ноги переступают на −88.6° —
+ * расхождение 178.6°, то самое «ноги перекручиваются». Контроль на наших клипах: ±2–4°.
+ * Поэтому сторож в `mocapSetPack.test.ts` проверяет сторону ЗАМЕРОМ ТРАВЕЛА, а не сверкой букв.
+ *
  * ⚠⚠ ПОВОРОТ В ТЕЙКАХ ПОВОРОТА ЛЕЖИТ НЕ В КОРНЕ, А В СТОПАХ — И ОТТУДА ЕГО БЕРЁМ.
  * `TurnLt90_Loop` / `TurnRt90_Loop` / `TurnLt180` / `TurnRt180` начинаются и заканчиваются на ОДНОМ курсе:
  * рыск из таза даёт 0.0°, дорожки `Root.quaternion` у них нет вовсе. Так они и задуманы: «loopable rotation
@@ -79,12 +88,12 @@ const CORE: readonly MocapTake[] = [
   { take: 'Idle', clip: 'idle', cyclic: true, core: true, note: 'живой айдл 6.7 с — у нас сейчас 2 ключа, персонаж стоит бит-в-бит неподвижно' },
   { take: 'WalkFwdLoop', clip: 'walk_fwd', cyclic: true, core: true, note: 'ходьба вперёд, 55.2 u/с' },
   { take: 'WalkBwdLoop', clip: 'walk_back', cyclic: true, core: true, note: 'ходьба назад, 55.2 (файл Additionals)' },
-  { take: 'StrafeLeftLoop', clip: 'walk_strafe_L', cyclic: true, core: true, note: 'ходьба боком влево, 55.2 (Additionals)' },
-  { take: 'StrafeRightLoop', clip: 'walk_strafe_R', cyclic: true, core: true, note: 'ходьба боком вправо, 55.2 (Additionals)' },
+  { take: 'StrafeLeftLoop', clip: 'walk_strafe_R', cyclic: true, core: true, note: 'шаг в СВОЮ ЛЕВУЮ = ход в +X = наш `strafe_R` (замер травела +90.0°), 55.2 (Additionals)' },
+  { take: 'StrafeRightLoop', clip: 'walk_strafe_L', cyclic: true, core: true, note: 'шаг в СВОЮ ПРАВУЮ = ход в −X = наш `strafe_L` (замер −90.0°), 55.2 (Additionals)' },
   { take: 'RunFwdLoop', clip: 'run_fwd', cyclic: true, core: true, note: 'бег вперёд, 120.1 u/с — ровно наша скорость съёма' },
   { take: 'RunBwdLoop', clip: 'run_back', cyclic: true, core: true, note: 'бег назад, 73.4 (RunStrafeUpdate)' },
-  { take: 'RunLtLoop', clip: 'run_strafe_L', cyclic: true, core: true, note: 'бег боком влево, 71.8 (RunStrafeUpdate)' },
-  { take: 'RunRtLoop', clip: 'run_strafe_R', cyclic: true, core: true, note: 'бег боком вправо, 75.1 (RunStrafeUpdate)' },
+  { take: 'RunLtLoop', clip: 'run_strafe_R', cyclic: true, core: true, note: 'бег в СВОЮ ЛЕВУЮ = +X = наш `run_strafe_R` (замер +90.0°), 72.4 (RunStrafeUpdate)' },
+  { take: 'RunRtLoop', clip: 'run_strafe_L', cyclic: true, core: true, note: 'бег в СВОЮ ПРАВУЮ = −X = наш `run_strafe_L` (замер −90.0°), 75.8 (RunStrafeUpdate)' },
   // ПОВОРОТЫ: курс восстанавливаем из опорной стопы (в корне его нет) — см. шапку, там замеры.
   { take: 'TurnLt90_Loop', clip: 'turn_L_90', cyclic: false, rootYaw: true, yawFromFeet: true, core: true, note: 'поворот влево 90°: в корне поворота нет, восстановлен из опорной стопы — замер −88°' },
   { take: 'TurnRt90_Loop', clip: 'turn_R_90', cyclic: false, rootYaw: true, yawFromFeet: true, core: true, note: 'поворот вправо 90°, из опорной стопы — замер +88°' },
