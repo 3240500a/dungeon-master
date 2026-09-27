@@ -31,9 +31,15 @@ const USER = ARGS[0] || 'claude';
 /** Явное согласие сменить пароль СУЩЕСТВУЮЩЕМУ аккаунту — по умолчанию мы этого не делаем. */
 const FORCE = process.argv.includes('--force-reset');
 const API = process.env.DM_API || 'http://localhost:3001';
-/** На Windows исполняемый файл npm — `npm.cmd`. Зовём его НАПРЯМУЮ, без `shell: true`:
- *  с шеллом node ругается DEP0190 (аргументы не экранируются), и это не придирка — имя аккаунта приходит извне. */
-const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+/**
+ * ⚠ ЗОВЁМ `node` НАПРЯМУЮ, А НЕ ЧЕРЕЗ npm — и это не украшение, а единственный путь без граблей.
+ * `npm` на Windows это `npm.cmd`, а Node с некоторых версий отказывается запускать `.cmd` без
+ * `shell: true` (`spawn EINVAL` — поймано прогоном). С `shell: true` же он ругается DEP0190:
+ * аргументы не экранируются, а имя аккаунта приходит снаружи.
+ * Обе беды снимаются разом: `tsx` — обычный `.mjs`, и его запускает сам `process.execPath`.
+ */
+const TSX = path.join(ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+const CLI = path.join(ROOT, 'packages', 'server', 'src', 'db', 'createAdminCli.ts');
 
 const say = (s) => process.stdout.write(s + '\n');
 
@@ -52,8 +58,16 @@ async function main() {
    * и молча делать `--reset` НЕЛЬЗЯ: под этим ником может оказаться живой игрок, и мы сменили бы ему
    * пароль и выбили все сессии. В таком случае останавливаемся и спрашиваем.
    */
+  for (const f of [TSX, CLI]) {
+    if (!existsSync(f)) {
+      say('❌ Не найден файл: ' + f);
+      say('   Похоже, не установлены зависимости. Выполни в корне проекта:  npm install');
+      return 1;
+    }
+  }
+
   say('Завожу аккаунт «' + USER + '» и выдаю роль admin…');
-  const made = await run(NPM, ['run', '--silent', 'create-admin', '--', USER], pass + '\n');
+  const made = await run(process.execPath, [TSX, CLI, USER], pass + '\n');
   if (made.code !== 0) {
     say('\n❌ Не получилось (код ' + made.code + '). Причину CLI написал выше. Частые случаи:');
     say('   • не поднят Postgres — в деве ожидается 127.0.0.1:5432, база dungeon;');
@@ -72,7 +86,7 @@ async function main() {
       return 1;
     }
     say('\n--force-reset: выставляю пароль существующему аккаунту (старые сессии будут отозваны)…');
-    const set = await run(NPM, ['run', '--silent', 'create-admin', '--', USER, '--reset'], pass + '\n');
+    const set = await run(process.execPath, [TSX, CLI, USER, '--reset'], pass + '\n');
     if (set.code !== 0) { say('\n❌ Сменить пароль не удалось (код ' + set.code + ').'); return 1; }
   }
 
