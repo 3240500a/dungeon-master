@@ -1225,20 +1225,32 @@ describe('Room — ковка на сервере: ковка, зачарова�
   });
 
   it('D21: прилавок — только включённые базы, происхождение shop, ступень базы катается как у дропа', () => {
-    const { room, save } = makeRoom();
-    save.level = 40;
+    const { room } = makeRoom();
     // Снаряжение стока (`rollGear`) и зелья лавки (`freshConsumables`) катаются порознь (R2-04) — проверяем оба.
-    const inner = room as unknown as { rollGear(): Item[]; freshConsumables(): Item[] };
+    // ⚠ R13-11: `rollGear(сид, уровень)` (R5-22) — с аргументами. Приведение типа прятало вызов без них: сид `undefined` давал ОДИН и
+    // тот же прилавок на все 40 кругов, уровень — NaN (ступень всегда t0), и сторож «выключенной базы на прилавке нет» проверял
+    // прилавок, где её не было и без фильтра.
+    const inner = room as unknown as { rollGear(seed: number, heroLevel: number): Item[]; freshConsumables(): Item[] };
     const bases = cfg.get('items.base');
-    let rolled = 0, gear = 0;
-    // 40 прилавков: выключенная база (сейчас одна из 30 ближних) без фильтра попала бы на прилавок почти наверняка.
-    expect(bases.some((b) => b.enabled === false), 'тест имеет смысл, пока есть выключенная база').toBe(true);
+    const off = new Set(bases.filter((b) => b.enabled === false).map((b) => b.id));
+    let rolled = 0, gear = 0, offWithout = 0;
+    // 40 прилавков уровня 40: выключенная база (сейчас одна из 30 ближних) без фильтра попала бы на прилавок почти наверняка.
+    expect(off.size, 'тест имеет смысл, пока есть выключенная база').toBeGreaterThan(0);
+    // Та же база «включённой» — растяжка: этими сидами фильтр действительно что-то отсекает.
+    const unfiltered = { cfg: { get: (k: string) => (k === 'items.base' ? bases.map((b) => ({ ...b, enabled: true })) : cfg.get(k as never)) } };
+    const stocks = new Set<string>();
     for (let k = 0; k < 40; k++) {
-      for (const it of [...inner.freshConsumables(), ...inner.rollGear()]) {
+      const stock = inner.rollGear(1000 + k, 40);
+      stocks.add(stock.map((it) => `${it.baseId}:${it.tier}:${it.rarity}`).join('|'));
+      if ((room.constructor as unknown as { prototype: typeof inner }).prototype.rollGear.call(unfiltered, 1000 + k, 40).some((it) => off.has(it.baseId))) offWithout++;
+      for (const it of [...inner.freshConsumables(), ...stock]) {
         expect(it.origin, it.name).toBe('shop');
         const base = bases.find((b) => b.id === it.baseId)!;
         expect(base.enabled !== false, `выключенная база на прилавке: ${base.id}`).toBe(true);
-        if (it.kind === 'consumable' || it.rarity === 'unique') continue;
+        if (it.kind === 'consumable') continue;
+        expect(it.rarity, `уник на прилавке (R13-09): ${it.name}`).not.toBe('unique');
+        expect(Number.isFinite(it.itemLevel), `уровень вещи прилавка: ${it.itemLevel}`).toBe(true);
+        expect(it.itemLevel, `уровень вещи прилавка героя 40-го: ${it.name}`).toBeGreaterThanOrEqual(41);
         gear++;
         // Без броска ступени та же база на том же уровне получает одну и ту же ступень всегда.
         const fixed = generateItem(bases, cfg.get('affixes'), cfg.get('uniques'),
@@ -1248,6 +1260,8 @@ describe('Room — ковка на сервере: ковка, зачарова�
     }
     expect(gear).toBeGreaterThan(0);
     expect(rolled, 'ступени разные — бросок работает').toBeGreaterThan(0);
+    expect(stocks.size, 'у каждого сида свой прилавок').toBe(40);
+    expect(offWithout, 'без фильтра выключенная база на этих прилавках была бы').toBeGreaterThan(0);
   });
 });
 

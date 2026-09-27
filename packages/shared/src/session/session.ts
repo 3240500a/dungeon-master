@@ -2029,10 +2029,14 @@ export class GameSession {
     }
   }
 
-  /** Выбрасывает предмет из инвентаря игрока на землю у его ног (команда drop). Возвращает предмет или null. */
+  /**
+   * Выбрасывает предмет из инвентаря игрока на землю у его ног (команда drop). Возвращает предмет или null.
+   * ⭐ R14-05: мёртвый не бросает — как не поднимает (`pickupDropById`) и не пьёт: брошенное трупом не поднять ни ему, ни чужому
+   * аккаунту (R2-02), и смена этажа или вайп стирали его вместе с землёй — вещь с курсора, клик мимо окна смерти, и её нет.
+   */
   dropToGround(playerId: string, uid: string): Item | null {
     const p = this.world.players[playerId];
-    if (!p) return null;
+    if (!p || !p.alive) return null;
     const i = p.save.inventory.findIndex((it) => it.uid === uid);
     if (i < 0) return null;
     const item = p.save.inventory.splice(i, 1)[0]!;

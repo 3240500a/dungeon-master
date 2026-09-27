@@ -8,8 +8,8 @@ import {
 } from '@dm/shared';
 import { getSession, getCharacter, putCharacter, getRunLedger } from '../db/db.js';
 import { Room, townRng, runLedgerKey, runLedgerSettled, type Farewell } from './room.js';
-import { limits, known, ipBucket } from './rateLimit.js';
-import { sessionKey } from './authSession.js';
+import { limits, known, ipBucket, RecentKeys } from './rateLimit.js';
+import { sessionKey, routePassOk, ROUTE_PASS_TTL_MS } from './authSession.js';
 import { counters, setGaugeProvider } from './metrics.js';
 import { tickScheduler } from './scheduler.js';
 import { migrateLegacyWallet } from './accountStash.js';
@@ -45,6 +45,13 @@ function newCode(): string {
 function runDepthOf(nodeId: string): number {
   const m = /^n(\d+)_/.exec(nodeId);
   return m ? Number(m[1]) : 0;
+}
+
+/** R12-04: дождаться `p`, но не дольше `ms` (круг слива, чья запись зависла, не съедает бюджет целиком). Отказ `p` — как конец. */
+function untilMs(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<void>((r) => { timer = setTimeout(r, Math.max(0, ms)); });
+  return Promise.race([p.then(() => undefined, () => undefined), cap]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -150,6 +157,18 @@ const NODE_MAX_PLAYERS = Math.max(0, Number(process.env.DM_NODE_MAX_PLAYERS ?? p
 const UNSAVED_RETRY_MS = 5_000;
 const UNSAVED_RETRY_MAX_MS = 60_000;
 /**
+ * ⭐ R12-04: слив ноды дописывает кругами (`flushAll`): пауза между кругами — 250 мс, вдвое до 500 мс. Бюджет по умолчанию — для
+ * вызова без своего (тесты); слив ноды (`cluster/node.ts`) и процесса (`installShutdown`) дают свой — под свой предохранитель.
+ */
+const DRAIN_RETRY_MS = 250;
+const DRAIN_RETRY_MAX_MS = 500;
+const DRAIN_BUDGET_MS = 7_500;
+/**
+ * ⭐ R13-06: сколько слив ждёт ОДИН круг, мс. Круг, чья запись зависла (блокировка строки, полуоткрытое соединение до `query_timeout`),
+ * дальше не ждётся: следующий пробует тех, чья запись упала сразу, а зависшая идёт своим ходом (второй за ней не ставят — `Room.flush`).
+ */
+const DRAIN_ROUND_MS = 1_000;
+/**
  * ⭐ R11-12: сколько живёт номер прощальной записи (`farewellSeq`) героя, которого нода больше ничем не держит. Много больше любого
  * входа (его ожидания — секунды, потолок записи — 15 с): вход, взявший номер, не увидит, как тот исчез, — а увидит, отказ только
  * «сохраняем, повторите».
@@ -214,8 +233,8 @@ export const clusterHooks = {
    * R2-08: и тех, чья прощальная запись ещё в полёте или не легла: их правда — здесь, в памяти этой ноды.
    */
   liveCharIds(): string[] { return current ? [...new Set([...current.liveChars(), ...current.graceChars(), ...current.savingChars()])] : []; },
-  /** Дописать прогресс всех комнат — для слива ноды. */
-  flushAll(): Promise<unknown> { return current ? current.flushAll() : Promise.resolve(); },
+  /** Дописать прогресс всех комнат — для слива ноды; `budgetMs` — сколько времени слив готов ждать базу (R12-04). */
+  flushAll(budgetMs?: number): Promise<unknown> { return current ? current.flushAll(budgetMs) : Promise.resolve(); },
   /** R2-05: закрепление этих героев — у чужой ноды: здешние копии проиграли (см. `RoomManager.fenceLost`). */
   fenceLost(charIds: readonly string[]): void { current?.fenceLost(charIds); },
   /** R4-28: сердцебиение продлило закрепления тех, кого нода уже не держит, — снять (см. `RoomManager.releaseIdle`). */
@@ -287,6 +306,8 @@ export class RoomManager {
   private authFails = new WeakMap<GameConn, number>();
   /** ⭐ R7-04: сколько кадров входа соединения стоит в его очереди (кадры игры без входа до схемы не доходят, см. `onMessage`). */
   private joinsQueued = new WeakMap<GameConn, number>();
+  /** ⭐ R13-08: токены (отпечатком), чью сессию база отказала при годном пропуске маршрута, — их пропуск больше не пропуск (на его срок). */
+  private passRefused = new RecentKeys(ROUTE_PASS_TTL_MS + 60_000, 10_000);
 
   /** Имена персонажей с живой сессией — для продления закрепления в реестре (Ф4). */
   liveChars(): IterableIterator<string> { return this.live.keys(); }
@@ -317,14 +338,64 @@ export class RoomManager {
    * могли и закрыться, а выход процесса посреди транзакции — это её откат и потерянный прогресс или штраф.
    * Всё под общим предохранителем слива (8 с).
    */
-  flushAll(): Promise<unknown> {
+  async flushAll(budgetMs = DRAIN_BUDGET_MS): Promise<void> {
     // ⭐ R5-07: СПЕРВА ЗАМОРОЗИТЬ, ПОТОМ ПИСАТЬ. Слив был снимком: сейвы дописаны, а комнаты тикали и исполняли команды
     // дальше — вещь, переданная соседу по аккаунту после записи слива, но до выхода процесса, оставалась у обоих.
     this.frozen = true;
     for (const room of this.rooms.values()) room.freeze();
-    // R2-08: и копии, которые база не приняла, — последняя попытка перед выходом процесса (R6-06: кроме героев чужой ноды).
+    // ⭐ R12-04: ДОПИСКА — КРУГАМИ, ПОКА НЕ ЛЯЖЕТ ВСЁ ИЛИ НЕ КОНЧИТСЯ БЮДЖЕТ. Раньше слив делал одну попытку (у сейвов в комнатах —
+    // две подряд) и выходил: база, моргнувшая на пару секунд (рестарт, переключение), — и за миллисекунды процесс уходил без копий
+    // ушедших (их закрепление не читалось — копия даже не пробовалась) и без последних секунд присутствующих; копия, отданная соседу
+    // по аккаунту, оставалась у двоих — ровно то, от чего R2-08, R3-19 и R11-03. И молча. Теперь круг за кругом с паузой, а что так и
+    // не легло к концу бюджета, — ИНЦИДЕНТ, как у забытой копии (`forgetUnsaved`).
+    const deadline = Date.now() + budgetMs;
+    for (let pause = DRAIN_RETRY_MS; ; pause = Math.min(pause * 2, DRAIN_RETRY_MAX_MS)) {
+      // ⭐ R13-06: круг — ломтём (`DRAIN_ROUND_MS`), а не всем остатком бюджета: одна зависшая запись держала круг до конца бюджета, и
+      // героя, чья запись упала сразу, а база через миг вернулась, слив больше не пробовал (ИНЦИДЕНТ вместо записи).
+      await untilMs(this.drainRound(), Math.min(DRAIN_ROUND_MS, deadline - Date.now()));
+      const lost = this.unwritten();
+      // ⭐ R14-07: и свод записей забега — упавшая запись свода ждала таймера процесса, который уже выходит.
+      const ledgers = [...this.drainRooms()].filter((room) => room.ledgerPending());
+      if (!lost.length && !ledgers.length) return;
+      if (deadline - Date.now() <= pause) {
+        for (const id of lost) {
+          counters.farewellForgotten++;
+          console.error(`[room] ИНЦИДЕНТ: слив не дописал героя ${id} за ${budgetMs} мс (база не приняла) — его копия уходит с процессом; отданное ею могло остаться у двоих`);
+        }
+        for (const room of ledgers) {
+          counters.ledgerDrainLost++;
+          console.error(`[room] ИНЦИДЕНТ: слив не дописал свод записей забега комнаты ${room.code} за ${budgetMs} мс (база не приняла) — продолжение забега соберёт эти узлы свежими`);
+        }
+        return;
+      }
+      await new Promise((r) => setTimeout(r, pause));
+    }
+  }
+
+  /**
+   * ⭐ R12-04: один круг дописки слива. Сейвы комнат (`Room.flush`: присутствующие, копии снятых с неизвестным исходом), прощальные
+   * записи в полёте и копии, которые база не приняла (R2-08; R6-06: кроме героев чужой ноды). Закрепление героя не прочиталось (база
+   * лежит) — копия ждёт следующего круга, а не пропускается до выхода процесса.
+   */
+  private drainRound(): Promise<unknown> {
+    const rooms = [...this.drainRooms()].map((room) => room.flush());
     const retries = [...this.unsaved.keys()].map((id) => this.settleOwned(id));
-    return Promise.all([...[...this.rooms.values()].map((room) => room.flush()), ...this.leaving.values(), ...retries]);
+    return Promise.all([...rooms, ...this.inflight.values(), ...retries]);
+  }
+
+  /** R12-04: комнаты, где могут лежать недописанные сейвы: живые, грейс — и снятые, чьё закрытие сокета ещё идёт к менеджеру. */
+  private drainRooms(): Set<Room> {
+    const out = new Set<Room>(this.rooms.values());
+    for (const c of this.conns.values()) out.add(c.room);
+    for (const room of this.graceByChar.values()) out.add(room);
+    return out;
+  }
+
+  /** R12-04: чьи копии ещё не в базе (запись в полёте, не принята, сейв в комнате не лёг). */
+  private unwritten(): string[] {
+    const ids = new Set<string>([...this.inflight.keys(), ...this.unsaved.keys()]);
+    for (const room of this.drainRooms()) for (const id of room.unflushed()) ids.add(id);
+    return [...ids];
   }
 
   /**
@@ -760,14 +831,15 @@ export class RoomManager {
   /**
    * ⭐ R5-12, R6-09: кадр лобби — под потолками ДО поиска сессии. Отказ шлёт сам.
    *  • соединение — `limits.lobbyConn` (кадры с живой сессией держит он и потолок аккаунта `limits.lobby`);
-   *  • сеть адреса (`limits.lobbyIp`) — только соединению, которое уже предъявляло чужую сессию: бакет адреса платят неудачи
-   *    (`authOwner`). Раньше его платил каждый кадр, и поток с чужими токенами из-за общего NAT запирал соседей по адресу;
+   *  • сеть адреса (`limits.lobbyIp`) — ⭐ R12-05: только НЕЗНАКОМОМУ токену и в `authOwner`, до базы (платят неудачи). Раньше его
+   *    спрашивали здесь — и только у соединения, которое уже ошиблось: первый кадр КАЖДОГО свежего сокета шёл в базу мимо бакета, и
+   *    поток «открыл — кадр с мусорным токеном — закрыл» стоил запроса сессии на сокет. ⭐ R12-06: а ошибившемуся соединению бакет
+   *    адреса закрывал и живой токен (перезаход на том же сокете после протухшей сессии) — тролль за общим NAT держал его пустым;
    *  • соединение, закрытое за неудачи (`LOBBY_AUTH_FAILS_MAX`), — молча: кадры в его очереди уже никому не ответят.
    */
   private lobbyIpOk(ws: GameConn): boolean {
-    const fails = this.authFails.get(ws) ?? 0;
-    if (fails >= LOBBY_AUTH_FAILS_MAX) return false;
-    if (limits.lobbyConn.take(this.connKey(ws)) && (fails === 0 || limits.lobbyIp.peek(`ip:${this.netOf(ws)}`))) return true;
+    if ((this.authFails.get(ws) ?? 0) >= LOBBY_AUTH_FAILS_MAX) return false;
+    if (limits.lobbyConn.take(this.connKey(ws))) return true;
     ws.send(JSON.stringify(LOBBY_RATE));
     return false;
   }
@@ -928,6 +1000,7 @@ export class RoomManager {
    * здесь больше ничто не держит.
    */
   retryUnsaved(now = Date.now()): Promise<void> {
+    if (this.frozen) return Promise.resolve();   // R12-04: слив дописывает копии сам, кругами (`flushAll`)
     this.sweepFarewellSeq(now);   // R11-12: тем же фоном
     for (const id of this.unsavedBackoff.keys()) if (!this.unsaved.has(id)) this.unsavedBackoff.delete(id);
     const runs: Promise<void>[] = [];
@@ -1103,18 +1176,32 @@ export class RoomManager {
     const key = sessionKey(token);
     const seen = known.sessions.get(key);
     if (seen !== undefined && !limits.lobby.take(seen)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
+    // ⭐ R12-05: НЕЗНАКОМЫЙ ТОКЕН ПЛАТИТ БАКЕТ СЕТИ АДРЕСА ДО БАЗЫ — на любом соединении, и на свежем. Живая сессия токен возвращает:
+    // платят только неудачи (R6-09), как у HTTP (`sessionUser`, `limits.authIp`). Знакомый (`known.sessions`: вход, регистрация, старт
+    // процесса, прошлый живой кадр) бакета адреса не спрашивает вовсе — поток чужих токенов за общим NAT живые не запирает.
+    const ipKey = `ip:${this.netOf(ws)}`;
+    // ⭐ R13-08: СЕССИЯ, КОТОРУЮ ГЕЙТВЕЙ УЖЕ ПРОВЕРИЛ (пропуск маршрута в адресе сокета, `routePass`), бакет адреса тоже не платит. Нода
+    // знает сессии только со своего старта, и вошедший после её старта (после деплоя — все, кто перелогинился) был ей незнакомым: тролль
+    // за тем же CGNAT, гоняя мусорные токены по свежим сокетам, держал бакет пустым — и честный сосед получал «rate» на статус забега и
+    // на вход до всякой базы. Пропуск подписан ключом процессов и годен только своему токену; отказанный базой — больше не пропуск.
+    const routed = seen === undefined && this.routed(ws, token, key);
+    if (seen === undefined && !routed && !limits.lobbyIp.take(ipKey)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
     let userId: string | null;
     try {
       userId = await this.lookupSession(token, key);
     } catch (e) {
-      // База не ответила — кадр ответа не получил (R3-14: «занято»), и потолок аккаунта за него не платит: как до R11-06.
+      // База не ответила — кадр ответа не получил (R3-14: «занято»), и потолки за него не платят: как до R11-06.
       if (seen !== undefined) limits.lobby.refund(seen);
+      else if (!routed) limits.lobbyIp.refund(ipKey);
       throw e;
     }
     if (!userId) {
       known.sessions.delete(key);
-      // ⭐ R6-09: неудача платит бакет сети адреса и считается соединению; третья — соединение закрыто (см. `lobbyIpOk`).
-      limits.lobbyIp.take(`ip:${this.netOf(ws)}`);
+      // ⭐ R6-09: неудача считается соединению (бакет адреса она уже оплатила); третья — соединение закрыто (см. `lobbyIpOk`).
+      // Знакомый токен, чью сессию отозвали, платит бакет адреса здесь: до базы его не спрашивали. R13-08: и токен с пропуском — а сам
+      // пропуск больше не годен (сессию отозвали после маршрута): поток свежих сокетов с ним шёл бы в базу мимо бакета.
+      if (routed) this.passRefused.add(key);
+      if (seen !== undefined || routed) limits.lobbyIp.take(ipKey);
       const fails = (this.authFails.get(ws) ?? 0) + 1;
       this.authFails.set(ws, fails);
       ws.send(JSON.stringify({ t: 'error', code: 'auth', msg: 'Требуется вход' }));
@@ -1126,12 +1213,27 @@ export class RoomManager {
       return undefined;
     }
     known.sessions.add(key, userId);
-    if (seen === undefined && !limits.lobby.take(userId)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
+    // ⭐ R12-06: сессия живая — соединение больше не «ошибавшееся»: прошлые неудачи (протухший токен до перезахода) не копятся к
+    // закрытию. Незнакомый токен свой токен бакета адреса возвращает (R12-05: платят неудачи).
+    this.authFails.delete(ws);
+    if (seen === undefined) {
+      if (!routed) limits.lobbyIp.refund(ipKey);
+      if (!limits.lobby.take(userId)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
+    }
     const character = await getCharacter(charId);
     if (!character || character.userId !== userId) {
       ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return undefined;
     }
     return userId;
+  }
+
+  /**
+   * ⭐ R13-08: гейтвей проверил сессию этого токена и выдал пропуск маршрута в адрес сокета (`routePass`) — годный, этому токену, и база
+   * его сессию после маршрута не отказывала (`passRefused`).
+   */
+  private routed(ws: GameConn, token: string, key: string): boolean {
+    const pass = ws.routePass;
+    return pass !== undefined && !this.passRefused.has(key) && routePassOk(pass, token);
   }
 
   /** ⭐ R11-06: сессия токена из базы — один запрос на токен, сколько бы кадров его ни ждали. */

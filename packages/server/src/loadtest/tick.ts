@@ -56,7 +56,7 @@ function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInpu
     inputs[`p${i}`] = { move: { x: 0.6, y: 0.4 }, facing: 0.7, attack: true, cast: null, interact: false };
   }
 
-  const el = effectiveLevel(session.world.players['p0']!.save, reg.get('balance').power).total;
+  const el = effectiveLevel(session.world.players['p0']!.save, reg.get('balance').power, undefined, reg.get('item-tiers')).total;
   const rng = createRng((node.floorSpec.seed >>> 0) || 1);
   const monsters = spawnPacksEl(reg, layout, node.depth, 'normal', rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
   session.enterFloor(node.depth, {

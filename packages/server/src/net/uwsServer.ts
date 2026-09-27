@@ -3,9 +3,9 @@ import { request as httpRequest, validateHeaderName, validateHeaderValue, type I
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { installShutdown, frameFailed } from './wsServer.js';
-import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, type GameConn } from './conn.js';
+import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, routePassOf, type GameConn } from './conn.js';
 import { clientIp } from './rateLimit.js';
-import { isLoopback, PROXY_HEADERS } from './adminAccess.js';
+import { isLoopback, PROXY_HEADERS, LOCAL_PROOF_HEADER, proxyLinks } from './adminAccess.js';
 import { counters } from './metrics.js';
 
 /**
@@ -28,8 +28,8 @@ import { counters } from './metrics.js';
 /** Минимальная типизация нужного нам куска uWS (пакет ставится опционально). */
 interface UwsSocket {
   getRemoteAddressAsText(): ArrayBuffer;
-  /** R4-29: то, что `upgrade` передал сокету, — адрес игрока. */
-  getUserData(): { ip?: string };
+  /** R4-29: то, что `upgrade` передал сокету, — адрес игрока (и R13-08: пропуск маршрута). */
+  getUserData(): { ip?: string; pass?: string };
   send(data: string | ArrayBufferView, isBinary?: boolean): number;
   /** Сколько байт ещё не ушло клиенту (исходящая очередь сокета). */
   getBufferedAmount(): number;
@@ -51,7 +51,7 @@ interface UwsRes {
   onWritable(cb: (offset: number) => boolean): void;
   close(): void;
   getRemoteAddressAsText(): ArrayBuffer;
-  upgrade(userData: { ip: string }, key: string, protocol: string, extensions: string, context: unknown): void;
+  upgrade(userData: { ip: string; pass?: string }, key: string, protocol: string, extensions: string, context: unknown): void;
 }
 interface UwsReq {
   getUrl(): string;
@@ -113,6 +113,15 @@ export function proxyableRequest(method: string, path: string, headers: Record<s
   return true;
 }
 
+/**
+ * ⭐ R12-01: ЗАГОЛОВКИ СОЕДИНЕНИЯ И ДЛИНЫ КЛИЕНТА ДАЛЬШЕ ПРОКСИ НЕ ИДУТ. Они описывают соединение клиента с прокси, а не прокси с
+ * express: длину тела прокси ставит свою (ровно то, что собрал), кодирование и жизнь соединения решает `http.request`. Раньше
+ * `Content-Length` GET-запроса уходил в express при пустом теле, и тот ждал тела — следующими байтами того же соединения.
+ */
+const HOP_HEADERS: readonly string[] = [
+  'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'proxy-connection', 'upgrade', 'te', 'trailer', 'expect',
+];
+
 /** `ws.send` uWS: кадр не отправлен — исходящая очередь клиента выше `maxBackpressure`. */
 const SEND_DROPPED = 2;
 
@@ -121,7 +130,7 @@ class UwsConn implements GameConn {
   open = true;
   onMsg?: (raw: string) => void;
   onEnd?: () => void;
-  constructor(private readonly ws: UwsSocket, readonly ip: string) {}
+  constructor(private readonly ws: UwsSocket, readonly ip: string, readonly routePass?: string) {}
   send(data: string | Uint8Array): void {
     if (!this.open) return;
     // ⭐ R6-07: ОЧЕРЕДЬ ПЕРЕПОЛНЯЕТСЯ — КЛИЕНТ ОТКЛЮЧАЕТСЯ, как на транспорте `ws` (1013). Раньше сверх `maxBackpressure` uWS
@@ -227,17 +236,27 @@ export function gameWsBehavior(uWS: Pick<Uws, 'DISABLED'>, onConn: (conn: GameCo
       const headers: Record<string, string> = {};
       req.forEach((k, v) => { headers[k] = v; });
       const ip = clientIp(headers, dec.decode(res.getRemoteAddressAsText()));
-      res.upgrade({ ip }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'),
+      // R13-08: пропуск маршрута гейтвея (`?lp=`) — только здесь: запрос у uWS живёт лишь до конца `upgrade`.
+      const query = req.getQuery();
+      const pass = query ? routePassOf(`?${query}`) : undefined;
+      res.upgrade({ ip, ...(pass ? { pass } : {}) }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'),
         req.getHeader('sec-websocket-extensions'), context);
     },
     open: (ws: UwsSocket) => {
-      const conn = new UwsConn(ws, ws.getUserData().ip ?? dec.decode(ws.getRemoteAddressAsText()));
+      const conn = new UwsConn(ws, ws.getUserData().ip ?? dec.decode(ws.getRemoteAddressAsText()), ws.getUserData().pass);
       conns.set(ws, conn);
       onConn(conn);
     },
     message: (ws: UwsSocket, msg: ArrayBuffer, isBinary: boolean) => {
       // От клиента приходит только текст (JSON). Двоичный кадр вверх — не наш протокол.
-      if (isBinary) return;
+      // ⭐ R13-07: и НАРУШЕНИЕ — соединение закрывается (1003), кадр считается отброшенным. Раньше он молча пропускался ДО игры: мимо
+      // счётчика кадров, потолков `wsFrames`/`wsInput` и закрытия 4008 (всё это — в `RoomManager.accept`), а каждый кадр ещё и продлевал
+      // `idleTimeout` — анонимный сокет без входа гнал миллионы пустых двоичных кадров без предела. Честный клиент их не шлёт никогда.
+      if (isBinary) {
+        counters.framesInvalid++;
+        conns.get(ws)?.close(1003, 'binary not accepted');
+        return;
+      }
       // R2-01: бросок из обработчика внутри нативного колбэка uWS — это падение процесса. Гасим кадр.
       try { conns.get(ws)?.onMsg?.(dec.decode(msg)); } catch (e) { frameFailed(e); }
     },
@@ -297,37 +316,56 @@ function forwardRequest(
   const headers: Record<string, string> = {};
   req.forEach((k, v) => { headers[k] = v; });
   if (!proxyableRequest(method, path, headers)) { badRequest(); return; }
+  // ⭐ R12-01: ЗАПРОС БЕЗ ТЕЛА С ЗАЯВЛЕННЫМ ТЕЛОМ — 400. Такого честный клиент не шлёт, а пересланный как есть (`Content-Length`
+  // при пустом теле) он съедал голову следующего запроса на том же соединении с express как своё тело (см. `HOP_HEADERS`).
+  const bodiless = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+  const declared = Number(headers['content-length'] ?? 0);
+  if (bodiless && (headers['transfer-encoding'] !== undefined || declared !== 0)) { badRequest(); return; }
+  for (const h of HOP_HEADERS) delete headers[h];
+  delete headers[LOCAL_PROOF_HEADER];   // R12-01: доказательство локальности ставит только сам прокси (ниже)
   // ⭐ R3-03, R3-07: АДРЕС КЛИЕНТА РЕШАЕТ ЭТОТ ПРОКСИ, а express получает его готовым. Раньше заголовок клиента
   // проходил насквозь (его «первый адрес» и был ключом лимитов входа — подменяй на каждую попытку), а без заголовка
   // express видел петлю у КАЖДОГО запроса — служебные ручки «только с самой машины» были открыты всем.
   //  • Собеседник с петли и без заголовков прокси — это сама машина (стенд, мониторинг): переправляем как есть, и
-  //    express видит ровно то, что есть, — прямой локальный вызов.
+  //    express видит ровно то, что есть, — прямой локальный вызов (⭐ R12-01: с доказательством прокси, `localCaller`).
   //  • Иначе `X-Forwarded-For` ПЕРЕЗАПИСЫВАЕТСЯ одним адресом клиента (`clientIp`: заголовок читается, только если
   //    собеседник — доверенный прокси, и справа). Заголовок есть — служебные ручки закрыты (`localCaller`).
   const peer = dec.decode(res.getRemoteAddressAsText());
   if (!isLoopback(peer) || PROXY_HEADERS.some((h) => headers[h] !== undefined)) headers['x-forwarded-for'] = clientIp(headers, peer);
+  else headers[LOCAL_PROOF_HEADER] = proxyLinks.proof();   // R12-01: прямой вызов с самой машины — с доказательством
   // Тело ЗАПРОСА собираем целиком (под потолком пути, R4-11): через прокси идут только запросы аккаунтов/конфига и загрузка
   // моделей из редактора — редкие и обозримые. Игровой трафик сюда не попадает. ⭐ R7-10: а ОТВЕТ течёт клиенту потоком
   // (`relayResponse`): он бывает и мегабайтами (статика `/assets`, конфиг), и копить его целиком прокси не может.
+  // ⭐ R12-01: длина тела — СВОЯ (ровно собранное), а соединение с express — на ОДИН запрос (`agent: false`). Раньше запрос шёл
+  // через общий пул Node (в Node 24 он держит соединения живыми) — соединение делили чужие клиенты, и сбитая длина одного
+  // становилась чужим запросом у express.
   const forward = (body: Buffer): void => {
+    if (!bodiless) headers['content-length'] = String(body.length);
     const upstream = httpRequest(
-      { host: '127.0.0.1', port: httpPort, path, method, headers },
+      { host: '127.0.0.1', port: httpPort, path, method, headers, agent: false },
       (up) => relayResponse(res, up, method, isAborted, onAbort, relaying),
     );
     onAbort(() => upstream.destroy());   // R7-10: клиент ушёл — запрос к express больше не нужен
     upstream.on('error', (e) => { refuse('502 Bad Gateway', JSON.stringify({ error: `прокси не достучался до express: ${e.message}` })); });
-    if (body.length) upstream.write(body);
-    upstream.end();
+    // R12-01: соединение — прокси: пока оно открыто, express не верит на нём «петле без заголовков» без доказательства.
+    upstream.on('socket', (s) => {
+      s.once('connect', () => {
+        const port = s.localPort;
+        if (port === undefined) return;
+        proxyLinks.open(port);
+        s.once('close', () => proxyLinks.close(port));
+      });
+    });
+    upstream.end(body.length ? body : undefined);
   };
 
   // У запросов без тела ждать `onData` нельзя — переправляем сразу.
-  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') { forward(EMPTY); return; }
+  if (bodiless) { forward(EMPTY); return; }
 
   // ⭐ R4-11: тело — под потолком пути. Заявлено больше — отказ сразу, до тела; пришло больше (chunked, без длины) — отказ
   // на первом лишнем байте, накопленное выбрасывается, соединение закрывается (иначе клиент продолжал бы слать).
   const cap = bodyCapFor(req.getUrl());
   const tooLarge = (): void => { refuse('413 Payload Too Large', '{"error":"Слишком большое тело запроса"}'); };
-  const declared = Number(headers['content-length']);
   if (Number.isFinite(declared) && declared > cap) { tooLarge(); return; }
   const chunks: Buffer[] = [];
   let size = 0;

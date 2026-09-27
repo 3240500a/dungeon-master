@@ -5,7 +5,7 @@ import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { unmetWorn } from '../formulas/stats.js';
 import { isVersatile } from '../formulas/versatile.js';
-import { rollAffixes, nextTier, inferTierId, retierItem } from '../formulas/itemgen.js';
+import { rollAffixes, nextTier, inferTierId, retierItem, tierMatters } from '../formulas/itemgen.js';
 import {
   CRAFT_NONCES_KEEP, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost, enchantItem,
   enchantSlots, fullJournal, isCraftNonce, meltReturn, normalizeCraftNonces, normalizeJournal, parseCraftInput, partById,
@@ -149,10 +149,14 @@ const priceMult = (rarities: Rarities, id: Rarity): number => rarities.find((r) 
  * Будь она и в продаже, каждая сданная находка — обычное поведение игрока — приносила бы ×1.24 золота на
  * 20-м уровне и ×2.5 на 90-м (доход за убийство +53 % на глубине) против цели «золото дефицитно всю игру».
  * Нет тира на вещи (сейв старше поля, зелья, сырьё) — надбавки нет, как было.
+ * ⚠ R12-03: и у вещи, которую ступень НЕ МЕНЯЕТ (кольцо, амулет — `tierMatters`): «Мифическое» кольцо бьёт как «Убогое» с
+ * теми же свойствами, а стоило впятеро дороже (на 80-м уровне 4 910 против 890 при одной скупке 356).
  */
 function tierPremium(reg: ConfigRegistry, item: Item): number {
   const t = item.tier ? reg.get('item-tiers').find((x) => x.id === item.tier) : undefined;
   if (!t || !Number.isFinite(t.statMult) || t.statMult <= 1) return 0;
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (base && !tierMatters(base)) return 0;
   return (15 + 4 * Math.max(0, t.minItemLevel)) * (t.statMult - 1);
 }
 
@@ -400,13 +404,15 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
  * ⚠ R2-12: карточка считала своё (`nextTierOf` + `upgradeCost`) и скованной вещи не видела — горела «Улучшить до
  * «Отличный»» с ценой, а сервер всегда отказывал. Золото и сырьё — не здесь: их не хватает «пока», и карточка
  * показывает это построчно.
+ * ⭐ R12-03: вещь, которую ступень НЕ МЕНЯЕТ (кольцо, амулет: ни урона, ни брони — `tierMatters`), — отказ до оплаты. Прежде
+ * подъём кольца t0 → t6 брал 13 584 золота и шесть лестниц железа, а статы, требования, аффиксы и мощь героя оставались те же.
  */
 export function canUpgradeItem(reg: ConfigRegistry, item: Item): ActionResult {
   if (item.broken) return { ok: false, reason: 'Сперва почини' };
-  if (!reg.get('items.base').some((b) => b.id === item.baseId)) {
-    return { ok: false, reason: 'Кузнец не знает такой вещи' };
-  }
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base) return { ok: false, reason: 'Кузнец не знает такой вещи' };
   if (item.parts) return { ok: false, reason: 'Скованную вещь поднимает замена детали, а не подъём тира' };
+  if (!tierMatters(base)) return { ok: false, reason: 'Ступень этой вещи ничего не меняет' };
   // Ступень выше есть, а подъёма нет — у найденного меча, чьи детали до неё не дотягиваются (R4-31).
   if (!upgradedItem(reg, item)) return { ok: false, reason: nextTierOf(reg, item) ? 'Эта форма выше не куётся' : 'Лучше эту вещь уже не сделать' };
   if (!Object.keys(upgradeCost(reg, item)).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };

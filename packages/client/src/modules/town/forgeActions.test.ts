@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ConfigRegistry, canRerollItem, craftAction, createRng, defaultParts, emptyStash, enchantAction, enchantCost, forgeGold, forgeRepair,
-  forgeReroll, forgeSalvage, forgeUpgrade, fullJournal, generateItem, itemFromBaseId, newBotSave, retierItem, salvageMean, shapeFoundWeapon,
+  ConfigRegistry, buildCraftShell, canRerollItem, canUpgradeItem, craftAction, createRng, defaultParts, emptyStash, enchantAction, enchantCost, forgeGold, forgeRepair,
+  forgeReroll, forgeSalvage, forgeUpgrade, fullJournal, generateItem, itemFromBaseId, newBotSave, retierItem, salvageMean, shapeFoundWeapon, tierMatters,
   type AccountStash, type Item, type SaveState,
 } from '@dm/shared';
 import { benchActions, benchTarget, diffStrings, type BenchAction } from './forgeActions.js';
@@ -337,6 +337,56 @@ describe('⚠ R7-19: сломанный уник — карточка «Почи
     expect(benchTarget(reg, it), 'шапка и карточка говорят одно').toBeUndefined();
     const save = { gold: 10_000_000, inventory: [it] } as unknown as SaveState;
     expect(forgeRepair(reg, save, it.uid, { ...RICH }).ok).toBe(false);
+  });
+});
+
+/**
+ * ⭐ R14-12: ПОДПИСЬ КАРТОЧКИ И ШАПКА — ТЕМ ЖЕ ОТВЕТОМ, ЧТО ОТКАЗ. С R12-03 кузнец кольцо и амулет не поднимает («Ступень этой вещи
+ * ничего не меняет», `tierMatters`), а подпись «Улучшить» шла от `nextTierOf` (о `tierMatters` он не знает) — «до «Отличный»» над
+ * погашенной карточкой, и шапка верстака (`benchTarget` → `upgradedItem`) писала «после улучшения» над «Кузнец эту вещь не меняет».
+ */
+describe('⭐ R14-12: «Улучшить» не обещает ступени, которую кузнец не поднимет', () => {
+  const ladder = [...reg.get('item-tiers')].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  const at = (id: string | undefined, dflt: number): number => { const i = ladder.findIndex((t) => t.id === id); return i < 0 ? dflt : i; };
+  const inGame = reg.get('items.base').filter((b) => b.kind !== 'consumable' && b.enabled !== false);
+  /** Найденная вещь базы на ступени `t` (как в `tierNoop.test.ts`). */
+  const onTier = (base: (typeof inGame)[number], t: number, rarity: 'normal' | 'magic'): Item => ({
+    ...buildCraftShell(base, ladder[t]!, reg.get('balance').maxTotalRequirement), rarity, origin: 'drop', uid: `r14-${base.id}-${t}`, pos: { x: 0, y: 0 },
+  });
+
+  it('⭐ каждая база в игре, которую ступень не меняет, на каждой ступени: карточка погашена без «до «…»», предпросмотра нет', () => {
+    let n = 0;
+    for (const base of inGame.filter((b) => !tierMatters(b))) {
+      for (let t = at(base.minTier, 0); t <= at(base.maxTier, ladder.length - 1); t++) {
+        const item = onTier(base, t, 'magic');
+        const up = benchActions(reg, item, 10_000_000, [], RICH)[0]!;
+        const why = `${base.id} ${ladder[t]!.id}`;
+        expect(up.id, why).toBe('upgrade');
+        expect(up.enabled, why).toBe(false);
+        expect(up.sub, `${why}: было «до «Отличный»» над погашенной карточкой`).not.toContain('до «');
+        expect(up.lines.map((l) => l.text), why).toEqual(['Ступень этой вещи ничего не меняет']);
+        expect(benchTarget(reg, item), `${why}: было — шапка «после улучшения»`).toBeUndefined();
+        n++;
+      }
+    }
+    expect(n, 'кольца и амулеты есть в игре').toBeGreaterThanOrEqual(2 * 6);
+  });
+
+  it('свойство по всем базам в игре: «до «…»» и предпросмотр улучшения — ровно когда кузнец поднимает (`canUpgradeItem`)', () => {
+    let yes = 0, no = 0;
+    for (const base of inGame) {
+      for (let t = at(base.minTier, 0); t <= at(base.maxTier, ladder.length - 1); t++) {
+        const item = onTier(base, t, 'normal');
+        const can = canUpgradeItem(reg, item).ok;
+        const up = benchActions(reg, item, 10_000_000, [], RICH)[0]!;
+        const why = `${base.id} ${ladder[t]!.id}: ${up.sub} · ${up.lines.map((l) => l.text).join(' · ')}`;
+        expect(up.sub.startsWith('до «'), why).toBe(can);
+        expect(benchTarget(reg, item) !== undefined, why).toBe(can);
+        if (can) yes++; else no++;
+      }
+    }
+    expect(yes, 'настоящие подъёмы — по-прежнему с подписью и предпросмотром').toBeGreaterThan(100);
+    expect(no).toBeGreaterThan(0);
   });
 });
 

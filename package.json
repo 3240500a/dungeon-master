@@ -42,6 +42,7 @@
     "poc:cluster": "tsx packages/server/src/loadtest/cluster.ts",
     "poc:cheat": "tsx packages/server/src/loadtest/cheat.ts",
     "poc:craft": "tsx packages/server/src/loadtest/craftflow.ts",
+    "poc:party": "tsx packages/server/src/loadtest/partyflow.ts",
     "poc:flood": "tsx packages/server/src/loadtest/flood.ts",
     "poc:delta": "tsx packages/server/src/loadtest/deltacheck.ts",
     "golden:wire": "tsx packages/server/src/loadtest/golden.ts"

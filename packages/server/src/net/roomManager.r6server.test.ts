@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import { ConfigRegistry, newCharacterSave, type ServerFrame, type SaveState } from '@dm/shared';
 import { counters } from './metrics.js';
-import { limits } from './rateLimit.js';
+import { limits, known } from './rateLimit.js';
+import { sessionKey } from './authSession.js';
 
 // Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
 // таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
@@ -330,25 +331,29 @@ describe('⭐ R6-09: поток кадров лобби без входа не �
     v.close();
   });
 
-  it('бакет адреса исчерпан: своя сессия — ответ; чужой токен — первая попытка «auth», дальше «rate» без похода в базу', async () => {
+  // ⭐ R12-05: первая попытка чужого токена на СВЕЖЕМ сокете больше не идёт в базу мимо бакета (раньше — «auth», и так на каждом
+  // новом сокете: поток «открыл — кадр — закрыл» стоил запроса сессии на сокет). Живая сессия, знакомая процессу (вход, регистрация,
+  // старт процесса — R11-05, R12-05), бакета адреса не платит по-прежнему.
+  it('бакет адреса исчерпан: знакомая сессия — ответ; чужой токен — «rate» сразу, без похода в базу', async () => {
     const ip = '100.64.0.9';
     freshIp(ip);
     vi.spyOn(performance, 'now').mockReturnValue(performance.now());   // часы бакетов стоят: пополнения за время теста нет
     for (let i = 0; i < 300; i++) lim.lobbyIp!.take(`ip:${ip}`);
     const h = seedChar('r609b');
+    known.sessions.add(sessionKey(h.token), h.userId);
     const v = connFrom(ip);
     v.push({ t: 'runStatus', token: h.token, charId: h.charId });
     await settle(10);
     expect(v.codes(), 'живая сессия не платит бакет адреса').toEqual([]);
     expect(v.last('runStatus')).toBeDefined();
     const bad = connFrom(ip);
+    const s0 = db.sessionReads;
     bad.push({ t: 'runStatus', token: badTok(900), charId: 'x' });
     await settle(10);
-    const s0 = db.sessionReads;
     bad.push({ t: 'runStatus', token: badTok(901), charId: 'x' });
     await settle(10);
-    expect(bad.codes()).toEqual(['auth', 'rate']);
-    expect(db.sessionReads - s0, 'второй — без базы').toBe(0);
+    expect(bad.codes()).toEqual(['rate', 'rate']);
+    expect(db.sessionReads - s0, 'в базу — ни одного').toBe(0);
     v.close(); bad.close();
   });
 

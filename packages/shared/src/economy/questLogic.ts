@@ -3,7 +3,7 @@ import type { SaveState } from '../types/save.js';
 import type { QuestDef, QuestProgress, RandomQuestTemplate } from '../types/quest.js';
 import type { Rng } from '../formulas/rng.js';
 import { xpForLevel } from '../formulas/xp.js';
-import { itemFromBaseId } from '../formulas/itemgen.js';
+import { baseInGame, itemFromBaseId } from '../formulas/itemgen.js';
 import { isSafeKey, shapeFoundWeapon } from '../formulas/craft.js';
 import { addToInventory, hasSpace } from '../inventory/grid.js';
 import { gainXp } from './progression.js';
@@ -22,14 +22,18 @@ export function questXp(level: number, xpTable: number[], permille: number): num
   return Math.round((delta * permille) / 1000);
 }
 
-/** Строит конкретный квест из шаблона доски (`uid` — уникальный суффикс id). */
-export function questFromTemplate(tpl: RandomQuestTemplate, rng: Rng, uid: string): QuestDef {
+/**
+ * Строит конкретный квест из шаблона доски (`uid` — уникальный суффикс id). `inGame` — есть ли база в игре (`baseInGame`):
+ * вещь награды берётся только из таких, не осталось ни одной — награда без вещи. Не передан — весь пул.
+ */
+export function questFromTemplate(tpl: RandomQuestTemplate, rng: Rng, uid: string, inGame?: (baseId: string) => boolean): QuestDef {
   const amount = rng.int(tpl.amountRange[0], tpl.amountRange[1]);
   const target = tpl.targetPool.length ? rng.pick(tpl.targetPool) : undefined;
+  const items = inGame ? tpl.rewardItemPool?.filter(inGame) : tpl.rewardItemPool;
   const reward = {
     gold: rng.int(tpl.rewardGoldRange[0], tpl.rewardGoldRange[1]),
     xp: rng.int(tpl.rewardXpRange[0], tpl.rewardXpRange[1]),
-    itemBaseId: tpl.rewardItemPool?.length ? rng.pick(tpl.rewardItemPool) : undefined,
+    itemBaseId: items?.length ? rng.pick(items) : undefined,
   };
   const label =
     tpl.objectiveType === 'kill' ? `Уничтожить ${amount} (${target})`
@@ -47,11 +51,14 @@ export function questFromTemplate(tpl: RandomQuestTemplate, rng: Rng, uid: strin
 /**
  * Генерирует доску случайных квестов (по одному на ВКЛЮЧЁННЫЙ шаблон). ⭐ R9-13: `stamp` — метка в id заданий (сервер даёт
  * поколение доски, `townStock.at`): тот же сид и та же метка собирают ту же доску с теми же id на любой ноде. Нет — часы.
+ * ⚠ R13-12: вещь награды — только из баз в игре (`baseInGame`). Пул брался целиком: выключи хозяин кольцо и шапку — каждая
+ * «зачистка» всё равно выдавала одну из них (200 сдач из 200).
  */
 export function generateBoard(reg: ConfigRegistry, rng: Rng, stamp: number = Date.now()): QuestDef[] {
   const templates = (reg.get('quests.random') as RandomQuestTemplate[]).filter((t) => (t as { enabled?: boolean }).enabled !== false);
   const tag = Math.max(0, Math.floor(stamp)).toString(36);
-  return templates.map((t, i) => questFromTemplate(t, rng, `${tag}${i}`));
+  const inGame = baseInGame(reg.get('items.base'));
+  return templates.map((t, i) => questFromTemplate(t, rng, `${tag}${i}`, inGame));
 }
 
 /** Шаблон, из которого собран квест доски (`rnd_<шаблон>_<метка>`, `questFromTemplate`); не с доски — `undefined`. */
@@ -275,7 +282,10 @@ export function turnInQuest(reg: ConfigRegistry, save: SaveState, questId: strin
   // Вещь награды — ДО любой выдачи: нет места, значит отказ целиком, и квест ждёт сдачи. Раньше результат
   // `addToInventory` не читался: при полной сумке награда молча пропадала, а квест закрывался.
   // Оружие — как найденное (§12.1): детали записаны на вещь, клинок с геометрией несёт свои статы.
-  const raw = r.itemBaseId ? itemFromBaseId(reg.get('items.base'), r.itemBaseId, reg.get('item-tiers'), 'quest') : null;
+  // ⚠ R13-12: базу, которой нет в игре (`baseInGame`), награда не выдаёт — ни с доски, принятой до выключения, ни из цепочки;
+  // остальная награда та же, и места в сумке под невыдаваемую вещь не нужно.
+  const raw = r.itemBaseId && baseInGame(reg.get('items.base'))(r.itemBaseId)
+    ? itemFromBaseId(reg.get('items.base'), r.itemBaseId, reg.get('item-tiers'), 'quest') : null;
   const item = raw ? shapeFoundWeapon(reg, raw) : null;
   const dims = reg.get('balance').inventory;
   if (item && !hasSpace(save.inventory, item.gridW, item.gridH, dims)) return { ok: false, reason: 'Нет места для награды' };

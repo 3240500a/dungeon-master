@@ -48,7 +48,17 @@ export interface BenchAction {
 export function benchTarget(reg: ConfigRegistry, item: Item): Item | undefined {
   // R7-19: сломанное, которое кузнец не чинит (уник), — предпросмотра нет: шапка и карточка говорят одно.
   if (item.broken) return canRepairItem(reg, item).ok ? { ...item, broken: false } : undefined;
-  return upgradedItem(reg, item);
+  // ⭐ R14-12: и целое, которое кузнец не поднимает (`canUpgradeItem`: кольцо, амулет — R12-03), — предпросмотра нет. `upgradedItem`
+  // о `tierMatters` не знает: шапка писала «после улучшения» над «Кузнец эту вещь не меняет» и погашенной карточкой.
+  return canUpgradeItem(reg, item).ok ? upgradedItem(reg, item) : undefined;
+}
+
+/** Подпись шапки предпросмотра — тем же ответом, что `benchTarget` и главная карточка (R14-12). */
+export function benchTargetLabel(reg: ConfigRegistry, item: Item, target: Item | undefined): string {
+  if (item.broken) return target ? 'после починки' : 'кузнец не чинит';
+  if (target) return 'после улучшения';
+  if (item.parts) return 'скованную поднимает замена детали';
+  return nextTierOf(reg, item) ? 'улучшать нечего' : 'улучшать больше некуда';
 }
 
 /**
@@ -151,7 +161,9 @@ export function benchActions(
     const goldOk = gold >= price;
     out.push({
       id: 'upgrade', cmd: 'forgeUpgrade', title: '🔨 Улучшить',
-      sub: item.parts ? 'скованная вещь' : nt ? `до «${nt.name}»` : 'вещь на потолке',
+      // ⭐ R14-12: «до «…»» — только когда кузнец поднимает (`can`): `nextTierOf` о `tierMatters` не знает, и у кольца погашенная
+      // карточка обещала «до «Отличный»» под строкой «Ступень этой вещи ничего не меняет».
+      sub: item.parts ? 'скованная вещь' : !nt ? 'вещь на потолке' : can.ok ? `до «${nt.name}»` : 'кузнец не поднимает',
       primary: true,
       enabled: can.ok && goldOk && canAffordBoth(inventory, stashWallet, cost),
       gold: can.ok ? price : undefined, materials: can.ok ? cost : undefined,

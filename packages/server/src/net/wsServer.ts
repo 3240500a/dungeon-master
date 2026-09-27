@@ -3,7 +3,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { clientIp } from './rateLimit.js';
-import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, type GameConn } from './conn.js';
+import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, routePassOf, type GameConn } from './conn.js';
 import { counters } from './metrics.js';
 import { nodeShutdownInstalled } from '../cluster/node.js';
 
@@ -15,7 +15,7 @@ import { nodeShutdownInstalled } from '../cluster/node.js';
 
 /** Обёртка `ws.WebSocket` → `GameConn`. Один объект на всё соединение (годится ключом Map). */
 class WsConn implements GameConn {
-  constructor(private readonly ws: WebSocket, readonly ip: string) {}
+  constructor(private readonly ws: WebSocket, readonly ip: string, readonly routePass?: string) {}
   get open(): boolean { return this.ws.readyState === this.ws.OPEN; }
   send(data: string | Uint8Array): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
@@ -91,7 +91,8 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
     (ws as { isAlive?: boolean }).isAlive = true;
     ws.on('pong', () => { (ws as { isAlive?: boolean }).isAlive = true; });
     ws.on('message', () => { (ws as { isAlive?: boolean }).isAlive = true; });
-    rooms.handleConnection(new WsConn(ws, clientIp(req.headers, req.socket.remoteAddress)));
+    // R13-08: пропуск маршрута гейтвея — из адреса сокета.
+    rooms.handleConnection(new WsConn(ws, clientIp(req.headers, req.socket.remoteAddress), routePassOf(req.url ?? '')));
   });
   // Пинг всех раз в 10с; кто не ответил с прошлого пинга — terminate() → 'close' → removePlayer.
   const heartbeat = setInterval(() => {
@@ -125,7 +126,8 @@ export function installShutdown(rooms: RoomManager): void {
     const done = (): never => process.exit(0);
     // Страховка: если база молчит, всё равно выходим — иначе рестарт dev-сервера подвиснет.
     const guard = setTimeout(done, 5000);
-    void rooms.flushAll().catch((e: unknown) => console.error('[dm-server] сейвы при остановке:', e))
+    // R12-04: дописка ждёт моргнувшую базу кругами — до полусекунды до страховки.
+    void rooms.flushAll(4_500).catch((e: unknown) => console.error('[dm-server] сейвы при остановке:', e))
       .finally(() => { clearTimeout(guard); done(); });
   };
   // ⭐ R5-08: `on`, а не `once`: повторный сигнал во время записи не должен убивать процесс действием по умолчанию.

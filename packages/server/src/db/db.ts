@@ -227,7 +227,7 @@ export async function putCharacter(
       return version;
     });
   } catch (e) {
-    if (e instanceof CommitUnknown) return committedAnyway(charId, snap.json, expectedVersion, e);
+    if (e instanceof CommitUnknown) { e.sent = snap.json; return committedAnyway(charId, snap.json, expectedVersion, e); }   // R14-04
     throw e;
   }
 }
@@ -248,6 +248,17 @@ async function committedAnyway(charId: string, json: string, expectedVersion: nu
   if (row && Number(row.version) === expectedVersion + 1 && row.mine) return Number(row.version);
   if (row && Number(row.version) === expectedVersion && e.settled) throw e.original;
   throw e;
+}
+
+/**
+ * ⭐ R14-04: ЛЕГЛА ЛИ ЗАПИСЬ С НЕИЗВЕСТНЫМ ИСХОДОМ — строка героя на версии `expectedVersion + 1` и РОВНО с отправленными данными (`json` —
+ * её снимок, `CommitUnknown.sent`). Да — эта версия: следующая запись той же копии пишет поверх неё. Нет (строка на прежней версии,
+ * ушла дальше, чужие данные, героя нет) — `null`. База молчит — бросает: исход так и неизвестен.
+ */
+export async function landedVersion(charId: string, json: string, expectedVersion: number): Promise<number | null> {
+  const row = await q1<{ version: number; mine: boolean }>(
+    'SELECT version, data = $1::jsonb AS mine FROM characters WHERE char_id = $2', [json, charId]);
+  return row && Number(row.version) === expectedVersion + 1 && row.mine ? Number(row.version) : null;
 }
 
 /**
@@ -325,6 +336,7 @@ export async function putCharacterWithStash(
     if (e instanceof StashConflict) return { ok: false, conflict: 'stash' };
     // R2-09: сейв и сундук — одна транзакция: строка персонажа наша — значит и сундук записан (его версия +1).
     if (e instanceof CommitUnknown) {
+      e.sent = snap.json;   // R14-04: сейв и сундук — одна транзакция: легла строка сейва — лёг и сундук (его версия +1)
       const version = await committedAnyway(charId, snap.json, expectedVersion, e);
       return { ok: true, version, stashVersion: expectedStashVersion + 1 };
     }

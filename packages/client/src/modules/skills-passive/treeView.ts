@@ -187,16 +187,25 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
   let lastX = 0;
   let lastY = 0;
 
+  /**
+   * ⭐ R12-10: конец перетаскивания (отпустили хоть за окном) слушается на `window` ТОЛЬКО пока тянут — вешается на
+   * `pointerdown`, снимается здесь же. Раньше слушатель вешался на каждую отрисовку и не снимался: окно перерисовывается на
+   * каждое `state:changed`/`gold:changed` (убийство, монета), и каждая отрисовка оставляла в памяти всё своё SVG-древо.
+   */
+  const endDrag = (): void => {
+    dragging = false;
+    wrap.style.cursor = 'grab';
+    window.removeEventListener('pointerup', endDrag);
+    window.removeEventListener('pointercancel', endDrag);
+  };
   wrap.addEventListener('pointerdown', (e) => {
     dragging = true;
     dragMoved = false;
     lastX = e.clientX;
     lastY = e.clientY;
     wrap.style.cursor = 'grabbing';
-  });
-  window.addEventListener('pointerup', () => {
-    dragging = false;
-    wrap.style.cursor = 'grab';
+    window.addEventListener('pointerup', endDrag);       // тот же обработчик второй раз не добавляется
+    window.addEventListener('pointercancel', endDrag);
   });
   wrap.addEventListener('pointermove', (e) => {
     if (!dragging) return;

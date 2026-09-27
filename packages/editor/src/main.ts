@@ -130,7 +130,7 @@ const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint', 'townRestockSec'] },
   { title: 'Ковка', keys: ['craft'] },
   { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },
-  { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'deathPenalty', 'lighting'] },
+  { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'combatLogoutSec', 'deathPenalty', 'lighting'] },
 ];
 /** Полный список подветок с авто-«Прочее» из ключей схемы, не попавших ни в одну группу. */
 const balanceGroupsFull = (() => {

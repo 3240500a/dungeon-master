@@ -53,6 +53,12 @@ export const counters = {
    */
   cmdTownRateLimited: 0,
   /**
+   * ⭐ R14-13: команд, отклонённых потолком ЧТЕНИЙ СУНДУКА аккаунта (R12-13: открыть, переложить, вклад материалов). Отдельно от
+   * кузницы, как и общий потолок (R2-25): перекладка вещей у сундука — не перебор бросков, и упор в лимит кузницы в ней не тонет.
+   * Команды кузницы, читающие сундук, при упоре в её лимит считаются там (её проверка — первой).
+   */
+  cmdStashRateLimited: 0,
+  /**
    * Вещей, изъятых из сейва на записи (R2-02): леджер числит их за другим аккаунтом или отозванными. Ненулевое —
    * повод смотреть, откуда вещь пришла: выброс и подбор между аккаунтами закрыт, других законных путей нет.
    */
@@ -89,9 +95,15 @@ export const counters = {
   farewellRetryFailed: 0,
   /**
    * ⭐ R7-09: недописанных копий героя, ЗАБЫТЫХ из-за того, что его закрепление ушло другой ноде. Ненулевое — инцидент: отданное
-   * такой копией могло остаться у двоих (разбор человеком, см. `RoomManager.forgetUnsaved`).
+   * такой копией могло остаться у двоих (разбор человеком, см. `RoomManager.forgetUnsaved`). ⭐ R12-04: и копий, которые слив ноды не
+   * дописал за свой бюджет (`RoomManager.flushAll`) — они уходят с процессом.
    */
   farewellForgotten: 0,
+  /**
+   * ⭐ R14-07: комнат, чей свод записей забега (`run_ledger`) слив ноды не дописал за свой бюджет. Ненулевое — инцидент: продолжение
+   * забега соберёт узлы из этих записей свежими (сундук, босс и опыт — заново).
+   */
+  ledgerDrainLost: 0,
   /** Шагов симуляции выполнено — из этого считается фактическая частота мира. */
   ticks: 0,
   /** Отключено клиентов, не успевавших читать (переполнение исходящей очереди). */
@@ -189,12 +201,14 @@ export function renderMetrics(): string {
   g('dm_cmd_failed_total', 'Команд, чей обработчик бросил исключение (ОШИБКА, если растёт)', counters.cmdFailed, 'counter');
   g('dm_cmd_rate_limited_total', 'Команд кузницы отклонено лимитом частоты (D12)', counters.cmdRateLimited, 'counter');
   g('dm_cmd_town_rate_limited_total', 'Команд города отклонено общим лимитом частоты (R1-11)', counters.cmdTownRateLimited, 'counter');
+  g('dm_cmd_stash_rate_limited_total', 'Команд сундука отклонено лимитом чтений сундука (R12-13)', counters.cmdStashRateLimited, 'counter');
   g('dm_ledger_confiscated_total', 'Вещей чужого аккаунта или отозванных изъято из сейва на записи (R2-02)', counters.ledgerConfiscated, 'counter');
   g('dm_frame_errors_total', 'Кадров, погашенных из-за исключения в обработчике (R2-01; ОШИБКА, если растёт)', counters.frameErrors, 'counter');
   g('dm_stash_conflicts_total', 'Записей сундука отклонено по версии (D8)', counters.stashConflicts, 'counter');
   g('dm_save_errors_total', 'Записей сейва, упавших с ошибкой базы', counters.saveErrors, 'counter');
   g('dm_farewell_retry_failed_total', 'Фоновых попыток дописать недописанную копию героя, снова упавших (R3-19)', counters.farewellRetryFailed, 'counter');
-  g('dm_farewell_forgotten_total', 'Недописанных копий героя, забытых из-за закрепления у другой ноды — инцидент (R7-09)', counters.farewellForgotten, 'counter');
+  g('dm_farewell_forgotten_total', 'Недописанных копий героя, забытых из-за закрепления у другой ноды (R7-09) или не дописанных сливом ноды за бюджет (R12-04), — инцидент', counters.farewellForgotten, 'counter');
+  g('dm_ledger_drain_lost_total', 'Сводов записей забега, не дописанных сливом ноды за бюджет (R14-07), — инцидент', counters.ledgerDrainLost, 'counter');
   g('dm_forge_crafted_total', 'Вещей скованно (K7)', counters.forgeCrafted, 'counter');
   g('dm_forge_melted_total', 'Скованных вещей переплавлено (K7)', counters.forgeMelted, 'counter');
   g('dm_forge_salvaged_total', 'Найденных вещей разобрано — у кузнеца и на месте (K7)', counters.forgeSalvaged, 'counter');

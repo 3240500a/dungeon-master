@@ -662,7 +662,7 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
   for (let i = 0; i < 8; i++) {
     const item = shapeFoundWeapon(reg, generateItem(itemsBase, affixes, uniques,
       { dropBias: 1.3, itemLevel: level + 1, tierLevel: rollTierLevel(level + 1, loot.tierWindow, rng),
-        tiers: reg.get('item-tiers'), rarities, baseRoll: loot.baseRoll, origin: 'shop' }, rng));
+        tiers: reg.get('item-tiers'), rarities, baseRoll: loot.baseRoll, origin: 'shop', noUnique: true }, rng));   // R13-09: уников в лавке нет
     const price = shopBuyPrice(reg, item);
     if (!item.slot || save.gold < price || !meetsRequirements(item, save.attributes)) continue;
     const cur = save.equipment[item.slot];

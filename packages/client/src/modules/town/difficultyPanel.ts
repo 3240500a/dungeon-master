@@ -32,7 +32,7 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
   function draw(body: HTMLElement): void {
     const state = app.state!;
     const diffs = app.config.get('difficulties');
-    const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save));   // R8-10: как меряет сервер — с запасом
+    const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save), app.config.get('item-tiers'));   // R8-10, R12-09: как меряет сервер — с запасом и ступенью
     const biomes = app.config.get('biomes').filter((b) => b.enabled !== false);
     const templates = app.config.get('run-templates').filter((t) => t.enabled !== false);
     const runMods = app.config.get('run-modifiers');

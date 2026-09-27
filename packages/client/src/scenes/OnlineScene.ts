@@ -13,6 +13,7 @@ import { EntryFlow } from '../net/entryFlow.js';
 import { routeToNode } from '../net/netClient.js';
 import { entryScreens } from '../ui/entryScreens.js';
 import { voteQuestion, type VoteStartFrame } from '../ui/voteText.js';
+import { DeathWindow, type DeathDock, type DeathView } from '../ui/deathWindow.js';
 import { TILE, Cell, gridSize, type FloorInit, type Grid } from '@dm/shared';
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
@@ -56,6 +57,13 @@ export class OnlineScene extends Phaser.Scene {
   private entry?: EntryFlow;
   private voteBox?: HTMLElement;
   private deathBox?: HTMLElement;
+  /** ⭐ R14-03: плашка «В город» вне окна смерти — окно закрыто «Смотреть», а выход у мёртвого есть (`canLeave`). */
+  private deathDockBox?: HTMLElement;
+  /** ⭐ R13-05: окно смерти — `ui/deathWindow.ts` (одно правило с 3D): статус той же смерти окно не строит заново. */
+  private readonly deathWin = new DeathWindow({ show: (v) => this.showDeathModal(v), hide: () => this.closeDeathModal(), dock: (v) => this.showDeathDock(v) },
+    { wait: 'Ожидайте: пати зачистит этаж и спустится — там вы возродитесь.', spectate: 'Смотреть за пати' });
+  /** R13-14: отписка сцены от снапшотов (их же слушает драйвер — общий `off('snapshot')` снял бы и его). */
+  private offSnap?: () => void;
   private codeLabel?: HTMLElement;
   private pingLabel?: HTMLElement;
   private lastPingShown = -2; // чтобы не трогать DOM каждый кадр (RTT меняется ~1/сек)
@@ -84,10 +92,20 @@ export class OnlineScene extends Phaser.Scene {
       this.buildArea(f.floor);
       this.driver?.seedPeers(f.peers);   // R2-03: статика тех, кто уже в комнате, — сразу (драйвер создаёт buildArea)
       this.showRoomCode(f.roomCode);
+      this.deathWin.reset();   // R13-05: смерть прошлой сессии — не эта
     });
-    this.app.net.on('areaChanged', (f) => { this.closeDeathModal(); this.buildArea(f.floor); }); // возрождение = смена области
+    this.app.net.on('areaChanged', (f) => { this.deathWin.reset(); this.buildArea(f.floor); }); // возрождение = смена области
     this.app.net.on('doorOpened', (f) => this.openDoor(f.doorId));
-    this.app.net.on('died', (f) => this.showDeathModal(f)); // окно смерти (потери + режим возрождения)
+    this.app.net.on('died', (f) => this.deathWin.onDied(f)); // окно смерти (потери + режим возрождения); R13-05: статус — не новая смерть
+    // ⭐ R13-14: ожил без смены области (авто-возрождение арены: `respawnPlayer` без `areaChanged`) — окно смерти прочь, как у 3D:
+    // иначе «Вы повержены» висело над героем и глотало клики холста. ⚠ По ПРИШЕДШЕМУ снапшоту, не на кадре отрисовки: мир тикает
+    // 30 Гц, снапшоты — 20, и на тике без рассылки `died` приходит раньше снапшота со смертью (последний принятый ещё «жив»).
+    // Снапшоты и `died` идут одним сокетом по порядку — снапшот, пришедший после `died`, смерть уже видит.
+    this.offSnap?.();
+    this.offSnap = this.app.net.on('snapshot', (f) => {
+      const me = f.snap.players.find((p) => p.id === this.myId);
+      if (me?.alive && this.deathWin.state) this.deathWin.reset();
+    });
     this.app.net.on('voteStart', (f) => this.showVote(f));
     this.app.net.on('voteUpdate', (f) => { if (this.voteBox) this.voteBox.querySelector('.tally')!.textContent = `${f.yes}/${f.total}`; });
     this.app.net.on('voteEnd', () => this.closeVote());
@@ -101,7 +119,7 @@ export class OnlineScene extends Phaser.Scene {
       who: () => ({ token: this.app.auth!.token, charId: this.app.pendingCharId! }),
       view: entryScreens(() => document.getElementById('ui-root') ?? document.body, () => this.app.gameLog?.setVisible(false)),
       // R4-36: и окна (инвентарь, кузница…) — их кнопки слали бы команды в сессию, которой нет, поверх лобби.
-      onLost: () => { this.closeVote(); this.closeDeathModal(); this.driver?.resetWorld(); this.app.bus.emit('ui:closeAll', {}); },
+      onLost: () => { this.closeVote(); this.deathWin.reset(); this.driver?.resetWorld(); this.app.bus.emit('ui:closeAll', {}); },
       // ⭐ R6-25: герой в мире — только с кадра `joined` и до потери связи / выхода: вне мира хоткеи окон и [E] у NPC молчат.
       inWorld: (on) => this.app.setInWorld(on),
       replies: this.app.replies,
@@ -289,33 +307,51 @@ export class OnlineScene extends Phaser.Scene {
   /**
    * Окно смерти: потери (золото/предметы) + режим возрождения. Соло/вайп → «возврат в город»
    * (окно закроется на areaChanged). Кооп → «ждите пати» + кнопка «Смотреть» (спектейт до спуска).
+   * ⭐ R13-05: что показать, решает `DeathWindow` (статус той же смерти окно не строит заново); «В город» — живых подключённых нет,
+   * пати ждёт отвалившегося посреди боя (`return`).
    */
-  private showDeathModal(f: { goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean }): void {
+  private showDeathModal(v: DeathView): void {
     this.closeDeathModal();
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px';
-    // PvP-арена: без потерь, авто-возрождение — иной текст.
-    if (f.pvp) {
-      box.innerHTML = `<div style="font-size:24px;margin-bottom:10px">Вы повержены</div>
-        <div style="font-size:13px;color:#b09088;margin-top:6px">Возрождение через пару секунд…</div>`;
-    } else {
-    const status = f.toTown ? 'Возвращаетесь в город…' : 'Ожидайте: пати зачистит этаж и спустится — там вы возродитесь.';
-    box.innerHTML = `<div style="font-size:24px;margin-bottom:10px">Вы погибли</div>
-      <div style="font-size:14px;color:#d9a898">Потеряно: <b>${f.goldLost}</b> золота, <b>${f.itemsLost}</b> предм.</div>
-      <div style="font-size:13px;color:#b09088;margin-top:10px">${status}</div>`;
-    }
-    if (f.pvp || !f.toTown) {
+    box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px;max-width:420px';
+    box.innerHTML = `<div style="font-size:24px;margin-bottom:10px">${v.title}</div>
+      ${v.loss ? `<div style="font-size:14px;color:#d9a898">${v.loss}</div>` : ''}
+      <div style="font-size:13px;color:#b09088;margin-top:10px">${v.status}</div>`;
+    const button = (label: string, run: () => void): void => {
       const btn = document.createElement('button');
-      btn.textContent = f.pvp ? 'Смотреть за соперником' : 'Смотреть за пати';
-      btn.style.cssText = 'margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer';
-      btn.addEventListener('click', () => this.closeDeathModal());
+      btn.textContent = label;
+      btn.style.cssText = 'margin:14px 4px 0;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer';
+      btn.addEventListener('click', run);
       box.appendChild(btn);
-    }
+    };
+    if (v.spectate) button(v.spectate, () => this.deathWin.dismiss());
+    if (v.town) button(v.town, () => this.app.net.send({ t: 'return' }));
     root.appendChild(box);
     this.deathBox = box;
   }
   private closeDeathModal(): void { this.deathBox?.remove(); this.deathBox = undefined; }
+  /**
+   * ⭐ R14-03: плашка «В город» вне окна смерти (`deathDock`): окно закрыто «Смотреть», а пати ждёт отвалившегося посреди боя — статус
+   * `canLeave` сервер шлёт один раз, и без плашки единственный выход не рисовался нигде (мёртвый ждал до часа). Не модалка: сверху,
+   * наблюдению не мешает. `null` — убрать.
+   */
+  private showDeathDock(v: DeathDock | null): void {
+    this.deathDockBox?.remove(); this.deathDockBox = undefined;
+    if (!v) return;
+    const root = document.getElementById('ui-root') ?? document.body;
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:50%;top:22%;transform:translateX(-50%);z-index:90;background:rgba(30,8,10,0.9);border:1px solid #c85a48;border-radius:8px;padding:8px 14px;color:#e6c8bd;font-size:13px;text-align:center;max-width:420px';
+    const text = document.createElement('div');
+    text.textContent = v.status;
+    const btn = document.createElement('button');
+    btn.textContent = v.town;
+    btn.style.cssText = 'margin-top:8px;padding:6px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer';
+    btn.addEventListener('click', () => this.app.net.send({ t: 'return' }));
+    box.append(text, btn);
+    root.appendChild(box);
+    this.deathDockBox = box;
+  }
 
   /** Сервер открыл дверь: убрать её спрайты + рычаг + интерактив, открыть клетки (для тумана). */
   private openDoor(doorId: number): void {
@@ -402,6 +438,7 @@ export class OnlineScene extends Phaser.Scene {
    */
   private cleanup(): void {
     this.entry?.detach();   // закрытие сокета после выхода из сцены её не трогает; экраны входа сняты
+    this.offSnap?.(); this.offSnap = undefined;   // R13-14: `NetClient` живёт всё приложение — снапшоты снесённой сцене не нужны
     dismissAsk();   // R3-23: вопрос в поле не переживает выход из игры
     this.app.gameLog?.setVisible(false); // выход из игры (в меню) — скрыть чат
     this.driver?.destroy(); this.driver = undefined;   // и его подписки на кадры сети (R5-16)
@@ -416,7 +453,7 @@ export class OnlineScene extends Phaser.Scene {
     this.torches = [];
     this.lighting?.destroy(); this.lighting = undefined;
     this.closeVote();
-    this.closeDeathModal();
+    this.deathWin.reset();
     this.codeLabel?.remove();
     this.codeLabel = undefined;
     this.pingLabel?.remove();

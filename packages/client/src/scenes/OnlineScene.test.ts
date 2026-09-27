@@ -77,7 +77,13 @@ function fakeNet() {
   let opens: (() => void)[] = [], closes: ((code?: number) => void)[] = [];
   const net = {
     connected: false, rtt: -1, connects: 0, resets: 0, sent: [] as unknown[],
-    on(t: string, cb: (f: never) => void): void { handlers.set(t, [...(handlers.get(t) ?? []), cb]); },
+    /** Отписка — ровно этого обработчика, как у настоящего `NetClient.on` (R5-16). */
+    on(t: string, cb: (f: never) => void): () => void {
+      handlers.set(t, [...(handlers.get(t) ?? []), cb]);
+      return () => { handlers.set(t, (handlers.get(t) ?? []).filter((h) => h !== cb)); };
+    },
+    /** Сколько обработчиков кадра `t` висит сейчас. */
+    count(t: string): number { return handlers.get(t)?.length ?? 0; },
     off(t: string): void { handlers.delete(t); },
     clearLifecycle(): void { opens = []; closes = []; },
     onOpen(cb: () => void): void { opens.push(cb); },
@@ -337,5 +343,109 @@ describe('OnlineScene — проводка 2D-клиента к серверу',
     expect(s.app.inWorld).toBe(true);
     s.shutdown();
     expect(s.app.inWorld).toBe(false);
+  });
+
+  /**
+   * ⭐ R13-14: АВТО-ВОЗРОЖДЕНИЕ АРЕНЫ СНИМАЕТ ОКНО СМЕРТИ. Сервер воскрешает погибшего в PvP через ~3 с (`tickArenaRespawns`
+   * → `respawnPlayer`) без кадра `areaChanged` — о возрождении клиент узнаёт только по снапшоту (`alive:true`). 2D закрывал
+   * окно лишь на смене области, обрыве, выходе и кнопке: «Вы повержены» висело над героем и глотало клики холста (атаки в
+   * этой части экрана) на каждой смерти арены. ⚠ Смотрим на ПРИШЕДШИЙ снапшот, а не на кадр отрисовки: мир тикает 30 Гц,
+   * снапшоты — 20 Гц, и на тике без рассылки `died` приходит раньше снапшота со смертью — последний принятый ещё «жив».
+   */
+  describe('⭐ R13-14: окно смерти и возрождение без смены области', () => {
+    const snap = (players: { id: string; alive: boolean }[]): { snap: never } => ({
+      snap: {
+        tick: 1, monsters: [], projectiles: [], drops: [],
+        players: players.map((p) => ({ x: 48, y: 48, facing: 0, hp: p.alive ? 100 : 0, mana: 10, stamina: 10, debuffs: {}, toggles: [], inCombat: false, stun: false, ...p })),
+      } as never,
+    });
+    const deathBox = (): El | undefined => body.children.find((c) => /Вы повержены|Вы погибли/.test(c.text()));
+
+    it('⭐ арена: `died {pvp}` → снапшот, где свой герой жив, без `areaChanged` — окно снято', () => {
+      const s = setup();
+      s.net.open(); s.net.fire('runStatus', { hasRun: false }); s.join('town');
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: false }, { id: 'p2', alive: true }]));
+      s.net.fire('died', { goldLost: 0, itemsLost: 0, toTown: false, pvp: true });
+      expect(deathBox()?.text()).toContain('Вы повержены');
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: false }, { id: 'p2', alive: true }]));
+      expect(deathBox(), 'мёртв — окно на месте').toBeDefined();
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: true }, { id: 'p2', alive: true }]));
+      expect(deathBox(), 'было: окно висело над героем до клика «Смотреть» и глотало клики холста').toBeUndefined();
+    });
+
+    it('⭐ смерть на тике без снапшота: `died` пришёл, а последний принятый снапшот ещё «жив» — окно не снимается кадрами отрисовки', () => {
+      const s = setup();
+      s.net.open(); s.net.fire('runStatus', { hasRun: false }); s.join('town');
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: true }]));
+      s.net.fire('died', { goldLost: 0, itemsLost: 0, toTown: false, pvp: true });
+      for (let i = 0; i < 5; i++) s.scene.update(0, 16);
+      expect(deathBox(), 'окно смерти не мигнуло и не пропало').toBeDefined();
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: false }]));
+      s.scene.update(0, 16);
+      expect(deathBox()).toBeDefined();
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: true }]));
+      expect(deathBox()).toBeUndefined();
+    });
+
+    it('кооп: мёртвый ждёт пати — живые союзники в снапшоте окно не снимают; «Смотреть» закрывает, как прежде', () => {
+      const s = setup();
+      s.net.open(); s.net.fire('runStatus', { hasRun: false }); s.join('dungeon');
+      s.net.fire('died', { goldLost: 120, itemsLost: 1, toTown: false });
+      for (let i = 0; i < 3; i++) s.net.fire('snapshot', snap([{ id: 'p1', alive: false }, { id: 'p2', alive: true }]));
+      expect(deathBox()?.text()).toContain('120');
+      deathBox()!.children.find((c) => c.textContent === 'Смотреть за пати')!.click();
+      expect(deathBox()).toBeUndefined();
+      s.net.fire('snapshot', snap([{ id: 'p1', alive: false }, { id: 'p2', alive: true }]));
+      expect(deathBox(), 'закрытое «Смотреть» снапшоты не открывают').toBeUndefined();
+    });
+
+    it('подписка на снапшоты — одна на показ сцены: выход её снимает, новый вход не копит', () => {
+      const s = setup();
+      const base = s.net.count('snapshot');
+      s.shutdown();
+      expect(s.net.count('snapshot'), 'после выхода обработчика сцены нет').toBe(base - 1);
+      s.scene.create();
+      s.scene.create();
+      expect(s.net.count('snapshot')).toBe(base);
+    });
+
+    it('3D-клиент: то же правило — по пришедшему снапшоту, а не на кадре отрисовки', () => {
+      const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'render3d', 'online3d.ts'), 'utf8');
+      const at = src.indexOf("app.net.on('snapshot'");
+      expect(at, 'обработчик снапшота есть').toBeGreaterThan(0);
+      const handler = src.slice(at, src.indexOf('\n  app.net.on(', at + 1));
+      expect(handler, 'жив в пришедшем снапшоте — окно смерти прочь').toMatch(/alive\s*&&\s*deathWin\.state\)\s*deathWin\.reset\(\)/);
+      const render = src.slice(src.indexOf('function renderWorld('), src.indexOf('function renderWorld(') + 4000);
+      expect(render, 'было: проверка по последнему принятому снапшоту на кадре отрисовки снимала окно на тике без снапшота').not.toMatch(/deathWin\.reset\(\)/);
+    });
+  });
+
+  /**
+   * ⭐ R14-03: «В ГОРОД» ПОСЛЕ «СМОТРЕТЬ». A погиб при живом B, закрыл окно «Смотреть»; B отвалился посреди боя — сервер один раз шлёт
+   * `died{status, canLeave}` (пати ждёт B до часа). Закрытое окно статусы не открывают (R13-05) — и «В город», единственный выход,
+   * не рисовался нигде. Теперь — плашка с кнопкой вне окна, кнопка шлёт `return`.
+   */
+  it('⭐ R14-03: смерть → «Смотреть» → статус `canLeave` — плашка «В город», её кнопка шлёт `return`; напарник вернулся — плашка прочь', () => {
+    const s = setup();
+    s.net.open(); s.net.fire('runStatus', { hasRun: false }); s.join('dungeon');
+    const box = (re: RegExp): El | undefined => body.children.find((c) => re.test(c.text()));
+    s.net.fire('died', { goldLost: 350, itemsLost: 2, toTown: false });
+    box(/Вы погибли/)!.children.find((c) => c.textContent === 'Смотреть за пати')!.click();
+    expect(box(/Вы погибли/)).toBeUndefined();
+    s.net.fire('died', { goldLost: 0, itemsLost: 0, toTown: false, status: true, canLeave: true });
+    expect(box(/Вы погибли/), 'окно само не встаёт (R13-05)').toBeUndefined();
+    const dock = box(/отключился посреди боя/);
+    expect(dock, 'было: ни окна, ни кнопки — мёртвый ждал до часа').toBeDefined();
+    const town = dock!.children.find((c) => c.textContent === 'В город');
+    expect(town, 'кнопка «В город»').toBeDefined();
+    const sent = s.net.sent.length;
+    town!.click();
+    expect(s.net.sent.slice(sent)).toEqual([{ t: 'return' }]);
+    s.net.fire('died', { goldLost: 0, itemsLost: 0, toTown: false, status: true });
+    expect(box(/отключился посреди боя/), 'напарник вернулся — выхода мёртвому больше нет').toBeUndefined();
+    s.net.fire('died', { goldLost: 0, itemsLost: 0, toTown: false, status: true, canLeave: true });
+    expect(box(/отключился посреди боя/)).toBeDefined();
+    s.net.fire('areaChanged', { floor: floor('town') } as never);
+    expect(box(/отключился посреди боя/), 'смена области — плашка прочь').toBeUndefined();
   });
 });

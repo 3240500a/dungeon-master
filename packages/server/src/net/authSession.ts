@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { WIRE_TOKEN_RE } from '@dm/shared';
 import { getSession, listLiveSessions, listUsernames } from '../db/db.js';
 import { limits, known, clientIp, ipBucket, type RateLimiter } from './rateLimit.js';
@@ -15,13 +15,52 @@ export function noteSession(token: string, userId: string): void {
 }
 
 /**
+ * ⭐ R13-08: ПРОПУСК МАРШРУТА — гейтвей проверил сессию токена (`/api/route`) и говорит об этом ноде адресом, который отдаёт клиенту
+ * (`?lp=`). Нода знает живые сессии только со своего старта (`primeKnown`), и токен, выданный позже (вход после деплоя ноды), на её
+ * лобби был незнакомым: платил бакет сети адреса ДО базы (R12-05), а поток мусорных токенов тролля за тем же CGNAT держал бакет
+ * пустым — честный сосед получал «rate» и на статус забега, и на вход. Пропуск — подпись ключом процессов (`serverKey('route')`, общий у
+ * гейтвея и нод) над отпечатком токена и сроком: подделать его нельзя, чужому токену он не подходит, а база спрашивается как прежде
+ * (отозванная сессия — «вход нужен»). Ключа нет (одиночный процесс без него, тест) — пропусков нет: всё как до R13-08.
+ */
+let routeKey: Buffer | null = null;
+/** Сколько живёт пропуск: клиент спрашивает маршрут перед каждым подключением (R4-13), и этого с запасом хватает до сокета. */
+export const ROUTE_PASS_TTL_MS = 10 * 60_000;
+export function setRoutePassKey(hex: string | null): void {
+  routeKey = hex ? Buffer.from(hex, 'hex') : null;
+}
+function routeMac(token: string, exp: number): string {
+  return createHmac('sha256', routeKey!).update(`route|${sessionKey(token)}|${exp}`).digest('base64url');
+}
+/** Пропуск маршрута для токена (`undefined` — ключа нет). */
+export function routePass(token: string, now = Date.now()): string | undefined {
+  if (!routeKey) return undefined;
+  const exp = Math.floor((now + ROUTE_PASS_TTL_MS) / 1000);
+  return `${exp.toString(36)}.${routeMac(token, exp)}`;
+}
+/** Годен ли пропуск `pass` этому токену сейчас: подпись своя, срок не вышел и не из будущего дальше своего. */
+export function routePassOk(pass: unknown, token: string, now = Date.now()): boolean {
+  if (!routeKey || typeof pass !== 'string') return false;
+  const m = /^([0-9a-z]{1,10})\.([A-Za-z0-9_-]{43})$/.exec(pass);
+  if (!m) return false;
+  const exp = parseInt(m[1]!, 36);
+  if (!Number.isSafeInteger(exp) || exp * 1000 <= now || exp * 1000 > now + ROUTE_PASS_TTL_MS + 60_000) return false;
+  const want = Buffer.from(routeMac(token, exp));
+  const got = Buffer.from(m[2]!);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+/**
  * ⭐ R11-05: СТАРТ ГЕЙТВЕЯ (и одиночного процесса) — живые сессии и ники базы сразу знакомы (`known`). Раньше знакомым становилось
  * только то, что предъявили этому процессу: после рестарта или деплоя каждый честный токен и ник платил общий бакет сети адреса, и
  * поток чужих токенов (ников) за общим NAT запирал соседям ростер, маршрут к ноде и вход — а стать знакомым, не пройдя этот бакет,
  * было нельзя. База по-прежнему спрашивается на каждом запросе: знакомость лишь снимает бакет адреса.
+ *
+ * ⭐ R12-05: и НОДА КЛАСТЕРА — живые сессии (ники ей не нужны: входа по паролю у неё нет, `names: false`). Кадр лобби с незнакомым
+ * токеном платит бакет сети адреса до базы; без знакомства на старте после каждого деплоя честные токены нод платили бы его наравне с
+ * потоком чужих за общим NAT. Сессии, выданные после старта ноды, знакомы ей с первого живого кадра.
  */
-export async function primeKnown(): Promise<{ sessions: number; names: number }> {
-  const [sessions, names] = await Promise.all([listLiveSessions(), listUsernames()]);
+export async function primeKnown(o: { names?: boolean } = {}): Promise<{ sessions: number; names: number }> {
+  const [sessions, names] = await Promise.all([listLiveSessions(), o.names === false ? Promise.resolve([]) : listUsernames()]);
   for (const s of sessions) known.sessions.add(sessionKey(s.token), s.userId);
   for (const n of names) known.names.add(n.toLowerCase());
   return { sessions: sessions.length, names: names.length };

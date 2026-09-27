@@ -131,6 +131,7 @@
     "materialStackLossPercent": 0.5
   },
   "reconnectGraceSec": 3600,
+  "combatLogoutSec": 10,
   "loot": {
     "dropChance": 0.12,
     "goldChance": 0.5,

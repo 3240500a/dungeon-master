@@ -46,11 +46,16 @@ const lowFirst = (s: string): string => (s ? s[0]!.toLowerCase() + s.slice(1) : 
 
 // ── Ступени предмета ─────────────────────────────────────────────────────────────────────────────
 
-/** Ступени предмета по возрастанию (t0 … t6). Выключенные не участвуют, как и в дропе. */
+/**
+ * Ступени предмета по возрастанию (t0 … t6) — ПОЛНАЯ лестница, выключенные тоже.
+ * ⚠ R12-08: индекс ступени хранится в базе (потолок журнала `tierHi`) и ключует таблицы (`capacityByTier`), а вещи выключенной
+ * ступени у игроков остаются. По лестнице ВКЛЮЧЁННЫХ выключенная в редакторе ступень сдвигала все индексы выше себя: вещь своей
+ * ступени не находила (зачарование скованной t5 стоило как t0, разбор поднимал журналу t0), ёмкость аффиксов и потолок журнала
+ * уезжали на соседнюю ступень. Выключенная ступень только не РОЖДАЕТСЯ заново: ковка на неё — отказ (`craftWeapon`), подъём у
+ * кузнеца её перешагивает (`nextTier`), дроп не выбирает (`pickTierClamped`).
+ */
 export function craftTiers(reg: ConfigRegistry): Tier[] {
-  const all = reg.get('item-tiers');
-  const on = all.filter((t) => t.enabled !== false);
-  return [...(on.length ? on : all)].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  return [...reg.get('item-tiers')].sort((a, b) => a.minItemLevel - b.minItemLevel);
 }
 
 /** Индекс ступени по id (−1 — нет такой). */
@@ -634,6 +639,11 @@ export function craftWeapon(
   const br = baseTierRange(reg, base);
   if (t < br.lo) return { ok: false, reason: `${base.name} не бывает ниже ${tiers[br.lo]?.id} ${tiers[br.lo]?.name}: возьми материалы получше`, ...view };
   if (t > br.hi) return { ok: false, reason: `${base.name} не бывает выше ${tiers[br.hi]?.id} ${tiers[br.hi]?.name}: возьми материалы попроще`, ...view };
+  // ⚠ R12-08: выключенная в редакторе ступень не куётся — как не падает и с монстров. Прежде её индекс занимала следующая
+  // включённая: те же материалы давали вещь ступенью выше (и с чужой ёмкостью аффиксов).
+  if (tiers[t]?.enabled === false && tiers.some((x) => x.enabled !== false)) {
+    return { ok: false, reason: `Ступень ${tiers[t]!.name} кузнец сейчас не куёт: возьми материалы другой ступени`, ...view };
+  }
   if (opts.journal) {
     const cap = journalTierCap(reg, opts.journal);
     if (t > cap) {

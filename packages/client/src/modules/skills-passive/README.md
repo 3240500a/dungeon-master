@@ -28,6 +28,9 @@
   очки мастерства (Σ рангов, чистит осиротевшие узлы), **вложенное золото НЕ возвращает**; комиссия =
   `balance.passiveRespecCostPct` (доля вложенного золота, растёт с прокачкой). Кнопка — в шапке граф-вью
   (`treeView.ts`), cmd `respecPassives`.
+- **Пан (R12-10):** как у древа скилов — `pointerup`/`pointercancel` на `window` только на время перетаскивания; раньше
+  каждая перерисовка (клик по узлу, золото, рассылка лавки на комнату) оставляла слушатель со всем своим SVG-древом навсегда.
+  Тест — `modules/skills/treePanListeners.test.ts`.
 - **Конфиг:** `mastery-tree` (`entryNodes`, `nodes` с `cost.type='gold'`); `balance.passiveRespecCostPct`,
   `balance.masteryPointsPerLevel` (очки/уровень).
 - **Хранение:** `save.masteries` (nodeId→ранг), `save.unspentMasteryPoints`.

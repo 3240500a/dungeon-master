@@ -1,12 +1,32 @@
 import type { ConfigRegistry } from '../config/registry.js';
-import { itemFromBaseId } from '../formulas/itemgen.js';
-import { shapeFoundWeapon } from '../formulas/craft.js';
+import { baseInGame, itemFromBaseId } from '../formulas/itemgen.js';
+import { shapeFoundWeapon, tierIndex } from '../formulas/craft.js';
 import { packInventory } from '../inventory/grid.js';
 import { SAVE_VERSION, type SaveState } from '../types/save.js';
 import type { Item } from '../types/items.js';
 
 /** Базовая броня любого нового персонажа (поверх оружия класса). */
 const STARTER_ARMOR = ['leather-cap', 'leather-armor', 'leather-boots', 'leather-belt'];
+
+/**
+ * ⚠ R14-08: ОРУЖИЕ НОВОГО ГЕРОЯ — БАЗА В ИГРЕ (`baseInGame`). `classes.startWeaponId` — голый id, и выключенную в редакторе базу
+ * герой получал как настоящую вещь: кузнец её поднимал, поднятую лавка покупала, а разбор писал её в журнал. Выключена — берётся
+ * включённая база той же семьи, хвата и слота: ниже ступенью, затем легче по требованиям (новому герою её держать), затем по
+ * порядку конфига. Нет такой (или базы нет в конфиге вовсе) — герой без оружия, как и прежде при неизвестном id.
+ * Одна истина — игре (`newCharacterSave`) и боту прогона баланса (`newBotSave`).
+ */
+export function startWeaponBaseId(reg: ConfigRegistry, cls: { startWeaponId: string }): string | undefined {
+  const bases = reg.get('items.base');
+  const inGame = baseInGame(bases);
+  if (inGame(cls.startWeaponId)) return cls.startWeaponId;
+  const was = bases.find((b) => b.id === cls.startWeaponId);
+  if (!was || was.kind !== 'weapon') return undefined;
+  const reqSum = (b: { requirements: Record<string, number | undefined> }): number => Object.values(b.requirements).reduce<number>((s, v) => s + (v ?? 0), 0);
+  const kin = bases.filter((b): b is typeof was => b.kind === 'weapon' && inGame(b.id)
+    && b.weaponClass === was.weaponClass && (b.hands ?? 1) === (was.hands ?? 1) && b.slot === was.slot);
+  kin.sort((a, b) => Math.max(0, tierIndex(reg, a.minTier)) - Math.max(0, tierIndex(reg, b.minTier)) || reqSum(a) - reqSum(b));
+  return kin[0]?.id;
+}
 
 /**
  * АВТОРИТЕТНЫЙ стартовый сейв нового персонажа из конфига (класс → атрибуты + стартовый
@@ -20,7 +40,10 @@ export function newCharacterSave(reg: ConfigRegistry, classId: string, name: str
   const cls = classes.find((c) => c.id === classId) ?? classes.find((c) => c.enabled !== false) ?? classes[0]!;
   const equipment: SaveState['equipment'] = {};
   const inventory: Item[] = [];
-  for (const id of [cls.startWeaponId, ...STARTER_ARMOR]) {
+  // ⚠ R14-08: только базы в игре — выключенная кожаная вещь не выдаётся, оружие класса заменяет родственное (`startWeaponBaseId`).
+  const inGame = baseInGame(reg.get('items.base'));
+  const weaponId = startWeaponBaseId(reg, cls);
+  for (const id of [...(weaponId ? [weaponId] : []), ...STARTER_ARMOR.filter(inGame)]) {
     const raw = itemFromBaseId(reg.get('items.base'), id, reg.get('item-tiers'), 'start');
     if (!raw) continue;
     // Стартовый меч — как найденный (§12.1, §26): детали записаны на вещь, клинок с геометрией несёт свои

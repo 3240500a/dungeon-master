@@ -3,6 +3,7 @@ import type { SaveState } from '../types/save.js';
 import type { Item } from '../types/items.js';
 import { ATTRIBUTES, type Attributes } from '../types/attributes.js';
 import { unmetWorn } from './stats.js';
+import { tierMatters } from './itemgen.js';
 
 /** Одна запись сложности (из конфига difficulties). */
 export type Difficulty = ConfigShapes['difficulties'][number];
@@ -18,10 +19,27 @@ export interface PowerBreakdown {
   total: number;
 }
 
+/** Ступени вещей (`item-tiers`): мощи нужен только порог уровня ступени. */
+export type PowerTiers = readonly { id: string; minItemLevel: number }[];
+
+/**
+ * ⭐ R12-09: УРОВЕНЬ ВЕЩИ ДЛЯ МОЩИ — уровень находки, но не ниже порога её ступени. Подъём у кузнеца (главный путь к высоким
+ * ступеням до 80-го уровня) меняет ступень и статы, а `itemLevel` оставляет уровнем находки — и мощь мерила вещь по нему:
+ * редкая, найденная на 5-м уровне и поднятая до t4 (порог 45), весила у героя 60-го уровня 5/60, комплект таких давал +1 EL
+ * вместо +8, и узлы заселялись на ~7 уровней слабее, чем у героя с теми же статами из находок. Скованная вещь рождается с
+ * уровнем порога своей ступени (`buildCraftShell`) — поднятая меряется так же. `itemLevel` на подъёме НЕ поднимается: он
+ * решает пул перекатки аффиксов и цену скупки. Вещь, которую ступень не меняет (кольцо, амулет — `tierMatters`), — по уровню
+ * находки: её сила — аффиксы, а они от ступени не зависят.
+ */
+function gearLevel(item: Item, tiers: PowerTiers | undefined): number {
+  const t = tiers && item.tier && tierMatters(item) ? tiers.find((x) => x.id === item.tier) : undefined;
+  return t ? Math.max(item.itemLevel, t.minItemLevel) : item.itemLevel;
+}
+
 /** Вклад вещи в мощь: вес редкости × «в уровень» (перерос уровень не даёт сверх 1). */
-function gearScore(item: Item, level: number, cfg: PowerConfig): number {
+function gearScore(item: Item, level: number, cfg: PowerConfig, tiers: PowerTiers | undefined): number {
   const weight = cfg.gearRarityWeight[item.rarity] ?? 1;
-  return weight * Math.min(1, item.itemLevel / level);
+  return weight * Math.min(1, gearLevel(item, tiers) / level);
 }
 
 /**
@@ -53,12 +71,12 @@ function reachableAttributes(save: SaveState): Attributes {
  * одноручника». Раньше оружие шло только в основную руку, и второй одноручник из сумки мощь не поднимал — «в городе меч в
  * руке, кинжал в сумке — надел в подземелье» заселяло узел слабее. Полуторный одной рукой — только со щитом (§25).
  */
-function wearableGear(save: SaveState, spare: Iterable<Item | null | undefined>, level: number, cfg: PowerConfig): number {
+function wearableGear(save: SaveState, spare: Iterable<Item | null | undefined>, level: number, cfg: PowerConfig, tiers: PowerTiers | undefined): number {
   const best = new Map<string, number>();
   let twoHanded = 0;
   const oneHanded: number[] = [];   // одноручное оружие: основная рука ИЛИ вторая
   const offer = (slot: string, item: Item): void => {
-    const s = gearScore(item, level, cfg);
+    const s = gearScore(item, level, cfg, tiers);
     if (slot === 'weapon' && (item.hands ?? 1) >= 2 && !item.versatile) { twoHanded = Math.max(twoHanded, s); return; }
     // Оружие, надетое во вторую руку, — всё равно оружие: в пару к основной, а не «щит».
     if (item.slot === 'weapon' && (item.hands ?? 1) < 2) { oneHanded.push(s); return; }
@@ -88,13 +106,18 @@ function wearableGear(save: SaveState, spare: Iterable<Item | null | undefined>,
  * ⭐ R7-02: `spare` — вещи, которые герой может надеть в любой момент (сумка, пояс, снаряжение героев его аккаунта рядом):
  * гир считается по лучшему из надетого и запаса (`wearableGear`). Так сервер меряет мощь, заселяя узел: раньше считалось
  * только надетое, и «снял всё в городе — спустился — надел в подземелье» заселяло узел до `gearMax` уровней слабее.
+ *
+ * ⭐ R12-09: `tiers` — ступени (`item-tiers`): вещь меряется не ниже порога своей ступени (`gearLevel`), и поднятая у кузнеца
+ * весит как скованная той же ступени. Сервер, клиент и сим передают их все; без них — по уровню находки, как раньше.
  */
-export function effectiveLevel(save: SaveState, cfg: PowerConfig, spare?: Iterable<Item | null | undefined>): PowerBreakdown {
+export function effectiveLevel(
+  save: SaveState, cfg: PowerConfig, spare?: Iterable<Item | null | undefined>, tiers?: PowerTiers,
+): PowerBreakdown {
   const level = Math.max(1, save.level);
 
   let gearRaw = 0;
-  if (spare) gearRaw = wearableGear(save, spare, level, cfg);
-  else for (const item of Object.values(save.equipment)) if (item) gearRaw += gearScore(item, level, cfg);
+  if (spare) gearRaw = wearableGear(save, spare, level, cfg, tiers);
+  else for (const item of Object.values(save.equipment)) if (item) gearRaw += gearScore(item, level, cfg, tiers);
   const gearBonus = Math.min(cfg.gearMax, Math.round(gearRaw / cfg.gearDivisor));
 
   let ranks = 0;

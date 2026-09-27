@@ -26,7 +26,7 @@ import { installInternalRoutes, internalReader, drainProcess, installCrashDrain,
 import { installStatic } from './net/staticRoutes.js';
 import { listenWithRetry } from './net/listen.js';
 import { installAccountRoutes, bearer, isCharId } from './net/accountRoutes.js';
-import { sessionUser, primeKnown } from './net/authSession.js';
+import { sessionUser, primeKnown, setRoutePassKey } from './net/authSession.js';
 import { setDeviceKey } from './net/deviceToken.js';
 import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
@@ -103,10 +103,16 @@ async function boot(): Promise<void> {
 
   // ⭐ R11-05: вход, регистрация, ростер и маршрут — у гейтвея (и одиночного процесса): живые сессии и ники базы знакомы ему с
   // запуска (после деплоя честный токен и ник не платят общий бакет адреса), токены устройства — подписаны ключом базы.
+  // ⭐ R13-08: пропуск маршрута (`/api/route` → адрес ноды) подписывает гейтвей, проверяет нода — ключ общий, из базы.
+  if (ROLE === 'gateway' || ROLE === 'single' || ROLE === 'node') setRoutePassKey(await serverKey('route'));
   if (ROLE === 'gateway' || ROLE === 'single') {
     setDeviceKey(await serverKey('device'));
     const primed = await primeKnown();
     console.log(`[dm-server] знакомо с запуска: сессий ${primed.sessions}, ников ${primed.names}`);
+  } else if (ROLE === 'node') {
+    // ⭐ R12-05: лобби ноды — незнакомый токен платит бакет адреса до базы; честные сессии знакомы ей с запуска (`primeKnown`).
+    const primed = await primeKnown({ names: false });
+    console.log(`[dm-server] знакомо с запуска: сессий ${primed.sessions}`);
   }
 
   // Ф3.4: в бою трафик обязан идти по TLS. Сам процесс слушает голый HTTP всегда — шифрование
@@ -567,7 +573,7 @@ if (ROLE === 'node' || ROLE === 'single') {
   const url = process.env.DM_NODE_URL ?? `ws://127.0.0.1:${PORT}/ws`;
   await joinCluster(nodeId, url, () => clusterHooks.liveCharIds(), clusterLoop,
     (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone));
-  installNodeShutdown(nodeId, () => clusterHooks.flushAll());
+  installNodeShutdown(nodeId, (budgetMs) => clusterHooks.flushAll(budgetMs));
   console.log(`[${nodeId}] в кластере: ${url}`);
 }
 // В режиме uws express слушает ТОЛЬКО петлю: снаружи на него не должно быть прямого хода

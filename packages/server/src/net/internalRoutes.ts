@@ -53,7 +53,7 @@ export function internalReader(o: { nodeId: string; metricsKey?: string }): (req
     metricsKey = '';
   }
   return (req) => {
-    if (localCaller(req.headers, req.socket.remoteAddress)) return true;
+    if (localCaller(req.headers, req.socket.remoteAddress, req.socket.remotePort)) return true;
     const m = /^Bearer\s+(.+)$/i.exec(req.header('authorization') ?? '');
     return !!m && keyMatches(m[1]!, metricsKey, timingSafeEqual);
   };
@@ -94,7 +94,7 @@ export function installInternalRoutes(
    * пустоты, перезапустить», и так по одному, без простоя для остальных.
    */
   app.post('/internal/drain', (req, res) => {
-    if (!localCaller(req.headers, req.socket.remoteAddress)) return res.status(403).end();
+    if (!localCaller(req.headers, req.socket.remoteAddress, req.socket.remotePort)) return res.status(403).end();
     console.log(`[${o.nodeId}] слив по команде`);
     res.json({ ok: true, node: o.nodeId });
     // Ответ уходит ДО начала слива: вызывающий должен получить подтверждение, а не таймаут.

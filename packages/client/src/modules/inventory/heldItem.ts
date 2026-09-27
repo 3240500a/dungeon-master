@@ -30,6 +30,8 @@ interface Held {
   ghost: HTMLElement;
   onMove: (e: MouseEvent) => void;
   onWorldClick: (e: MouseEvent) => void;
+  /** ⭐ R14-05: снять подписку на свою смерть (`died`). */
+  offDied: () => void;
 }
 
 let held: Held | null = null;
@@ -102,7 +104,11 @@ export function beginHold(app: App, item: Item, grabOx: number, grabOy: number, 
     const t = e.target as HTMLElement | null;
     if (t && t.closest(WORLD_SURFACE)) dropHeldToWorld(app);
   };
-  held = { item, grabOx, grabOy, from, ghost: makeGhost(item), onMove, onWorldClick };
+  // ⭐ R14-05: СВОЯ СМЕРТЬ ОТПУСКАЕТ КУРСОР — вещь обратно в сетку. Окно смерти не модалка, инвентарь остаётся открытым, и следующий клик
+  // по миру мимо окна слал `drop`: вещь ложилась к трупу, откуда её не поднять (ни ему, ни чужому аккаунту — R2-02), а спуск или вайп
+  // стирали её. Статус окна смерти (`status`, R13-05) — не новая смерть.
+  const offDied = app.net.on('died', (f) => { if (f.status !== true) resolveHeldOnClose(app); });
+  held = { item, grabOx, grabOy, from, ghost: makeGhost(item), onMove, onWorldClick, offDied };
   positionGhost();
   window.addEventListener('mousemove', onMove);
   window.addEventListener('click', onWorldClick);
@@ -113,6 +119,7 @@ export function clearHeld(): void {
   if (!held) return;
   window.removeEventListener('mousemove', held.onMove);
   window.removeEventListener('click', held.onWorldClick);
+  held.offDied();
   held.ghost.remove();
   held = null;
 }

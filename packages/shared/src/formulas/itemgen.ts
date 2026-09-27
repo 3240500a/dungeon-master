@@ -13,6 +13,17 @@ type ItemTiers = ConfigShapes['item-tiers'];
 const TIER_SCALED = new Set(['minDamage', 'maxDamage', 'armor']);
 
 /**
+ * ⭐ R12-03: МЕНЯЕТ ЛИ СТУПЕНЬ ВЕЩЬ С ТАКИМИ СТАТАМИ БАЗЫ. Ступень множит только урон и броню базы (`TIER_SCALED`); скорость,
+ * блок, аффиксы от неё не зависят, а требования она лишь поднимает. У кольца и амулета нет ни урона, ни брони: «Мифическое»
+ * кольцо — то же «Убогое», только слово в имени другое. Такой вещи ступень не поднимают у кузнеца (`canUpgradeItem`: подъём брал
+ * золото и сырьё за ничто), не берут за неё надбавку в лавке (`tierPremium`) и не мерят по ней мощь (`effectiveLevel`).
+ * Годится и вещь: её статы базы — те же пары, помноженные на ступень.
+ */
+export function tierMatters(base: { baseStats: readonly StatModifier[] }): boolean {
+  return base.baseStats.some((m) => m.kind === 'flat' && TIER_SCALED.has(m.stat) && m.value !== 0);
+}
+
+/**
  * Тир по уровню предмета, зажатый диапазоном [minTier, maxTier] базы. Лестница
  * сортируется по minItemLevel; берётся высший тир ≤ ilvl, но не ниже minTier и не
  * выше maxTier базы. Так «Ржавый нож» не станет Мифическим, а «мифрил» — Убогим.
@@ -71,20 +82,22 @@ export function pickTierClamped(
   maxTierId: string,
 ): ItemTiers[number] | undefined {
   if (!tiers || tiers.length === 0) return undefined;
-  // Выключенные тиры не выбираются (фолбэк на все, если вдруг всё выключено — чтобы предметы генерились).
-  const usable = tiers.filter((t) => t.enabled !== false);
-  const sorted = [...(usable.length ? usable : tiers)].sort((a, b) => a.minItemLevel - b.minItemLevel);
-  const idOf = (id: string): number => {
-    const i = sorted.findIndex((t) => t.id === id);
-    return i < 0 ? -1 : i;
-  };
-  let byLevel = 0;
-  for (let i = 0; i < sorted.length; i++) if (sorted[i]!.minItemLevel <= itemLevel) byLevel = i;
-  const loRaw = idOf(minTierId), hiRaw = idOf(maxTierId);
-  const lo = loRaw < 0 ? 0 : loRaw;
-  const hi = hiRaw < 0 ? sorted.length - 1 : hiRaw;
-  const clamped = Math.min(Math.max(byLevel, Math.min(lo, hi)), Math.max(lo, hi));
-  return sorted[clamped];
+  // ⚠ R14-06: ДИАПАЗОН БАЗЫ — НА ПОЛНОЙ ЛЕСТНИЦЕ, выключенные тоже (как у кузницы: `nextTier`, `baseTierRange`). Раньше лестница
+  // была из включённых: выключенный `maxTier` базы там не находился (−1), и потолок пропадал — кожаный доспех с потолком t3 падал
+  // t5 с тел, из сундуков, с прилавка, а кузнец отвечал «лучше не сделать»; выключенный `minTier` ронял пол на t0. Нет такой
+  // ступени в конфиге вовсе — граница открыта, как прежде.
+  const sorted = [...tiers].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  const loRaw = sorted.findIndex((t) => t.id === minTierId), hiRaw = sorted.findIndex((t) => t.id === maxTierId);
+  const a = loRaw < 0 ? 0 : loRaw, b = hiRaw < 0 ? sorted.length - 1 : hiRaw;
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  // Выключенные тиры не выбираются: высшая ВКЛЮЧЁННАЯ ступень диапазона с minItemLevel ≤ ilvl, а нет такой — низшая включённая
+  // в нём. Выключено всё (или весь диапазон базы) — в игре все его ступени, чтобы предметы генерились; из диапазона не выходим.
+  const inRange = sorted.slice(lo, hi + 1);
+  const on = inRange.filter((t) => t.enabled !== false);
+  const pool = on.length ? on : inRange;
+  let pick = pool[0];
+  for (const t of pool) if (t.minItemLevel <= itemLevel) pick = t;
+  return pick;
 }
 
 /**
@@ -403,8 +416,9 @@ export function inferTierId(
 ): string | undefined {
   if (item.tier) return item.tier;
   if (!tiers?.length) return undefined;
-  const usable = tiers.filter((t) => t.enabled !== false);
-  const pool = usable.length ? usable : tiers;
+  // ⚠ R12-08: сверка — со ВСЕЙ лестницей, выключенные тоже: след на статах оставила ступень, которой вещь была, а выключенная
+  // после её рождения ступень от этого не перестала быть её ступенью (иначе вещь «была бы» соседней).
+  const pool = tiers;
   // Сравнивать можно только то, что тир вообще масштабирует (`scaleBaseStats`), и только `flat`.
   // Числа базы — С ФОРМОЙ клинка (`spreadMult`): узкий 5–15 на «Сломанном» не должен читаться чужим тиром.
   const pairs = shapedBaseStats(base.baseStats, shapeOfItem(item))
@@ -433,13 +447,19 @@ export function nextTier(
   currentTierId: string | undefined,
 ): ItemTiers[number] | undefined {
   if (!tiers?.length || base.kind === 'consumable') return undefined;
-  const usable = tiers.filter((t) => t.enabled !== false);
-  const sorted = [...(usable.length ? usable : tiers)].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  // ⭐ R12-08: МЕСТО ВЕЩИ — НА ПОЛНОЙ ЛЕСТНИЦЕ, выключенные тоже; выключенную ступень подъём лишь ПЕРЕШАГИВАЕТ. Раньше лестница
+  // была из включённых: вещь выключенной в редакторе ступени своей там не находила (−1) и «улучшалась» до t0 — за золото и
+  // сырьё, t5-меч 30–53 → 7–12; а выключенный потолок базы (`maxTier`) пропадал вовсе, и база шла до верха лестницы.
+  // Всё выключено — все в игре (как у дропа, `pickTierClamped`). Ступени вещи нет в конфиге вовсе — где она стоит, неизвестно:
+  // подъёма нет, а не «на t0».
+  const sorted = [...tiers].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  const anyOn = tiers.some((t) => t.enabled !== false);
   const hi = sorted.findIndex((t) => t.id === base.maxTier);
   const cap = hi < 0 ? sorted.length - 1 : hi;
   const cur = currentTierId ? sorted.findIndex((t) => t.id === currentTierId) : -1;
-  const next = cur + 1;
-  return next <= cap ? sorted[next] : undefined;
+  if (currentTierId && cur < 0) return undefined;
+  for (let i = cur + 1; i <= cap; i++) if (!anyOn || sorted[i]!.enabled !== false) return sorted[i];
+  return undefined;
 }
 
 /**
@@ -511,6 +531,16 @@ export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers, origin?
     affixes: [],
     origin,
   });
+}
+
+/**
+ * ⚠ R13-12: БАЗА В ИГРЕ — есть в конфиге и не выключена в редакторе (`enabled: false`: «не выпадает и не в магазине»). Выдача
+ * вещи по id базы (`itemFromBaseId`) галку не смотрит — её смотрит тот, кто выдаёт: награда квеста (`questLogic`) и, ⚠ R14-08,
+ * стартовый комплект (`newCharacterSave`).
+ */
+export function baseInGame(itemsBase: ItemsBase): (baseId: string) => boolean {
+  const on = new Set(itemsBase.filter((b) => b.enabled !== false).map((b) => b.id));
+  return (baseId) => on.has(baseId);
 }
 
 /** Ищет базу по id и создаёт normal-предмет (тир по уровню); null — база не найдена. `origin` — кто родил (§12.4). */
@@ -657,12 +687,13 @@ export function rollAffixes(
  * дропа берётся высший доступный тир (`opts.tiers`): урон/броня базы масштабируются
  * `statMult`, требования — `reqMult`, имя получает префикс тира. Аффиксы — по ilvl.
  * `origin` — кто родил вещь (дроп, сундук, лавка…): его пишет ВЫЗЫВАЮЩИЙ, сам генератор этого не знает.
+ * ⭐ R13-09: `noUnique` — бросок «уник» даёт редкую вещь просящей базы (как пустой пул уников): кузница уников не продаёт.
  */
 export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin },
+  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin; noUnique?: boolean },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -675,10 +706,16 @@ export function generateItem(
   // свойства на ней, то есть просадку силы вдобавок к просадке ступени.
   const tierIlvl = Math.max(1, Math.round(opts.tierLevel ?? opts.itemLevel));
 
-  const uniquePool = uniques.filter((u) => u.enabled !== false); // выключенные уники не выпадают
-  if (rarity === 'unique' && uniquePool.length > 0) {
+  // Выключенные базы (enabled:false) не выпадают из случайного дропа (явный baseId — можно).
+  const enabledBase = itemsBase.filter((b) => b.enabled !== false);
+  // Выключенные уники не выпадают. ⚠ R13-12: и уники на базе, которой нет в игре (выключена в редакторе или убрана): отбор
+  // смотрел только на галку уника, а базу искал среди ВСЕХ — уник на выключенной базе падал с тел, из сундуков и с прилавка
+  // (128 из 384 уников за 20 000 дропов при выключенной секире палача). Не осталось ни одного — «уник» падает редкой вещью.
+  const uniquePool = rarity === 'unique' && !opts.noUnique
+    ? uniques.filter((u) => u.enabled !== false && enabledBase.some((b) => b.id === u.baseId)) : [];
+  if (uniquePool.length > 0) {
     const unique = rng.pick(uniquePool);
-    const base = itemsBase.find((b) => b.id === unique.baseId);
+    const base = enabledBase.find((b) => b.id === unique.baseId);
     if (base) {
       const ilvl = Math.max(baseItemLevel(base, opts.tiers), dropIlvl);
       const tier = pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, base.maxTier);
@@ -701,8 +738,7 @@ export function generateItem(
 
   // Выбор базы: по baseId (магазин/квест), иначе — взвешенно по категориям (`categoryWeights` из
   // balance.loot) × per-item `dropWeight`. Без weights — прежнее поведение (равномерно по экипу).
-  // Выключенные базы (enabled:false) не выпадают из случайного дропа (явный baseId — можно).
-  const enabledBase = itemsBase.filter((b) => b.enabled !== false);
+  // Выключенные базы не выпадают из случайного дропа (`enabledBase` выше).
   const equipPool = enabledBase.filter((b) => b.kind !== 'consumable');
   const base = opts.baseId
     ? itemsBase.find((b) => b.id === opts.baseId) ?? rng.pick(equipPool)

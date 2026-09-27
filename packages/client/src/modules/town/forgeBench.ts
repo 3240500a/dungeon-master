@@ -4,7 +4,7 @@ import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { itemTooltipHtml, itemDescLines } from '../inventory/itemView.js';
 import { rarityHex } from '../loot/rarity.js';
 import { CELL, glyphOf, getHeld, clearHeld } from '../inventory/heldItem.js';
-import { benchActions, benchTarget, diffStrings, type BenchAction } from './forgeActions.js';
+import { benchActions, benchTarget, benchTargetLabel, diffStrings, type BenchAction } from './forgeActions.js';
 import { confirmAll, disposePrompts } from '../inventory/disposeConfirm.js';
 import type { CmdReply } from '../../net/cmdReplies.js';
 
@@ -256,9 +256,8 @@ export function forgeBench(app: App, o: BenchOpts): HTMLElement {
   info.append(mk('div', `font-size:14px;color:${rarityHex(item.rarity)}`, item.name));
   const target = benchTarget(app.config, item);
   const rows = target ? diffStrings(baseLines(item), baseLines(target)) : [];
-  info.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:2px`,
-    item.broken ? (target ? 'после починки' : 'кузнец не чинит') : target ? 'после улучшения'
-    : item.parts ? 'скованную поднимает замена детали' : 'улучшать больше некуда'));
+  // R14-12: подпись — тем же ответом, что предпросмотр и карточка (`benchTargetLabel`).
+  info.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:2px`, benchTargetLabel(app.config, item, target)));
   info.append(rows.length
     ? previewBlock(rows)
     : mk('div', `font-size:12px;color:${COLORS.dim};margin-top:8px`, 'Кузнец эту вещь не меняет.'));

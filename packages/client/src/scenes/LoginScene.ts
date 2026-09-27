@@ -54,7 +54,13 @@ export class LoginScene extends Phaser.Scene {
     };
     $<HTMLElement>('.switch').addEventListener('click', () => setMode(mode === 'login' ? 'register' : 'login'));
 
+    // ⭐ R13-15: флаг «запрос в пути» — на ОБА пути (кнопка и Enter в поле пароля), как у веб-3D (`screens3d`). Раньше его
+    // держала только кнопка (`disabled` глушит лишь её `click`), и двойной Enter / автоповтор / клик и Enter слали второй
+    // `/api/login|register`: лишняя сессия и поворот токена устройства, двойной расход жетонов лимитера входа.
+    let busy = false;
     const submit = async (): Promise<void> => {
+      if (busy) return;
+      busy = true;
       err.textContent = '';
       go.disabled = true;
       try {
@@ -64,6 +70,7 @@ export class LoginScene extends Phaser.Scene {
       } catch (e) {
         err.textContent = (e as Error).message;
         go.disabled = false;
+        busy = false;
       }
     };
     go.addEventListener('click', () => void submit());

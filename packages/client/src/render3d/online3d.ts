@@ -63,6 +63,7 @@ import { EntryFlow } from '../net/entryFlow.js';
 import { routeToNode } from '../net/netClient.js';
 import { entryScreens } from '../ui/entryScreens.js';
 import { voteQuestion, type VoteStartFrame } from '../ui/voteText.js';
+import { DeathWindow, type DeathDock, type DeathView } from '../ui/deathWindow.js';
 import { InputSampler } from '../net/inputSampler.js';
 import { onFocusLost } from '../net/focusRelease.js';   // R4-20: alt-tab — зажатое отпущено
 
@@ -806,7 +807,6 @@ export async function startOnline3d(): Promise<void> {
     const mine = latest.players.find((p) => p.id === myId);
     if (mine) {
       const st = app.state!; st.hp = mine.hp; st.mana = mine.mana; st.stamina = mine.stamina; st.debuffs = mine.debuffs;
-      if (mine.alive && deathBox) closeDeath();   // ожил (в т.ч. авто-возрождение арены без areaChanged) — снять оверлей смерти
       if (st.toggles.join(',') !== mine.toggles.join(',')) { st.toggles = mine.toggles; app.bus.emit('state:changed', {}); } else st.toggles = mine.toggles;
       // Фокус камеры/окна/миникарты: жив → за собой; мёртв → за живым союзником (наблюдение), иначе держим кадр.
       let fx = mine.x, fy = mine.y;
@@ -1062,7 +1062,14 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Сетевые обработчики (данные + жизненный цикл) ────────────────────────────
   // Ф1.4: дельты применяет транспорт (`netClient`) — сюда приходит уже собранный мир.
-  app.net.on('snapshot', (f) => { latest = mergeSnapshot(f.snap); snapAt = performance.now() / 1000; snapSeq++; });
+  app.net.on('snapshot', (f) => {
+    latest = mergeSnapshot(f.snap); snapAt = performance.now() / 1000; snapSeq++;
+    // Ожил (в т.ч. авто-возрождение арены без areaChanged) — снять оверлей смерти. ⚠ R13-14: по ПРИШЕДШЕМУ снапшоту, не на кадре
+    // отрисовки: мир тикает 30 Гц, снапшоты — 20, и на тике без рассылки `died` приходит раньше снапшота со смертью — проверка по
+    // последнему принятому («жив») на отрисовке снимала окно в тот же кадр (≈ каждая третья смерть). Порядок кадров — один сокет.
+    const mine = latest.players.find((p) => p.id === myId);
+    if (mine?.alive && deathWin.state) deathWin.reset();
+  });
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
@@ -1083,11 +1090,12 @@ export async function startOnline3d(): Promise<void> {
     myId = f.playerId;   // экраны входа снимает поток входа (`entry`) на тот же кадр
     const st = new GameState(f.save); st.restoreFull(); app.state = st;
     mergePeerStatics(peerStatics, f.peers);   // R2-03: статика тех, кто уже в комнате, — сразу, а не с их экипировки
+    deathWin.reset();   // R13-05: смерть прошлой сессии — не эта
     buildArea(f.floor); showRoomCode(f.roomCode);
   });
-  app.net.on('areaChanged', (f) => { closeDeath(); buildArea(f.floor); });
+  app.net.on('areaChanged', (f) => { deathWin.reset(); buildArea(f.floor); });
   app.net.on('doorOpened', (f) => openDoor(f.doorId));
-  app.net.on('died', (f) => showDeath(f));
+  app.net.on('died', (f) => deathWin.onDied(f));   // R13-05: статус той же смерти окно не строит заново
   app.net.on('voteStart', (f) => showVote(f));
   app.net.on('voteUpdate', (f) => { const t = voteBox?.querySelector('.tally'); if (t) t.textContent = `${f.yes}/${f.total}`; });
   app.net.on('voteEnd', () => closeVote());
@@ -1099,7 +1107,7 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Модалки (DOM, как в 2D OnlineScene) ──────────────────────────────────────
   // Экраны входа (плашка «Подключение…», лобби, «Продолжить») — общие с 2D: `ui/entryScreens.ts` через поток `entry`.
-  let voteBox: HTMLElement | undefined, deathBox: HTMLElement | undefined, codeLabel: HTMLElement | undefined, pingLabel: HTMLElement | undefined;
+  let voteBox: HTMLElement | undefined, deathBox: HTMLElement | undefined, deathDockBox: HTMLElement | undefined, codeLabel: HTMLElement | undefined, pingLabel: HTMLElement | undefined;
   let lastPing = -2;
   const mk = (html: string, css: string): HTMLElement => { const b = document.createElement('div'); b.style.cssText = css; b.innerHTML = html; root.appendChild(b); return b; };
 
@@ -1111,18 +1119,23 @@ export async function startOnline3d(): Promise<void> {
     voteBox.querySelector('[data-v="0"]')!.addEventListener('click', () => app.net.send({ t: 'vote', accept: false }));
   }
   function closeVote(): void { voteBox?.remove(); voteBox = undefined; }
-  function showDeath(f: { goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean }): void { closeDeath();
-    // PvP-арена: без потерь, авто-возрождение — иной текст; кнопка «Смотреть» ведёт к камере-наблюдателю.
-    if (f.pvp) {
-      deathBox = mk(`<div style="font-size:24px;margin-bottom:10px">Вы повержены</div><div style="font-size:13px;color:#b09088;margin-top:6px">Возрождение через пару секунд…</div><button data-a="spec" style="margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Смотреть за соперником</button>`, 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px;pointer-events:auto');
-      deathBox.querySelector('[data-a="spec"]')?.addEventListener('click', () => closeDeath());
-      return;
-    }
-    const status = f.toTown ? 'Возвращаетесь в город…' : 'Ожидайте: пати спустится — там возродитесь.';
-    deathBox = mk(`<div style="font-size:24px;margin-bottom:10px">Вы погибли</div><div style="font-size:14px;color:#d9a898">Потеряно: <b>${f.goldLost}</b> золота, <b>${f.itemsLost}</b> предм.</div><div style="font-size:13px;color:#b09088;margin-top:10px">${status}</div>${f.toTown ? '' : '<button data-a="spec" style="margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Смотреть</button>'}`, 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px;pointer-events:auto');
-    deathBox.querySelector('[data-a="spec"]')?.addEventListener('click', () => closeDeath());
+  // ⭐ R13-05: окно смерти — `ui/deathWindow.ts` (одно правило с 2D): потери — из кадра самой смерти, статус (`status`) меняет только
+  // режим, а окно, закрытое «Смотреть», не открывает. «В город» — живых подключённых нет, пати ждёт отвалившегося посреди боя.
+  const deathWin = new DeathWindow({ show: (v) => showDeath(v), hide: () => closeDeath(), dock: (v) => showDeathDock(v) },
+    { wait: 'Ожидайте: пати спустится — там возродитесь.', spectate: 'Смотреть' });
+  function showDeath(v: DeathView): void { closeDeath();
+    const btn = (a: string, label: string): string => `<button data-a="${a}" style="margin:14px 4px 0;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">${label}</button>`;
+    deathBox = mk(`<div style="font-size:24px;margin-bottom:10px">${v.title}</div>${v.loss ? `<div style="font-size:14px;color:#d9a898">${v.loss}</div>` : ''}<div style="font-size:13px;color:#b09088;margin-top:10px">${v.status}</div>${v.spectate ? btn('spec', v.spectate) : ''}${v.town ? btn('town', v.town) : ''}`, 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px;max-width:420px;pointer-events:auto');
+    deathBox.querySelector('[data-a="spec"]')?.addEventListener('click', () => deathWin.dismiss());
+    deathBox.querySelector('[data-a="town"]')?.addEventListener('click', () => app.net.send({ t: 'return' }));
   }
   function closeDeath(): void { deathBox?.remove(); deathBox = undefined; }
+  // ⭐ R14-03: плашка «В город» вне окна смерти (`deathDock`, одно правило с 2D): окно закрыто «Смотреть», а пати ждёт отвалившегося
+  // посреди боя — статус `canLeave` сервер шлёт один раз, и без плашки единственный выход не рисовался нигде (мёртвый ждал до часа).
+  function showDeathDock(v: DeathDock | null): void { deathDockBox?.remove(); deathDockBox = undefined; if (!v) return;
+    deathDockBox = mk(`<div>${v.status}</div><button data-a="town" style="margin-top:8px;padding:6px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">${v.town}</button>`, 'position:fixed;left:50%;top:22%;transform:translateX(-50%);z-index:90;background:rgba(30,8,10,0.9);border:1px solid #c85a48;border-radius:8px;padding:8px 14px;color:#e6c8bd;font-size:13px;text-align:center;max-width:420px;pointer-events:auto');
+    deathDockBox.querySelector('[data-a="town"]')?.addEventListener('click', () => app.net.send({ t: 'return' }));
+  }
   function updatePing(): void { const rtt = app.net.rtt; if (rtt === lastPing) return; lastPing = rtt;
     if (!pingLabel) pingLabel = mk('', 'position:fixed;top:40px;right:12px;z-index:60;background:rgba(23,27,36,0.8);border:1px solid #2b323f;border-radius:6px;padding:4px 8px;color:#cfe0f2;font-size:12px;font-family:monospace;pointer-events:none');
     const c = rtt < 0 ? '#8f897c' : rtt < 60 ? '#7fdc7f' : rtt < 120 ? '#dcd07f' : rtt < 200 ? '#dcae7f' : '#dc7f7f';
@@ -1183,7 +1196,7 @@ export async function startOnline3d(): Promise<void> {
    * Свой id забыт: до нового `joined` кадр мир не рисует и ввод не шлёт. Пол прошлой области стоит под плашкой до входа.
    */
   function dropSession(): void {
-    closeVote(); closeDeath();
+    closeVote(); deathWin.reset();
     ui.closeAll();   // R4-36: окна прошлой сессии (инвентарь, кузница…) — их кнопки слали бы команды в сессию, которой нет
     spectateId = null; hideSpectateHint();
     clearActors();

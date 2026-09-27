@@ -2171,3 +2171,25 @@ describe('⚠ R10-02: снаряд не пролетает диагональн�
     expect(hits).toBeGreaterThan(0);
   });
 });
+
+/**
+ * ⭐ R14-05: МЁРТВЫЙ ВЕЩЕЙ НЕ БРОСАЕТ. Вещь на курсоре в момент смерти и клик по миру мимо окна смерти (или «Выбросить» из меню)
+ * клали её к трупу: поднять её мёртвый не может (`pickupDropById`), чужой аккаунт — тоже (R2-02), а смена этажа и вайп стирают землю.
+ */
+describe('⭐ R14-05: мёртвый вещей не бросает', () => {
+  it('мёртвый — `dropToGround` отказывает, вещь в сумке, земля пуста; ожил — бросает', () => {
+    const r = reg();
+    const s = new GameSession(r, 7, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(5, 6), monsters: [] });
+    const item = itemFromBaseId(r.get('items.base'), 'dagger', r.get('item-tiers'), 'drop')!;
+    expect(addToInventory(p.save.inventory, item, r.get('balance').inventory)).toBeTruthy();
+    p.alive = false; p.hp = 0;
+    expect(s.dropToGround('p1', item.uid)).toBeNull();
+    expect(p.save.inventory.some((i) => i.uid === item.uid), 'вещь в сумке').toBe(true);
+    expect(s.world.drops.length, 'земля пуста').toBe(0);
+    p.alive = true; p.hp = 10;
+    expect(s.dropToGround('p1', item.uid)?.uid, 'контроль: живой бросает').toBe(item.uid);
+    expect(s.world.drops.length).toBe(1);
+  });
+});

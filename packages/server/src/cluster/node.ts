@@ -105,6 +105,14 @@ export async function joinCluster(
   beat.unref();
 }
 
+/** Предохранитель слива ноды: дольше процесс не живёт, даже если база молчит (`TimeoutStopSec` юнита — больше, DEPLOY.md §3b). */
+const DRAIN_GUARD_MS = 8_000;
+/**
+ * ⭐ R12-04: сколько из него дописка сейвов ждёт базу (`RoomManager.flushAll` — кругами): полсекунды остаются на снятие ноды из
+ * реестра и выход.
+ */
+const DRAIN_FLUSH_MS = DRAIN_GUARD_MS - 500;
+
 /**
  * Слив ноды (Ф4.5): перестать принимать новых, дать сохраниться, уйти.
  * `flush` — запись прогресса всех комнат; ждать её обязательно (Ф2: запись асинхронная).
@@ -114,7 +122,7 @@ export async function joinCluster(
  * через две секунды; входы сюда отвечают «перезапускаемся»), сейвы дописаны, нода и её закрепления сняты из
  * реестра, выход. Всё — под одним предохранителем.
  */
-export function installNodeShutdown(nodeId: string, flush: () => Promise<unknown>): void {
+export function installNodeShutdown(nodeId: string, flush: (budgetMs: number) => Promise<unknown>): void {
   nodeShutdown = true;
   let leaving = false;
   const shutdown = (): void => {
@@ -126,12 +134,12 @@ export function installNodeShutdown(nodeId: string, flush: () => Promise<unknown
     console.log(`[${nodeId}] слив: новых игроков не принимаю, дописываю сейвы…`);
     // Предохранитель: если база молчит, всё равно выходим — иначе рестарт подвиснет.
     const done = (): never => process.exit(0);
-    const guard = setTimeout(done, 8000);
+    const guard = setTimeout(done, DRAIN_GUARD_MS);
     void (async () => {
       try {
         // Объявление слива — рядом с записью, а не перед ней: молчащая база не должна съедать время сейвов.
         const announce = (beatNow?.() ?? Promise.resolve()).catch((e: unknown) => console.warn(`[${nodeId}] объявить слив не удалось:`, e));
-        await flush();
+        await flush(DRAIN_FLUSH_MS);   // ⭐ R12-04: база моргнула — сейвы дописываются кругами, пока не кончится бюджет
         await announce;
         // ⭐ R4-28: удары сердца — ДО снятия ноды: новых нет, идущие дописаны. Раньше удар по расписанию, ушедший в базу до
         // снятия, ложился после него — строка ноды и закрепления всех её игроков возвращались, и гейтвей ещё десять секунд

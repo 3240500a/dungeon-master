@@ -7,7 +7,7 @@
 - **Логика (shared, чистая):** `economy/questLogic.ts` — `acceptQuest(save, def, quota?)`,
   `turnInQuest(reg, save, id)`, `trackObjective(save, 'kill'|'collect-item', target)`,
   `trackFloor(save, depth)`, `ensureMainQuest(reg, save)`, `generateBoard(reg, rng)`,
-  `questFromTemplate(tpl, rng, uid)`, `questXp(level, xpTable, permille)`. Мутируют `save`.
+  `questFromTemplate(tpl, rng, uid, inGame?)`, `questXp(level, xpTable, permille)`. Мутируют `save`.
 - **Трекинг (сервер `Room`):** из событий сессии — `monster-died.by` (kill по `def.id`),
   `item-picked` (collect-item по `item.baseId`), `enterDungeon` (reach-floor по глубине,
   общий прогресс пати). Изменения шлются владельцу как `saveUpdate` + событие `quest`.
@@ -33,6 +33,10 @@
   «достичь этажа» на один спуск нельзя), выполненное, но не сданное, держит место — «Сначала сдай «…»».
 - **Награды при сдаче:** золото/опыт-доля (через shared `gainXp`)/очки скиллов/предмет —
   считает `turnInQuest`, клиент шлёт `turnInQuest`, сервер отвечает `saveUpdate`.
+  ⚠ R13-12: выключенная в редакторе база (`items.base.enabled: false` — «не выпадает и не в магазине») не приходит и
+  наградой: доска берёт вещь только из баз в игре (`baseInGame`, `itemgen.ts`; весь пул выключен — задание без вещи), а сдача задания,
+  принятого до выключения (и звена цепочки), отдаёт золото/опыт/очки без вещи и места под неё не требует. Тест —
+  `shared/src/economy/disabledBase.test.ts`.
 - **Хранение:** `save.quests` (прогресс) + `save.activeQuestDefs` (резолвнутые определения).
 - **Конфиг:** `quests.main`, `quests.random`, `items.base` (награды-предметы).
 - **Протокол:** C→S команды `acceptQuest`/`turnInQuest`; S→C кадр `questBoard` + событие

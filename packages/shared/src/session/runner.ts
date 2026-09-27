@@ -175,6 +175,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const townTripSec = settings.townTripSec ?? 45;
   const rng = createRng((settings.seed >>> 0) || 1);
   const powerCfg = reg.get('balance').power;
+  const tiers = reg.get('item-tiers');   // R12-09: мощь — и по ступени вещей, как у сервера
   const deathPenalty = reg.get('balance').deathPenalty;
   const prefabs = reg.get('room-prefabs');
   const biomes = reg.get('biomes');
@@ -280,7 +281,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const sampleCurve = (): void => {
     if (totalTime - lastCurveT >= 60) {
       lastCurveT = totalTime;
-      curve.push({ timeSec: Math.round(totalTime), level: save.level, power: effectiveLevel(save, powerCfg).total, floor: curFloor });
+      curve.push({ timeSec: Math.round(totalTime), level: save.level, power: effectiveLevel(save, powerCfg, undefined, tiers).total, floor: curFloor });
     }
   };
   /** Распределение очков за уровни (атрибуты + скиллы/пассивы) — дёшево, зовём после каждого этажа. */
@@ -366,7 +367,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     openDoors(layout);
     const biome = biomes.find((b) => b.id === node!.biomeId) ?? biomes[0]!;
     const pool = resolveMonsterPool(biome, node.depth);
-    const el = effectiveLevel(save, powerCfg).total;
+    const el = effectiveLevel(save, powerCfg, undefined, tiers).total;
     const frng = createRng((node.floorSpec.seed >>> 0) || 1);
     const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     session.enterFloor(node.depth, {

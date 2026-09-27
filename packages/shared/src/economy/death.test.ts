@@ -5,6 +5,7 @@ import { newBotSave } from '../sim/playerBot.js';
 import { materialItem } from './materials.js';
 import { applyDeathPenalty } from './death.js';
 import type { Item } from '../types/items.js';
+import type { SaveState } from '../types/save.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -76,13 +77,19 @@ describe('applyDeathPenalty (штраф смерти, авторитетно н�
     expect(save.inventory.map((i) => i.count).sort((x, y) => (y ?? 0) - (x ?? 0))).toEqual([75, 30]);
   });
 
-  it('⚠ маленький стек теряет хотя бы единицу, а не ноль от округления', () => {
-    const r = reg();
-    const save = newBotSave(r, 'warrior');
-    save.inventory = [materialItem(IRON, 1, 'a')];
-    const res = applyDeathPenalty(save, { ...PENALTY, inventoryDropPercent: 1 }, createRng(1));
-    expect(res.materialsLost).toBe(1);
-    expect(save.inventory).toHaveLength(0);          // стек кончился — ушёл из сумки
+  // ⚠ R13-13: раньше здесь стерегли «не меньше единицы» (`max(1, round)`): одна единица под раздачей терялась ВСЕГДА — вдвое
+  // против доли. Теперь дробная доля — броском: ноль от округления вниз по-прежнему не выходит (стек без риска), но и не всегда.
+  it('⚠ маленький стек теряется с вероятностью своей доли — не «никогда» от округления и не «всегда»', () => {
+    let gone = 0;
+    for (let seed = 1; seed <= 2000; seed++) {
+      // Штрафу нужны только золото и сумка — полный сейв на две тысячи смертей не нужен.
+      const save = { gold: 0, inventory: [materialItem(IRON, 1, 'a')] } as unknown as SaveState;
+      const res = applyDeathPenalty(save, { ...PENALTY, inventoryDropPercent: 1 }, createRng(seed));
+      expect(res.materialsLost + save.inventory.length).toBe(1);   // стек кончился — ушёл из сумки, иначе цел
+      gone += res.materialsLost;
+    }
+    expect(gone / 2000).toBeGreaterThan(0.47);       // доля 0.5 от одной единицы
+    expect(gone / 2000).toBeLessThan(0.53);
   });
 });
 
@@ -126,5 +133,52 @@ describe('⚠ R5-21: потери смерти — настроенная дол
       expect(applyDeathPenalty(a, PEN, createRng(seed))).toEqual(applyDeathPenalty(b, PEN, createRng(seed)));
       expect(a.inventory.map((i) => i.uid)).toEqual(b.inventory.map((i) => i.uid));
     }
+  });
+});
+
+/**
+ * ⚠ R13-13: И ДОЛЯ СТЕКА — БРОСКОМ. R5-21 сделал броском число жертв, а попавший под раздачу стек сырья по-прежнему терял
+ * `max(1, round(n × доля))`: вверх от половины и не меньше единицы. При живых 0.5 × 0.5 цель — четверть любого стека, а выходило
+ * 50 % у одной единицы (ценное сырьё высокой ступени), 33 % у трёх, 30 % у пяти — мелкий запас платил за смерть вдвое.
+ */
+describe('⚠ R13-13: стек сырья теряет в среднем настроенную долю при любом размере', () => {
+  const live = reg().get('balance').deathPenalty;
+  const PEN = { goldPercent: 0, inventoryDropPercent: live.inventoryDropPercent, materialStackLossPercent: live.materialStackLossPercent };
+  const target = PEN.inventoryDropPercent * PEN.materialStackLossPercent;
+  /** Сумка из одного стека: штрафу нужны только золото и сумка — полный сейв на 100 тысяч смертей не нужен. */
+  const stackBag = (have: number): SaveState => ({ gold: 0, inventory: [materialItem(IRON, have, 'm')] }) as unknown as SaveState;
+
+  it('цель живого штрафа — дробная доля (иначе мерить нечего)', () => {
+    expect(target).toBeGreaterThan(0);
+    expect(target).toBeLessThan(1);
+  });
+
+  for (const have of [1, 2, 3, 5, 200]) {
+    it(`стек из ${have}: доля потерь ≈ ${Math.round(target * 100)} % (±1 %) за 20 000 смертей`, () => {
+      const N = 20_000;
+      let lost = 0;
+      for (let seed = 1; seed <= N; seed++) {
+        const save = stackBag(have);
+        const res = applyDeathPenalty(save, PEN, createRng(seed));
+        const left = save.inventory.reduce((s, it) => s + (it.count ?? 1), 0);
+        expect(res.materialsLost + left).toBe(have);     // потеряно + осталось = было
+        expect(res.itemsLost).toBe(0);
+        lost += res.materialsLost;
+      }
+      const share = lost / (N * have);
+      expect(Math.abs(share - target), `доля ${share.toFixed(4)} против ${target}`).toBeLessThan(0.01);
+    });
+  }
+
+  it('стек, которому бросок оставил всё, лежит в сумке нетронутым', () => {
+    let spared = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const save = stackBag(1);
+      const res = applyDeathPenalty(save, { ...PEN, inventoryDropPercent: 1 }, createRng(seed));
+      if (res.materialsLost === 0) { spared++; expect(save.inventory).toHaveLength(1); expect(save.inventory[0]!.count).toBe(1); }
+      else expect(save.inventory).toHaveLength(0);
+    }
+    expect(spared).toBeGreaterThan(0);
+    expect(spared).toBeLessThan(200);
   });
 });

@@ -27,8 +27,9 @@ vi.mock('../db/db.js', () => ({
 }));
 vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
 /**
- * Криптоисточник под рукой теста: `fixedInt` — каждый `randomInt` (сиды комнаты, забега, городских бросков) отдаёт одно число;
- * `pattern` — `randomFillSync` заливает буфер счётчиком вместо случайных байт. Выключены — настоящие.
+ * Криптоисточник под рукой теста: `fixedInt` — каждый `randomInt` (сиды комнаты, забега, городских бросков) отдаёт одно число, а
+ * `randomBytes` (R14-10: ключ этажей забега) — байты этого числа; `pattern` — `randomFillSync` заливает буфер счётчиком вместо
+ * случайных байт. Выключены — настоящие.
  */
 const tap = vi.hoisted(() => ({ fixedInt: 0, pattern: 0, fills: 0 }));
 vi.mock('node:crypto', async (importOriginal) => {
@@ -41,7 +42,10 @@ vi.mock('node:crypto', async (importOriginal) => {
     for (let i = 0; i < u.length; i++) u[i] = tap.pattern++ >>> 0;
     return buf;
   }) as typeof real.randomFillSync;
-  return { ...real, randomInt, randomFillSync, default: { ...real, randomInt, randomFillSync } };
+  const randomBytes = ((n: number, ...rest: unknown[]) => (tap.fixedInt
+    ? Buffer.alloc(n, tap.fixedInt & 0xff)
+    : (real.randomBytes as (size: number, ...x: unknown[]) => Buffer)(n, ...rest))) as typeof real.randomBytes;
+  return { ...real, randomInt, randomFillSync, randomBytes, default: { ...real, randomInt, randomFillSync, randomBytes } };
 });
 
 type Room = import('./room.js').Room;

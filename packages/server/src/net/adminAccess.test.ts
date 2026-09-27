@@ -73,4 +73,22 @@ describe('⭐ R3-03: служебные ручки — только прямом
     expect(localCaller({}, '10.8.1.3'), 'не петля').toBe(false);
     expect(localCaller({}, undefined)).toBe(false);
   });
+
+  /**
+   * ⭐ R14-11: БРАУЗЕРНАЯ СТРАНИЦА С ТОЙ ЖЕ МАШИНЫ — НЕ «СВОЯ МАШИНА». Сокет — петля, заголовков прокси нет, но есть чужой `Origin`,
+   * `Sec-Fetch-Site` не `none` или `Host` — не петля (подмена DNS). Их не шлют ни curl, ни `fetch` из Node, ни Prometheus.
+   */
+  it('⭐ R14-11: Origin, Sec-Fetch-Site не «none», Host не петля — не своя машина', () => {
+    expect(localCaller({ origin: 'https://evil.example' }, '127.0.0.1'), 'Origin').toBe(false);
+    expect(localCaller({ origin: 'null' }, '127.0.0.1'), 'Origin null (sandbox, file:)').toBe(false);
+    expect(localCaller({ origin: 'http://localhost:3001', host: 'localhost:3001' }, '127.0.0.1'), 'даже свой источник — это страница').toBe(false);
+    for (const site of ['cross-site', 'same-site', 'same-origin']) expect(localCaller({ 'sec-fetch-site': site }, '127.0.0.1'), site).toBe(false);
+    for (const host of ['evil.example:3001', 'evil.example', '10.8.1.3:3001', 'localhost.evil.example']) {
+      expect(localCaller({ host }, '127.0.0.1'), host).toBe(false);
+    }
+    // Контроль: адресная строка браузера (`none`), fetch из Node (`sec-fetch-mode: cors`), любые записи петли в Host.
+    expect(localCaller({ 'sec-fetch-site': 'none', host: 'localhost:3001' }, '127.0.0.1')).toBe(true);
+    expect(localCaller({ 'sec-fetch-mode': 'cors', host: '127.0.0.1:3001' }, '127.0.0.1')).toBe(true);
+    for (const host of ['localhost', '127.0.0.1', '127.9.9.9:80', '[::1]:3001', '[::1]', 'LOCALHOST:3001']) expect(localCaller({ host }, '::1'), host).toBe(true);
+  });
 });

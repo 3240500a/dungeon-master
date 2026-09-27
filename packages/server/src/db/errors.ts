@@ -26,6 +26,12 @@ export class LedgerViolation extends Error {
  * фиксации, и она может дойти позже любого чтения.
  */
 export class CommitUnknown extends Error {
+  /**
+   * ⭐ R14-04: снимок сейва, ушедший этой фиксацией (JSON строки `characters.data`; ставит `putCharacter`/`putCharacterWithStash`). По нему
+   * следующая запись той же копии узнаёт, что легла именно эта (`landedVersion`), и пишет поверх её версии, а не принимает отказ по
+   * версии за «правду в базе».
+   */
+  sent?: string;
   constructor(readonly original: unknown, readonly settled = false) {
     super(`исход COMMIT неизвестен: ${original instanceof Error ? original.message : String(original)}`);
     this.name = 'CommitUnknown';

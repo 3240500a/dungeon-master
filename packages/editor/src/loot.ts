@@ -378,7 +378,7 @@ export function renderLootPage(host: HTMLElement, data: Record<string, unknown>)
   const reg = regFromData(data);
   if (!knobs) {
     const save = newBotSave(reg, reg.get('classes')[0]!.id);
-    knobs = { power: effectiveLevel(save, reg.get('balance').power).total, depth: 5, diffId: 'normal', floors: 6 };
+    knobs = { power: effectiveLevel(save, reg.get('balance').power, undefined, reg.get('item-tiers')).total, depth: 5, diffId: 'normal', floors: 6 };
   }
   const k = knobs;
   host.innerHTML = '';

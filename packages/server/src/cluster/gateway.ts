@@ -7,7 +7,7 @@ import { limits } from '../net/rateLimit.js';
 import { localCaller } from '../net/adminAccess.js';
 import { cachedJson } from '../net/cachedJson.js';
 import { queryText } from '../net/asyncRoute.js';
-import { sessionUser } from '../net/authSession.js';
+import { sessionUser, routePass } from '../net/authSession.js';
 import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow } from './registry.js';
 
 /**
@@ -173,6 +173,15 @@ function moveIssued(e: Issued, node: NodeRow): void {
 }
 
 /**
+ * ⭐ R13-08: АДРЕС НОДЫ — С ПРОПУСКОМ МАРШРУТА (`lp`): сессию этого токена гейтвей только что проверил, и лобби ноды не заставит её
+ * платить бакет сети адреса наравне с чужими токенами (нода знает сессии только со своего старта). Ключа нет — адрес как есть.
+ */
+function withPass(url: string, token: string): string {
+  const pass = routePass(token);
+  return pass ? `${url}${url.includes('?') ? '&' : '?'}lp=${encodeURIComponent(pass)}` : url;
+}
+
+/**
  * `canRead` — кто может читать служебное состояние кластера (R6-20): по умолчанию — только прямой вызов с самой машины;
  * `index.ts` передаёт правило `/metrics` (и ключ чтения метрик, `internalReader`).
  */
@@ -180,7 +189,7 @@ export function installGatewayRoutes(
   app: Express,
   o: { canRead?: (req: Request) => boolean } = {},
 ): void {
-  const canRead = o.canRead ?? ((req: Request): boolean => localCaller(req.headers, req.socket.remoteAddress));
+  const canRead = o.canRead ?? ((req: Request): boolean => localCaller(req.headers, req.socket.remoteAddress, req.socket.remotePort));
   /**
    * Куда подключаться. Возвращает либо адрес ноды, либо место в очереди.
    * Клиент зовёт это ПЕРЕД открытием сокета и после каждого разрыва.
@@ -241,7 +250,7 @@ export function installGatewayRoutes(
         if (home) {
           noteIssued(home);
           if (ticket) await dropTicket(ticket, userId);
-          return res.json({ url: home.url, node: home.id, reason: 'закреплён за узлом' });
+          return res.json({ url: withPass(home.url, token), node: home.id, reason: 'закреплён за узлом' });
         }
         const total = nodes.reduce((a, n) => a + n.players, 0) + pendingIssued();
         // ⭐ R6-08: к другу по коду — в пределах запаса ноды, а не в общей очереди (см. `partyHeadroom`).
@@ -262,7 +271,7 @@ export function installGatewayRoutes(
       if (code) {
         if (byLetter) {
           if (mine) moveIssued(mine, byLetter); else noteIssued(byLetter);
-          return res.json({ url: byLetter.url, node: byLetter.id, reason: 'по коду комнаты' });
+          return res.json({ url: withPass(byLetter.url, token), node: byLetter.id, reason: 'по коду комнаты' });
         }
         if (mine) dropIssued(mine);
         return res.status(404).json({ error: 'Комната не найдена: узел не отвечает' });
@@ -275,7 +284,7 @@ export function installGatewayRoutes(
       const nodeId = await claimChar(charId, free.id);
       const target = nodes.find((n) => n.id === nodeId) ?? free;
       moveIssued(mine, target);
-      res.json({ url: target.url, node: target.id, reason: target.id === free.id ? 'самая свободная' : 'закреплён за узлом' });
+      res.json({ url: withPass(target.url, token), node: target.id, reason: target.id === free.id ? 'самая свободная' : 'закреплён за узлом' });
     })().catch((e: unknown) => {
       warnRoute(e);
       if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });

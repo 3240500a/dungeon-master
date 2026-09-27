@@ -162,7 +162,7 @@ export class UIScene extends Phaser.Scene {
       const diffs = this.app.config.get('difficulties');
       const diff = diffs.find((dd) => dd.id === state.difficultyId) ?? diffs.find((dd) => dd.id === 'normal') ?? diffs[0]!;
       // R8-10: уровень, по которому сервер заселил узел; нет его (старый сервер) — своя мера по надетому и запасу.
-      const cl = state.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(state.save, this.app.config.get('balance').power, carriedGear(state.save)).total, diff), diff, state.depth);
+      const cl = state.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(state.save, this.app.config.get('balance').power, carriedGear(state.save), this.app.config.get('item-tiers')).total, diff), diff, state.depth);
       loc = `Этаж ${state.depth} · ${diff.name} · вызов ур.${cl}`;
     }
     this.label.setText(

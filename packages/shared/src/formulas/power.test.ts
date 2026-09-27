@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import type { Item, Rarity } from '../types/items.js';
+import { forgeUpgrade } from '../economy/townActions.js';
+import { generateItem } from './itemgen.js';
+import { shapeFoundWeapon } from './craft.js';
+import { createRng } from './rng.js';
 import type { SaveState } from '../types/save.js';
 import {
   effectiveLevel,
@@ -215,5 +219,65 @@ describe('lockedDifficulties — R8-13: тир, который не открое
 
   it('выключенный тир сам не в отчёте — его выключили намеренно', () => {
     expect(lockedDifficulties([tier('a', 0), tier('b', 99, false)], 15)).toEqual([]);
+  });
+});
+
+describe('⭐ R12-09: поднятое у кузнеца меряется ступенью, а не уровнем находки', () => {
+  const tiers = reg.get('item-tiers');
+  const t4 = tiers.find((t) => t.id === 't4')!;
+  const KIT = { weapon: 'long-sword', offhand: 'buckler', helm: 'leather-cap', chest: 'leather-armor', gloves: 'leather-gloves', boots: 'leather-boots', belt: 'leather-belt' } as const;
+  const rich = (): Record<string, number> => Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 99_999]));
+  const drop = (baseId: string, itemLevel: number, tierLevel: number, rarity: Rarity): Item => shapeFoundWeapon(reg, generateItem(
+    reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+      dropBias: 1, itemLevel, tierLevel, baseId, tiers, rarities: reg.get('rarities'), rareNames: reg.get('rare-names'), forceRarity: rarity,
+      maxReqTotal: reg.get('balance').maxTotalRequirement, baseRoll: reg.get('balance').loot.baseRoll, origin: 'drop',
+    }, createRng(itemLevel * 7 + baseId.length)));
+
+  /** Найдена на 5-м уровне (t0) — и поднята до t4 НАСТОЯЩИМ подъёмом у кузнеца (как главный путь к высоким ступеням). */
+  function forgedUp(baseId: string): Item {
+    const it = { ...drop(baseId, 5, 5, 'rare'), pos: { x: 0, y: 0 } };
+    const save = { gold: 1e9, inventory: [it] } as unknown as SaveState;
+    const wallet = rich();
+    while (save.inventory[0]!.tier !== t4.id) expect(forgeUpgrade(reg, save, it.uid, wallet).ok, baseId).toBe(true);
+    const up = save.inventory[0]!;
+    expect(up.itemLevel, 'уровень находки подъём не трогает').toBe(5);
+    return up;
+  }
+  const kit = (): SaveState['equipment'] =>
+    Object.fromEntries(Object.entries(KIT).map(([slot, id]) => [slot, forgedUp(id)])) as SaveState['equipment'];
+  /** Та же вещь, но с уровнем порога своей ступени — как скованная этой ступени (`buildCraftShell`). */
+  const atTierLevel = (eq: SaveState['equipment']): SaveState['equipment'] =>
+    Object.fromEntries(Object.entries(eq).map(([slot, it]) => [slot, { ...it!, itemLevel: t4.minItemLevel }])) as SaveState['equipment'];
+
+  it('надетое: мощь та же, что у той же вещи уровня t4 — и выше, чем по уровню находки', () => {
+    const worn = kit();
+    const up = mkSave({ level: 60, equipment: worn });
+    const twin = mkSave({ level: 60, equipment: atTierLevel(worn) });
+    const fine: PowerConfig = { ...powerCfg, gearDivisor: 1, gearMax: 99 };
+    for (const cfg of [powerCfg, fine]) {
+      expect(effectiveLevel(up, cfg, undefined, tiers)).toEqual(effectiveLevel(twin, cfg, undefined, tiers));
+      expect(effectiveLevel(up, cfg, [], tiers)).toEqual(effectiveLevel(twin, cfg, [], tiers));
+    }
+    expect(effectiveLevel(up, powerCfg, [], tiers).total, 'было: 61 против 66 у найденного').toBeGreaterThan(effectiveLevel(up, powerCfg, []).total);
+  });
+
+  it('запас (сумка): поднятое меряется так же, как надетое', () => {
+    // Требования сняты: вещь запаса, которую герою не надеть, в счёт не идёт (R8-10) — здесь мерим ступень, а не атрибуты.
+    const bag = (Object.values(kit()) as Item[]).map((it) => ({ ...it, requirements: {} }));
+    const bare = mkSave({ level: 60 });
+    const twin = mkSave({ level: 60, equipment: atTierLevel(Object.fromEntries(bag.map((it) => [it.slot, it])) as SaveState['equipment']) });
+    expect(effectiveLevel(bare, powerCfg, bag, tiers).total).toBe(effectiveLevel(twin, powerCfg, [], tiers).total);
+  });
+
+  it('кольцо и амулет: ступень их не меняет — и мощь по ней не растёт', () => {
+    for (const id of ['simple-ring', 'simple-amulet']) {
+      const lucky = drop(id, 40, 45, 'rare');   // бросок ступени выше уровня находки (окно `over`)
+      expect(t4.minItemLevel).toBeGreaterThan(lucky.itemLevel);
+      expect(lucky.tier).toBe(t4.id);
+      const slot = lucky.slot as keyof SaveState['equipment'];
+      const fine: PowerConfig = { ...powerCfg, gearDivisor: 1, gearMax: 99 };
+      const s = (it: Item): SaveState => mkSave({ level: 60, equipment: { [slot]: it } as SaveState['equipment'] });
+      expect(effectiveLevel(s(lucky), fine, [], tiers)).toEqual(effectiveLevel(s({ ...lucky, tier: 't0' }), fine, [], tiers));
+    }
   });
 });

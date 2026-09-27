@@ -20,6 +20,10 @@
   показ. Состояние показа сбрасывать в `create()` — R9-15: флаг «запрос создания в пути» `ClassSelectScene` был полем
   и после успеха (мир → возврат в «Персонажей») или 401 («Вход» → снова «Создать») глушил все карточки до F5. Теперь
   флаг — на показ (как `busy` в `screens3d.showCreate`); сторож — `scenes/ClassSelectScene.test.ts`.
+  ⭐ R13-15: `LoginScene` держит флаг «запрос в пути» на ОБА пути отправки — кнопку и Enter в поле пароля (как `busy` в
+  `screens3d.showLogin`). Раньше его держала только кнопка (`disabled` глушит лишь её `click`): двойной Enter, автоповтор
+  или клик и Enter слали второй `/api/login|register` — лишняя сессия и поворот токена устройства, двойной расход жетонов
+  лимитера входа (по нику и по адресу), на регистрации — «ник занят» поверх успеха. Сторож — `scenes/LoginScene.test.ts`.
 - **Сервер:** `packages/server` — `/api/register|login|logout`, `/api/characters` CRUD
   (`requireAuth` по токену). Пароль — scrypt+соль (`auth/password.ts`, без зависимостей),
   сессия — токен в БД (Postgres: таблицы `users`/`sessions`/`characters`). WS-join проверяет

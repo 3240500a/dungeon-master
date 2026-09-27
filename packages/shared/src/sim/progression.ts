@@ -57,7 +57,7 @@ export function simulateProgression(
 
   const curve: ProgressionPoint[] = [];
   const record = () => curve.push({
-    level: bot.level, hours, floor, power: effectiveLevel(bot, balance.power).total, deaths,
+    level: bot.level, hours, floor, power: effectiveLevel(bot, balance.power, undefined, reg.get('item-tiers')).total, deaths,
   });
   record();
 

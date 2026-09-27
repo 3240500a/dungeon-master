@@ -86,7 +86,7 @@ export function mountHud3d(app: App): Hud3d {
         const diffs = app.config.get('difficulties');
         const diff = diffs.find((x) => x.id === st.difficultyId) ?? diffs.find((x) => x.id === 'normal') ?? diffs[0]!;
         // R8-10: уровень, по которому сервер заселил узел; нет его (старый сервер) — своя мера по надетому и запасу.
-        const cl = st.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(st.save, app.config.get('balance').power, carriedGear(st.save)).total, diff), diff, st.depth);
+        const cl = st.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(st.save, app.config.get('balance').power, carriedGear(st.save), app.config.get('item-tiers')).total, diff), diff, st.depth);
         loc = `этаж ${st.depth} · ${diff.name} · вызов ур.${cl}`;
       }
       if (info) info.textContent = `Ур. ${lvl}  ·  ${loc}  ·  Золото ${st.save.gold}  ·  Очки: атр ${st.save.unspentAttributePoints} / скилл ${st.save.unspentSkillPoints}`;

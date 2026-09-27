@@ -229,7 +229,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
       }
 
       // Мощь (эфф. уровень) — определяет стартовую сложность забега.
-      const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save));   // R8-10: как меряет сервер
+      const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save), app.config.get('item-tiers'));   // R8-10, R12-09: как меряет сервер
       const powRow = mk('div', 'display:flex;justify-content:space-between;align-items:center;font-size:13px;margin:0 0 12px;cursor:help');
       powRow.append(mk('span', `color:${COLORS.dim}`, 'Мощь (эфф. уровень)'));
       powRow.append(mk('span', `font-weight:700;color:${COLORS.gold}`, String(pw.total)));

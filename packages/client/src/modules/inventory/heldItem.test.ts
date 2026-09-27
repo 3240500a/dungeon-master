@@ -88,10 +88,15 @@ describe('⭐ R9-09: клик по холсту интерфейса (3D-сте�
   const G = globalThis as unknown as { document?: unknown; window?: unknown };
   let winClick: ((e: unknown) => void)[] = [];
   let sent: { cmd: string; uid?: string }[] = [];
-  const app = { sendCmd: (c: { cmd: string; uid?: string }) => { sent.push(c); return 1; }, bus: { emit: () => { } } };
+  /** Кадры сервера для держимого (R14-05: своя смерть отпускает курсор). */
+  let died: ((f: unknown) => void)[] = [];
+  const app = {
+    sendCmd: (c: { cmd: string; uid?: string }) => { sent.push(c); return 1; }, bus: { emit: () => { } },
+    net: { on: (t: string, cb: (f: unknown) => void) => { if (t === 'died') died.push(cb); return () => { died = died.filter((h) => h !== cb); }; } },
+  };
   const ITEM = { uid: 'sword-1', name: 'Меч', gridW: 1, gridH: 3, rarity: 'rare', kind: 'weapon', slot: 'weapon' };
   beforeEach(() => {
-    winClick = []; sent = [];
+    winClick = []; sent = []; died = [];
     G.document = { createElement: (t: string) => new El(t.toUpperCase()), body: { appendChild: () => { } } };
     G.window = {
       addEventListener: (t: string, cb: (e: unknown) => void) => { if (t === 'click') winClick.push(cb); },
@@ -154,5 +159,28 @@ describe('⭐ R9-09: клик по холсту интерфейса (3D-сте�
     click(world);
     expect(sent, 'из сундука в мир не бросаем').toHaveLength(1);
     expect(getHeld()).toBeNull();
+  });
+
+  /**
+   * ⭐ R14-05: СВОЯ СМЕРТЬ ОТПУСКАЕТ КУРСОР. Вещь на курсоре (переодевался посреди боя) и смерть: инвентарь открыт, окно смерти — не
+   * модалка, и следующий клик по миру мимо него слал `drop` — вещь ложилась к трупу, откуда её не поднять ни ему, ни чужому аккаунту,
+   * а спуск или вайп стирали её. Сервер мёртвому теперь отказывает сам; клиент и не шлёт: вещь возвращается в сетку.
+   */
+  it('⭐ смерть с вещью на курсоре — курсор пуст, клик по миру ничего не шлёт', () => {
+    const world = fromPage('game3d.html', 'app');
+    hold('inv');
+    for (const cb of [...died]) cb({ t: 'died', goldLost: 10, itemsLost: 0, toTown: false });
+    expect(getHeld(), 'вещь вернулась в сетку').toBeNull();
+    click(world);
+    expect(sent, 'было: [{cmd:"drop"}] — вещь падала к трупу').toEqual([]);
+    expect(died, 'подписка снята вместе с курсором').toEqual([]);
+  });
+
+  it('статус окна смерти (не новая смерть) курсор не трогает; положил вещь — подписки нет', () => {
+    hold('inv');
+    for (const cb of [...died]) cb({ t: 'died', goldLost: 0, itemsLost: 0, toTown: true, status: true });
+    expect(getHeld(), 'статус — не смерть').not.toBeNull();
+    clearHeld();
+    expect(died).toEqual([]);
   });
 });

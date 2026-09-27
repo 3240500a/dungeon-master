@@ -30,6 +30,19 @@ export interface GameConn {
    * За прокси адрес игрока стоит в `x-forwarded-for`, поэтому транспорт берёт его оттуда.
    */
   readonly ip: string;
+  /**
+   * ⭐ R13-08: пропуск маршрута из адреса сокета (`?lp=`, его ставит гейтвей в ответе `/api/route`) — сессия, которую гейтвей уже
+   * проверил, на лобби ноды не платит бакет сети адреса (`RoomManager.authOwner`). Нет — как прежде.
+   */
+  readonly routePass?: string;
+}
+
+/** ⭐ R13-08: пропуск маршрута (`lp`) из адреса игрового сокета; кривой и слишком длинный — нет пропуска. */
+export function routePassOf(url: string): string | undefined {
+  const q = url.indexOf('?');
+  if (q < 0 || url.length > 2048) return undefined;
+  const v = new URLSearchParams(url.slice(q + 1)).get('lp');
+  return v && v.length <= 64 ? v : undefined;
 }
 
 /** Что должен уметь транспорт: отдавать новые соединения игре. */

@@ -37,7 +37,8 @@ describe('⭐ L2: веб-3D — вход и потеря связи через �
 
   it('потеря связи сносит всё, что рисовалось из прошлой сессии', () => {
     const body = SRC.slice(SRC.indexOf('function dropSession(): void {'), SRC.indexOf('const entry = new EntryFlow'));
-    for (const must of ['closeVote(); closeDeath();', 'ui.closeAll();', 'spectateId = null', 'clearActors();', 'peerStatics.clear();', 'interp.drop(k)', "myId = '';"]) {
+    // R13-05: окно смерти сносит `deathWin.reset()` — закрывает оверлей и забывает смерть прошлой сессии.
+    for (const must of ['closeVote(); deathWin.reset();', 'ui.closeAll();', 'spectateId = null', 'clearActors();', 'peerStatics.clear();', 'interp.drop(k)', "myId = '';"]) {
       expect(body, `dropSession: ${must}`).toContain(must);
     }
     // И смена области, и потеря связи сносят сущности ОДНОЙ функцией.

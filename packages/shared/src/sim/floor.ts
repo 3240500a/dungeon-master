@@ -76,7 +76,7 @@ export function simulateFloor(
   const affixes = reg.get('affixes');
   const uniques = reg.get('uniques');
 
-  const el = effectiveLevel(save, reg.get('balance').power).total;
+  const el = effectiveLevel(save, reg.get('balance').power, undefined, reg.get('item-tiers')).total;
   const cl = challengeAtFloor(startChallenge(el, diff), diff, floor);
   const model = makePlayerModel(reg, save, { useSkills: policy.useSkills });
 

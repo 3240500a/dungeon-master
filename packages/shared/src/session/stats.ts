@@ -221,7 +221,7 @@ export function buildSnapshot(reg: ConfigRegistry, save: SaveState): BuildSnapsh
   return {
     classId: save.classId,
     level: save.level,
-    power: effectiveLevel(save, reg.get('balance').power).total,
+    power: effectiveLevel(save, reg.get('balance').power, undefined, reg.get('item-tiers')).total,
     attributes: { ...save.attributes },
     effectiveAttributes: snap.attrs,
     derived: {

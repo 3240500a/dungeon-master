@@ -71,7 +71,7 @@ vi.mock('./items.js', () => ({
   },
 }));
 
-const { putCharacterWithStash, putCharacter } = await import('./db.js');
+const { putCharacterWithStash, putCharacter, landedVersion } = await import('./db.js');
 
 const save = { charId: 'c1', gold: 1 } as unknown as SaveState;
 const stash = { version: 1, tabs: [[]], materials: { 'iron-1': 3 } } as unknown as AccountStash;
@@ -203,4 +203,38 @@ describe('R2-09: исход фиксации выясняется, а не уг�
       await expect(write()).rejects.toBeInstanceOf(CommitUnknown);
     });
   }
+});
+
+/**
+ * ⭐ R14-04: НЕИЗВЕСТНЫЙ ИСХОД НЕСЁТ ОТПРАВЛЕННЫЙ СНИМОК. Запись, чья фиксация легла, а ответ потерян (и сверка не смогла решить), —
+ * на дописке копии отказ по версии: строка уже на версии +1. Раньше это значило «правда в базе» — и копия, ушедшая дальше снимка
+ * (выброшенная соседу по аккаунту вещь, штраф смерти тела в бою), выбрасывалась. Теперь дописка сверяет строку с отправленным снимком
+ * (`landedVersion`): легла ровно она — пишет поверх её версии.
+ */
+describe('⭐ R14-04: неизвестный исход несёт отправленный снимок', () => {
+  for (const which of ['putCharacter', 'putCharacterWithStash'] as const) {
+    it(`${which}: \`CommitUnknown.sent\` — ровно тот снимок, что ушёл в строку`, async () => {
+      const { CommitUnknown } = await import('./errors.js');
+      pg.commitUnknown = true;
+      pg.resolveRow = { version: 4, mine: false };
+      const s = { charId: 'c1', gold: 7 } as unknown as SaveState;
+      const e = await (which === 'putCharacter' ? putCharacter('c1', 'u1', s, 4) : putCharacterWithStash('c1', 'u1', s, 4, stash, 7)).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(CommitUnknown);
+      expect((e as InstanceType<typeof CommitUnknown>).sent).toBe(JSON.stringify(s));
+    });
+  }
+
+  it('`landedVersion`: строка на версии +1 и ровно этот снимок — её версия; другая версия или чужие данные — null', async () => {
+    const json = JSON.stringify(save);
+    pg.resolveRow = { version: 5, mine: true };
+    expect(await landedVersion('c1', json, 4)).toBe(5);
+    expect(pg.outside.at(-1)!.text, 'сверка по данным').toMatch(/data = \$1::jsonb/);
+    expect(pg.outside.at(-1)!.params).toEqual([json, 'c1']);
+    pg.resolveRow = { version: 5, mine: false };
+    expect(await landedVersion('c1', json, 4), 'чужая запись той же версии').toBeNull();
+    pg.resolveRow = { version: 6, mine: true };
+    expect(await landedVersion('c1', json, 4), 'строка ушла дальше').toBeNull();
+    pg.resolveRow = null;
+    expect(await landedVersion('c1', json, 4), 'героя нет').toBeNull();
+  });
 });

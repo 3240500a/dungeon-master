@@ -56,7 +56,7 @@ export function runSim(reg: ConfigRegistry, settings: SimSettings): SimOutput {
   if (settings.scenario === 'fight') {
     const save = prepBotAt(reg, settings, rng);
     const model = makePlayerModel(reg, save, { useSkills: settings.build.useSkills });
-    const el = effectiveLevel(save, power).total;
+    const el = effectiveLevel(save, power, undefined, reg.get('item-tiers')).total;
     const cl = challengeAtFloor(startChallenge(el, diff), diff, settings.floor);
     const monsters = reg.get('monsters');
     const affx = reg.get('monster-affixes');

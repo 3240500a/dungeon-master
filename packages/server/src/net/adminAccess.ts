@@ -1,3 +1,5 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+
 /**
  * ЧИСТЫЕ РЕШЕНИЯ ДОСТУПА: «пускать этот источник?» и «этот токен — наш ключ?».
  *
@@ -77,7 +79,69 @@ export const PROXY_HEADERS: readonly string[] = ['x-forwarded-for', 'forwarded',
  * (`proxyToExpress`). Обратный прокси перед сервером обязан ставить `X-Forwarded-For` (Caddy делает это по
  * умолчанию, nginx — `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`): по нему же считаются лимиты
  * входа (`clientIp`). Подделка заголовков здесь ничего не даёт: лишний заголовок только ЗАКРЫВАЕТ доступ.
+ *
+ * ⭐ R12-01: ЗАПРОС ПО СОЕДИНЕНИЮ, КОТОРОЕ ОТКРЫЛ СВОЙ ПРОКСИ uWS (`socketPort` — порт собеседника, он в `proxyLinks`), —
+ * локальный, только если прокси сам поставил на нём доказательство (`LOCAL_PROOF_HEADER`, секрет процесса): «петля и без
+ * заголовков прокси» для таких соединений ничего не доказывает. Раньше прокси пересылал заголовки длины клиента и делил
+ * соединения с express между чужими клиентами — GET с `Content-Length` съедал голову следующего запроса как своё тело, а его
+ * тело (`POST /internal/drain` без заголовков) express разбирал как отдельный запрос «с самой машины». Пересылку починил сам прокси
+ * (`forwardRequest`: длина — своя, соединение — на один запрос); это вторая линия. Прямой вызов на петлю express (не через
+ * прокси: стенд, мониторинг) — по-прежнему по правилу выше.
+ *
+ * ⭐ R14-11: И НЕ БРАУЗЕРНАЯ СТРАНИЦА (`browserPage`). Любая страница, открытая в браузере на этой машине, ходит на `localhost` с петли и
+ * без заголовков прокси: `fetch(…/internal/drain, {method:'POST', mode:'no-cors'})` — простой запрос без предзапроса, CORS прячет лишь
+ * ответ, а слив уже пошёл; с подменой DNS (чужое имя → 127.0.0.1) страница ещё и читала `/metrics` и `/api/cluster`.
  */
-export function localCaller(headers: Record<string, string | string[] | undefined>, socketAddr: string | undefined): boolean {
-  return isLoopback(socketAddr) && !PROXY_HEADERS.some((h) => headers[h] !== undefined);
+export function localCaller(
+  headers: Record<string, string | string[] | undefined>, socketAddr: string | undefined, socketPort?: number,
+): boolean {
+  if (!isLoopback(socketAddr) || PROXY_HEADERS.some((h) => headers[h] !== undefined)) return false;
+  if (browserPage(headers)) return false;
+  if (socketPort === undefined || !proxyPorts.get(socketPort)) return true;
+  const proof = headers[LOCAL_PROOF_HEADER];
+  return typeof proof === 'string' && keyMatches(proof, localProof, timingSafeEqual);
 }
+
+/**
+ * ⭐ R14-11: ЗАПРОС ШЛЁТ СТРАНИЦА В БРАУЗЕРЕ, а не человек или программа с этой машины:
+ *  • есть `Origin` — его ставит браузер на всё, кроме простого GET и навигации (POST формы и `fetch` любого режима — с ним), и только он;
+ *  • `Sec-Fetch-Site` не `none` — браузер говорит, что запрос начала страница (`none` — адресная строка, закладка: сам человек);
+ *  • `Host` назван и это не петля (`localhost`, 127/8, `[::1]`, с портом или без) — подмена DNS: страница evil.example, чьё имя вдруг
+ *    указывает на 127.0.0.1, ходит сюда со своим именем в `Host` (без заголовка `Host` браузер не ходит вовсе).
+ * curl, Prometheus, `dmload` и `fetch` из Node (он шлёт `sec-fetch-mode`, но не `Sec-Fetch-Site` и не `Origin`) под это не попадают.
+ */
+function browserPage(headers: Record<string, string | string[] | undefined>): boolean {
+  if (headers.origin !== undefined) return true;
+  const site = headers['sec-fetch-site'];
+  if (site !== undefined && site !== 'none') return true;
+  const host = headers.host;
+  if (host === undefined) return false;
+  if (typeof host !== 'string') return true;
+  const h = host.trim();
+  const m = /^\[([^\]]+)\](?::\d+)?$/.exec(h) ?? /^([^:[\]]+)(?::\d+)?$/.exec(h);
+  return !isLoopback(m ? m[1] : h);
+}
+
+/** ⭐ R12-01: заголовок, которым свой прокси uWS доказывает express, что запрос — прямой вызов с самой машины. */
+export const LOCAL_PROOF_HEADER = 'x-dm-local';
+/**
+ * Порты петли, с которых свой прокси сейчас ходит в express (открытые им соединения), — счётом: закрытие старого соединения,
+ * дошедшее уже после того, как тот же порт взяло новое, не снимает новое.
+ */
+const proxyPorts = new Map<number, number>();
+let localProof = '';
+/**
+ * ⭐ R12-01: соединения своего прокси uWS к express и секрет процесса (см. `localCaller`). Секрет — случайный на процесс, наружу
+ * не уходит: прокси снимает одноимённый заголовок клиента и ставит свой только собеседнику с петли без заголовков прокси.
+ */
+export const proxyLinks = {
+  proof(): string {
+    if (!localProof) localProof = randomBytes(32).toString('hex');
+    return localProof;
+  },
+  open(port: number): void { proxyPorts.set(port, (proxyPorts.get(port) ?? 0) + 1); },
+  close(port: number): void {
+    const n = (proxyPorts.get(port) ?? 0) - 1;
+    if (n > 0) proxyPorts.set(port, n); else proxyPorts.delete(port);
+  },
+};

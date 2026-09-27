@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  ConfigRegistry, craftAction, createRng, defaultParts, emptyStash, enchantCost, forgeGold, fullJournal, newBotSave,
+  ConfigRegistry, buildCraftShell, craftAction, createRng, defaultParts, emptyStash, enchantCost, forgeGold, fullJournal, newBotSave,
   repairCost, salvageMean, salvageRange, upgradeCost, type Item, type SaveState, type TownCommand,
 } from '@dm/shared';
 import type { CmdReply } from '../../net/cmdReplies.js';
@@ -293,4 +293,31 @@ describe('⭐ R4-23: повтор после «нет ответа» не пла
     expect(b.note()).toContain('Нет связи');
     expect(b.render().text()).not.toContain('⏳');
   });
+});
+
+/**
+ * ⭐ R14-12: КОЛЬЦО НА ВЕРСТАКЕ — ОКНО ГОВОРИТ ОДНО. С R12-03 кузнец кольцо и амулет не поднимает («Ступень этой вещи ничего не
+ * меняет»), а шапка писала «после улучшения» над «Кузнец эту вещь не меняет», и погашенная карточка обещала «до «Отличный»».
+ */
+describe('⭐ R14-12: кольцо и амулет на верстаке', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  beforeEach(() => { G.document = { createElement: (t: string) => new El(t), body: new El('body') }; });
+  afterEach(() => { delete G.document; });
+  const ladder = [...reg.get('item-tiers')].sort((a, b) => a.minItemLevel - b.minItemLevel);
+
+  for (const baseId of ['simple-ring', 'simple-amulet']) {
+    it(baseId, () => {
+      const base = reg.get('items.base').find((b) => b.id === baseId)!;
+      const item: Item = { ...buildCraftShell(base, ladder[2]!, reg.get('balance').maxTotalRequirement), rarity: 'magic', origin: 'drop', uid: `r14-${baseId}` };
+      const b = bench(item);
+      const root = b.render();
+      const up = root.card('Улучшить')!;
+      expect(up.text()).toContain('Ступень этой вещи ничего не меняет');
+      expect(up.text(), 'было: «до «Отличный»» над погашенной карточкой').not.toContain('до «');
+      expect(root.text(), 'было: шапка «после улучшения» над «Кузнец эту вещь не меняет»').not.toContain('после улучшения');
+      expect(root.text()).toContain('улучшать нечего');
+      up.click();
+      expect(b.requests, 'погашенная карточка не шлёт').toEqual([]);
+    });
+  }
 });
