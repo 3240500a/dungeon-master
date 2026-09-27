@@ -13,10 +13,22 @@
  * (герой шёл бы, пока её не нажмут снова). Отпускание браузер ничего не набирает — его перехват набору не мешает.
  */
 
-/** Поле, куда набирают текст: `input`, `textarea`, редактируемый элемент (как у пояса и хоткеев окон). */
+/**
+ * Типы `<input>`, в которые НАБИРАЮТ (`''` — заглушка без типа; у браузера такое поле — `text`). ⭐ R11-16: галка, ползунок,
+ * переключатель, кнопка, цвет, файл — не набор: раньше «поле» было любым `INPUT`, и галка настроек веб-3D (⚙), оставшаяся в
+ * фокусе после клика, глотала WASD, а пробел переключал её посреди боя вместо рывка.
+ */
+const TYPED = new Set(['', 'text', 'search', 'url', 'tel', 'email', 'password', 'number', 'date', 'datetime-local', 'month', 'week', 'time']);
+
+/**
+ * Поле, куда набирают текст: текстовый `input` (см. `TYPED`), `textarea`, редактируемый элемент. Одно правило на все
+ * клавиши страницы — сторож 2D, клавиши игры веб-3D (`render3d/gameKeys.ts`), пояс, хоткеи окон, F3 отладки.
+ */
 export function isTextEntry(t: EventTarget | null): boolean {
-  const el = t as HTMLElement | null;
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true);
+  const el = t as (HTMLElement & { type?: unknown }) | null;
+  if (!el) return false;
+  if (el.tagName === 'INPUT') return TYPED.has(typeof el.type === 'string' ? el.type.toLowerCase() : '');
+  return el.tagName === 'TEXTAREA' || el.isContentEditable === true;
 }
 
 /** Поставить сторожа на `doc` (2D — на `document` при старте страницы); возвращает снятие. */

@@ -84,3 +84,14 @@ export function isWireText(s: string): boolean {
  */
 export const WIRE_TOKEN_RE = /^[0-9a-f]{64}$/;
 export const WIRE_CHAR_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Безопасный ключ словаря из базы (id класса, id материала, шаблон доски): короткий, из латиницы, цифр, `_` и `-`, и
+ * НЕ ключ прототипа — `__proto__` под этот алфавит подходит, поэтому отсекается отдельно.
+ *
+ * ⚠ R10-10: живёт здесь, а не у ковки (`formulas/craft.ts` его переэкспортирует), потому что тот же алфавит держит и СХЕМА
+ * конфига (`config/schemas.ts`): id материала крафта и шаблона доски, которым сторожа формы из базы (`cleanWallet`,
+ * `meltReturn`, `noteGeneration`) молча отбрасывали всё прочее.
+ */
+export const isSafeKey = (k: string): boolean =>
+  /^[A-Za-z0-9_-]{1,64}$/.test(k) && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';

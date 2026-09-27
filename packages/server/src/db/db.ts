@@ -25,12 +25,16 @@ const USER_COLS = 'id, username, pass_hash AS "passHash", pass_salt AS "passSalt
 
 /**
  * Создаёт пользователя (ник уникален, регистронезависимо). Бросает при дубле (UNIQUE). `ip` — адрес регистрации (для
- * разбора), `net` — его сеть (`ipBucket`, R6-19): по ней считается суточный потолок аккаунтов.
+ * разбора), `net` — его сеть (`ipBucket`, R6-19): по ней считается суточный потолок аккаунтов. ⭐ R11-01: `wider` — ступени сети
+ * шире (IPv6: /56 и /48, `netTiers`): суточный потолок держат и они.
  */
-export async function createUser(username: string, passHash: string, passSalt: string, ip?: string, net?: string): Promise<string> {
+export async function createUser(
+  username: string, passHash: string, passSalt: string, ip?: string, net?: string, wider: readonly string[] = [],
+): Promise<string> {
   const id = `u_${randomUUID()}`;
-  await q('INSERT INTO users (id, username, pass_hash, pass_salt, created_ip, created_net) VALUES ($1, $2, $3, $4, $5, $6)',
-    [id, username, passHash, passSalt, ip ?? null, net ?? null]);
+  await q(`INSERT INTO users (id, username, pass_hash, pass_salt, created_ip, created_net, created_net56, created_net48)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, username, passHash, passSalt, ip ?? null, net ?? null, wider[0] ?? null, wider[1] ?? null]);
   return id;
 }
 
@@ -42,14 +46,25 @@ export async function createUser(username: string, passHash: string, passSalt: s
  * и не стоит ничего честному игроку: он заводит аккаунт один раз.
  * ⭐ R6-19: по сети, а не по точному адресу — иначе ферма меняла хвост IPv6 внутри своей /64. Строки до правки (сети нет)
  * считаются по адресу: для IPv4 сеть и есть адрес.
+ * ⭐ R11-01: `net` — ключ ЛЮБОЙ ступени сети (/64, /56, /48 — `netTiers`; у ключей разный хвост, спутать нельзя): ферма меняла /64
+ * внутри своей /56 (или бесплатной /48) — и потолок пяти аккаунтов был у каждой /64.
  */
 export async function countRecentRegistrations(net: string, hours = 24): Promise<number> {
   const r = await q1<{ n: string }>(
     `SELECT COUNT(*) n FROM users
-     WHERE (created_net = $1 OR (created_net IS NULL AND created_ip = $1))
+     WHERE (created_net = $1 OR created_net56 = $1 OR created_net48 = $1 OR (created_net IS NULL AND created_ip = $1))
        AND created_at > now() - ($2 || ' hours')::interval`,
     [net, String(hours)]);
   return Number(r?.n ?? 0);
+}
+
+/**
+ * ⭐ R11-05: все ники базы (без регистра) — гейтвей знает их с запуска (`primeKnown`): вход в существующий ник не платит общий
+ * бакет поиска с адреса даже после рестарта, а регистрация в занятый ник отвечает «занят», не спрашивая базу.
+ */
+export async function listUsernames(): Promise<string[]> {
+  const rows = await q<{ u: string }>('SELECT lower(username) AS u FROM users');
+  return rows.map((r) => r.u);
 }
 export async function getUserByName(username: string): Promise<UserRow | null> {
   return q1<UserRow>(`SELECT ${USER_COLS} FROM users WHERE lower(username) = lower($1)`, [username]);
@@ -133,8 +148,29 @@ export async function sweepSessions(): Promise<number> {
   const rows = await q<{ token: string }>('DELETE FROM sessions WHERE expires_at < now() RETURNING token');
   return rows.length;
 }
-export async function deleteSession(token: string): Promise<void> {
-  await q('DELETE FROM sessions WHERE token = $1', [token]);
+/** Удалить сессию токена. ⭐ R11-07: `true` — строка была (сессия жила): только такой выход возвращает токен бакета адреса. */
+export async function deleteSession(token: string): Promise<boolean> {
+  const rows = await q<{ token: string }>('DELETE FROM sessions WHERE token = $1 RETURNING token', [token]);
+  return rows.length > 0;
+}
+/**
+ * ⭐ R11-05: живые сессии (токен и аккаунт) — гейтвей знает их с запуска (`primeKnown`): токен, выданный до рестарта или деплоя,
+ * не платит общий бакет адреса. Свежепродлённые — последними (при потолке памяти вытесняются самые старые).
+ */
+export async function listLiveSessions(): Promise<{ token: string; userId: string }[]> {
+  return q<{ token: string; userId: string }>(
+    'SELECT token, user_id AS "userId" FROM sessions WHERE expires_at > now() ORDER BY expires_at');
+}
+
+/**
+ * ⭐ R11-05: КЛЮЧ ПРОЦЕССОВ `name` (32 случайных байта hex) — один на базу: общий у гейтвея и нод, переживает рестарт. Первый
+ * спросивший его заводит, остальные читают. Сейчас им подписываются токены устройства входа (`net/deviceToken.ts`).
+ */
+export async function serverKey(name: string): Promise<string> {
+  await q('INSERT INTO server_keys (name, key) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING', [name, randomBytes(32).toString('hex')]);
+  const r = await q1<{ key: string }>('SELECT key FROM server_keys WHERE name = $1', [name]);
+  if (!r) throw new Error(`[db] ключ процессов ${name} не заведён`);
+  return r.key;
 }
 
 // ── Персонажи ──────────────────────────────────────────────────────────────────
@@ -372,6 +408,10 @@ export async function getRunLedger(runKey: string): Promise<RunNodeState[]> {
  * ⭐ R9-01: влить записи узлов в свод забега `runKey` — ОБЪЕДИНЕНИЕМ, одним запросом: списки только растут (взятое кем-либо
  * взято для всех), мощь узла — первой записи. Строку одного узла две комнаты пишут по очереди (блокировка строки на
  * `ON CONFLICT`), и объединение не теряет ни одной.
+ * ⭐ R10-13: строки — ПО ПОРЯДКУ id узла (`ORDER BY r.id`), у всех писателей одному. Запрос берёт блокировки строк в порядке
+ * записей, а его давал вызывающий (порядок изменений у каждой комнаты свой): две комнаты одного забега, пишущие те же узлы
+ * навстречу (`[n1, n2]` и `[n2, n1]`), взаимно блокировались — база обрывала одну (40P01), её записи ждали повтора 5 с, и вход,
+ * читавший свод в это окно, видел узлы свежими.
  */
 export async function mergeRunLedger(runKey: string, records: readonly RunNodeState[]): Promise<void> {
   if (!records.length) return;
@@ -382,6 +422,7 @@ export async function mergeRunLedger(runKey: string, records: readonly RunNodeSt
     `INSERT INTO run_ledger (run_key, node_id, el, chests, killed, levers, updated_at)
      SELECT $1, r.id, r.el, ${list('chests')}, ${list('killed')}, ${list('levers')}, now()
      FROM jsonb_to_recordset($2::jsonb) AS r(id text, el double precision, chests jsonb, killed jsonb, levers jsonb)
+     ORDER BY r.id
      ON CONFLICT (run_key, node_id) DO UPDATE SET
        chests = ${union('chests')}, killed = ${union('killed')}, levers = ${union('levers')}, updated_at = now()`,
     [runKey, JSON.stringify(rows)]);

@@ -156,6 +156,14 @@ export interface MonsterEntity {
   pathCd: number;
   /** Кэш следующей путевой точки обхода (null — идти напрямую). */
   waypoint: Vec2 | null;
+  /**
+   * ⚠ R10-02: сторож застревания погони (`GameSession.navChase`) — где монстр был в начале окна и сколько окну секунд
+   * (null — окно не идёт: стоит, бьёт или отходит).
+   */
+  stallAt: Vec2 | null;
+  stallT: number;
+  /** Остаток обхода по пути ДАЖЕ при видимости цели, сек: погоня напрямую застряла у угла (R10-02). */
+  detour: number;
   alive: boolean;
   /** Время смерти (w.timeMs) — труп держится в снапшоте ещё CORPSE_LINGER_MS, потом удаляется (иначе снапшот растёт весь этаж). */
   deadAt?: number;
@@ -352,6 +360,9 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     blinkCd: 0,
     pathCd: 0,
     waypoint: null,
+    stallAt: null,
+    stallT: 0,
+    detour: 0,
     alive: true,
   };
 }

@@ -6,6 +6,7 @@
  */
 import type { App } from '../core/app.js';
 import { login, register, listCharacters, createCharacter, deleteCharacter, type CharacterSummary } from '../modules/auth/authApi.js';
+import { signOut } from '../modules/auth/signOut.js';
 import { listClasses } from '../modules/classes/index.js';
 
 const TITLE = "'Cinzel','Forum',Georgia,serif";
@@ -77,7 +78,8 @@ export function runAuthFlow(app: App, root: HTMLElement): Promise<void> {
       const classNameOf = (id: string): string => listClasses(app.config).find((c) => c.id === id)?.name ?? id;
       card.append(btn('+ Новый персонаж', () => { close(); showCreate(); }, '#8aa84a'));
       card.append(btn('← В меню', () => { close(); showMainMenu(); }, '#6f9bcf'));
-      card.append(btn('Выйти из аккаунта', () => { app.clearAuth(); close(); showLogin(); }, '#6a3a3a'));
+      // ⭐ R11-15: выход гасит сессию и НА СЕРВЕРЕ (`signOut`, общий с 2D) — раньше только стирал `dm:auth`, и токен жил неделю.
+      card.append(btn('Выйти из аккаунта', () => { void signOut(app); close(); showLogin(); }, '#6a3a3a'));
       void refresh();
     };
 

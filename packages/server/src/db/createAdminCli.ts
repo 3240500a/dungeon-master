@@ -104,7 +104,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    const { hash, salt } = hashPassword(pass);
+    const { hash, salt } = await hashPassword(pass);
     if (reset) {
       const id = await setUserPassword(name, hash, salt);
       // Старые токены после смены пароля обязаны перестать работать, иначе смена ничего не даёт.

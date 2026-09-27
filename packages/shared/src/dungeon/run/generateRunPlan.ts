@@ -2,7 +2,7 @@ import type { ConfigRegistry } from '../../config/registry.js';
 import type { RunModifier, RunNodeType, RunTemplate, Biome, Floor, FloorRole } from '../../config/schemas.js';
 import { createRng, type Rng } from '../../formulas/rng.js';
 import { resolveFloorSpec, pickFloorForRole, pickFloor, availableRoles } from '../floorSpec.js';
-import { pickRunModifiers } from './runModifiers.js';
+import { RUN_MOD_LIVE_STATS, pickRunModifiers, runModifierLive } from './runModifiers.js';
 import type { RunConfig, RunNode, RunPlan } from './types.js';
 
 /** Взвешенный выбор из [{item, weight}] по rng. Возвращает null для пустого/нулевого. */
@@ -27,8 +27,9 @@ const COMBAT_ROLES: FloorRole[] = ['combat', 'elite', 'treasure', 'event', 'shop
  * (длина/ветвление/каденция), а СОДЕРЖИМОЕ каждого слота — подобранный конфиг этажа-члена шаблона
  * (по роли+биому+глубине). Слот роли генерится ТОЛЬКО если есть этаж этой роли: нет boss-этажа →
  * босс-слота нет, финал = простой этаж+портал; нет rest-этажа → нет городов. Детерминировано от сида.
+ * `live` — статы эффектов модификаторов, которые игра применяет (`RUN_MOD_LIVE_STATS`; другой набор — только тестам).
  */
-export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan {
+export function generateRunPlan(reg: ConfigRegistry, config: RunConfig, live: ReadonlySet<string> = RUN_MOD_LIVE_STATS): RunPlan {
   const templates = reg.get('run-templates') as RunTemplate[];
   const biomes = reg.get('biomes') as Biome[];
   const floors = reg.get('floors') as Floor[];
@@ -53,7 +54,7 @@ export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan
   const nodeMods = mods.filter((m) => m.scope === 'node' && m.enabled !== false);
   // ⭐ R8-12: то же правило, что у сервера на старте забега (`pickRunModifiers`): действующие, без дублей, благо — в паре с
   // опасностью. И для забега, продолженного из сейва: записанное до правки (32 копии, одни блага) в план не доедет.
-  const runModIds = pickRunModifiers(mods, tpl?.allowedModifiers, config.modifiers);
+  const runModIds = pickRunModifiers(mods, tpl?.allowedModifiers, config.modifiers, live);
 
   // Доступные роли = у которых есть этаж-член шаблона в этом биоме.
   const avail = availableRoles(biome.id, floors, templateId);
@@ -76,7 +77,11 @@ export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan
       const chance = nodeType === 'boss' ? 0.9 : nodeType === 'elite' ? 0.6 : 0.3;
       if (rng.chance(chance)) {
         const picked = weightedPick(nodeMods.map((m) => ({ item: m, weight: m.weight })), rng);
-        if (picked) nodeModIds.push(picked.id);
+        // ⚠ R10-15: только ДЕЙСТВУЮЩИЙ (`runModifierLive`, правило алтаря R8-12): эффект, который не применяет никто, рисовал
+        // ★ на карте забега — обещанный «Тайник» оказывался обычной комнатой. ⚠ Бросок и выбор — как прежде, отбрасывается
+        // только результат: отфильтруй `nodeMods` заранее — пустой пул пропустил бы броски, и граф каждого забега из сейва
+        // (регенерится от сида) перестроился бы. Подключённый стат вернёт свои модификаторы сам.
+        if (picked && runModifierLive(picked, live)) nodeModIds.push(picked.id);
       }
     }
     const seed = nodeSeed(config.seed, depth, lane);

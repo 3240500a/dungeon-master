@@ -8,7 +8,8 @@ import {
 } from '@dm/shared';
 import { getSession, getCharacter, putCharacter, getRunLedger } from '../db/db.js';
 import { Room, townRng, runLedgerKey, runLedgerSettled, type Farewell } from './room.js';
-import { limits, ipBucket } from './rateLimit.js';
+import { limits, known, ipBucket } from './rateLimit.js';
+import { sessionKey } from './authSession.js';
 import { counters, setGaugeProvider } from './metrics.js';
 import { tickScheduler } from './scheduler.js';
 import { migrateLegacyWallet } from './accountStash.js';
@@ -148,6 +149,12 @@ const NODE_MAX_PLAYERS = Math.max(0, Number(process.env.DM_NODE_MAX_PLAYERS ?? p
  */
 const UNSAVED_RETRY_MS = 5_000;
 const UNSAVED_RETRY_MAX_MS = 60_000;
+/**
+ * ⭐ R11-12: сколько живёт номер прощальной записи (`farewellSeq`) героя, которого нода больше ничем не держит. Много больше любого
+ * входа (его ожидания — секунды, потолок записи — 15 с): вход, взявший номер, не увидит, как тот исчез, — а увидит, отказ только
+ * «сохраняем, повторите».
+ */
+const FAREWELL_SEQ_TTL_MS = 10 * 60_000;
 
 /**
  * ⭐ R1-19: СХЕМА КАДРА ДО ВСЕГО. Раньше кадр только приводился типом (`JSON.parse(raw) as ClientFrame`), и в
@@ -243,6 +250,20 @@ export class RoomManager {
    * и статус забега сперва дописывают копию и только потом читают сейв из базы: копия и есть правда о герое.
    */
   private unsaved = new Map<string, () => Promise<Farewell>>();
+  /**
+   * ⭐ R10-05: ПОРЯДКОВЫЙ НОМЕР ПОСЛЕДНЕЙ ПРОЩАЛЬНОЙ ЗАПИСИ героя (`track`): вход сверяет его до и после чтения сейва
+   * (`farewellMoved`). Номер общий на процесс и только растёт: снятая запись (`releaseIfIdle`) и новая — всегда «сдвинулось».
+   * ⭐ R11-12: `at` — когда записан (часы `Date.now`): номер героя, которого нода больше ничем не держит, подметает фон
+   * (`sweepFarewellSeq`). Раньше снимал только `releaseIfIdle`, а после прощания, начатого комнатой (истёк грейс, финал, вайп), и
+   * после входа, упавшего посреди, его не звал никто — карта росла на каждого такого героя.
+   */
+  private farewellSeq = new Map<string, { seq: number; at: number }>();
+  private farewellCount = 0;
+  /**
+   * ⭐ R11-06: сессии, которые база ищет сейчас, — отпечаток токена → ответ: одновременные кадры лобби с одним токеном с N сокетов
+   * ждут один запрос, а не множат его.
+   */
+  private sessionLookups = new Map<string, Promise<string | null>>();
   /** R3-19: фоновая дописка `unsaved` — когда пробовать героя снова и сколько раз подряд не вышло; кого дописывают сейчас. */
   private unsavedBackoff = new Map<string, { at: number; fails: number }>();
   private unsavedRetrying = new Set<string>();
@@ -621,13 +642,14 @@ export class RoomManager {
     const target = code ? this.rooms.get(code) : undefined;
     if (code && !target) { ws.send(JSON.stringify(NO_ROOM)); return; }
     const graceBefore = this.graceByChar.get(frame.charId);
+    const seqBefore = this.farewellSeq.get(frame.charId)?.seq;   // R10-05
     const home = !!target && graceBefore === target;
     if (frame.resume || home) {
       const owned = await this.ownedSave(userId, frame.charId);
       if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
       const { save, version } = await migrateLegacyWallet(userId, owned.save, owned.version, this.cfg);   // R1-06
       await this.foldRunLedger(save);   // R9-01: что взято на узлах забега без него — из свода в базе
-      if (this.farewellMoved(frame.charId, graceBefore)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
+      if (this.farewellMoved(frame.charId, graceBefore, seqBefore)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
       if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
       const graceRoom = this.graceByChar.get(frame.charId);
       if (graceRoom) {
@@ -657,12 +679,13 @@ export class RoomManager {
       if (!(await this.settleFarewell(frame.charId))) { ws.send(JSON.stringify(SAVING_ERROR)); return; }
     }
     const graceNow = this.graceByChar.get(frame.charId);
+    const seqNow = this.farewellSeq.get(frame.charId)?.seq;   // R10-05
     const owned = await this.ownedSave(userId, frame.charId);
     if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
     // ⚠ R1-06: переезд старого кошелька — ДО входа в комнату, пока сейв ещё ничей (см. `migrateLegacyWallet`).
     const { save, version } = await migrateLegacyWallet(userId, owned.save, owned.version, this.cfg);
     await this.foldRunLedger(save);   // R9-01: припаркованный забег — с тем, что взято на его узлах без героя
-    if (this.farewellMoved(frame.charId, graceNow)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
+    if (this.farewellMoved(frame.charId, graceNow, seqNow)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
     if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
     let room: Room;
     if (code) {
@@ -707,9 +730,15 @@ export class RoomManager {
    * собирал сессию из копии до штрафа: забег цел, золото цело, а живая сессия держала неоштрафованную копию до автосейва.
    * `graceBefore` — грейс-комната героя до чтения. Сдвинулось — «сохраняем, повторите»: повтор дождётся записи
    * (`settleFarewell`) и прочитает правду.
+   * ⭐ R10-05: и запись, начатая И ЗАКОНЧЕННАЯ за время чтения, — `seqBefore`, номер последней прощальной записи до чтения
+   * (`farewellSeq`). Раньше проверялись только запись в полёте и смена грейса, а финал пишет копию отключённого напарника, не
+   * снимая его грейс (`finishRun`): запись, легшая, пока «Продолжить» ждал свод забега, проходила незамеченной — вход собирал
+   * сессию из копии ДО финала (забег цел, версия устарела), и кадры, присланные следом за входом (выброс вещи соседу по аккаунту),
+   * исполнялись до первой отклонённой записи: вещь в обеих строках.
    */
-  private farewellMoved(charId: string, graceBefore: Room | undefined): boolean {
-    return this.inflight.has(charId) || this.unsaved.has(charId) || this.graceByChar.get(charId) !== graceBefore;
+  private farewellMoved(charId: string, graceBefore: Room | undefined, seqBefore: number | undefined): boolean {
+    return this.inflight.has(charId) || this.unsaved.has(charId) || this.graceByChar.get(charId) !== graceBefore
+      || this.farewellSeq.get(charId)?.seq !== seqBefore;
   }
 
   /**
@@ -812,6 +841,7 @@ export class RoomManager {
    * R2-08: итог записи запоминается — не легла, копия остаётся в `unsaved` до следующей попытки (`settleFarewell`).
    */
   private track(charId: string, write: Promise<Farewell | void>): Promise<void> {
+    this.farewellSeq.set(charId, { seq: ++this.farewellCount, at: Date.now() });   // R10-05: вход, читающий сейв сейчас, это увидит
     const raw: Promise<void> = write.then(
       (f) => {
         if (f && !f.saved && f.retry) this.unsaved.set(charId, f.retry);
@@ -898,6 +928,7 @@ export class RoomManager {
    * здесь больше ничто не держит.
    */
   retryUnsaved(now = Date.now()): Promise<void> {
+    this.sweepFarewellSeq(now);   // R11-12: тем же фоном
     for (const id of this.unsavedBackoff.keys()) if (!this.unsaved.has(id)) this.unsavedBackoff.delete(id);
     const runs: Promise<void>[] = [];
     for (const charId of this.unsaved.keys()) {
@@ -927,11 +958,26 @@ export class RoomManager {
   }
 
   /**
+   * ⭐ R11-12: НОМЕР ПРОЩАЛЬНОЙ ЗАПИСИ героя, которого нода ничем не держит (ни живой сессии, ни грейса, ни записи в полёте, ни
+   * недописанной копии, ни дела в его очереди — входа в том числе), старше `FAREWELL_SEQ_TTL_MS` — забыть. Прощание, начатое комнатой
+   * (истёк грейс, финал, вайп), и вход, упавший посреди, `releaseIfIdle` не зовут — без подметания карта росла бы на каждого такого
+   * героя. Вход, взявший номер, стоит в очереди героя (`charOps`) — его номер не тронут; а без очереди номер ему не нужен.
+   */
+  private sweepFarewellSeq(now: number): void {
+    for (const [id, e] of this.farewellSeq) {
+      if (now - e.at < FAREWELL_SEQ_TTL_MS) continue;
+      if (this.live.has(id) || this.graceByChar.has(id) || this.inflight.has(id) || this.unsaved.has(id) || this.charOps.has(id)) continue;
+      this.farewellSeq.delete(id);
+    }
+  }
+
+  /**
    * R2-17: сессии героя на этой ноде нет — ни живой, ни в грейсе, ни прощальной записи в полёте или копии,
    * которую база не приняла, — снимаем его закрепление. Звать внутри очереди персонажа.
    */
   private async releaseIfIdle(charId: string): Promise<void> {
     if (this.live.has(charId) || this.graceByChar.has(charId) || this.inflight.has(charId) || this.unsaved.has(charId)) return;
+    this.farewellSeq.delete(charId);   // R10-05: вход, читавший в это время, увидит «сдвинулось» (прочих подметает `sweepFarewellSeq`)
     await releaseChar(charId, NODE_ID).catch(() => undefined);
   }
 
@@ -1049,10 +1095,24 @@ export class RoomManager {
    * Проверка сессии + владения персонажем. Ошибку шлёт сама; возвращает userId или undefined. ⭐ R5-12: кадр лобби платит
    * потолок АККАУНТА (`limits.lobby`) сразу после сессии — до чтения сейва: с N сокетов один аккаунт больше не множит
    * чтения базы.
+   * ⭐ R11-06: и ДО запроса сессии, когда аккаунт токена уже известен (`known.sessions`: база подтвердила его раньше). Раньше потолок
+   * аккаунта стоял после `getSession`: сокетов сколько угодно, и каждый кадр лобби с живым токеном на каждом стоил запроса сессии в
+   * общую базу. Одновременные запросы одного токена — один запрос (`sessionLookups`).
    */
   private async authOwner(ws: GameConn, token: string, charId: string): Promise<string | undefined> {
-    const userId = await getSession(token);
+    const key = sessionKey(token);
+    const seen = known.sessions.get(key);
+    if (seen !== undefined && !limits.lobby.take(seen)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
+    let userId: string | null;
+    try {
+      userId = await this.lookupSession(token, key);
+    } catch (e) {
+      // База не ответила — кадр ответа не получил (R3-14: «занято»), и потолок аккаунта за него не платит: как до R11-06.
+      if (seen !== undefined) limits.lobby.refund(seen);
+      throw e;
+    }
     if (!userId) {
+      known.sessions.delete(key);
       // ⭐ R6-09: неудача платит бакет сети адреса и считается соединению; третья — соединение закрыто (см. `lobbyIpOk`).
       limits.lobbyIp.take(`ip:${this.netOf(ws)}`);
       const fails = (this.authFails.get(ws) ?? 0) + 1;
@@ -1065,12 +1125,23 @@ export class RoomManager {
       }
       return undefined;
     }
-    if (!limits.lobby.take(userId)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
+    known.sessions.add(key, userId);
+    if (seen === undefined && !limits.lobby.take(userId)) { ws.send(JSON.stringify(LOBBY_RATE)); return undefined; }
     const character = await getCharacter(charId);
     if (!character || character.userId !== userId) {
       ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return undefined;
     }
     return userId;
+  }
+
+  /** ⭐ R11-06: сессия токена из базы — один запрос на токен, сколько бы кадров его ни ждали. */
+  private lookupSession(token: string, key: string): Promise<string | null> {
+    let p = this.sessionLookups.get(key);
+    if (!p) {
+      p = getSession(token).finally(() => { this.sessionLookups.delete(key); });
+      this.sessionLookups.set(key, p);
+    }
+    return p;
   }
 
   /**

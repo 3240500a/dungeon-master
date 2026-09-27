@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { Cell, TILE, type Grid } from '@dm/shared';
 import { WALL_H } from './env3d.js';
+import { isTextEntry } from '../ui/typingGuard.js';
 
 export type DebugLayer = 'colliders' | 'vision' | 'attack' | 'ai' | 'facing' | 'labels';
 export interface DbgActor { x: number; z: number; facing: number; r: number; me?: boolean }
@@ -104,7 +105,7 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
   btn.addEventListener('click', () => setOn(!on));
   addEventListener('keydown', (e) => {
     if (e.code !== 'F3') return; // панель — кнопкой DBG или F3; слои переключаются ТОЛЬКО галками (мышь)
-    const t = document.activeElement; if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+    if (isTextEntry(document.activeElement)) return;   // R11-16: набор в поле; галка слоя в фокусе — не поле
     e.preventDefault(); setOn(!on);
   });
 

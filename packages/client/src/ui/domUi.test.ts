@@ -125,6 +125,17 @@ describe('⭐ R6-25: вне мира окна не открываются — н
     expect(u.d.isOpen('forge')).toBe(true);
   });
 
+  it('⭐ R11-16: галка или ползунок настроек в фокусе — хоткей окна работает; в текстовом поле — нет', () => {
+    const u = ui(true);
+    const press = (target: unknown): void => { for (const f of keydown) f({ code: 'KeyI', target, preventDefault: () => { } }); };
+    press({ tagName: 'INPUT', type: 'checkbox' });
+    expect(u.d.isOpen('inventory'), 'было: любой INPUT в фокусе глотал хоткей').toBe(true);
+    press({ tagName: 'INPUT', type: 'range' });
+    expect(u.d.isOpen('inventory')).toBe(false);
+    press({ tagName: 'INPUT', type: 'text' });
+    expect(u.d.isOpen('inventory'), '«i», набранная в поле, окна не открывает').toBe(false);
+  });
+
   it('Esc закрывает окно и вне мира', () => {
     const u = ui(true);
     u.d.openPanel('inventory');

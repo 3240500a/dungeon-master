@@ -8,6 +8,10 @@ import { carriedMaterials } from './materials.js';
 import { generateItem, itemFromBaseId } from '../formulas/itemgen.js';
 import { shapeFoundWeapon } from '../formulas/craft.js';
 import { effectiveLevel } from '../formulas/power.js';
+import { skillWeaponAllowed } from '../formulas/skills.js';
+import { attackWeaponsOf } from '../formulas/playerCombat.js';
+import { oneHandGrip } from '../formulas/versatile.js';
+import { addToInventory } from '../inventory/grid.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -993,5 +997,266 @@ describe('⚠ R7-19: сломанный уник — кузнец не чини�
     expect(rare.broken, 'трофей прочей редкости — решение игрока, не трогаем').toBe(true);
     expect(equip(reg, s, u.uid).ok).toBe(true);
     expect(mendBrokenUniques(s.inventory), 'второй раз лечить нечего').toBe(0);
+  });
+});
+
+/**
+ * ⚠ R10-11: «ТРЕБ. УРОВЕНЬ» УЗЛА МАСТЕРСТВА ДЕРЖИТСЯ. Редактор предлагает его у каждого узла (`passiveGraph.ts`), схема его
+ * хранит, древо скилов (`allocActive`) его соблюдает — а `allocPassive` не смотрел вовсе: узел, закрытый владельцем до 60-го
+ * уровня, брал герой 2-го уровня с очком мастерства и золотом. Отказ — до траты, сейв не тронут.
+ */
+describe('⚠ R10-11: требуемый уровень узла мастерства', () => {
+  const gated = (levelReq: number): ConfigRegistry => {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    const tree = structuredClone(r.get('mastery-tree'));
+    for (const n of tree.nodes) if (n.id === tree.entryNodes[0]) n.levelReq = levelReq;
+    r.reload({ 'mastery-tree': tree });
+    return r;
+  };
+  const hero = (level: number): SaveState =>
+    ({ classId: 'warrior', level, gold: 1_000_000, unspentMasteryPoints: 5, masteries: {} } as unknown as SaveState);
+
+  it('⭐ уровень 59 при требовании 60 — отказ «Требуется уровень 60», золото, очки и ранги не тронуты', () => {
+    const r = gated(60);
+    const entry = r.get('mastery-tree').entryNodes[0]!;
+    const s = hero(59);
+    const before = JSON.stringify(s);
+    expect(allocPassive(r, s, entry)).toEqual({ ok: false, reason: 'Требуется уровень 60' });
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('уровень 60 — можно; требование 1 (встроенные данные) — как прежде', () => {
+    const r = gated(60);
+    const entry = r.get('mastery-tree').entryNodes[0]!;
+    const s = hero(60);
+    expect(allocPassive(r, s, entry)).toEqual({ ok: true });
+    expect(s.masteries[entry]).toBe(1);
+    for (const n of reg.get('mastery-tree').nodes) expect(n.levelReq, n.id).toBe(1);
+    expect(allocPassive(reg, hero(1), entry).ok).toBe(true);
+  });
+});
+
+/**
+ * ⚠ R10-14: ПУСТАЯ ЛЕСТНИЦА ПОЧИНКИ — ОТКАЗ И У НЕ-УНИКА. `materialLadder` пропускает выключенные ступени, и выключенный
+ * материал первой ступени семьи (конфиг, который R2-28/R6-22 поддерживают) опустошал лестницу каждой обычной вещи этой семьи.
+ * Улучшение такую вещь не брало («Эту вещь кузнец не улучшает»), а починка отказывала только унику (R7-19) и проверку сырья на
+ * пустой цене пропускала: сломанный обычный меч чинился за одно золото — «починка стоит золота И сырья» тихо ломалась.
+ */
+describe('⚠ R10-14: пустая лестница починки — отказ', () => {
+  const noIron1 = (): ConfigRegistry => {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    const mats = structuredClone(r.get('craft-materials'));
+    for (const m of mats) if (m.id === 'iron-1') m.enabled = false;
+    r.reload({ 'craft-materials': mats });
+    return r;
+  };
+  const brokenOf = (r: ConfigRegistry, baseId: string, rarity: 'normal' | 'magic' | 'rare'): Item => ({
+    ...generateItem(r.get('items.base'), r.get('affixes'), r.get('uniques'), {
+      dropBias: 1, itemLevel: 20, tierLevel: 10, baseId, tiers: r.get('item-tiers'), rarities: r.get('rarities'), forceRarity: rarity,
+      maxReqTotal: r.get('balance').maxTotalRequirement, origin: 'drop',
+    }, createRng(5)),
+    broken: true, pos: { x: 0, y: 0 },
+  } as Item);
+
+  it('⭐ iron-1 выключен: сломанный обычный меч — отказ «Эту вещь кузнец не чинит» до платы, сейв и кошелёк не тронуты', () => {
+    const r = noIron1();
+    const it = brokenOf(r, 'short-sword', 'normal');
+    expect(repairCost(r, it), 'лестница пуста').toEqual({});
+    const s = { gold: 1_000_000, inventory: [it], equipment: {}, belt: [] } as unknown as SaveState;
+    const before = JSON.stringify(s);
+    const empty: Record<string, number> = {};
+    const res = forgeRepair(r, s, it.uid, empty);
+    expect(res, 'было — починка за одно золото').toEqual({ ok: false, reason: 'Эту вещь кузнец не чинит' });
+    expect(canRepairItem(r, it)).toEqual(res);
+    expect(JSON.stringify(s)).toBe(before);
+    expect(empty).toEqual({});
+    // Магическая той же базы по-прежнему чинится — её лестница начинается со второй ступени.
+    const magic = brokenOf(r, 'short-sword', 'magic');
+    expect(canRepairItem(r, magic)).toEqual({ ok: true });
+    expect(Object.keys(repairCost(r, magic)).length).toBeGreaterThan(0);
+  });
+
+  it('встроенные данные: у каждой сломанной не-уник вещи каждой базы × редкости лестница не пуста, и починка открыта', () => {
+    let n = 0;
+    for (const b of reg.get('items.base')) {
+      if (b.kind === 'consumable') continue;
+      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+        const it = brokenOf(reg, b.id, rarity);
+        if (it.rarity === 'unique') continue;
+        expect(Object.keys(repairCost(reg, it)).length, `${b.id}/${rarity}`).toBeGreaterThan(0);
+        expect(canRepairItem(reg, it), `${b.id}/${rarity}`).toEqual({ ok: true });
+        n++;
+      }
+    }
+    expect(n).toBeGreaterThan(100);
+  });
+});
+
+/**
+ * ⭐ R11-02: ДУАЛ-ВИЛД — ОДНОРУЧНОЕ ОРУЖИЕ ВО ВТОРУЮ РУКУ. Пупсик принимал кинжал в ячейку «Левая рука», но команда `equip`
+ * цели не несла, и ядро надевало вещь в её РОДНОЙ слот: кинжал менял меч в основной руке, меч уходил в сумку, вторая рука
+ * оставалась пустой. Ни один путь не клал оружие в `equipment.offhand` — а ветку «Парное оружие» (b-dual, пять активок)
+ * берёт любой класс, и её активки гасли навсегда (`skillWeaponAllowed`: оружие в обеих руках), очки лежали до платного сброса.
+ */
+describe('⭐ R11-02: дуал-вилд — одноручное оружие во вторую руку', () => {
+  const dims = reg.get('balance').inventory;
+  /** Вещь по базе с постоянным uid; требования — только если тест их проверяет. */
+  const mk = (baseId: string, uid = baseId): Item => {
+    const it = itemFromBaseId(reg.get('items.base'), baseId, reg.get('item-tiers'), 'drop')!;
+    return { ...it, uid, requirements: {} };
+  };
+  /** Воин с атрибутами «на всё»: основная рука `main`, вторая `off`, в сумке `bag` (вещи по базам, uid = база). */
+  const hero = (main: string | null, off: string | null, ...bag: string[]): SaveState => {
+    const s = newCharacterSave(reg, 'warrior', 'Парный', 'r1102');
+    s.attributes = { strength: 999, dexterity: 999, intelligence: 999, vitality: 999 } as SaveState['attributes'];
+    s.equipment = {};
+    if (main) s.equipment.weapon = { ...mk(main, 'main'), pos: null };
+    if (off) s.equipment.offhand = { ...mk(off, 'off'), pos: null };
+    s.belt = [];
+    s.inventory = [];
+    for (const b of bag) expect(addToInventory(s.inventory, mk(b), dims), b).toBe(true);
+    return s;
+  };
+  /** Все uid героя: сумка + надетое. Вещь не может ни пропасть, ни задвоиться. */
+  const uids = (s: SaveState): string[] => [
+    ...s.inventory.map((i) => i.uid),
+    ...Object.values(s.equipment).filter((i): i is Item => !!i).map((i) => i.uid),
+  ].sort();
+  const tree = reg.get('skill-tree');
+  const dualBranches = new Set(tree.branches.filter((b) => b.requiresDual).map((b) => b.id));
+  /** Активки, которым нужно оружие в обеих руках (гейт узла или ветки). */
+  const dualActives = tree.nodes.filter((n) => n.effect.active
+    && (('requiresDual' in n.effect.active && n.effect.active.requiresDual) || dualBranches.has(n.branchId)));
+  const dualGate = (n: (typeof dualActives)[number]) => ({ ...n.effect.active!, requiresDual: true });
+
+  it('⭐ случай из находки: меч в руке, кинжал на ячейку второй руки — кинжал во второй руке, меч на месте, активки «Парного оружия» живы', () => {
+    const s = hero('short-sword', null, 'dagger');
+    const before = uids(s);
+    const r = equip(reg, s, 'dagger', 'offhand');
+    expect(r.ok, r.reason).toBe(true);
+    expect(s.equipment.weapon?.uid, 'было: кинжал менял меч').toBe('main');
+    expect(s.equipment.offhand?.uid, 'было: вторая рука пустая').toBe('dagger');
+    expect(s.equipment.offhand?.pos).toBeNull();
+    expect(uids(s), 'ничего не потеряно и не задвоено').toEqual(before);
+    expect(attackWeaponsOf(s), 'бьют обе руки').toHaveLength(2);
+    expect(dualActives.length).toBeGreaterThanOrEqual(5);
+    for (const n of dualActives) expect(skillWeaponAllowed(dualGate(n), s.equipment.weapon, s.equipment.offhand), n.id).toBe(true);
+    // Контроль: без цели — как раньше, в родной слот (так шлют меню «Надеть», кузница и Unity).
+    const plain = hero('short-sword', null, 'dagger');
+    expect(equip(reg, plain, 'dagger').ok).toBe(true);
+    expect(plain.equipment.weapon?.uid).toBe('dagger');
+    expect(plain.equipment.offhand).toBeUndefined();
+  });
+
+  it('вторая рука занята щитом или оружием — прежнее уходит в сумку; основная рука пуста — тоже можно', () => {
+    const shielded = hero('long-sword', 'wooden-shield', 'dagger');
+    const before = uids(shielded);
+    expect(equip(reg, shielded, 'dagger', 'offhand').ok).toBe(true);
+    expect(shielded.equipment.offhand?.uid).toBe('dagger');
+    expect(shielded.inventory.map((i) => i.uid), 'щит — в сумке').toContain('off');
+    expect(uids(shielded)).toEqual(before);
+    const dual = hero('long-sword', 'dagger', 'hand-axe');
+    expect(equip(reg, dual, 'hand-axe', 'offhand').ok).toBe(true);
+    expect([dual.equipment.weapon?.uid, dual.equipment.offhand?.uid]).toEqual(['main', 'hand-axe']);
+    expect(dual.inventory.map((i) => i.uid)).toContain('off');
+    const bare = hero(null, null, 'dagger');
+    expect(equip(reg, bare, 'dagger', 'offhand').ok).toBe(true);
+    expect(bare.equipment.offhand?.uid).toBe('dagger');
+    // Щит на ячейку второй руки с целью — как без неё.
+    const sh = hero('long-sword', null, 'buckler');
+    expect(equip(reg, sh, 'buckler', 'offhand').ok).toBe(true);
+    expect(sh.equipment.offhand?.uid).toBe('buckler');
+  });
+
+  it('⚠ отказы — сейв байт в байт: двуручник в руке, полуторный в руке, двуручное во вторую руку, не оружие, чужая цель', () => {
+    const cases: [string, SaveState, string, unknown, string][] = [
+      ['настоящий двуручник в основной руке', hero('claymore', null, 'dagger'), 'dagger', 'offhand', 'Занято двумя руками'],
+      ['полуторный одной рукой — только со щитом (§25)', hero('greatsword', null, 'dagger'), 'dagger', 'offhand', 'Полуторное оружие одной рукой носят только со щитом'],
+      ['двуручник во вторую руку', hero('short-sword', null, 'claymore'), 'claymore', 'offhand', 'Двуручное оружие во вторую руку не взять'],
+      ['полуторный во вторую руку', hero('short-sword', null, 'greatsword'), 'greatsword', 'offhand', 'Двуручное оружие во вторую руку не взять'],
+      ['шлем во вторую руку', hero('short-sword', null, 'leather-cap'), 'leather-cap', 'offhand', 'Этот предмет не для этого слота'],
+      ['цель — не вторая рука', hero('short-sword', null, 'dagger'), 'dagger', 'weapon', 'Нельзя надеть'],
+      ['цель — мусор', hero('short-sword', null, 'dagger'), 'dagger', 7, 'Нельзя надеть'],
+    ];
+    for (const [why, s, uid, target, reason] of cases) {
+      const before = JSON.stringify(s);
+      const r = equip(reg, s, uid, target as 'offhand');
+      expect(r, why).toEqual({ ok: false, reason });
+      expect(JSON.stringify(s), why).toBe(before);
+    }
+  });
+
+  it('⚠ снятый щит не влезает в сумку — отказ, сейв байт в байт (примерка всего снятого разом, R1-02)', () => {
+    const s = hero('short-sword', 'tower-shield', 'dagger');
+    for (let y = 0; y < dims.rows; y++) for (let x = 0; x < dims.cols; x++) {
+      const taken = s.inventory.some((it) => it.pos && x >= it.pos.x && x < it.pos.x + it.gridW && y >= it.pos.y && y < it.pos.y + it.gridH);
+      if (!taken) s.inventory.push({ ...mk('dagger', `j${x}-${y}`), gridW: 1, gridH: 1, pos: { x, y } });
+    }
+    const before = JSON.stringify(s);
+    expect(equip(reg, s, 'dagger', 'offhand')).toEqual({ ok: false, reason: 'Нет места для снятого' });
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('⚠ требования — по тому, что будет надето после смены (R4-08): не хватает Ловкости на кинжал — отказ', () => {
+    const s = hero('short-sword', null);
+    s.attributes = { strength: 20, dexterity: 10, intelligence: 10, vitality: 20 } as SaveState['attributes'];
+    s.inventory.push({ ...mk('dagger'), requirements: { dexterity: 18 }, pos: { x: 0, y: 0 } });
+    const before = JSON.stringify(s);
+    expect(equip(reg, s, 'dagger', 'offhand')).toEqual({ ok: false, reason: 'Недостаточно атрибутов' });
+    expect(JSON.stringify(s)).toBe(before);
+    // Уходящий из второй руки кинжал с +Ловкостью больше не подпирает новый.
+    const held = hero('short-sword', null);
+    held.attributes = { strength: 20, dexterity: 10, intelligence: 10, vitality: 20 } as SaveState['attributes'];
+    held.equipment.offhand = { ...mk('dagger', 'off'), baseStats: [{ stat: 'dexterity', kind: 'flat', value: 10 }], pos: null };
+    held.inventory.push({ ...mk('stiletto'), requirements: { dexterity: 18 }, pos: { x: 0, y: 0 } });
+    expect(equip(reg, held, 'stiletto', 'offhand').reason).toBe('Недостаточно атрибутов');
+  });
+
+  it('⭐ основная рука при дуале: одноручник — вторая рука цела; двуручник и полуторный снимают второе оружие; щит под полуторным остаётся', () => {
+    const one = hero('short-sword', 'dagger', 'long-sword');
+    expect(equip(reg, one, 'long-sword').ok).toBe(true);
+    expect([one.equipment.weapon?.uid, one.equipment.offhand?.uid]).toEqual(['long-sword', 'off']);
+    for (const two of ['claymore', 'greatsword']) {
+      const s = hero('short-sword', 'dagger', two);
+      const before = uids(s);
+      const r = equip(reg, s, two);
+      expect(r.ok, `${two}: ${r.reason}`).toBe(true);
+      expect(s.equipment.weapon?.uid).toBe(two);
+      expect(s.equipment.offhand, `${two}: кинжал ушёл в сумку, а не остался под двуручным хватом`).toBeUndefined();
+      expect(uids(s)).toEqual(before);
+    }
+    const shield = hero('short-sword', 'wooden-shield', 'greatsword');
+    expect(equip(reg, shield, 'greatsword').ok).toBe(true);
+    expect(shield.equipment.offhand?.uid, 'полуторный со щитом — одноручный хват (§25)').toBe('off');
+    expect(oneHandGrip(shield)).toBe(true);
+  });
+
+  it('⚠ полуторный в основную руку при дуале, места под снятое разом нет — отказ, сейв байт в байт', () => {
+    // Свободно только место самого полуторного (2×3): одноручник 1×3 влезает, ручной арбалет 2×2 — тоже, вместе — нет.
+    const s = hero('short-sword', 'hand-crossbow', 'greatsword');
+    const gs = s.inventory[0]!;
+    for (let y = 0; y < dims.rows; y++) for (let x = 0; x < dims.cols; x++) {
+      const under = x >= gs.pos!.x && x < gs.pos!.x + gs.gridW && y >= gs.pos!.y && y < gs.pos!.y + gs.gridH;
+      if (!under) s.inventory.push({ ...mk('dagger', `j${x}-${y}`), gridW: 1, gridH: 1, pos: { x, y } });
+    }
+    const before = JSON.stringify(s);
+    expect(equip(reg, s, 'greatsword')).toEqual({ ok: false, reason: 'Нет места для снятого' });
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('⭐ СТОРОЖ ДАННЫХ: каждой активке с требованием дуала есть пара одноручников, которую надевает `equip`, и гейт её пускает', () => {
+    const oneH = reg.get('items.base').filter((b) => b.kind === 'weapon' && b.enabled !== false && (b.hands ?? 1) === 1 && !b.versatile);
+    expect(oneH.length).toBeGreaterThan(2);
+    for (const n of dualActives) {
+      const fits = oneH.some((m) => oneH.some((o) => {
+        const s = hero(null, null, m.id, `${o.id}`);
+        s.inventory[1]!.uid = 'second';
+        if (!equip(reg, s, m.id).ok || !equip(reg, s, 'second', 'offhand').ok) return false;
+        return skillWeaponAllowed(dualGate(n), s.equipment.weapon, s.equipment.offhand);
+      }));
+      expect(fits, `${n.id}: ни одна пара не открывает активку — очки ветки пропадут`).toBe(true);
+    }
   });
 });

@@ -64,6 +64,7 @@ beforeEach(async () => {
   const lim = limits as unknown as Record<string, { reset(k: string): void } | undefined>;
   for (const name of ['login', 'loginLookup']) lim[name]?.reset(ipBucket(NAT));
   for (const u of [...NAMES, 'honest']) limits.loginUser.reset(u);
+  lim.scrypt?.reset('all');   // R11-01: общий бюджет scrypt процесса полон — здесь он не проверяется (часы стоят)
   db.lookups = 0; pw.verifies = 0; db.held = null;
   // Часы бакетов стоят: пополнения за время теста нет — «сколько прошло» не зависит от скорости машины под нагрузкой.
   vi.spyOn(performance, 'now').mockReturnValue(performance.now());

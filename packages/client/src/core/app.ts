@@ -8,6 +8,7 @@ import { setRarityMeta } from '../modules/loot/rarity.js';
 import { NetClient } from '../net/netClient.js';
 import { CmdReplies, type CmdReply } from '../net/cmdReplies.js';
 import { PROTOCOL_STALE } from '../net/entryFlow.js';
+import { onStaleBuild, watchChunkErrors } from '../net/staleBuild.js';
 import type { AuthSession } from '../modules/auth/authApi.js';
 import type { GameLog } from '../ui/gameLog.js';
 
@@ -177,6 +178,10 @@ export class App {
     if (!this.offline) {
       void this.syncConfig(); // единая истина: эффективный конфиг с сервера (и на каждом входе в мир — R5-15)
       this.listenConfigChannel();
+      // ⭐ R10-12: ленивый кусок сборки не загрузился (деплой сменил хэши, а вкладка его пережила без перезагрузки при том
+      // же `PROTOCOL_VERSION`) — игроку «перезагрузите страницу», один раз на страницу (`net/staleBuild.ts`).
+      onStaleBuild(() => this.bus.emit('log:message', { text: PROTOCOL_STALE, kind: 'system' }));
+      watchChunkErrors();
     }
     this.refreshLabelResolvers();
     // Авторитетный сток магазина с сервера (и его цены, R4-37) → перерисовать открытую панель.

@@ -39,7 +39,7 @@ let server: Server;
 let base = '';
 beforeAll(async () => {
   const { hashPassword } = await import('../auth/password.js');
-  const h = hashPassword('secret-1');
+  const h = await hashPassword('secret-1');
   db.users.set('honest', { id: 'user-honest', username: 'honest', passHash: h.hash, passSalt: h.salt });
   const cfg = new ConfigRegistry();
   cfg.loadAll();
@@ -55,6 +55,7 @@ beforeEach(async () => {
   limits.login.reset(ipBucket(NAT));
   limits.loginLookup.reset(ipBucket(NAT));   // R8-05: поиск ника — свой бакет адреса
   for (const u of ['honest', 'victim']) limits.loginUser.reset(u);
+  limits.scrypt.reset('all');   // R11-01: общий бюджет scrypt процесса полон — здесь он не проверяется (часы стоят)
   // Часы бакетов стоят: пополнения за время теста нет — «пустой бакет» не зависит от скорости машины под нагрузкой.
   vi.spyOn(performance, 'now').mockReturnValue(performance.now());
 });

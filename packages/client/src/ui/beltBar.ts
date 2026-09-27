@@ -1,5 +1,6 @@
 import type { App } from '../core/app.js';
 import { beltCapacity, syncBeltLength } from '../modules/consumables/index.js';
+import { isTextEntry } from './typingGuard.js';
 
 /** Пьёт зелье из слота пояса i через сервер (авторитетно). */
 function drinkBelt(app: App, i: number): boolean {
@@ -33,8 +34,8 @@ export class BeltBar {
 
     this.onKey = (e: KeyboardEvent): void => {
       if (e.repeat) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // R11-16: набор в поле — не питьё; галка или ползунок ⚙ в фокусе — не поле (зелье посреди боя пьётся).
+      if (isTextEntry(e.target)) return;
       const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
       if (n < 0 || n >= beltCapacity(app)) return;
       if (drinkBelt(app, n)) e.preventDefault();

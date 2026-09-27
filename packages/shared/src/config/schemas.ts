@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
   WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_QUEST_TEMPLATE_ID_MAX,
-  WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, isWireText,
+  WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, isSafeKey, isWireText,
 } from '../session/wireLimits.js';
 
 /**
@@ -37,6 +37,14 @@ const requirementsSchema = z.record(attributeEnum, z.number()).default({});
  * провода (R2-27, `session/wireLimits.ts`) — иначе редактор принял бы то, что сервер молча отвергнет.
  */
 const wireId = z.string().max(WIRE_ID_MAX).refine(isWireText, 'управляющий символ или непарный суррогат — провод такой id не пропустит (R3-02)');
+
+/**
+ * ⚠ R10-10: id, которым КЛЮЧУЕТСЯ словарь в базе (кошелёк сырья и оплата ковки — по id материала, квота доски — по id
+ * шаблона): только латиница, цифры, `_` и `-` (`isSafeKey`). Сторожа формы из базы (`cleanWallet`, `meltReturn`,
+ * `noteGeneration`) прочее молча отбрасывают — редактор такой id принимать не должен.
+ */
+const safeKeyId = (max = WIRE_ID_MAX) =>
+  z.string().max(max).refine(isSafeKey, 'только латиница, цифры, «_» и «-»: этим id ключуется словарь в сейве (R10-10)');
 
 // ── balance ───────────────────────────────────────────────────────────────
 export const balanceSchema = z.object({
@@ -1403,7 +1411,8 @@ export const salvageRulesSchema = z.array(
  */
 export const craftMaterialsSchema = z.array(
   z.object({
-    id: z.string(),
+    /** ⚠ R10-10: ключ кошелька сырья и `craftPaid` — только безопасный ключ. */
+    id: safeKeyId(),
     /** Выключенный материал не падает и не участвует в рецептах. */
     enabled: z.boolean().default(true),
     name: z.string(),
@@ -2763,7 +2772,8 @@ export const questsMainSchema = z.array(
 
 export const questsRandomSchema = z.array(
   z.object({
-    id: z.string().max(WIRE_QUEST_TEMPLATE_ID_MAX).refine(isWireText, 'управляющий символ или непарный суррогат (R3-02)'),
+    /** ⚠ R10-10: ключ квоты доски (`boardQuota`) — только безопасный ключ (он же и без управляющих символов, R3-02). */
+    id: safeKeyId(WIRE_QUEST_TEMPLATE_ID_MAX),
     /** Активен ли шаблон случайного квеста (выключенный не попадает на доску). */
     enabled: z.boolean().default(true),
     objectiveType: objectiveTypeEnum,

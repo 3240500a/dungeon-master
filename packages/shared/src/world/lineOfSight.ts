@@ -1,4 +1,4 @@
-import { isBlockedCell, TILE, type Grid } from './grid.js';
+import { diagonalSealed, isBlockedCell, TILE, type Grid } from './grid.js';
 import type { Obstacle } from './state.js';
 
 /**
@@ -6,6 +6,11 @@ import type { Obstacle } from './state.js';
  * если между точками есть хотя бы одна непроходимая клетка. Клетки самих точек не
  * учитываются (там стоят монстр/игрок на полу). Координаты — пиксельные.
  * Headless-версия клиентского `hasLineOfSight` (переезжает на неё на Этапе 3).
+ *
+ * ⚠ R10-02: шаг по ДИАГОНАЛИ сквозь угол, у которого обе боковые клетки непроходимы (`diagonalSealed`), — тоже стена.
+ * Проверялась только клетка, куда шагнули: через «диагональный шов» (две клетки пола, касающиеся углом) было видно, а тело
+ * угол не проходит. Монстр видел героя, в обход не шёл (путь ищется только без видимости) и застревал у угла дальше своего
+ * удара, а герой бил его через угол; тем же швом подбор, сундук, рычаг и разлёт добычи доставали в запечатанное.
  *
  * `obstacles` (опц.) — суб-тайловые препятствия декора: если у препятствия
  * `blocksSight`, и отрезок пересекает его форму (круг/бокс), обзор перекрыт
@@ -38,6 +43,8 @@ export function hasLineOfSight(
     if (!isEndpoint && isBlockedCell(grid, x, y)) return false;
     if (x === cx2 && y === cy2) break;
     const e2 = 2 * err;
+    const px = x;
+    const py = y;
     if (e2 > -dy) {
       err -= dy;
       x += sx;
@@ -46,6 +53,7 @@ export function hasLineOfSight(
       err += dx;
       y += sy;
     }
+    if (diagonalSealed(grid, px, py, x, y)) return false; // R10-02: угол шва не просвечивает
   }
 
   // Суб-тайловые препятствия, перекрывающие обзор (после чистого грида).

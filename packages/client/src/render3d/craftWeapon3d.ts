@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { TILE, weaponLookSig, type ConfigRegistry, type WeaponLookHand } from '@dm/shared';
 import type { CraftMeshResult } from '../modules/town/craftMesh/index.js';
 import { craftMeshConfigVersion } from '../modules/town/craftMesh/configVersion.js';
+import { markStaleBuild } from '../net/staleBuild.js';
 
 /**
  * ⭐ ОДИН ПУТЬ ДЛЯ СЕБЯ И ДРУГИХ. Вид оружия (`weaponLook`: база + четыре детали по рукам) приходит у пиров
@@ -30,12 +31,16 @@ export const CRAFT_CM_TO_UNITS = TILE / 100;
 let lib: CraftMeshLib | null = null;
 let loading: Promise<CraftMeshLib | null> | null = null;
 
-/** Загрузить построитель (один раз). Не загрузился — null, следующий вид попробует снова. */
+/**
+ * Загрузить построитель (один раз). Не загрузился — null, следующий вид попробует снова. ⭐ R10-12: упавший кусок — почти
+ * всегда деплой без перезагрузки вкладки (хэши кусков сменились): раньше оружие из деталей молча оставалось процедурным
+ * на всю сессию, теперь игроку — «перезагрузите страницу» (`markStaleBuild`, один раз на страницу).
+ */
 export function loadCraftMeshLib(): Promise<CraftMeshLib | null> {
   if (lib) return Promise.resolve(lib);
   loading ??= import('../modules/town/craftMesh/index.js')
     .then((m) => (lib = m))
-    .catch(() => { loading = null; return null; });
+    .catch((e: unknown) => { loading = null; markStaleBuild('модель оружия из деталей', e); return null; });
   return loading;
 }
 

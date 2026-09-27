@@ -48,13 +48,20 @@ function reachableAttributes(save: SaveState): Attributes {
  * меч из сумки. Атрибуты — `reachableAttributes`. Одна и та же вещь (сервер кладёт в запас и надетое) опирает один раз.
  * Опору дают и две вещи одного слота разом (надетое кольцо и кольцо в сумке) — это может лишь ЗАВЫСИТЬ мощь (замер: +1 у
  * 8 героев из 1200), занизить её снятием и перекладкой нельзя: всё, что надевается по одной в каком-то порядке, встаёт.
+ *
+ * ⭐ R11-02: одноручное оружие встаёт и во ВТОРУЮ руку (дуал-вилд): руки — лучшее из «двуручник», «оружие + щит» и «два
+ * одноручника». Раньше оружие шло только в основную руку, и второй одноручник из сумки мощь не поднимал — «в городе меч в
+ * руке, кинжал в сумке — надел в подземелье» заселяло узел слабее. Полуторный одной рукой — только со щитом (§25).
  */
 function wearableGear(save: SaveState, spare: Iterable<Item | null | undefined>, level: number, cfg: PowerConfig): number {
   const best = new Map<string, number>();
   let twoHanded = 0;
+  const oneHanded: number[] = [];   // одноручное оружие: основная рука ИЛИ вторая
   const offer = (slot: string, item: Item): void => {
     const s = gearScore(item, level, cfg);
     if (slot === 'weapon' && (item.hands ?? 1) >= 2 && !item.versatile) { twoHanded = Math.max(twoHanded, s); return; }
+    // Оружие, надетое во вторую руку, — всё равно оружие: в пару к основной, а не «щит».
+    if (item.slot === 'weapon' && (item.hands ?? 1) < 2) { oneHanded.push(s); return; }
     if (s > (best.get(slot) ?? 0)) best.set(slot, s);
   };
   const worn = new Set<Item>();
@@ -65,7 +72,9 @@ function wearableGear(save: SaveState, spare: Iterable<Item | null | undefined>,
     const unmet = new Set(unmetWorn(reachableAttributes(save), [...worn, ...extra]));
     for (const item of extra) if (!unmet.has(item)) offer(item.slot!, item);
   }
-  let raw = Math.max(twoHanded, (best.get('weapon') ?? 0) + (best.get('offhand') ?? 0));
+  const [first = 0, second = 0] = oneHanded.sort((a, b) => b - a);
+  const main = Math.max(best.get('weapon') ?? 0, first);   // `weapon` здесь — только полуторное
+  let raw = Math.max(twoHanded, main + (best.get('offhand') ?? 0), first + second);
   for (const [slot, s] of best) if (slot !== 'weapon' && slot !== 'offhand') raw += s;
   return raw;
 }

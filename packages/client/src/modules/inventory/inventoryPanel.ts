@@ -1,8 +1,7 @@
 import { meetsRequirements, type EquipSlot, type Item } from '@dm/shared';
 import type { App } from '../../core/app.js';
-import type { GameState } from '../../core/gameState.js';
 import type { PanelFactory } from '../../ui/domUi.js';
-import { effectiveAttributes } from './equip.js';
+import { effectiveAttributes, paperdollCommand } from './equip.js';
 import { itemsOverlapping, type Dims } from './grid.js';
 import { itemTooltipHtml } from './itemView.js';
 import { rarityHex } from '../loot/rarity.js';
@@ -91,16 +90,6 @@ function equipSlotCell(app: App, slot: EquipSlot, msg: HTMLElement): HTMLElement
   return cell;
 }
 
-/** Принимает ли слот предмет (учёт offhand: щит или 1-ручное; блок двуручкой). */
-function slotAccepts(item: Item, slot: EquipSlot, state: GameState): boolean {
-  if (slot === 'offhand') {
-    if ((state.save.equipment.weapon?.hands ?? 1) >= 2) return false; // занято двумя руками
-    if (item.slot === 'offhand') return true; // щит
-    return item.slot === 'weapon' && (item.hands ?? 1) === 1; // дуал-вилд
-  }
-  return item.slot === slot;
-}
-
 /** Клик по слоту пупсика: положить держимое (надеть/обмен) или взять надетое на курсор. */
 function onSlotClick(app: App, slot: EquipSlot, msg: HTMLElement): void {
   const state = app.state!;
@@ -108,16 +97,14 @@ function onSlotClick(app: App, slot: EquipSlot, msg: HTMLElement): void {
   if (held) {
     // Надеть можно только из инвентаря (сервер экипирует из save.inventory). Из сундука — сначала в инвентарь.
     if (held.from !== 'inv') { msg.textContent = 'Сначала перенесите предмет в инвентарь'; return; }
-    if (!slotAccepts(held.item, slot, state)) {
-      msg.textContent = slot === 'offhand' && (state.save.equipment.weapon?.hands ?? 1) >= 2
-        ? 'Занято двумя руками' : 'Этот предмет не для этого слота';
-      return;
-    }
+    // R11-02: щит или второе одноручное (дуал-вилд) — по правилу сервера; вторая рука уходит С ЦЕЛЬЮ.
+    const cmd = paperdollCommand(held.item, slot, state.save.equipment.weapon);
+    if (typeof cmd === 'string') { msg.textContent = cmd; return; }
     if (!meetsRequirements(held.item, effectiveAttributes(state, state.save.equipment[slot] ?? undefined))) {
       msg.textContent = 'Недостаточно атрибутов';
       return;
     }
-    app.sendCmd({ cmd: 'equip', uid: held.item.uid });
+    app.sendCmd(cmd);
     clearHeld();
   } else {
     if (!state.save.equipment[slot]) return;

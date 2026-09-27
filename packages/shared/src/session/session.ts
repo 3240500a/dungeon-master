@@ -33,7 +33,7 @@ import { resolveActive, type InsertProc, type ResolvedActive, type ResourcePool 
 /** Цена способности и вторая цена (надбавка вставок в чужой пул) — короткие имена для платежа. */
 type Cost = { manaCost: number; resource: ResourcePool };
 type Extra = { pool: ResourcePool; amount: number };
-import { isBlockedCell, worldToCell, Cell } from '../world/grid.js';
+import { diagonalSealed, isBlockedCell, worldToCell, Cell } from '../world/grid.js';
 import type { Grid } from '../world/grid.js';
 import { hasLineOfSight } from '../world/lineOfSight.js';
 import { addToInventory } from '../inventory/grid.js';
@@ -214,6 +214,15 @@ const MONSTER_MELEE_WHIFF_SLACK = 8;
 /** Сколько мс труп монстра держится в w.monsters после смерти, прежде чем удаляется из мира/снапшота. Клиенты снимают
  *  спрайт/куклу по первому alive=false (+ событию monster-died) и отыгрывают коллапс (~1.1с в 3D) — линга с запасом хватает. */
 const CORPSE_LINGER_MS = 3000;
+/**
+ * ⚠ R10-02: сторож застревания погони (`navChase`). Окно, за которое погоня к цели обязана сдвинуть монстра хотя бы на
+ * STALL_SHARE пути, положенного ему по скорости; не сдвинула — DETOUR_SEC он идёт по пути в обход, даже видя цель.
+ */
+const STALL_SEC = 0.5;
+const STALL_SHARE = 0.25;
+const DETOUR_SEC = 1;
+/** Сторож смотрит только погоню «на цель» (косинус с направлением на неё не ниже): стрейф стрелка вбок у стены — манёвр. */
+const STALL_COS = 0.7;
 
 /** Спецификация активной способности (v2: дискриминирована по `category`). */
 type ActiveAbility = NonNullable<ConfigShapes['skill-tree']['nodes'][number]['effect']['active']>;
@@ -1542,6 +1551,7 @@ export class GameSession {
       const sub = dt / steps;
       let gone = false;
       for (let sIdx = 0; sIdx < steps; sIdx++) {
+        const from = worldToCell(proj.pos.x, proj.pos.y);
         proj.pos.x += proj.vel.x * sub;
         proj.pos.y += proj.vel.y * sub;
         // Бумеранг: у макс. дальности разворот к владельцу; гаснет, вернувшись к нему.
@@ -1559,7 +1569,9 @@ export class GameSession {
           }
         }
         const cell = worldToCell(proj.pos.x, proj.pos.y);
-        if (isBlockedCell(w.grid, cell.cx, cell.cy)) {
+        // ⚠ R10-02: подшаг, перескочивший угол «диагонального шва» (обе боковые клетки — стены), — тоже удар о стену: иначе
+        // стрела из угла шва била того, кто ни видеть стрелка (`hasLineOfSight`), ни дойти до него напрямую не может.
+        if (isBlockedCell(w.grid, cell.cx, cell.cy) || diagonalSealed(w.grid, from.cx, from.cy, cell.cx, cell.cy)) {
           // Обычный снаряд гаснет о стену. ⚠ R5-05: бумеранг летал «поверх препятствий» — и бил на лету монстров за
           // стеной и закрытой дверью, туда и обратно, а те ответить не могли. Теперь туда он от стены РАЗВОРАЧИВАЕТСЯ
           // к владельцу (шаг назад, в свою клетку, — как у дальности), обратно — гаснет о неё, как любой снаряд.
@@ -2111,13 +2123,22 @@ export class GameSession {
    * ведём его по BFS-пути (обход стен), заменяя направление m.vel на вектор к следующей путевой
    * точке (скорость сохраняется). Видит цель или движется ОТ неё (кайт/флиа) — не трогаем.
    * Пересчёт пути троттлится (~0.3с) и при достижении точки — findPath дёшев, но не каждый тик.
+   *
+   * ⚠ R10-02: и ВИДЯ цель — пока идёт обход (`m.detour`), который включает сторож застревания (`watchStall`). Видимость
+   * считается по клеткам, а тело — круг: у угла стены линия клеток проходит, а круг цепляет угол и сползает туда, где
+   * видимости уже нет, — и путь ведёт его обратно. Монстр дрожал на границе клеток вне досягаемости своего удара.
    */
   private navChase(m: MonsterEntity, targetPos: Vec2, grid: Grid, losClear: boolean, dt: number): void {
+    m.detour = Math.max(0, m.detour - dt);
     const speed = vecLen(m.vel.x, m.vel.y);
-    if (speed < 1) { m.waypoint = null; return; }
-    const toward = m.vel.x * (targetPos.x - m.pos.x) + m.vel.y * (targetPos.y - m.pos.y) > 0;
-    if (toward && !losClear) {
-      // Погоня без прямой видимости → обход стен по BFS-пути.
+    if (speed < 1) { m.waypoint = null; m.stallAt = null; return; }
+    const tx = targetPos.x - m.pos.x, ty = targetPos.y - m.pos.y;
+    const dot = m.vel.x * tx + m.vel.y * ty;
+    const toward = dot > 0;
+    if (dot >= STALL_COS * speed * vecLen(tx, ty)) this.watchStall(m, speed, dt);
+    else m.stallAt = null;
+    if (toward && (!losClear || m.detour > 0)) {
+      // Погоня без прямой видимости (или застрявшая, R10-02) → обход стен по BFS-пути.
       m.pathCd -= dt;
       const reached = !!m.waypoint && vecLen(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
       if (!m.waypoint || reached || m.pathCd <= 0) {
@@ -2135,6 +2156,25 @@ export class GameSession {
     }
     m.waypoint = null;
     if (!toward) this.avoidWallAhead(m, grid, speed); // кайт/флиа — не пятиться в угол
+  }
+
+  /**
+   * ⚠ R10-02: СТОРОЖ ЗАСТРЕВАНИЯ ПОГОНИ. Окно в STALL_SEC: погоня к цели, которая за него не сдвинула монстра и на
+   * STALL_SHARE пути, положенного по скорости, — застряла (угол стены, который линия клеток «видит», а круг не проходит).
+   * Тогда DETOUR_SEC он идёт по BFS-пути (`navChase`), даже видя цель: 4-связный путь по центрам клеток круг (радиус ≤ 15,
+   * меньше полклетки) не цепляет нигде. Идущий своим ходом, бьющий, оглушённый, отходящий и стрелок в стрейфе вбок
+   * (`STALL_COS`) сюда не попадают.
+   */
+  private watchStall(m: MonsterEntity, speed: number, dt: number): void {
+    if (!m.stallAt) { m.stallAt = { ...m.pos }; m.stallT = 0; return; }
+    m.stallT += dt;
+    if (m.stallT < STALL_SEC) return;
+    if (vecLen(m.pos.x - m.stallAt.x, m.pos.y - m.stallAt.y) < speed * STALL_SEC * STALL_SHARE) {
+      m.detour = DETOUR_SEC;
+      m.waypoint = null;   // путь — сразу, с того места, где застрял
+    }
+    m.stallAt = { ...m.pos };
+    m.stallT = 0;
   }
 
   /** Если впереди (по вектору скорости) стена — повернуть скорость к ближайшему открытому

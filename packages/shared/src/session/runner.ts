@@ -21,7 +21,7 @@ import type { BuildPolicy } from '../sim/types.js';
 import { emptyStash, sanitizeStash } from '../economy/stashActions.js';
 import { availableMaterials, materialItem } from '../economy/materials.js';
 import { normalizeJournal } from '../formulas/craft.js';
-import { shopBuyPrice, shopSellPrice, SHOP_CONSUMABLE_STOCK } from '../economy/townActions.js';
+import { shopBuyPrice, shopSellPrice, SHOP_CONSUMABLE_STOCK, shopConsumableIds } from '../economy/townActions.js';
 import type { AccountStash } from '../types/stash.js';
 import { GameSession, type SessionEvent } from './session.js';
 import { BotController, type BotTier, type BotStyle } from './bot.js';
@@ -138,6 +138,34 @@ function sellWorth(reg: ConfigRegistry, mats: Record<string, number>): number {
     if (rest > 0) sum += shopSellPrice(reg, materialItem(def, rest, id));
   }
   return sum;
+}
+
+/**
+ * Пополняет пояс бота лечебными зельями (у реального игрока пояс всегда полон перед вылазкой) — ПОКУПКОЙ в лавке, как
+ * игрок (R2-04): недостающее до шести, сперва лечебные, кончились на прилавке (`SHOP_CONSUMABLE_STOCK` за заход) —
+ * малые; не хватает золота — сколько хватит. Раньше бот получал шесть зелий даром на каждой остановке, и прогон
+ * баланса не видел этой траты вовсе. ⭐ R11-13: только зелья, которые лавка продаёт (`shopConsumableIds`: выключенная в редакторе
+ * база не продаётся) — раньше бот покупал и выключенное. Возвращает потраченное золото.
+ */
+export function stockBeltFromShop(reg: ConfigRegistry, save: SaveState): number {
+  const itemsBase = reg.get('items.base');
+  const sold = new Set(shopConsumableIds(reg));
+  const belt = Array.from({ length: 6 }, (_, i) => save.belt[i] ?? null);
+  const left: Record<string, number> = {};
+  for (const id of ['healing-potion', 'minor-healing-potion']) if (sold.has(id)) left[id] = SHOP_CONSUMABLE_STOCK;
+  let spent = 0;
+  for (let i = 0; i < belt.length; i++) {
+    if (belt[i]) continue;
+    const id = Object.keys(left).find((k) => left[k]! > 0);
+    const potion = id ? itemFromBaseId(itemsBase, id, undefined, 'shop') : null;
+    if (!id || !potion) break;
+    const price = shopBuyPrice(reg, potion);
+    if (save.gold < price) break;
+    save.gold -= price; spent += price; left[id]!--;
+    belt[i] = potion;
+  }
+  save.belt = belt;
+  return spent;
 }
 
 export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings): RunReport {
@@ -264,28 +292,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     allocateSkillsAndPassives(reg, save, settings.build, rng);
     goldOnPassives += Math.max(0, before - save.gold);
   };
-  const itemsBase = reg.get('items.base');
-  /**
-   * Пополняет пояс лечебными зельями (у реального игрока пояс всегда полон перед вылазкой) — ПОКУПКОЙ в лавке, как
-   * игрок (R2-04): недостающее до шести, сперва лечебные, кончились на прилавке (`SHOP_CONSUMABLE_STOCK` за заход) —
-   * малые; не хватает золота — сколько хватит. Раньше бот получал шесть зелий даром на каждой остановке, и прогон
-   * баланса не видел этой траты вовсе.
-   */
-  const stockBelt = (): void => {
-    const belt = Array.from({ length: 6 }, (_, i) => save.belt[i] ?? null);
-    const left: Record<string, number> = { 'healing-potion': SHOP_CONSUMABLE_STOCK, 'minor-healing-potion': SHOP_CONSUMABLE_STOCK };
-    for (let i = 0; i < belt.length; i++) {
-      if (belt[i]) continue;
-      const id = Object.keys(left).find((k) => left[k]! > 0);
-      const potion = id ? itemFromBaseId(itemsBase, id, undefined, 'shop') : null;
-      if (!id || !potion) break;
-      const price = shopBuyPrice(reg, potion);
-      if (save.gold < price) break;
-      save.gold -= price; goldSpent += price; left[id]!--;
-      belt[i] = potion;
-    }
-    save.belt = belt;
-  };
+  const stockBelt = (): void => { goldSpent += stockBeltFromShop(reg, save); };
   /** Городская остановка: распределение + пара заходов в магазин + полный пояс зелий (эконом-бот). */
   const doTown = (): void => {
     allocate();

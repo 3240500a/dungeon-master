@@ -82,6 +82,29 @@ describe('effectiveLevel', () => {
     expect(effectiveLevel(bare, cfg, [w(2, 'unique'), w(1, 'rare'), shield]).gearBonus, 'одноручник + щит сильнее').toBe(8);
   });
 
+  /**
+   * ⭐ R11-02: одноручное оружие встаёт и во вторую руку (дуал-вилд). Мера запаса, считавшая оружие только по основной руке,
+   * прятала второй одноручник: «в городе один меч в руке, уникальный кинжал в сумке — спустился — надел в левую руку»
+   * заселяло узел на вклад кинжала слабее (R7-02). Полуторный одной рукой носят только со щитом — с оружием не складывается.
+   */
+  it('⭐ R11-02: два одноручника из запаса — обе руки; полуторный с оружием не складывается, со щитом — да', () => {
+    const w = (hands: number, rarity: Rarity, versatile = false): Item => ({ ...mkItem(rarity, 20), slot: 'weapon', hands, ...(versatile ? { versatile } : {}) } as Item);
+    const shield = (rarity: Rarity): Item => ({ ...mkItem(rarity, 20), slot: 'offhand' } as Item);
+    const cfg: PowerConfig = { ...powerCfg, gearDivisor: 1, gearMax: 99 };
+    const bare = mkSave({ level: 20, equipment: {} });
+    expect(effectiveLevel(bare, cfg, [w(1, 'rare'), w(1, 'unique')]).gearBonus, 'было 5: второй одноручник не в счёте').toBe(8);
+    // Надет меч, кинжал в сумке — то же, что надетые оба (дуал надевается и в подземелье).
+    const sword = w(1, 'rare'), dagger = w(1, 'unique');
+    const worn = mkSave({ level: 20, equipment: { weapon: sword, offhand: dagger } as SaveState['equipment'] });
+    const armed = mkSave({ level: 20, equipment: { weapon: sword } as SaveState['equipment'] });
+    expect(effectiveLevel(armed, cfg, [dagger]).gearBonus).toBe(effectiveLevel(worn, cfg, []).gearBonus);
+    expect(effectiveLevel(worn, cfg, []).gearBonus, 'надетый дуал — ровно сумма надетого').toBe(8);
+    expect(effectiveLevel(bare, cfg, [w(2, 'unique', true), w(1, 'rare')]).gearBonus, 'полуторный + оружие — не носят').toBe(5);
+    expect(effectiveLevel(bare, cfg, [w(2, 'unique', true), w(1, 'rare'), shield('magic')]).gearBonus, 'полуторный + щит').toBe(7);
+    expect(effectiveLevel(bare, cfg, [w(1, 'unique'), w(1, 'magic'), shield('rare')]).gearBonus, 'щит лучше второго оружия').toBe(8);
+    expect(effectiveLevel(bare, cfg, [w(1, 'unique')]).gearBonus, 'одна вещь в две руки не встаёт').toBe(5);
+  });
+
   describe('⭐ R8-10: запас — только то, что герой может надеть сейчас', () => {
     const cfg1: PowerConfig = { ...powerCfg, gearDivisor: 1, gearMax: 99 };
     const attrs = (strength: number): SaveState['attributes'] => ({ strength, dexterity: 10, intelligence: 10, vitality: 10 });

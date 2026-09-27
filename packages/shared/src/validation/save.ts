@@ -121,6 +121,8 @@ export const saveStateSchema = z.object({
     // R9-13: сид доски квестов поколения (нет — из `seed`).
     board: z.number().int().optional(),
   }).optional(),
+  // R11-04: здоровье, мана, выносливость на момент последней записи — вход в новую комнату не лечит (пишет только сервер).
+  vitals: z.object({ hp: z.number().min(0), mana: z.number().min(0), stamina: z.number().min(0), at: z.number().optional() }).optional(),
   maxDepth: z.number().int().min(0),
   difficultyProgress: z.record(z.string(), z.number()).default({}),
   lastDifficulty: z.string().default('normal'),

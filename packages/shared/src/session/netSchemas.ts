@@ -119,7 +119,8 @@ export const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId }).strict(),
   z.object({ cmd: z.literal('depositMaterials') }).strict(),
   z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield }).strict(),
-  z.object({ cmd: z.literal('equip'), uid }).strict(),
+  // R11-02: цель — только вторая рука (дуал-вилд, щит); без неё — родной слот вещи. Встанет ли — решает ядро (`equip`).
+  z.object({ cmd: z.literal('equip'), uid, slot: z.literal('offhand').optional() }).strict(),
   z.object({ cmd: z.literal('unequip'), slot: wireText(1, 32) }).strict(),
   // R2-15: `n` — сколько очков разом (нет — одно, как шлёт Unity и «+»). Пачка очков — одна команда, а не n кадров.
   z.object({ cmd: z.literal('allocAttr'), attr: wireText(1, 32), n: z.number().int().min(1).max(ALLOC_ATTR_MAX).optional() }).strict(),

@@ -56,8 +56,9 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 afterAll(() => { server.close(); });
-beforeEach(() => {
+beforeEach(async () => {
   pw.wrong = 0; pw.right = 0; db.sessionLookups = 0;
+  (await import('./rateLimit.js')).limits.scrypt.reset('all');   // R11-01: общий бюджет scrypt процесса полон — здесь он не проверяется
   // Часы бакетов стоят: пополнения за время теста нет — «сколько прошло» не зависит от скорости машины под нагрузкой.
   vi.spyOn(performance, 'now').mockReturnValue(performance.now());
 });
@@ -127,6 +128,10 @@ describe('⭐ R9-12: сессия, которой нет, платит баке�
     const token = 'c'.repeat(64);
     db.sessions.set(token, 'user-attacker');
     for (let i = 0; i < 30; i++) expect(await characters(ip, randomToken(1000 + i))).toBe(401);   // сосед по NAT ошибается
-    for (let i = 0; i < 200; i++) expect(await characters(ip, token)).toBe(200);
+    const { limits } = await import('./rateLimit.js');
+    for (let i = 0; i < 200; i++) {
+      limits.account.reset('user-attacker');   // R11-06: потолок аккаунта (часы стоят) — у него свой тест; здесь — бакет адреса
+      expect(await characters(ip, token)).toBe(200);
+    }
   });
 });

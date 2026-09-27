@@ -26,6 +26,8 @@ export interface DeathRng { int(min: number, max: number): number; chance(p: num
  * `death/penalty.ts` (потерянного при переходе на сервер) — см. docs/MULTIPLAYER.md.
  */
 export function applyDeathPenalty(save: SaveState, penalty: DeathPenaltyBalance, rng?: DeathRng): DeathSummary {
+  // ⭐ R11-04: смерть — следующая жизнь с полными пулами: записанные здоровье и мана (`vitals`) к ней не относятся (штраф взят).
+  delete save.vitals;
   const goldLost = Math.floor(save.gold * penalty.goldPercent);
   save.gold = Math.max(0, save.gold - goldLost);
 

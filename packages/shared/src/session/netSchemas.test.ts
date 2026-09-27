@@ -182,6 +182,15 @@ describe('схема команд города', () => {
       expect(parseTownCommand({ cmd: 'allocAttr', attr: 'strength', n }).ok, String(n)).toBe(false);
     }
   });
+
+  it('⭐ R11-02: `equip` с целью — только вторая рука (дуал-вилд); без цели — родной слот, как шлют меню и Unity', () => {
+    for (const c of [{ cmd: 'equip', uid: 'u1' }, { cmd: 'equip', uid: 'u1', slot: 'offhand' }] as TownCommand[]) {
+      expect(parseTownCommand(c), JSON.stringify(c)).toEqual({ ok: true, command: c });
+    }
+    for (const slot of ['weapon', 'helm', 'OFFHAND', '', null, 1, ['offhand']]) {
+      expect(parseTownCommand({ cmd: 'equip', uid: 'u1', slot }).ok, JSON.stringify(slot)).toBe(false);
+    }
+  });
 });
 
 /**
@@ -336,7 +345,7 @@ describe('⚠ R3-02 / R3-14: строки провода без U+0000 и неп
     { cmd: 'forgeSalvage', uid: 'u1' }, { cmd: 'forgeRepair', uid: 'u1' },
     { cmd: 'craft', nonce: 'nonce-0001', input: { weaponClass: 'sword', hands: 1, parts: { strike: pick('blade-a'), grip: pick('grip-a'), bind: pick('bind-a'), head: pick('head-a') } } },
     { cmd: 'forgeEnchant', uid: 'u1', rarity: 'magic' }, { cmd: 'forgeSketch', variantId: 'blade-a' },
-    { cmd: 'salvage', uid: 'u1' }, { cmd: 'equip', uid: 'u1' }, { cmd: 'unequip', slot: 'weapon' },
+    { cmd: 'salvage', uid: 'u1' }, { cmd: 'equip', uid: 'u1' }, { cmd: 'equip', uid: 'u1', slot: 'offhand' }, { cmd: 'unequip', slot: 'weapon' },
     { cmd: 'allocAttr', attr: 'strength' }, { cmd: 'allocPassive', nodeId: 'n1' }, { cmd: 'allocSkill', nodeId: 'n1' },
     { cmd: 'socketInsert', nodeId: 'n1', slot: 0, insertId: 'fire' }, { cmd: 'socketClear', nodeId: 'n1', slot: 0 },
     { cmd: 'useConsumable', uid: 'u1' }, { cmd: 'moveBelt', uid: 'u1' }, { cmd: 'moveItem', uid: 'u1', x: 0, y: 0 },

@@ -55,3 +55,49 @@ describe('⚠ R8-12: модификаторы забега — только де
     expect(runModifierLive({ ...mods[0]!, effects: [] }, allLive), 'без эффектов — не действует').toBe(false);
   });
 });
+
+/**
+ * ⚠ R10-15: УЗЛОВЫЕ МОДИФИКАТОРЫ — ТЕМ ЖЕ ПРАВИЛОМ R8-12. Алтарь с R8-12 предлагает только действующие, а план по-прежнему
+ * вешал узловые («Лихорадка» +20 % к скорости атаки, «Закалка» +25 % здоровья, «Тайник» ×1.5 к находкам) на ~29 % узлов, и
+ * карта забега рисовала им ★ — хотя эффект не применяет никто. Игрок выбирал ветку за обещанный тайник и получал обычную
+ * комнату. ⚠ Бросок узла и выбор модификатора остались на месте: план забега из сейва регенерится от сида, и сдвиг потока
+ * случайности перестроил бы граф каждого запаркованного забега (`currentNodeId`, `run_ledger`). Отбрасывается только результат.
+ */
+describe('⚠ R10-15: узловые модификаторы — только действующие', () => {
+  /** Каждый включённый шаблон × включённый биом × `seeds` сидов. */
+  const configs = (seeds: number) => reg.get('run-templates').filter((t) => t.enabled !== false).flatMap((t) =>
+    reg.get('biomes').filter((b) => b.enabled !== false).flatMap((b) =>
+      Array.from({ length: seeds }, (_, i) => ({ ...defaultRunConfig(reg, t.id, i * 7919 + 13), biomeId: b.id }))));
+  const shape = (p: ReturnType<typeof generateRunPlan>) =>
+    p.nodes.map((n) => [n.id, n.type, n.depth, n.lane, n.edges.map((e) => e.to), n.floorSpec.floorId, n.floorSpec.seed]);
+
+  it('⭐ пока ни один узловой эффект не подключён — ни у одного узла нет модификатора и ★', () => {
+    let nodes = 0;
+    for (const c of configs(20)) {
+      for (const n of generateRunPlan(reg, c).nodes) {
+        expect(n.modifiers, `${c.templateId}/${c.biomeId}/${c.seed} ${n.id}`).toEqual([]);
+        expect(n.floorSpec.modifiers).toEqual([]);
+        nodes++;
+      }
+    }
+    expect(nodes).toBeGreaterThan(500);
+  });
+
+  it('⭐ граф забега — тот же, что до правки: со всеми статами «действующими» те же узлы получают модификаторы', () => {
+    let modded = 0;
+    for (const c of configs(20)) {
+      const now = generateRunPlan(reg, c);
+      const all = generateRunPlan(reg, c, allLive);   // = план до правки: тогда годился любой узловой модификатор
+      expect(shape(now), `${c.templateId}/${c.biomeId}/${c.seed}`).toEqual(shape(all));
+      modded += all.nodes.filter((n) => n.modifiers.length > 0).length;
+    }
+    expect(modded, 'сторож сравнения: модификаторы у узлов были').toBeGreaterThan(100);
+  });
+
+  it('подключили стат — его узлы возвращаются сами: `dropBias` → «Тайник», а «Лихорадки» и «Закалки» по-прежнему нет', () => {
+    const live: ReadonlySet<string> = new Set(['dropBias']);
+    const seen = new Set<string>();
+    for (const c of configs(20)) for (const n of generateRunPlan(reg, c, live).nodes) for (const id of n.modifiers) seen.add(id);
+    expect([...seen]).toEqual(['boon-cache']);
+  });
+});

@@ -739,7 +739,7 @@ function allocatePassives(reg: ConfigRegistry, save: SaveState, policy: BuildPol
       const node = byId.get(id);
       if (!node) continue;
       const rank = save.masteries[id] ?? 0;
-      if (rank >= node.maxRank) continue;
+      if (rank >= node.maxRank || node.levelReq > save.level) continue;   // R10-11: как `allocPassive`
       const cost = Math.round(node.cost.amount * Math.pow(mult, rank));
       if (save.gold - cost < reserve) continue;
       const val = scoreMods(node.effect.modifiers ?? [], policy.offenseBias) / Math.max(1, cost);

@@ -138,10 +138,12 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     const lockedEntry = isEntry && !allowedEntries.includes(node.id);
     const r = node.notable ? 15 : isEntry ? 12 : 9;
 
+    // ⚠ R10-11: «Треб. уровень» узла — как у древа скилов (`skillTreeView`): доступный, но не по уровню — приглушён.
+    const lowLvl = state.save.level < node.levelReq;
     let fill = '#1a1f29';
     let stroke = '#3e4756';
     if (allocated) { fill = node.notable ? COLORS.gold : '#8aa84a'; stroke = '#0a0a0a'; }
-    else if (available) { fill = '#1e2a3a'; stroke = '#6f9bcf'; }
+    else if (available) { fill = lowLvl ? '#241d17' : '#1e2a3a'; stroke = lowLvl ? '#6b563a' : '#6f9bcf'; }
     if (isEntry && !allocated) stroke = COLORS.gold;         // доступный вход класса — золотой
     if (lockedEntry) { fill = '#241a1a'; stroke = '#5a3a3a'; } // чужой вход — заблокирован
 
@@ -161,9 +163,11 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
       const costLine = rank >= maxRank
         ? 'макс. ранг'
         : `след. ранг: ${nextCost} зол. + 1 очко`;
+      const lvlLine = state.save.level < node.levelReq
+        ? `<div style="color:#d89b7c">требуется уровень ${node.levelReq}</div>` : '';
       return `<div style="color:${node.notable ? COLORS.gold : COLORS.text};font-weight:bold">${node.name}</div>` +
         `<div style="color:#c4bca8">${node.description}</div>` +
-        `<div style="color:#9aa;margin-top:3px">ранг ${rank}/${maxRank} · ${costLine}</div>` +
+        `<div style="color:#9aa;margin-top:3px">ранг ${rank}/${maxRank} · ${costLine}</div>` + lvlLine +
         (eff ? `<div style="color:#8fd">${eff}</div>` : '');
     });
 

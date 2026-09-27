@@ -6,6 +6,7 @@ import {
   WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_QUEST_TEMPLATE_ID_MAX,
   WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS,
 } from '../session/wireLimits.js';
+import { isSafeKey } from '../formulas/craft.js';
 import { questFromTemplate } from '../economy/questLogic.js';
 import { createRng } from '../formulas/rng.js';
 
@@ -173,5 +174,45 @@ describe('⚠ R7-20: потолок окна реконнекта', () => {
     expect(withGrace(2_000_000)).not.toThrow();
     expect(withGrace(3600)).not.toThrow();
     expect(2_000_000 * 1000, 'потолок схемы укладывается в таймер Node').toBeLessThanOrEqual(2 ** 31 - 1);
+  });
+});
+
+/**
+ * ⚠ R10-10: id МАТЕРИАЛА КРАФТА И ШАБЛОНА ДОСКИ — ТОЛЬКО БЕЗОПАСНЫЙ КЛЮЧ (`isSafeKey`: латиница, цифры, `_` и `-`, не ключ
+ * прототипа). Ими ключуются кошелёк сырья аккаунта, оплата ковки (`craftPaid`) и квота доски (`boardQuota`), а сторожа формы
+ * из базы (`cleanWallet`, `meltReturn`, `noteGeneration`) всё прочее молча отбрасывают. Схема пускала любой текст: материал
+ * «руда-1» из редактора стирался из кошелька при каждой загрузке сундука, переплавка его не возвращала, а шаблон «вылазка» не
+ * держал квоту — то же задание тут же бралось с доски альта (R3-10 снова). Теперь такой id не пропустит редактор.
+ */
+describe('⚠ R10-10: id материала и шаблона доски — безопасный ключ', () => {
+  /** Свежий реестр на каждую попытку: принятая правка не должна течь в соседнюю проверку. */
+  const fresh = (): ConfigRegistry => { const x = new ConfigRegistry(); x.loadAll(); return x; };
+  const withMaterial = (id: string) => () => {
+    const x = fresh();
+    const mats = structuredClone(x.get('craft-materials'));
+    mats.push({ ...mats[0]!, id, family: 'ore' });
+    x.reload({ 'craft-materials': mats });
+  };
+  const withTemplate = (id: string) => () => {
+    const x = fresh();
+    const tpls = structuredClone(x.get('quests.random'));
+    tpls[0]!.id = id;
+    x.reload({ 'quests.random': tpls });
+  };
+
+  it('⭐ материал «руда-1», «ore.1», «ore 1», «__proto__» — отказ валидации; «ore-1» и «ore_1» — можно', () => {
+    for (const bad of ['руда-1', 'ore.1', 'ore 1', '__proto__', 'constructor', '']) expect(withMaterial(bad), bad).toThrow();
+    for (const ok of ['ore-1', 'ore_1']) expect(withMaterial(ok), ok).not.toThrow();
+  });
+
+  it('⭐ шаблон доски «rnd.delve», «вылазка», «__proto__» — отказ валидации; «rnd_delve» — можно', () => {
+    for (const bad of ['rnd.delve', 'вылазка', 'rnd delve', '__proto__']) expect(withTemplate(bad), bad).toThrow();
+    expect(withTemplate('rnd_delve')).not.toThrow();
+  });
+
+  it('встроенные данные — все такие', () => {
+    const r = fresh();
+    for (const m of r.get('craft-materials')) expect(isSafeKey(m.id), m.id).toBe(true);
+    for (const t of r.get('quests.random')) expect(isSafeKey(t.id), t.id).toBe(true);
   });
 });

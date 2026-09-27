@@ -271,14 +271,14 @@ export class EntryFlow {
   /**
    * ⭐ R4-13: подключиться — к ноде, которую назвал гейтвей (`route`), или по адресу по умолчанию. `o` — вход кликом:
    * уйдёт, как только сокет откроется. Очередь — место на плашке и переспрос с билетом; отказ гейтвея — лобби с причиной.
-   * ⚠ `connect` — ПОСЛЕДНИМ (см. `reconnect`).
+   * ⚠ `connect` — ПОСЛЕДНИМ (см. `reconnect`), и только через `open` (R10-17: бросок конструктора сокета — лобби).
    */
   private dial(o?: JoinOpts): void {
     this.stopTimer();
     const seq = ++this.dialSeq;
     this.openJoin = o ?? null;
     const route = this.deps.route;
-    if (!route) { this.deps.net.connect(); return; }
+    if (!route) { this.open(); return; }
     const { token, charId } = this.deps.who();
     const fresh = (): boolean => seq === this.dialSeq && this.live;
     route(token, charId, this.ticket, o?.roomCode).then((r) => {
@@ -297,8 +297,25 @@ export class EntryFlow {
         this.deps.view.setStatus(r.error);
         return;
       }
-      this.deps.net.connect(r.url);
-    }, () => { if (fresh()) this.deps.net.connect(); });
+      this.open(r.url);
+    }, () => { if (fresh()) this.open(); });
+  }
+
+  /**
+   * ⭐ R10-17: открыть сокет. Конструктор `WebSocket` бросает СИНХРОННО: страница по https и адрес `ws://` — смешанное
+   * содержимое (`SecurityError`), негодный адрес — `SyntaxError`. Раньше бросок внутри ответа маршрута становился
+   * необработанным отказом промиса, а игрок оставался на плашке «Подключение…» без кнопок, без таймера и без причины
+   * (а без маршрута бросок уходил из `start` в код клиента). Теперь — лобби с причиной: кнопка лобби пробует снова.
+   */
+  private open(url?: string): void {
+    try {
+      this.deps.net.connect(url);
+    } catch (e) {
+      console.warn('[net] сокет не открылся:', url ?? '(адрес по умолчанию)', e);
+      this.openJoin = null;
+      this.toLobby();
+      this.deps.view.setStatus('Не удалось подключиться к узлу игры');
+    }
   }
 
   /**

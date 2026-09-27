@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import type { GameConn } from './conn.js';
 import {
-  ConfigRegistry, newCharacterSave, craftWeapon, defaultParts, createRng, CRAFT_SLOT_LIST,
+  ConfigRegistry, newCharacterSave, craftWeapon, defaultParts, createRng, CRAFT_SLOT_LIST, itemFromBaseId,
   type ServerFrame, type SaveState, type Item, type AccountStash, type PeerInfo,
 } from '@dm/shared';
 
@@ -106,6 +106,23 @@ describe('Room — вид оружия из деталей в статике и�
     const after = peerOf(b.ws.last('peerInfo'), a.pid);
     expect(after).toBeTruthy();
     expect(after).not.toHaveProperty('weaponLook');
+  });
+
+  it('⭐ R11-02: кинжал на ячейку второй руки (`slot:"offhand"`) — дуал через провод: меч на месте, второй игрок видит пару', async () => {
+    const room = new RoomCtor('DUAL', cfg, { onEmpty() {}, onGrace() {}, onUngrace() {} });
+    rooms.push(room);
+    const a = join(room, 'user-dual-a');
+    const b = join(room, 'user-dual-b');
+    await settle();
+    const sword = forgedInBag(a.save);
+    const dagger = { ...itemFromBaseId(cfg.get('items.base'), 'dagger', cfg.get('item-tiers'), 'drop')!, pos: { x: 3, y: 0 } };
+    a.save.inventory.push(dagger);
+    await room.handleCmd(a.pid, { cmd: 'equip', uid: sword.uid }, 1);
+    await room.handleCmd(a.pid, { cmd: 'equip', uid: dagger.uid, slot: 'offhand' }, 2);
+    expect(a.ws.last('cmdResult'), 'было: «Неверная команда» — схема не знала цели').toMatchObject({ cmd: 'equip', ok: true });
+    expect(a.save.equipment.weapon?.uid, 'было: кинжал менял меч').toBe(sword.uid);
+    expect(a.save.equipment.offhand?.uid).toBe(dagger.uid);
+    expect(peerOf(b.ws.last('peerInfo'), a.pid)?.weaponKey).toBe('sword+dagger');
   });
 
   it('⭐ R2-03: вошедший позже сразу получает кадр статики тех, кто уже в комнате, — без единой команды', async () => {

@@ -14,7 +14,7 @@ import {
   getUserById,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions, sweepRunLedger,
-  getUserRole,
+  getUserRole, serverKey,
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
@@ -22,11 +22,15 @@ import { startUwsServer } from './net/uwsServer.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { renderMetrics } from './net/metrics.js';
 import { originAllowed, parseOrigins, keyMatches } from './net/adminAccess.js';
-import { installInternalRoutes, internalReader, drainProcess, installCrashDrain } from './net/internalRoutes.js';
+import { installInternalRoutes, internalReader, drainProcess, installCrashDrain, installNodeFence } from './net/internalRoutes.js';
+import { installStatic } from './net/staticRoutes.js';
+import { listenWithRetry } from './net/listen.js';
 import { installAccountRoutes, bearer, isCharId } from './net/accountRoutes.js';
-import { sessionUser } from './net/authSession.js';
+import { sessionUser, primeKnown } from './net/authSession.js';
+import { setDeviceKey } from './net/deviceToken.js';
+import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
-import { ah, httpErrors, queryText } from './net/asyncRoute.js';
+import { ah, httpErrors, queryText, warnHttp } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -97,6 +101,14 @@ async function boot(): Promise<void> {
   const gone = await sweepSessions();
   if (gone) console.log(`[dm-server] убрано протухших сессий: ${gone}`);
 
+  // ⭐ R11-05: вход, регистрация, ростер и маршрут — у гейтвея (и одиночного процесса): живые сессии и ники базы знакомы ему с
+  // запуска (после деплоя честный токен и ник не платят общий бакет адреса), токены устройства — подписаны ключом базы.
+  if (ROLE === 'gateway' || ROLE === 'single') {
+    setDeviceKey(await serverKey('device'));
+    const primed = await primeKnown();
+    console.log(`[dm-server] знакомо с запуска: сессий ${primed.sessions}, ников ${primed.names}`);
+  }
+
   // Ф3.4: в бою трафик обязан идти по TLS. Сам процесс слушает голый HTTP всегда — шифрование
   // терминирует nginx перед ним, и определить это изнутри нельзя. Поэтому требуем ЯВНОГО
   // подтверждения: без него в проде остаётся громкое предупреждение, а не тихая уверенность,
@@ -135,6 +147,15 @@ app.use(cors((req, cb) => {
 // инструменты `/api/dev/*` — большим, но после проверки доступа (`devGate` → `devJson`, как R4-11 для ассетов).
 
 /**
+ * Роль процесса (Ф4). Один и тот же файл — три разных занятия:
+ *   supervisor — поднимает гейтвей и ноды и следит за ними (по умолчанию в бою);
+ *   gateway    — HTTP, аккаунты, конфиг, статика, маршрутизация и очередь; игры в нём нет;
+ *   node       — только WebSocket и комнаты (R10-09: по HTTP — только служебное, `installNodeFence`);
+ *   single     — всё в одном процессе, как было до Ф4 (стенд, разработка, малый онлайн).
+ */
+const ROLE = process.env.DM_ROLE ?? 'single';
+
+/**
  * Ф1.7 `/metrics` и Ф4.5 `/internal/drain` — только прямому вызову с самой машины (R3-03, `net/internalRoutes.ts`).
  * Здесь, до раздачи статики: её SPA-фолбэк на любой GET иначе отдал бы на `/metrics` страницу игры.
  */
@@ -153,6 +174,9 @@ installInternalRoutes(app, {
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'dm-server', version: '0.1.0' });
 });
+
+// ⭐ R10-09: нода кластера по HTTP отдаёт только то, что выше (метрики, слив, здоровье); API и статика — у гейтвея.
+installNodeFence(app, ROLE);
 
 // ── Конфиг игры (единая истина: сервер) ─────────────────────────────────────────
 // GET отдаёт АКТУАЛЬНЫЙ эффективный конфиг (дефолты + сохранённые правки) — его грузят
@@ -202,8 +226,8 @@ async function devGuard(req: Request, res: Response): Promise<boolean> {
   if (!token) { res.status(401).json({ error: 'Требуется вход' }); return false; }
   if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return true;
   // Не ключ процессов и не токен сессии по виду — в базу незачем (R4-02). ⭐ R9-12: сессии нет — неудача платит бакет сети
-  // адреса до базы (`sessionUser`).
-  const userId = await sessionUser(req, res, token);
+  // адреса до базы (`sessionUser`). ⭐ R11-06: и потолок аккаунта — свой, широкий (публикация поз-редактора — пачка запросов).
+  const userId = await sessionUser(req, res, token, limits.accountDev);
   if (!userId) return false;
   if (await getUserRole(userId) !== 'admin') {
     console.warn(`[dm-server] отказ dev-роута ${req.path}: у ${userId} нет прав администратора`);
@@ -219,7 +243,7 @@ async function devGuard(req: Request, res: Response): Promise<boolean> {
  */
 const devGate: RequestHandler = (req, res, next) => {
   void devGuard(req, res).then((ok) => { if (ok) next(); }).catch((e: unknown) => {
-    console.error('[dm-server] отказ в обработчике:', e);
+    warnHttp(e, 'отказ в обработчике');   // R11-11: через глушитель, как `ah`
     if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
   });
 };
@@ -385,22 +409,8 @@ app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
 
 // ── Dev: ассеты 3D-моделей (GLB) — импорт из поз-редактора (FBX→настройка→экспорт GLB), раздача в игру ──
 // GLB — бинарь, в pose_store НЕ кладём (там мелкие JSON); файлы на диске, мелкий конфиг (карта костей/тип/хват)
-// — в pose_store (pe_models). Раздача статикой /assets/<id>.glb; в проде запись отключена (DEV_CONFIG_APPLY).
-// DEV: ЖЁСТКО без кэша — `no-store` + БЕЗ etag/last-modified (никаких 304). Браузер НИКОГДА не хранит и не
-// ревалидирует: перезалил модель/текстуру под тем же именем → свежие байты сразу (без Ctrl+Shift+R, без залипания).
-// ПРОД: часовой кэш (GLB крупные). Вернуть кэш = запустить с NODE_ENV=production.
-app.use('/assets', express.static(ASSETS_DIR, {
-  maxAge: DEV_CONFIG_APPLY ? 0 : '1h',
-  etag: !DEV_CONFIG_APPLY,          // DEV: без ETag → нет условных запросов/304
-  lastModified: !DEV_CONFIG_APPLY,  // DEV: без Last-Modified
-  cacheControl: !DEV_CONFIG_APPLY,  // DEV: заголовок ставим сами (ниже)
-  setHeaders: DEV_CONFIG_APPLY
-    ? (res): void => { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); res.setHeader('Pragma', 'no-cache'); res.setHeader('Expires', '0'); }
-    : undefined,
-}));
-// Нет такого файла → честный 404 (перехват ДО общего catch-all, иначе отсутствующий ассет отдавал HTML-заглушку со
-// статусом 200, и игра парсила её как GLB/PNG). Заодно чистка битых ссылок в редакторе может достоверно определить «нет файла».
-app.use('/assets', (_req, res) => { res.status(404).json({ error: 'asset not found' }); });
+// — в pose_store (pe_models). Раздача статикой /assets/<id>.glb — вместе с бандлом клиента (`installStatic` ниже, R10-03);
+// в проде запись отключена (DEV_CONFIG_APPLY).
 // Статистика файлов ассетов (`GET /api/assets/stats`, «Роадмап» редактора) — из кэша, см. `installContentReads` выше.
 
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
@@ -479,38 +489,25 @@ app.get('/api/me', ah(async (req, res) => {
 // ── Статика клиента (прод: ОДИН сервер отдаёт игру + /api + /ws на одном домене) ──────────
 // Регистрируется ПОСЛЕ всех /api-роутов, поэтому их не затирает; WS — на upgrade `/ws`, отдельно.
 // Клиент сам находит сервер на том же origin (`/api`, `wss://<host>/ws`), доп. конфиг не нужен.
+// Модели и текстуры (`/assets`, ASSETS_DIR) и собранный клиент (его бандл — тоже `/assets`, R10-03) — `net/staticRoutes.ts`.
 const CLIENT_DIST = process.env.CLIENT_DIST ?? join(dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 // Ф0.9: `DM_SERVE_STATIC=off` снимает раздачу клиента с игрового процесса. Сейчас через него
 // идут 7,4 МБ бандла и 31 МБ моделей — один холодный заход стоит игровому ядру десятков
 // мегабайт. Правильный ответ это CDN; переменная нужна, чтобы отделить игру от раздачи уже
 // сегодня, не дожидаясь CDN (второй процесс с тем же CLIENT_DIST).
 const SERVE_STATIC = process.env.DM_SERVE_STATIC !== 'off';
-// ⚠ Корневую страницу НЕЛЬЗЯ прибивать к index.html: 2D-клиент больше не собирается в продакшен
-// (см. `client/vite.config.ts`), и жёсткая ссылка на него выключила бы раздачу целиком — вместе
-// с 3D-стендом и поз-редактором. Берём первую существующую страницу, порядок = приоритет.
-const ENTRY = ['game3d.html', 'index.html'].find((f) => existsSync(join(CLIENT_DIST, f)));
-if (!SERVE_STATIC) {
+// R10-09: нода статику не отдаёт вовсе (`installNodeFence` выше) — и не монтирует.
+const ENTRY = ROLE === 'node' ? undefined : installStatic(app, { assetsDir: ASSETS_DIR, clientDist: CLIENT_DIST, serveStatic: SERVE_STATIC, dev: DEV_CONFIG_APPLY });
+if (ROLE === 'node') {
+  console.log('[dm-server] нода кластера: по HTTP — только /metrics, /internal/drain и /api/health (API и статика — у гейтвея)');
+} else if (!SERVE_STATIC) {
   console.log('[dm-server] раздача статики выключена (DM_SERVE_STATIC=off)');
 } else if (ENTRY) {
-  app.use(express.static(CLIENT_DIST));
-  // SPA-фолбэк: любой не-/api GET → корневая страница (deep links). /api/* уходит в 404 выше по стеку.
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
-    res.sendFile(join(CLIENT_DIST, ENTRY));
-  });
   console.log(`[dm-server] отдаю клиент из ${CLIENT_DIST}, корневая страница — ${ENTRY}`);
 } else {
   console.log('[dm-server] client/dist не найден — статику не отдаю (dev: клиент на Vite :5173)');
 }
 
-/**
- * Роль процесса (Ф4). Один и тот же файл — три разных занятия:
- *   supervisor — поднимает гейтвей и ноды и следит за ними (по умолчанию в бою);
- *   gateway    — HTTP, аккаунты, конфиг, статика, маршрутизация и очередь; игры в нём нет;
- *   node       — только WebSocket и комнаты;
- *   single     — всё в одном процессе, как было до Ф4 (стенд, разработка, малый онлайн).
- */
-const ROLE = process.env.DM_ROLE ?? 'single';
 /** Лаг цикла событий этой ноды — уезжает в реестр с каждым ударом сердца (Ф4). */
 const clusterLoop = monitorEventLoopDelay({ resolution: 5 });
 clusterLoop.enable();
@@ -573,22 +570,13 @@ if (ROLE === 'node' || ROLE === 'single') {
   installNodeShutdown(nodeId, () => clusterHooks.flushAll());
   console.log(`[${nodeId}] в кластере: ${url}`);
 }
-// EADDRINUSE устойчиво: при dev-рестарте старый инстанс может ещё держать порт — НЕ роняем процесс необработанной
-// ошибкой (иначе сервер умирает и редактор/клиент ловят ECONNREFUSED), а ждём освобождения и повторяем listen.
-let listenTries = 0;
-server.on('error', (err: NodeJS.ErrnoException) => {
-  if (err.code === 'EADDRINUSE' && listenTries < 10) {
-    listenTries++;
-    console.warn(`[dm-server] порт ${HTTP_PORT} занят (рестарт dev?) — повтор #${listenTries} через 500мс…`);
-    setTimeout(() => server.listen(HTTP_PORT), 500);
-  } else {
-    console.error('[dm-server] фатальная ошибка сервера:', err);
-    process.exit(1);
-  }
-});
 // В режиме uws express слушает ТОЛЬКО петлю: снаружи на него не должно быть прямого хода
 // мимо прокси, иначе мимо него уедут и заголовки адреса, по которым считаются лимиты частоты.
-server.listen(HTTP_PORT, uws ? '127.0.0.1' : undefined, () => {
-  listenTries = 0;
-  console.log(`[dm-server] слушает http://localhost:${PORT}`);
+// EADDRINUSE устойчиво (dev-рестарт: старый инстанс ещё держит порт) — повтор, ⭐ R10-16: на тот же адрес (`net/listen.ts`).
+listenWithRetry(server, HTTP_PORT, uws ? '127.0.0.1' : undefined, {
+  onFatal: (err) => {
+    console.error('[dm-server] фатальная ошибка сервера:', err);
+    process.exit(1);
+  },
+  onListening: () => console.log(`[dm-server] слушает http://localhost:${PORT}`),
 });

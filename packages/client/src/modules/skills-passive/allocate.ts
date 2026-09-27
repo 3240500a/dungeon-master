@@ -55,6 +55,8 @@ export function allocatePassive(
 
   const rank = rankOf(state, nodeId);
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
+  // ⚠ R10-11: то же правило, что у сервера (`allocPassive`) и древа скилов.
+  if (state.save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
   if (!isAllocatable(tree, state, nodeId, passiveEntriesFor(app.config, state.save)))
     return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };

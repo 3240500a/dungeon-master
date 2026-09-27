@@ -3,13 +3,15 @@ import type { Request, Response, RequestHandler, ErrorRequestHandler } from 'exp
 /**
  * Express 4 не ловит отказ промиса из обработчика: необработанный `reject` уронил бы процесс.
  * Все обработчики, ходящие в базу (Ф2 — доступ асинхронный), оборачиваются этим.
+ * ⭐ R11-11: отказ — в лог через глушитель (`warnHttp`), а не стеком на каждый запрос: пока база лежит (переключение, потолок пула),
+ * анонимный поток входов, выходов и чтений поз писал по стеку на запрос — тот же поток в лог, что R1-10…R7-05 глушили у кадров.
  */
 export type RouteParams = Record<string, string>;
 export const ah = <P extends RouteParams = RouteParams>(
   fn: (req: Request<P>, res: Response) => Promise<unknown>,
 ): RequestHandler<P> => (req, res) => {
   void fn(req as Request<P>, res).catch((e: unknown) => {
-    console.error('[dm-server] отказ в обработчике:', e);
+    warnHttp(e, 'отказ в обработчике');
     if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
   });
 };
@@ -25,15 +27,18 @@ export function queryText(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
-/** Лог ошибок, дошедших до `httpErrors`, — не чаще раза в 10 с (как `warnFrame` у кадров): поток таких не топит лог. */
+/**
+ * Лог ошибок HTTP (дошедших до `httpErrors`, отказов `ah` и `devGate` — R11-11) — не чаще раза в 10 с (как `warnFrame` у кадров):
+ * поток таких не топит лог. `what` — что за ошибка (в строку лога).
+ */
 let httpWarnAt = 0;
 let httpWarnMuted = 0;
-function warnHttp(e: unknown): void {
+export function warnHttp(e: unknown, what = 'ошибка запроса'): void {
   const now = Date.now();
   if (now - httpWarnAt < 10_000) { httpWarnMuted++; return; }
   const muted = httpWarnMuted ? ` (и ещё ${httpWarnMuted} с прошлого сообщения)` : '';
   httpWarnAt = now; httpWarnMuted = 0;
-  console.error(`[dm-server] ошибка запроса${muted}:`, e);
+  console.error(`[dm-server] ${what}${muted}:`, e);
 }
 
 /**

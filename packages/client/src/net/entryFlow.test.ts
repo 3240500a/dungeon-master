@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { parseClientFrame, type ClientFrame, type ServerFrame } from '@dm/shared';
 import { EntryFlow, netLostText, QUEUE_POLL_MS, STATUS_RETRY_MS, type EntryDeps } from './entryFlow.js';
-import type { RouteAnswer } from './netClient.js';
+import { NetClient, routeToNode, type RouteAnswer } from './netClient.js';
 import { entryScreens } from '../ui/entryScreens.js';
 import { askInGame } from '../ui/kit.js';
 
@@ -585,5 +585,107 @@ describe('⭐ R4-13: маршрут к игровой ноде (кластер) 
     answer({ url: NODE0 });
     await vi.advanceTimersByTimeAsync(0);
     expect(c.net.connects).toBe(0);
+  });
+});
+
+/**
+ * ⭐ R10-17: СОКЕТ НЕ СОЗДАЛСЯ — ЛОББИ С ПРИЧИНОЙ, А НЕ ВЕЧНАЯ ПЛАШКА.
+ *
+ * Конструктор `WebSocket` бросает СИНХРОННО: страница по https и адрес узла `ws://` (DEPLOY, вариант Б) — смешанное
+ * содержимое (`SecurityError`), негодный адрес — `SyntaxError`. `connect` звался последним в ответе маршрута без защиты:
+ * бросок становился необработанным отказом промиса, а игрок оставался на плашке «Подключение…» без кнопок, без таймера и
+ * без причины (R4-22: на экране входа всегда есть что нажать). Теперь — лобби с причиной; кнопка лобби пробует снова.
+ */
+describe('⭐ R10-17: сокет не создался (конструктор бросил) — лобби с причиной, а не плашка без кнопок', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  const unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown): void => { unhandled.push(e); };
+  beforeEach(() => {
+    unhandled.length = 0;
+    process.on('unhandledRejection', onUnhandled);
+    G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body: new El('body') };
+    vi.spyOn(console, 'warn').mockImplementation(() => { });
+  });
+  afterEach(() => { process.off('unhandledRejection', onUnhandled); delete G.document; vi.restoreAllMocks(); });
+  /** Все отложенные шаги (ответ маршрута, отказ промиса) — настоящими часами: отказ «без обработчика» ловит сам node. */
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const insecure = (): never => {
+    throw Object.assign(new Error("Failed to construct 'WebSocket': An insecure WebSocket connection may not be initiated from a page loaded over HTTPS."), { name: 'SecurityError' });
+  };
+
+  it('⭐ адрес ноды от гейтвея не открывается — лобби с причиной, без необработанного отказа; кнопка лобби пробует снова', async () => {
+    const NODE = 'ws://203.0.113.5:3101/ws';
+    const c = client('hero-1', { route: () => Promise.resolve({ url: NODE }) });
+    const connect = c.net.connect;
+    let broken = true;
+    c.net.connect = (url?: string): void => { connect(url); if (broken) insecure(); };
+    c.start();
+    await settle();
+    expect(c.net.urls).toEqual([NODE]);
+    expect(unhandled, 'было: бросок внутри ответа маршрута — необработанный отказ').toEqual([]);
+    expect(c.text(), 'было: плашка «Подключение…» без кнопок навсегда').toContain('Кооп');
+    expect(c.text()).toContain('Не удалось подключиться к узлу игры');
+    expect(console.warn, 'причина — в консоль (оператору: ws:// со страницы https)').toHaveBeenCalled();
+
+    // Кнопка лобби — новая попытка (маршрут заново); снова бросок — снова лобби, не плашка.
+    c.click('[data-a="solo"]');
+    await settle();
+    expect(c.net.urls).toEqual([NODE, NODE]);
+    expect(c.text()).toContain('Кооп');
+    expect(unhandled).toEqual([]);
+
+    // Починили адрес — следующая кнопка подключает и входит, как обычно.
+    broken = false;
+    c.click('[data-a="solo"]');
+    await settle();
+    expect(c.net.urls).toEqual([NODE, NODE, NODE]);
+    c.net.open();
+    expect(c.net.sent.at(-1)).toEqual({ t: 'runStatus', token: TOKEN, charId: 'hero-1' });
+  });
+
+  it('без маршрута (одиночный процесс) — бросок сокета на старте не роняет `start`, а ведёт в лобби с причиной', async () => {
+    const c = client();
+    const connect = c.net.connect;
+    c.net.connect = (url?: string): void => { connect(url); insecure(); };
+    expect(() => c.start(), 'было: бросок уходил из `start` в код клиента').not.toThrow();
+    await settle();
+    expect(c.net.connects).toBe(1);
+    expect(c.text()).toContain('Кооп');
+    expect(c.text()).toContain('Не удалось подключиться к узлу игры');
+    expect(unhandled).toEqual([]);
+  });
+
+  it('⭐ как в браузере: настоящие `NetClient` и `routeToNode`, страница по https, гейтвей называет `ws://` узла', async () => {
+    const W = globalThis as unknown as { location?: unknown; fetch?: unknown; WebSocket?: unknown };
+    const saved = { location: W.location, fetch: W.fetch, WebSocket: W.WebSocket };
+    const made: string[] = [];
+    class BrowserWs {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
+      readyState = 0; binaryType = '';
+      onopen: (() => void) | null = null; onclose: ((ev?: { code?: number }) => void) | null = null; onmessage: (() => void) | null = null;
+      constructor(url: string) { if (url.startsWith('ws:')) insecure(); made.push(url); }   // Chrome/Firefox на https-странице
+      send(): void { }
+      close(): void { this.readyState = 3; }
+    }
+    W.location = { protocol: 'https:', host: 'game.example', hostname: 'game.example' };
+    W.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ url: 'ws://203.0.113.5:3101/ws' }) });
+    W.WebSocket = BrowserWs;
+    try {
+      const net = new NetClient();
+      const root = new El('ui-root');
+      const flow = new EntryFlow({
+        net, who: () => ({ token: TOKEN, charId: 'hero-1' }), route: routeToNode,
+        view: entryScreens(() => root as unknown as HTMLElement, () => { }),
+      });
+      flow.attach();
+      flow.start();
+      await settle();
+      expect(unhandled).toEqual([]);
+      // Страница по https — сокет узла только `wss://` (браузер `ws://` не откроет вовсе): просим его у того же хоста и порта.
+      expect(made).toEqual(['wss://203.0.113.5:3101/ws']);
+      flow.detach();
+    } finally {
+      Object.assign(W, saved);
+    }
   });
 });

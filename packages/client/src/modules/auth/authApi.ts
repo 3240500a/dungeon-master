@@ -27,11 +27,26 @@ async function api<T>(path: string, init: RequestInit & { token?: string } = {})
   return data;
 }
 
+/**
+ * ⭐ R11-05: ТОКЕН УСТРОЙСТВА — сервер выдаёт его на верный пароль и регистрацию, клиент хранит по нику (`dm:device:<ник>`) и шлёт
+ * со входом в этот ник. С ним вход не упирается в общий лимит адреса: соседа по NAT, чей лимит адреса опустошил тролль неверными
+ * паролями, этот вход обходит (его держит лимит ника). Пароль нужен как прежде; хранилища нет (приватный режим) — вход как раньше.
+ */
+const deviceKey = (username: string): string => `dm:device:${username.trim().toLowerCase()}`;
+function deviceOf(username: string): string | undefined {
+  try { return localStorage.getItem(deviceKey(username)) ?? undefined; } catch { return undefined; }
+}
+function keepDevice(username: string, s: AuthSession & { device?: unknown }): AuthSession {
+  if (typeof s.device === 'string') { try { localStorage.setItem(deviceKey(username), s.device); } catch { /* нет хранилища */ } }
+  return { token: s.token, userId: s.userId, username: s.username };   // в сессию (`dm:auth`) токен устройства не идёт
+}
+
 export const register = (username: string, password: string): Promise<AuthSession> =>
-  api('/register', { method: 'POST', body: JSON.stringify({ username, password }) });
+  api<AuthSession>('/register', { method: 'POST', body: JSON.stringify({ username, password }) }).then((s) => keepDevice(username, s));
 
 export const login = (username: string, password: string): Promise<AuthSession> =>
-  api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  api<AuthSession>('/login', { method: 'POST', body: JSON.stringify({ username, password, device: deviceOf(username) }) })
+    .then((s) => keepDevice(username, s));
 
 export const logout = (token: string): Promise<void> =>
   api('/logout', { method: 'POST', token }).then(() => undefined);

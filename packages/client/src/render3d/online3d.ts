@@ -24,6 +24,7 @@ import { driveActor } from './driveActor.js';
 import { corpseStart, collapseCorpses } from './corpseCollapse.js';   // ⭐ смерть + коллапс-луп трупов: падение (и за окном) → запекание лежащего
 import { cullActor } from './windowCull.js';   // ⭐ окно-culling живого монстра: сон/пробуждение (спящему — часы нокдауна)
 import { moveFromKeys, facingFrom, aimOnGround, aimTmp } from './playerInput.js';
+import { gameKeyDown, gameKeyUp } from './gameKeys.js';   // R11-16: галка ⚙ в фокусе клавиш игры не глотает
 import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -256,13 +257,9 @@ export async function startOnline3d(): Promise<void> {
   // а не вторая копия формулы: развернём камеру — свет поедет за ней сам.
   let TO_CAM = camDir(CAM);
   const orbit = { target: new THREE.Vector3(), dist: CAM.startDist };
-  addEventListener('keydown', (e) => {
-    const t = document.activeElement;
-    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;   // ввод в форму — не игровой ключ
-    keys.add(e.code);
-    if (e.code === 'Space' || e.code === 'Tab' || e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault();
-  });
-  addEventListener('keyup', (e) => keys.delete(e.code));
+  // ⭐ R11-16: не игра — только НАБОР в поле; галка и ползунок ⚙ в фокусе клавиш не глотают, пробел их не жмёт (`gameKeys.ts`).
+  addEventListener('keydown', (e) => gameKeyDown(e, document.activeElement, keys));
+  addEventListener('keyup', (e) => gameKeyUp(e, document.activeElement, keys));
   // ИНСПЕКТОР СЛОЁВ (F9) — ТОТ ЖЕ модуль, что в редакторе. Смотреть на разные цифры в двух местах —
   // ровно та беда, ради которой он и заводится: разошлись бы не только числа, но и выводы по ним.
   let traceView: LayerTraceView | null = null;

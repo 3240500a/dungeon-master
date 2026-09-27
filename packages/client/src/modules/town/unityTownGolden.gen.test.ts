@@ -5,14 +5,16 @@
  * (`DmHeld.DropCell` ≡ `heldItem.dropCell`). Меню Unity: DM ▸ Verify Town Parity. Правили веб осознанно — эталон
  * обновится здесь, потом скопировать в Assets/DM/UI/Tests/unity_town_golden.json.
  * Цену ПОКУПКИ Unity не считает вовсе — её шлёт сервер в кадре `shop` (`prices`), сверять нечего.
+ * ⭐ R11-02: раздел `offhand` — «что встанет во вторую руку» (`offhandRefusal`: щит / дуал-вилд) для порта пупсика Unity;
+ * пока Unity его не сверяет (открытый хвост: ячейка второй руки должна слать `equip` с `slot:'offhand'`).
  */
 import { describe, it, expect } from 'vitest';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  ConfigRegistry, createRng, generateItem, itemFromBaseId, materialItem, newCharacterSave, parseTownCommand, shopSellPrice, stashDims,
-  upgradedItem, type Item,
+  ConfigRegistry, createRng, generateItem, itemFromBaseId, materialItem, newCharacterSave, offhandRefusal, parseTownCommand, shopSellPrice,
+  stashDims, upgradedItem, type Item,
 } from '@dm/shared';
 import { dropCell } from '../inventory/heldItem.js';
 
@@ -77,6 +79,22 @@ function dropCases(): { cols: number; rows: number; w: number; h: number; grabOx
   return out;
 }
 
+/** ⭐ R11-02: основная рука × вещь → отказ второй руки (`offhandRefusal`) или `null`. Только поля, которые правило читает. */
+function offhandCases(): { main: HandView | null; item: HandView; refusal: string | null }[] {
+  const view = (it: Item): HandView => ({ slot: it.slot ?? null, hands: it.hands ?? 1, versatile: !!it.versatile });
+  const items = ['short-sword', 'dagger', 'hand-crossbow', 'apprentice-wand', 'greatsword', 'claymore', 'wooden-shield', 'leather-cap']
+    .map((id) => itemFromBaseId(reg.get('items.base'), id, undefined, 'drop')!);
+  const out = new Map<string, { main: HandView | null; item: HandView; refusal: string | null }>();
+  for (const main of [undefined, ...items.filter((it) => it.slot === 'weapon')]) {
+    for (const item of items) {
+      const c = { main: main ? view(main) : null, item: view(item), refusal: offhandRefusal(item, main) };
+      out.set(JSON.stringify([c.main, c.item]), c);   // разные базы с одинаковыми руками — один случай
+    }
+  }
+  return [...out.values()];
+}
+type HandView = { slot: string | null; hands: number; versatile: boolean };
+
 describe('unityTownGolden — продюсер эталона (пишет __golden__/unity_town.json)', () => {
   it('генерит эталон цены скупки и бросков и пишет на диск', () => {
     const sell = sellItems().map((item) => ({ item, price: shopSellPrice(reg, item) }));
@@ -91,8 +109,11 @@ describe('unityTownGolden — продюсер эталона (пишет __gold
     expect(drop.some((c) => c.cell === null) && drop.some((c) => c.cell !== null)).toBe(true);
     // Каждая клетка, которую dropCell разрешает, проходит строгую схему сервера (R2-35).
     for (const c of drop) if (c.cell) expect(parseTownCommand({ cmd: 'moveItem', uid: 'u', ...c.cell }).ok).toBe(true);
+    const offhand = offhandCases();
+    expect(offhand.some((c) => c.refusal === null && c.item.slot === 'weapon'), 'дуал-вилд есть').toBe(true);
+    expect(offhand.some((c) => c.refusal !== null) && offhand.some((c) => c.refusal === null && c.item.slot === 'offhand')).toBe(true);
     const golden = {
-      note: 'Эталон паритета Unity ↔ веб для города (R2-35, R2-36). Генерит packages/client/src/modules/town/unityTownGolden.gen.test.ts.',
+      note: 'Эталон паритета Unity ↔ веб для города (R2-35, R2-36, R11-02). Генерит packages/client/src/modules/town/unityTownGolden.gen.test.ts.',
       // Ровно те разделы /api/config, которые читает порт цены: множитель редкости и цена сырья поштучно.
       config: {
         rarities: reg.get('rarities').map((r) => ({ id: r.id, priceMult: r.priceMult })),
@@ -100,6 +121,7 @@ describe('unityTownGolden — продюсер эталона (пишет __gold
       },
       sell,
       drop,
+      offhand,
     };
     const dir = join(HERE, '__golden__');
     mkdirSync(dir, { recursive: true });

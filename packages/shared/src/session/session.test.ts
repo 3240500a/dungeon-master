@@ -2122,3 +2122,52 @@ describe('⚠ R7-19: уник-трофей падает целым', () => {
     expect(rare.every((it) => it.rarity === 'rare' && it.broken), 'прочие трофеи — сломаны, как прежде').toBe(true);
   });
 });
+
+/**
+ * ⚠ R10-02: СНАРЯД НЕ ПРОЛЕТАЕТ ДИАГОНАЛЬНЫЙ ШОВ — угол, где касаются две клетки пола, а обе боковые — стены. Подшаг снаряда
+ * (≤ 8 px) проверял только клетку, куда попал: у самого угла он перескакивал из клетки в клетку по диагонали, минуя обе стены,
+ * и стрела героя из угла шва била монстра, который ни видеть его, ни дойти напрямую не мог. Теперь угол держит и снаряд —
+ * то же правило, что у взгляда (`diagonalSealed`).
+ */
+describe('⚠ R10-02: снаряд не пролетает диагональный шов', () => {
+  /** Комнаты (1..4)² и (5..8)², касаются только углом (4,4)↔(5,5); `open` — прорезать боковую (5,4): шва нет. */
+  function seam(open: boolean): Grid {
+    const g = makeGrid(12, 10, Cell.Wall);
+    for (let y = 1; y <= 8; y++) for (let x = 1; x <= 8; x++) if ((x <= 4 && y <= 4) || (x >= 5 && y >= 5)) g[y]![x] = Cell.Floor;
+    if (open) g[4]![5] = Cell.Floor;
+    return g;
+  }
+  /** Лучник у угла шва стреляет ровно по диагонали через угол в неподвижного монстра; → [вылетело стрел, попаданий]. */
+  function shoot(open: boolean): [number, number] {
+    const r = reg();
+    const s = new GameSession(r, 9, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'archer'));
+    const mAt = cellToWorld(6, 6);
+    const target = tankMon(r, mAt.x, mAt.y, 'undead');
+    target.def.ai = 'stationary';
+    const at = { x: 5 * TILE - 15, y: 5 * TILE - 15 };
+    s.enterFloor(1, { grid: seam(open), spawn: at, monsters: [target] });
+    const seen = new Set<number>();
+    let hits = 0;
+    for (let i = 0; i < 120; i++) {
+      p.pos = { ...at };
+      for (const e of s.tick(1 / 30, { p1: { ...idle, facing: Math.PI / 4, attack: true } })) {
+        if (e.type === 'hit' && e.target === 'monster') hits++;
+      }
+      for (const pr of s.world.projectiles) if (pr.owner === 'player') seen.add(pr.id);
+    }
+    return [seen.size, hits];
+  }
+
+  it('⭐ через шов — ни одного попадания; стрелы при этом летят', () => {
+    const [shots, hits] = shoot(false);
+    expect(shots, 'лучник стрелял').toBeGreaterThan(0);
+    expect(hits, 'сквозь угол шва').toBe(0);
+  });
+
+  it('контроль: одна боковая клетка открыта — те же выстрелы попадают', () => {
+    const [shots, hits] = shoot(true);
+    expect(shots).toBeGreaterThan(0);
+    expect(hits).toBeGreaterThan(0);
+  });
+});

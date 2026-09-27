@@ -245,6 +245,16 @@ const SCHEMA_MAIN: readonly string[] = [`
     -- меняла хвост IPv6 внутри своей сети. created_ip остаётся — для разбора.
     ALTER TABLE users ADD COLUMN IF NOT EXISTS created_net text;
     CREATE INDEX IF NOT EXISTS users_created_net ON users (created_net, created_at DESC);
+    -- R11-01: и ступени шире (IPv6: /56 и /48) — суточный потолок держат и они: ферма меняла /64 внутри своей /56 или /48.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS created_net56 text;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS created_net48 text;
+    CREATE INDEX IF NOT EXISTS users_created_net56 ON users (created_net56, created_at DESC);
+    CREATE INDEX IF NOT EXISTS users_created_net48 ON users (created_net48, created_at DESC);
+    -- R11-05: ключи процессов (подпись токенов устройства входа) — один на базу, переживают рестарт.
+    CREATE TABLE IF NOT EXISTS server_keys (
+      name text PRIMARY KEY,
+      key  text NOT NULL
+    );
     -- РОЛЬ. Инструментальные роуты (/api/dev/*) держались на том, что запрос пришёл с локальной
     -- машины. Это не пропуск, а его видимость: браузер разработчика тоже ходит с 127.0.0.1, значит
     -- под гейт подпадала ЛЮБАЯ открытая в нём страница. Теперь пускает роль, а не адрес.

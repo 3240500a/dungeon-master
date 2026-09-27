@@ -1,5 +1,6 @@
 import type { App } from '../core/app.js';
 import { hideTooltip } from './kit.js';
+import { isTextEntry } from './typingGuard.js';
 
 /** Панель — самодостаточный кусок UI, рисующий себя в переданный контейнер. */
 export interface Panel {
@@ -231,9 +232,8 @@ export class DomUi {
       const panel = map[e.code];
       // R6-25: хоткеи окон — только в мире (Esc выше закрывает и вне его).
       if (panel && this.factories.has(panel) && this.app.inWorld) {
-        // Не перехватываем, если фокус в поле ввода (редактор и т.п.).
-        const t = e.target as HTMLElement;
-        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+        // Не перехватываем, если фокус в поле ввода (редактор и т.п.); галка или ползунок в фокусе — не поле (R11-16).
+        if (isTextEntry(e.target)) return;
         e.preventDefault();
         this.toggle(panel);
       }

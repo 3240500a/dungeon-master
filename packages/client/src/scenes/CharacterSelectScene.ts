@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { App } from '../core/app.js';
 import { makeButton } from './ui/button.js';
-import { listCharacters, deleteCharacter, logout, type CharacterSummary } from '../modules/auth/authApi.js';
+import { listCharacters, deleteCharacter, type CharacterSummary } from '../modules/auth/authApi.js';
+import { signOut } from '../modules/auth/signOut.js';
 import { FONT_TITLE } from '../ui/kit.js';
 import { reflowOnFontsReady } from './ui/fonts.js';
 
@@ -126,9 +127,8 @@ export class CharacterSelectScene extends Phaser.Scene {
   }
 
   private async doLogout(): Promise<void> {
-    const app = App.from(this);
-    try { await logout(app.auth!.token); } catch { /* всё равно выходим */ }
-    app.clearAuth();
+    // ⭐ R11-15: один шов выхода с веб-3D (`signOut`): сессия гаснет на сервере, вход забыт; сервер недоступен — всё равно выходим.
+    await signOut(App.from(this));
     this.scene.start('Login');
   }
 }

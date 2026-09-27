@@ -5,12 +5,12 @@ import {
   generateRunPlan, pickRunModifiers, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng, rngFrom, shapeFoundWeapon, rollTierLevel,
   buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
-  craftAction, enchantAction, sketchAction, fullJournal, normalizeJournal, normalizeCraftNonces, SHOP_CONSUMABLES, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
+  craftAction, enchantAction, sketchAction, fullJournal, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor, pruneBoardQuests,
   isDifficultyUnlocked, applyDeathPenalty, parseTownCommand, PRICE_CHANGED,
   noteNodeId, sameRun, runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord, mergeNodeState, isDotKind, activeAbilityOf,
-  hasLineOfSight, findPath, PROTOCOL_VERSION,
+  hasLineOfSight, findPath, worldToCell, playerSnapshot, PROTOCOL_VERSION,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
@@ -148,6 +148,13 @@ const VOTE_COOLDOWN_MS = 1_500;
  * клиентом на время пути ввода (подбежал и сразу нажал, рывок). Рычагу и сундуку сервер даёт 56 при радиусах клиента 40 и 48.
  */
 const EXIT_REACH_PX = 64;
+/**
+ * ⭐ R10-01: сколько шагов по сетке (клеток, 4-связно) от героя до точки перехода ещё «рядом». В два тайла влезает не больше
+ * четырёх шагов (по два на ось) — запас на обход угла; стена в клетку между героем и выходом лабиринта — это десятки клеток.
+ */
+const EXIT_REACH_STEPS = 6;
+/** Потолок обхода поиска пути к точке перехода: все клетки в `EXIT_REACH_STEPS` шагах (их не больше 85) — поиск не бежит по этажу. */
+const EXIT_REACH_SEARCH = 128;
 /** Что говорить тому, кто зовёт переход издалека (R3-01, R4-01): кадр `error` с кодом `far`. */
 const FAR_EXIT = 'Подойдите к выходу';
 const FAR_PORTAL = 'Подойдите к порталу';
@@ -488,6 +495,24 @@ interface LeftState {
   skillCd: Record<string, number>; toggles: string[]; skillBuffs: Record<string, number>;
 }
 
+/**
+ * ⭐ R11-04: пулы героя из сейва (`save.vitals`) для свежей сущности `p` (полные пулы) — не выше полных, живой (здоровье ≥ 1). Время
+ * вне игры (`v.at`, часы сервера) — реген по статам героя (`regen`), как если бы он стоял в городе: мгновенно пулы не полнятся, а
+ * вернувшийся через полчаса (или завтра) — полон, как и простоявший их в игре. Нет записи (старый сейв, погиб) или она битая —
+ * ничего: пулы остаются полными.
+ */
+function savedVitals(
+  p: PlayerEntity, v: SaveState['vitals'], regen: { hpRegen: number; manaRegen: number; staminaRegen: number }, now: number,
+): Partial<Pick<PlayerEntity, 'hp' | 'mana' | 'stamina'>> {
+  if (!v || ![v.hp, v.mana, v.stamina].every(Number.isFinite)) return {};
+  const dt = typeof v.at === 'number' && Number.isFinite(v.at) ? Math.max(0, now - v.at) / 1000 : 0;
+  return {
+    hp: Math.min(p.hp, Math.max(1, v.hp + regen.hpRegen * dt)),
+    mana: Math.min(p.mana, Math.max(0, v.mana + regen.manaRegen * dt)),
+    stamina: Math.min(p.stamina, Math.max(0, v.stamina + regen.staminaRegen * dt)),
+  };
+}
+
 /** Хуки комнаты в RoomManager: уничтожение + регистрация/снятие грейс-реконнекта по charId. */
 interface RoomHooks {
   onEmpty: (code: string) => void;
@@ -626,6 +651,17 @@ export class Room implements Tickable {
   private disconnected = new Map<string, Disconnected>();
   /** R4-06: какими герои ушли (charId → состояние сущности) — см. `LeftState`. */
   private left = new Map<string, LeftState>();
+  /**
+   * ⭐ R11-04: КАКИМИ ГЕРОИ ВОШЛИ НА АРЕНУ (charId → состояние сущности, как `LeftState`): арена даёт всем полное тело на время боя
+   * (`enterArenaFloor`), а возврат в город — это тело, а не арены (`enterTown`). `at` — время мира снимка: присутствующему город
+   * отдаёт реген и откаты за время боя, как если бы он стоял в городе. Живёт, пока комната на арене.
+   */
+  private arenaHome = new Map<string, { state: LeftState; at: number }>();
+  /**
+   * ⭐ R11-03: СНЯТЫЕ С НЕИЗВЕСТНЫМ ИСХОДОМ ФИКСАЦИИ (`keepUnknown`) — pid → прощание «на дописать». Менеджер забирает его тем же
+   * путём, что прощальную запись: закрытие сокета или выселение зовут `removePlayer`, и тот отдаёт его вместо «записано».
+   */
+  private staleFarewells = new Map<string, { charId: string; farewell: Farewell }>();
   /** Таймер грейс-окна при полностью пустой комнате (0 подключённых); null = не запущен. */
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   /** ⭐ R5-07: комната заморожена сливом процесса (`freeze`): мир и сейвы больше не меняются, только дописываются. */
@@ -717,9 +753,20 @@ export class Room implements Tickable {
     this.clients.set(pid, client);
     // R2-02: аккаунт — в сущность игрока: выброшенное им помечается, и чужой аккаунт его не поднимет.
     // R4-06: ушёл с этого же экземпляра этажа — встаёт там же и таким же (здоровье, дебаффы, откаты, смерть).
-    const left = this.takeLeft(save.charId);
-    this.session.addPlayer(pid, save, left?.pos, userId);
+    let left = this.takeLeft(save.charId);
+    // ⭐ R11-04: пришёл на арену впервые за этот бой — тело арены полное (как у всех), а его тело вне арены (запись ухода или
+    // пулы из сейва) ждёт возврата в город (`arenaHome`). Уже бился здесь и отключился — возвращается телом арены (R4-06).
+    const arenaFirst = this.area === 'arena' && !this.arenaHome.has(save.charId);
+    const home = arenaFirst ? left : undefined;
+    if (arenaFirst) left = undefined;
+    const pe = this.session.addPlayer(pid, save, left?.pos, userId);
     const deadAgain = left ? this.restoreLeft(pid, left) : false;
+    if (arenaFirst || !left) {
+      // R11-04: новая комната — пулы из сейва (с регеном за время вне игры), а не полные.
+      const saved = save.vitals ? savedVitals(pe, save.vitals, playerSnapshot(save, this.cfg).derived, Date.now()) : {};
+      if (arenaFirst) this.arenaHome.set(save.charId, { state: home ?? { ...this.stateOf(pe), ...saved }, at: this.session.world.timeMs });
+      else Object.assign(pe, saved);
+    }
     this.joinRun(save);
     pruneBoardQuests(save);          // R5-20: сданное с доски в старом сейве — из журнала (квота помнит поколения)
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
@@ -820,17 +867,23 @@ export class Room implements Tickable {
    * Самые давние записи вытесняются потолком `LEFT_MAX`.
    */
   private noteLeft(p: PlayerEntity): void {
+    this.noteVitals(p);   // R11-04: и в сейв — пока сущность в мире (запись уйдёт позже, и комната к тому времени могла уйти с арены)
+    const charId = p.save.charId;
+    this.left.delete(charId);
+    this.left.set(charId, this.stateOf(p));
+    if (this.left.size > LEFT_MAX) this.left.delete(this.left.keys().next().value!);
+  }
+
+  /** R4-06: состояние сущности героя — как запись ухода (`LeftState`); время для снятого стоит: дебаффы — остатком. */
+  private stateOf(p: PlayerEntity): LeftState {
     const now = this.session.world.timeMs;
     const debuffs: DebuffState = {};
     for (const [k, d] of Object.entries(p.debuffs)) if (d) debuffs[k as DebuffKind] = { ...d, expiresAt: Math.max(0, d.expiresAt - now) };
-    const charId = p.save.charId;
-    this.left.delete(charId);
-    this.left.set(charId, {
+    return {
       pos: { ...p.pos }, alive: p.alive, hp: p.hp, mana: p.mana, stamina: p.stamina, debuffs,
       stunTimer: p.stunTimer, attackCd: p.attackCd, dodgeCd: p.dodgeCd, combatTimer: p.combatTimer,
       skillCd: { ...p.skillCd }, toggles: [...p.toggles], skillBuffs: { ...p.skillBuffs },
-    });
-    if (this.left.size > LEFT_MAX) this.left.delete(this.left.keys().next().value!);
+    };
   }
 
   /** R4-06: запись ухода героя — только годная к возврату (мёртвый в арене возрождается свежим, как там и положено). */
@@ -863,11 +916,13 @@ export class Room implements Tickable {
 
   /**
    * R4-06, R4-16: этаж сменился — записи ушедших живут дальше так же, как присутствующие: мёртвые оживают (записи нет —
-   * вход свежим), точка ухода к новому этажу не относится, город снимает дебаффы и стан, арена возрождает всех.
+   * вход свежим), точка ухода к новому этажу не относится, город снимает дебаффы и стан.
+   * ⭐ R11-04: арена записи живых больше не стирает: её полное тело — только на время боя (`arenaHome`), и ушедший раньше вернётся
+   * в город таким, каким ушёл, а не свежим.
    */
   private floorChanged(to: 'dungeon' | 'town' | 'arena'): void {
     for (const [id, s] of this.left) {
-      if (!s.alive || to === 'arena') { this.left.delete(id); continue; }
+      if (!s.alive) { this.left.delete(id); continue; }
       delete s.pos;
       if (to === 'town') { s.debuffs = {}; s.stunTimer = 0; }
     }
@@ -883,7 +938,13 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     // Уже снят (R1-01: сессию, потерявшую право писать, комната снимает сама, а закрытие её сокета доходит
     // до менеджера позже) — ни записи, ни второго `peerLeft`, ни второго уничтожения комнаты.
-    if (!p && !c) return Promise.resolve(SAVED);
+    // ⭐ R11-03: снят с неизвестным исходом фиксации — его прощание и есть копия «на дописать» (`keepUnknown`).
+    if (!p && !c) {
+      const stale = this.staleFarewells.get(pid);
+      if (!stale) return Promise.resolve(SAVED);
+      this.staleFarewells.delete(pid);
+      return Promise.resolve(stale.farewell);
+    }
     this.peerSent.delete(pid);
     let done: Promise<Farewell> = Promise.resolve(SAVED);
     if (p) this.noteLeft(p);   // R4-06: вернётся — таким, каким ушёл
@@ -977,6 +1038,8 @@ export class Room implements Tickable {
    * (его забег продолжится там, где он жив). Возвращает, было ли что снимать.
    */
   fence(charId: string): boolean {
+    // R11-03: и копия «на дописать» сессии, снятой с неизвестным исходом фиксации, — тоже проигравшая (R6-06).
+    for (const [pid, s] of this.staleFarewells) if (s.charId === charId) this.staleFarewells.delete(pid);
     for (const c of this.clients.values()) {
       if (this.session.world.players[c.pid]?.save.charId !== charId) continue;
       this.dropStale(c);
@@ -1159,8 +1222,10 @@ export class Room implements Tickable {
     const live = Promise.all(clients.map((c) => this.persist(c.pid)))
       .then((rs) => Promise.all(clients.filter((_, i) => rs[i] === 'failed').map((c) => this.persist(c.pid))));
     this.lastSaveAt = Date.now();
+    // R11-03: и копии сессий, снятых с неизвестным исходом фиксации, которые менеджер ещё не забрал (закрытие сокета в пути).
+    const stale = [...this.staleFarewells.values()].map((s) => s.farewell.retry?.());
     // R9-01: и свод записей забега — процесс уходит, а копии участников живут дальше.
-    return Promise.all([live, ...[...this.disconnected.values()].map((i) => i.saving), this.flushLedger()]);
+    return Promise.all([live, ...[...this.disconnected.values()].map((i) => i.saving), ...stale, this.flushLedger()]);
   }
 
   /**
@@ -1362,10 +1427,23 @@ export class Room implements Tickable {
       case 'buy': {
         // ⭐ R6-16: `maxGold` — цена кадра лавки, которую видел игрок: дороже ядро не берёт. Отказ «цена изменилась» — кадр
         // лавки заново, с ценами СВОЕГО конфига: иначе клиент так и просил бы по старой (кадр шлётся на входе и после покупки).
-        const refreshed = (r: CmdOutcome): CmdOutcome => { if (!r.ok && r.reason?.startsWith(PRICE_CHANGED)) this.showShop(); return r; };
+        // ⭐ R10-06: только ЗОВУЩЕМУ и в меру пересылок после отказа (`cmdResync`, как сейв, R1-11) — прилавок не менялся. Раньше
+        // кадр прилавка (десятки КБ) уходил всей комнате на каждый отказ: `buy{maxGold:0}` без золота отказывает всегда, и 92 байта
+        // команды оборачивались кадром в ~27 КБ каждому в пати, 10 раз в секунду, — до разрыва медленного канала соседа.
+        const refreshed = (r: CmdOutcome): CmdOutcome => {
+          if (!r.ok && r.reason?.startsWith(PRICE_CHANGED) && limits.cmdResync.take(c.userId)) this.send(c.ws, this.shopFrame());
+          return r;
+        };
         // R2-04: зелья лавки — свои у комнаты (не сток героя): купленное уходит только отсюда.
         const potion = this.consumables.find((i) => i.uid === command.uid);
         if (potion) {
+          // ⭐ R11-13: базу выключили в редакторе, пока прилавок стоит (правка живьём), — с прилавка долой, не продаётся.
+          const on = shopConsumableIds(this.cfg);
+          if (!on.includes(potion.baseId)) {
+            this.consumables = this.consumables.filter((i) => on.includes(i.baseId));
+            this.showShop();
+            return refreshed({ ok: false, reason: 'нет в ассортименте' });
+          }
           const r = buyItem(this.cfg, save, potion, command.maxGold);
           if (r.ok) { this.consumables = this.consumables.filter((i) => i !== potion); this.showShop(); }
           return refreshed(r);
@@ -1437,7 +1515,7 @@ export class Room implements Tickable {
       // транзакция сундука, как вся кузница; отказы ядра — до изменения. От `craft.live` не зависит: эскизы копит
       // разбор, который работает и при закрытой ковке, — потратить их на детали впрок можно и тогда.
       case 'forgeSketch': return this.withAccount(c, pid, 'craft', (st) => sketchAction(this.cfg, st, command.variantId));
-      case 'equip': return equip(this.cfg, save, command.uid);
+      case 'equip': return equip(this.cfg, save, command.uid, command.slot);   // R11-02: цель — вторая рука (дуал-вилд)
       case 'unequip': return unequip(this.cfg, save, command.slot);
       case 'allocAttr': return allocAttr(save, command.attr, command.n);   // R2-15: пачка очков — одна команда
       case 'respec': return respec(this.cfg, save, command.maxGold);
@@ -1627,10 +1705,21 @@ export class Room implements Tickable {
   /**
    * Стоит ли игрок у точки перехода (выход, портал) — с запасом `EXIT_REACH_PX` на отставание позиции сервера от
    * предсказанной клиентом (R3-01).
+   * ⭐ R10-01: И СО СВОЕЙ СТОРОНЫ СТЕНЫ — точку видно (сетка стен и закрытых дверей, как `GameSession.within`, R6-26), и дойти до
+   * неё — пара шагов (`EXIT_REACH_STEPS`). Два тайла длиннее стены в клетку: в лабиринте архива выход (портал финала на боссе,
+   * точку входа) звали из соседнего коридора сквозь стену — спуск, «забег пройден» с живым боссом, уход в город, — срезая
+   * десятки клеток, а то и весь этаж. Путь — вторая мера: видимость по клеткам проходит и сквозь диагональный шов (R10-02),
+   * а шаги по сетке — нет. Декор взгляд здесь не закрывает: этаж на стороны он не делит, а у выхода и входа его не ставят.
    */
   private stands(pid: string, at: { x: number; y: number } | undefined): boolean {
     const pos = this.session.world.players[pid]?.pos;
-    return !!pos && !!at && Math.hypot(at.x - pos.x, at.y - pos.y) <= EXIT_REACH_PX;
+    if (!pos || !at || Math.hypot(at.x - pos.x, at.y - pos.y) > EXIT_REACH_PX) return false;
+    const w = this.session.world;
+    if (!hasLineOfSight(w.grid, pos.x, pos.y, at.x, at.y)) return false;
+    const from = worldToCell(pos.x, pos.y), to = worldToCell(at.x, at.y);
+    if (from.cx === to.cx && from.cy === to.cy) return true;
+    const path = findPath(w.grid, pos, at, EXIT_REACH_SEARCH);
+    return path.length > 0 && path.length <= EXIT_REACH_STEPS;
   }
   /** Отказ перехода издалека — инициатору кадр `error` с кодом `far` (честный клиент видит подсказку, а не молчание). */
   private tellFar(pid: string, msg: string): void {
@@ -1842,7 +1931,7 @@ export class Room implements Tickable {
       try {
         // K7: действие кузницы в телеметрию — только состоявшееся: записано, или запись одного сейва
         // не прошла, но действие стоит (его допишет автосейв). Откат и повтор ключа ковки — не считаются.
-        const w = await this.write(c, p, loaded, why);
+        const w = await this.write(c, p, loaded, why, before);
         if (w === 'ok') {
           tallyForge(c.tm, why);
           if (loaded) this.sendStashOf(c, loaded.stash);
@@ -2018,7 +2107,7 @@ export class Room implements Tickable {
       if (this.area === 'town') {
         if (v.diffId) this.difficultyId = v.diffId; // тир забега
         const host = this.parkedHost();   // R4-25: забег первого, у кого он припаркован, — не молча новый поверх
-        if (host?.run?.config) { this.resumeFromLedger(host); return; } // продолжить незавершённый забег (R9-01: со сводом из базы)
+        if (host?.run?.config) { this.resumeFromLedger(host, v); return; } // продолжить незавершённый забег (R9-01: со сводом из базы)
         this.startRun(v.runCfg);
         return;
       }
@@ -2091,11 +2180,16 @@ export class Room implements Tickable {
    * своих записей в полёте) и вливает его в копии этого забега в комнате; вход в узел — после. Переходов до того нет
    * (`resuming`, пауза R1-03 и так держит полторы секунды); пока ждали, комната ушла из города, хозяин забега сменился или вышел —
    * продолжения нет; база не ответила — тоже нет (`error{code:'busy'}`: позвать снова), а не продолжение старой копией.
+   * ⭐ R10-07: и пока ждали, в комнату НИКТО НЕ ВОШЁЛ, а спуск начнёт ровно то, за что голосовали (`voted` — прошедшее голосование,
+   * R9-08). Раньше после ожидания сверялись только хозяин и забег, а вход в комнату ожидание не держит: вошедший по коду в это окно
+   * уносился в продолжение без голоса — и его СВОЙ припаркованный забег переписывался забегом хозяина без штрафа «Завершить»
+   * (обход R4-25), а вошедший с тем же забегом и указателем глубже уводил продолжение глубже показанного в окне.
    */
-  private resumeFromLedger(host: SaveState): void {
+  private resumeFromLedger(host: SaveState, voted: NonNullable<Room['vote']>): void {
     const run = host.run!.config;
     const key = runLedgerKey(run);
     const charId = host.charId;
+    const voters = new Set(this.clients.keys());
     this.resuming = true;
     void (async () => {
       let stored: RunNodeState[] | undefined;
@@ -2111,6 +2205,12 @@ export class Room implements Tickable {
       const h = this.parkedHost();
       if (!h?.run?.config || h.charId !== charId || runLedgerKey(h.run.config) !== key) {
         this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });   // хозяин забега ушёл, пока ждали, — не то, за что голосовали
+        return;
+      }
+      // R10-07: вошедший без голоса или спуск уже не тот (глубина, хозяин) — не переход, а отмена: позвать заново, окно покажет правду.
+      const joined = [...this.clients.keys()].some((pid) => !voters.has(pid));
+      if (joined || (voted.plan && planKey(voted.plan) !== planKey(this.descendPlan(voted.diffId, voted.runCfg)))) {
+        this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });
         return;
       }
       if (stored.length) {
@@ -2388,6 +2488,7 @@ export class Room implements Tickable {
     this.spawnIdx.clear();   // монстры узла ушли вместе с этажом; запись узла (`nodeState`) ждёт продолжения
     const t = townLayout();
     this.session.enterFloor(0, { grid: t.grid, spawn: t.spawn, monsters: [] });
+    if (from === 'arena') this.leaveArena();   // R11-04: из арены — телом города, а не арены
     this.restock();   // R1-03: сток героя-хозяина — свежий, только если подошёл срок
     for (const pid of this.clients.keys()) ensureMainQuest(this.cfg, this.session.world.players[pid]!.save);
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
@@ -2408,11 +2509,20 @@ export class Room implements Tickable {
    */
   private enterArenaFloor(): void {
     this.endVote();   // R8-03
-    this.floorChanged('arena');   // R4-06: арена возрождает всех — ушедшие вернутся свежими
+    this.floorChanged('arena');   // R4-06; R11-04: ушедшие вернутся такими, какими ушли, — не свежими
     this.wipeAt = 0;
     this.area = 'arena'; this.depth = 0; this.decor = [];
     this.spawnIdx.clear();
     this.arenaRespawns.clear(); this.arenaSpawnByPid.clear();
+    // ⭐ R11-04: тело каждого — до полного тела арены (`respawnPlayer` ниже): в город вернётся это (`leaveArena`). Раньше круг
+    // «город → арена → город» (два голосования, ~3 с) лечил целиком: здоровье, мана и выносливость, — и так же посреди забега
+    // (портал входа → город → арена → город → «Продолжить» того же узла). Зелья и реген между боями были не нужны.
+    this.arenaHome.clear();
+    const now = this.session.world.timeMs;
+    for (const pid of this.clients.keys()) {
+      const p = this.session.world.players[pid];
+      if (p) this.arenaHome.set(p.save.charId, { state: this.stateOf(p), at: now });
+    }
     const a = arenaLayout(ARENA_SIZE);
     this.arenaSpawns = a.spawns;
     this.session.enterFloor(0, { grid: a.grid, spawn: a.spawns[0]!, monsters: [], pvp: true });
@@ -2427,11 +2537,45 @@ export class Room implements Tickable {
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
   }
+  /**
+   * ⭐ R11-04: КОНЕЦ АРЕНЫ — ТЕЛА ГОРОДА (`arenaHome`). Присутствующий получает то, с чем вошёл на арену, плюс реген и откаты за время
+   * боя, как если бы стоял в городе; урон арены (и её полное тело) в город не идёт. Ушедший с арены раньше — его запись ухода
+   * теперь тело города, без регена (время для ушедшего стоит, R4-06): вход по коду вернёт его таким, а не полным телом арены.
+   */
+  private leaveArena(): void {
+    const now = this.session.world.timeMs;
+    for (const pid of this.clients.keys()) {
+      const p = this.session.world.players[pid];
+      const home = p && this.arenaHome.get(p.save.charId);
+      if (!p || !home) continue;
+      this.arenaHome.delete(p.save.charId);
+      this.restoreLeft(pid, home.state);
+      const dt = Math.max(0, now - home.at) / 1000;
+      const d = this.session.snapshotOf(pid)?.derived;
+      if (d) {
+        p.hp = Math.min(d.maxHp, p.hp + d.hpRegen * dt);
+        p.mana = Math.min(d.maxMana, p.mana + d.manaRegen * dt);
+        p.stamina = Math.min(d.maxStamina, p.stamina + d.staminaRegen * dt);
+      }
+      p.attackCd = Math.max(0, p.attackCd - dt); p.dodgeCd = Math.max(0, p.dodgeCd - dt); p.combatTimer = Math.max(0, p.combatTimer - dt);
+      for (const k of Object.keys(p.skillCd)) p.skillCd[k] = Math.max(0, (p.skillCd[k] ?? 0) - dt);
+    }
+    for (const [charId, home] of this.arenaHome) {
+      const s = { ...home.state };
+      delete s.pos;
+      this.left.delete(charId);
+      this.left.set(charId, s);
+    }
+    while (this.left.size > LEFT_MAX) this.left.delete(this.left.keys().next().value!);
+    this.arenaHome.clear();
+  }
+
   /** Зелья лавки (R2-04): гарантированный запас (`SHOP_CONSUMABLE_STOCK` каждого) — на каждый заход в город, в каждой комнате свой. */
   private freshConsumables(): Item[] {
     const itemsBase = this.cfg.get('items.base');
     const out: Item[] = [];
-    for (const id of SHOP_CONSUMABLES) for (let n = 0; n < SHOP_CONSUMABLE_STOCK; n++) { const p = itemFromBaseId(itemsBase, id, undefined, 'shop'); if (p) out.push(p); }
+    // ⭐ R11-13: только включённые базы (`shopConsumableIds`), как снаряжение кузницы (`rollGear`) и дроп с монстров.
+    for (const id of shopConsumableIds(this.cfg)) for (let n = 0; n < SHOP_CONSUMABLE_STOCK; n++) { const p = itemFromBaseId(itemsBase, id, undefined, 'shop'); if (p) out.push(p); }
     return out;
   }
 
@@ -2732,9 +2876,12 @@ export class Room implements Tickable {
    * запись повторяется. R2-09: исход фиксации неизвестен (база записала, а ответ потерян, — слой базы уже сверил
    * строку и не смог решить) — живую сессию снимаем (`dropStale`), а не пишем и не откатываем её память наугад.
    */
-  private async write(c: Client, p: { save: SaveState }, account: LoadedStash | undefined, reason = 'autosave'): Promise<WriteResult> {
+  private async write(
+    c: Client, p: PlayerEntity, account: LoadedStash | undefined, reason = 'autosave', before?: string,
+  ): Promise<WriteResult> {
     // Снятая сессия (R1-01, R2-05, R2-09) права писать не имеет — даже записью, вставшей в очередь до снятия.
     if (c.stale) return 'conflict';
+    this.noteVitals(p);   // R11-04: здоровье, мана, выносливость — в сейв: новая комната (другая нода, рестарт) возьмёт их отсюда
     for (let attempt = 0; ; attempt++) {
       // Причины по вещи (D9, R2-21) — снимком: что успеют пометить, пока запись в пути, уйдёт следующей.
       const reasons = new Map(c.reasons);
@@ -2764,7 +2911,8 @@ export class Room implements Tickable {
         if (isTxRetryable(e) && attempt < 2) continue;
         counters.saveErrors++;
         if (e instanceof CommitUnknown) {
-          console.error(`[room ${this.code}] запись сейва ${p.save.charId} (${reason}): исход фиксации неизвестен — сессия снята, вход прочитает правду из базы`, e);
+          console.error(`[room ${this.code}] запись сейва ${p.save.charId} (${reason}): исход фиксации неизвестен — сессия снята, копия ждёт дописки`, e);
+          this.keepUnknown(c, p.save, account, reason, before);   // R11-03: копию — менеджеру «на дописать», до снятия
           this.dropStale(c);
           return 'unknown';
         }
@@ -2783,6 +2931,64 @@ export class Room implements Tickable {
         return 'failed';
       }
     }
+  }
+
+  /**
+   * ⭐ R11-03: ИСХОД ФИКСАЦИИ ЖИВОЙ СЕССИИ НЕИЗВЕСТЕН — КОПИЯ НЕ ВЫБРАСЫВАЕТСЯ, А ОСТАЁТСЯ МЕНЕДЖЕРУ «НА ДОПИСАТЬ». Раньше сессия
+   * снималась (`dropStale`) вместе с единственной копией того, что герой успел отдать: A выбросил меч соседу по аккаунту B, запись B
+   * легла, а фиксация A потерялась и не легла (база упала, переключение, обрыв) — вход A читал строку до выброса, и меч был у двоих
+   * (прощальная запись с тем же исходом копию держала — R2-08, R3-19, а живая сессия — нет). Теперь прощание снятой сессии —
+   * дописка этой копии с ТОЙ ЖЕ версией (`staleFarewells` → `removePlayer` → менеджер: `unsaved`, вход отвечает «сохраняем», пока
+   * она не ляжет, фон дописывает, чужая нода — забывает). Легла прежняя фиксация — дописке отказ по версии: правда уже в базе.
+   * Запись с сундуком: отказ по сундуку значит, что прежняя фиксация не легла (сейв и сундук — одна транзакция), а сундук обогнал
+   * другой герой аккаунта, — дописывается сейв ДО действия (`before`): действие не состоялось, а всё до него — да.
+   */
+  private keepUnknown(c: Client, save: SaveState, account: LoadedStash | undefined, reason: string, before: string | undefined): void {
+    if (this.clients.get(c.pid) !== c) return;   // уже снята (выход): её прощальная запись держит копию сама (R2-08)
+    const charId = save.charId, userId = c.userId, version = c.saveVersion;
+    const stash = account ? { data: account.stash, version: account.version } : undefined;
+    const seized = new Set<string>();   // изъятое леджером (R2-02) — и из сейва до действия
+    const retry = async (): Promise<WriteResult> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          if (stash) {
+            const res = await putCharacterWithStash(charId, userId, save, version, stash.data, stash.version, reason);
+            if (res.ok) return 'ok';
+            if (res.conflict === 'save') return 'conflict';
+            const pre = structuredClone(save);
+            if (before) rollbackCmd(pre, before);
+            stripItems(pre, undefined, seized);
+            return await putCharacter(charId, userId, pre, version, 'autosave') !== null ? 'ok' : 'conflict';
+          }
+          return await putCharacter(charId, userId, save, version, reason) !== null ? 'ok' : 'conflict';
+        } catch (e) {
+          if (isTxRetryable(e) && attempt < 2) continue;   // R4-10: откатано целиком, повтор безопасен
+          if (e instanceof LedgerViolation && attempt < 2) {   // R2-02: вещь, которую леджер не пустит, — изъять и повторить
+            for (const id of e.itemIds) seized.add(id);
+            if (stripItems(save, stash?.data, seized) || stash) continue;
+          }
+          if (isDataException(e)) return 'conflict';        // R3-02: такую копию база не примет никогда — правда в базе
+          console.error(`[room ${this.code}] дописка копии ${charId}, снятой с неизвестным исходом фиксации, упала:`, e);
+          return e instanceof CommitUnknown ? 'unknown' : 'failed';
+        }
+      }
+    };
+    this.staleFarewells.set(c.pid, { charId, farewell: this.farewellOf('unknown', retry) });
+  }
+
+  /**
+   * ⭐ R11-04: ЗДОРОВЬЕ, МАНА, ВЫНОСЛИВОСТЬ — В СЕЙВ (`save.vitals`, пишет каждая запись). Запись ухода (`LeftState`, R4-06) живёт
+   * в комнате, и вход в НОВУЮ (выйти из города и «Продолжить», вход на другой ноде, рестарт) заводил сущность с полными пулами — на
+   * тот же узел забега: зелья и реген между боями не были нужны вовсе. Мёртвый — без записи (оживает полным, штраф уже взят).
+   * На арене пишется тело ГОРОДА (`arenaHome`): полное тело арены из неё не уносится. Сущность, уже снятая с мира (прощальная запись
+   * в очереди), — не трогается: её пулы записаны при уходе (`noteLeft`), пока комната ещё стояла там, откуда он ушёл.
+   */
+  private noteVitals(p: PlayerEntity): void {
+    if (this.session.world.players[p.id] !== p) return;
+    const home = this.area === 'arena' ? this.arenaHome.get(p.save.charId)?.state : undefined;
+    const s = home ?? p;
+    if (s.alive) p.save.vitals = { hp: s.hp, mana: s.mana, stamina: s.stamina, at: Date.now() };
+    else delete p.save.vitals;
   }
 
   /** Записанные причины снимаются; помеченное заново, пока запись была в пути, ждёт следующей. */
@@ -3158,12 +3364,23 @@ export class Room implements Tickable {
     const p = this.heroPower(save, []);
     if (p > runPeak(run)) run.peak = p;
   }
-  /** Герои забега здесь: все подключённые и ждущие реконнекта этого же забега — с аккаунтом каждого (R6-27, R7-02). */
+  /**
+   * Герои забега здесь: все подключённые и ждущие реконнекта этого же забега — с аккаунтом каждого (R6-27, R7-02).
+   * ⭐ R10-08: кроме ждущих, чей забег пати уже увела в город (`safe`, R7-03): такой — «вышел из города», его забег припаркован, и
+   * мощь новых узлов по нему не считается, как по любому вышедшему. Раньше он шёл в счёт весь грейс (умолчание — час): сильный
+   * напарник спокойно закрыл вкладку, слабый вернулся в город — и его «Продолжить» (а оно идёт прежде нового забега) заселяло каждый
+   * новый узел под отсутствующего. Вернётся — на узел, заселённый без него, ровно как вход по коду после выхода из города (R7-02:
+   * глубины за такой узел ему нет); следующий новый узел — снова по нему. Отключившийся на ЭТОМ этаже (не `safe`) — в счёте (R6-27).
+   */
   private runHeroes(): { save: SaveState; userId: string }[] {
     const out: { save: SaveState; userId: string }[] = [];
     for (const c of this.clients.values()) { const s = this.session.world.players[c.pid]?.save; if (s) out.push({ save: s, userId: c.userId }); }
     const cfg = this.runConfig;
-    if (cfg) for (const info of this.disconnected.values()) if (info.save.run?.config && sameRun(info.save.run.config, cfg)) out.push({ save: info.save, userId: info.userId });
+    if (cfg) {
+      for (const info of this.disconnected.values()) {
+        if (!info.safe && info.save.run?.config && sameRun(info.save.run.config, cfg)) out.push({ save: info.save, userId: info.userId });
+      }
+    }
     return out;
   }
   /**

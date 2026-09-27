@@ -128,6 +128,19 @@ describe('⭐ R6-03: набор в поле ввода не глотается �
     expect(isTextEntry(null)).toBe(false);
   });
 
+  it('⭐ R11-16: поле — то, куда НАБИРАЮТ: галка, ползунок, кнопка, выпадающий список — не поле (игровые клавиши идут дальше)', () => {
+    const input = (type: string): EventTarget => Object.assign(new KeyNode('INPUT'), { type }) as unknown as EventTarget;
+    for (const t of ['text', 'password', 'search', 'email', 'number', 'url', 'tel', '']) expect(isTextEntry(input(t)), t || 'без типа').toBe(true);
+    for (const t of ['checkbox', 'range', 'radio', 'button', 'submit', 'color', 'file']) {
+      expect(isTextEntry(input(t)), `${t}: было — любой INPUT считался полем, и галка настроек глотала WASD`).toBe(false);
+    }
+    expect(isTextEntry(new KeyNode('SELECT') as unknown as EventTarget)).toBe(false);
+    const p = page();
+    const cb = Object.assign(body.child('INPUT'), { type: 'checkbox' });
+    p.kb.press(cb, 65, 'a');
+    expect(p.kb.isDown(65), 'галка в фокусе — клавиша игре видна').toBe(true);
+  });
+
   it('2D ставит сторожа на `document` при старте страницы', () => {
     const MAIN = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'main.ts'), 'utf8');
     expect(MAIN).toMatch(/guardTyping\(document\);/);

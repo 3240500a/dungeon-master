@@ -4,11 +4,17 @@ import { COLORS, button, mk, tabsBar } from '../../ui/kit.js';
 import { shopCategory, type ShopCat } from './shopCats.js';
 import { renderShopGrid } from './shopGrid.js';
 import { forgeBench } from './forgeBench.js';
+import { markStaleBuild, reloadPage } from '../../net/staleBuild.js';
 
 /** Модуль вкладки «Ковка» — грузится один раз на страницу, при первом открытии вкладки. */
 type CraftTab = typeof import('./forgeCraftTab.js');
 let craftTab: CraftTab | null = null;
 let craftTabLoading = false;
+/**
+ * ⭐ R10-12: кусок окна не загрузился — держится до «Повторить», а не до следующей перерисовки. Упавший `import()` — почти
+ * всегда деплой без перезагрузки вкладки (хэши кусков сменились, старого файла нет), и повтор на каждую перерисовку (то есть
+ * на каждую подобранную монету) просил его снова и снова.
+ */
 let craftTabFailed = false;
 
 /**
@@ -118,15 +124,21 @@ export const forgePanel: PanelFactory = (app, ui) => {
           return;
         }
         if (craftTabFailed) {
-          body.append(note('Окно ковки не загрузилось', 'Нет связи с сервером игры? Переключи вкладку, чтобы попробовать ещё раз.'));
-          craftTabFailed = false; // следующая перерисовка — новая попытка
+          // ⭐ R10-12: кусок окна не загрузился — код вкладки старше сервера (деплой сменил хэши кусков, а вкладка пережила
+          // его без перезагрузки) или прервалась связь. Помогает перезагрузка: раньше тут было «Нет связи? Переключи вкладку»,
+          // и каждый повтор просил тот же пропавший файл. «Повторить» — на мигнувшую связь.
+          const box = note('Окно ковки не загрузилось', 'Сервер обновился, а код этой вкладки — прежний (или прервалась связь). Перезагрузите страницу (F5).');
+          const row = mk('div', 'margin-top:10px;display:flex;gap:8px;justify-content:center');
+          row.append(button('Перезагрузить (F5)', reloadPage, 'primary'), button('Повторить', () => { craftTabFailed = false; draw(); }));
+          box.append(row);
+          body.append(box);
           return;
         }
         body.append(note('Кузнец раскладывает инструмент…', ''));
         if (craftTabLoading) return;
         craftTabLoading = true;
         import('./forgeCraftTab.js')
-          .then((m) => { craftTab = m; }, () => { craftTabFailed = true; })
+          .then((m) => { craftTab = m; }, (e: unknown) => { craftTabFailed = true; markStaleBuild('окно ковки', e); })
           .finally(() => { craftTabLoading = false; app.bus.emit('state:changed', {}); });
       };
 

@@ -105,4 +105,19 @@ describe('пассивные скиллы (граф со смежностью)',
     state.save.gold = 0;
     expect(allocatePassive(appStub, state, 'p-str').ok).toBe(false);
   });
+
+  it('⚠ R10-11: «Треб. уровень» узла держится, как у сервера (`allocPassive`)', () => {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    const tree = structuredClone(r.get('mastery-tree'));
+    const entry = tree.entryNodes[0]!;
+    for (const n of tree.nodes) if (n.id === entry) n.levelReq = 31;
+    r.reload({ 'mastery-tree': tree });
+    const app = { config: r } as unknown as import('../../core/app.js').App;
+    const state = makeState(); // уровень 30
+    expect(allocatePassive(app, state, entry)).toEqual({ ok: false, reason: 'Требуется уровень 31' });
+    expect(state.save.masteries).toEqual({});
+    state.save.level = 31;
+    expect(allocatePassive(app, state, entry).ok).toBe(true);
+  });
 });

@@ -85,7 +85,7 @@ function applyCmd(app: App, gs: GameState, cmd: TownCommand, stash: AccountStash
     case 'forgeSalvage': return forgeSalvage(reg, s, stash, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);   // R8-14, R9-04: как сервер
     case 'salvage': return fieldSalvage(reg, s, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);
     case 'allocAttr': return allocAttr(s, cmd.attr, cmd.n);
-    case 'equip': return equip(reg, s, cmd.uid);
+    case 'equip': return equip(reg, s, cmd.uid, cmd.slot);   // R11-02: вторая рука, как сервер
     case 'unequip': return unequip(reg, s, cmd.slot);
     case 'allocSkill': return allocActive(reg, s, cmd.nodeId);
     case 'socketInsert': return socketInsert(reg, s, cmd.nodeId, cmd.slot, cmd.insertId);

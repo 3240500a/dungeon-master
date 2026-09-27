@@ -4,6 +4,7 @@ import type { SaveState } from '../types/save.js';
 import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { unmetWorn } from '../formulas/stats.js';
+import { isVersatile } from '../formulas/versatile.js';
 import { rollAffixes, nextTier, inferTierId, retierItem } from '../formulas/itemgen.js';
 import {
   CRAFT_NONCES_KEEP, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost, enchantItem,
@@ -218,6 +219,16 @@ export function salvageWorth(reg: ConfigRegistry, item: Item): number {
  */
 export const SHOP_CONSUMABLES: readonly string[] = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 export const SHOP_CONSUMABLE_STOCK = 5;
+
+/**
+ * ⭐ R11-13: ЗЕЛЬЯ ЛАВКИ, КОТОРЫЕ ЕСТЬ В ИГРЕ: из `SHOP_CONSUMABLES` — только расходники, чья база есть в `items.base` и не выключена
+ * в редакторе (`enabled: false`: «не выпадает и не в магазине»). Раньше выключенная база с монстров не падала, а лавка раскладывала
+ * её по пять на каждый заход в город и продавала, и бот прогона баланса покупал её в пояс. Один список — серверу и боту.
+ */
+export function shopConsumableIds(reg: ConfigRegistry): string[] {
+  const on = new Set(reg.get('items.base').filter((b) => b.kind === 'consumable' && b.enabled !== false).map((b) => b.id));
+  return SHOP_CONSUMABLES.filter((id) => on.has(id));
+}
 
 /**
  * ЦЕНА ПОКУПКИ: оценка, но НЕ ДЕШЕВЛЕ сырья, которое даст разбор этой вещи у кузнеца (D21).
@@ -854,10 +865,13 @@ export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
  * у него пуста: пустая — это ОТКАЗ, а не «бесплатно» (`materialLadder`). Прежде `forgeRepair` на пустой цене проверку сырья
  * пропускал, и сломанный уник чинился за одно золото, когда редкий той же базы платил железом трёх ступеней. Сломанным уник
  * больше и не падает (`GameSession.killMonster`), а сломанный из старого сейва цел на входе (`mendBrokenUniques`).
+ * ⚠ R10-14: пустая лестница — отказ и у НЕ-уника. Выключенный материал первой ступени семьи (конфиг, который R2-28/R6-22
+ * поддерживают) опустошал лестницу каждой обычной вещи семьи: улучшение её не брало, а починка брала за одно золото.
  */
-export function canRepairItem(_reg: ConfigRegistry, item: Item): ActionResult {
+export function canRepairItem(reg: ConfigRegistry, item: Item): ActionResult {
   if (!item.broken) return { ok: false, reason: 'Вещь цела' };
   if (item.rarity === 'unique') return { ok: false, reason: 'Уникальную вещь кузнец не чинит' };
+  if (!Object.keys(repairCost(reg, item)).length) return { ok: false, reason: 'Эту вещь кузнец не чинит' };
   return { ok: true };
 }
 
@@ -890,7 +904,8 @@ export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, w
   const raised = priceRaised(gold, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
-  if (Object.keys(mats).length && !canAffordBoth(save.inventory, wallet, mats)) {
+  // Цена сырья не пуста — пустую `canRepairItem` уже отказал (R7-19, R10-14): «бесплатно по сырью» не бывает.
+  if (!canAffordBoth(save.inventory, wallet, mats)) {
     return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
   }
   save.gold -= gold;
@@ -1034,7 +1049,27 @@ export function sketchAction(reg: ConfigRegistry, stash: AccountStash, variantId
 }
 
 // ── Экипировка ───────────────────────────────────────────────────────────────
-export function equip(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
+/**
+ * ⭐ R11-02: ЧТО ВСТАНЕТ ВО ВТОРУЮ РУКУ — одно правило для ядра (`equip`) и пупсика (веб, эталон Unity): если развести их,
+ * ячейка принимала бы то, что сервер отклонит (или надел бы не туда). Щит — под всё, кроме запирающего двуручника. Оружие
+ * (дуал-вилд) — только одноручное и только к одноручному или пустой руке: полуторное одной рукой носят со ЩИТОМ (§25), и
+ * полуторное во вторую руку не берут вовсе. Причина отказа — строкой; `null` — встанет.
+ */
+export function offhandRefusal(item: Item, main: Item | undefined): string | null {
+  if ((main?.hands ?? 1) >= 2 && !main?.versatile) return 'Занято двумя руками';
+  if (item.slot === 'offhand') return null;
+  if (item.slot !== 'weapon') return 'Этот предмет не для этого слота';
+  if ((item.hands ?? 1) >= 2) return 'Двуручное оружие во вторую руку не взять';
+  if (isVersatile(main)) return 'Полуторное оружие одной рукой носят только со щитом';
+  return null;
+}
+
+/**
+ * Надеть вещь из сумки. Без `target` — в её родной слот (меню «Надеть», кузница, Unity). ⭐ R11-02: `target: 'offhand'` —
+ * во вторую руку (пупсик: вещь брошена на ячейку «Левая рука»); так одноручное оружие встаёт вторым (дуал-вилд). Раньше
+ * цели не было: кинжал, брошенный в левую ячейку, менял меч в основной руке, а ветка «Парное оружие» не открывалась никогда.
+ */
+export function equip(reg: ConfigRegistry, save: SaveState, uid: string, target?: 'offhand'): ActionResult {
   const dims = dimsOf(reg);
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
@@ -1042,20 +1077,21 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string): Action
   // ⚠ Сломанный трофей носить нельзя — сперва к кузнецу (или на разбор). Проверка ЗДЕСЬ, в одной
   // авторитетной точке экипировки: клиент её только дублирует подсказкой.
   if (item.broken) return { ok: false, reason: 'Сломано — почини у кузнеца' };
-  const slot = item.slot;
+  if (target !== undefined && target !== 'offhand') return { ok: false, reason: 'Нельзя надеть' };
+  const slot: EquipSlot = target ?? item.slot;
+  if (slot === 'offhand') { const no = offhandRefusal(item, save.equipment.weapon); if (no) return { ok: false, reason: no }; }
 
   // ⭐ Полуторное оружие вторую руку НЕ запирает: со щитом оно просто переходит в одноручный хват
   // и теряет часть урона и темпа (`versatile.ts`). Настоящий двуручник — запирает, как и раньше.
   const twoH = slot === 'weapon' && (item.hands ?? 1) >= 2 && !item.versatile;
   const prev = save.equipment[slot];
-  const displaced = twoH ? save.equipment.offhand : undefined;
-  // ⚠ R4-08: требования — по тому, что будет надето ПОСЛЕ смены: уходящая вещь (и снятый двуручником щит) своей
+  // Двуручник снимает вторую руку целиком; полуторный — только второе ОРУЖИЕ (R11-02): одной рукой его носят лишь со щитом.
+  const off = save.equipment.offhand;
+  const displaced = slot === 'weapon' && (twoH || (isVersatile(item) && off?.slot === 'weapon')) ? off : undefined;
+  // ⚠ R4-08: требования — по тому, что будет надето ПОСЛЕ смены: уходящая вещь (и снятое со второй руки) своей
   // прибавкой больше не подпирает ни новую вещь, ни оставшиеся.
   const broken = wornBroken(save, save.attributes, equippedItems(save).filter((i) => i !== prev && i !== displaced).concat(item));
   if (broken) return { ok: false, reason: broken === item ? 'Недостаточно атрибутов' : wornReason(broken) };
-
-  const mainTwoH = (save.equipment.weapon?.hands ?? 1) >= 2 && !save.equipment.weapon?.versatile;
-  if (slot === 'offhand' && mainTwoH) return { ok: false, reason: 'Занято двумя руками' };
 
   const need: Item[] = [];
   if (prev) need.push(prev);
@@ -1077,7 +1113,7 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string): Action
   save.inventory.splice(idx, 1);
   item.pos = null;
   save.equipment[slot] = item;
-  if (twoH && displaced) delete save.equipment.offhand;
+  if (displaced) delete save.equipment.offhand;
   if (slot === 'belt') { const kept = save.belt.filter((x): x is Item => !!x).slice(0, newBeltCap); save.belt = Array.from({ length: newBeltCap }, (_, i) => kept[i] ?? null); }
   // Не бывает: та же сумка и тот же порядок, что у примерки. Бросок — чтобы сервер откатил сейв, а не потерял вещь.
   for (const it of need) if (!addToInventory(save.inventory, it, dims)) throw new Error('equip: примерка разошлась с записью');
@@ -1338,6 +1374,9 @@ export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: strin
   if (!node) return { ok: false, reason: 'Узел не найден' };
   const rank = save.masteries[nodeId] ?? 0;
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
+  // ⚠ R10-11: «Треб. уровень» редактора — как у древа скилов (`allocActive`). Не смотрели вовсе: узел, закрытый до 60-го
+  // уровня, брал герой 2-го с очком мастерства и золотом.
+  if (save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
   // Вход доступен только своему классу; прочее — по смежности (переходы дают край соседней ветви).
   const entries = passiveEntriesFor(reg, save);
   const allocatable = rank > 0 || entries.includes(nodeId)

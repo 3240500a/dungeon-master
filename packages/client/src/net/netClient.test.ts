@@ -177,3 +177,16 @@ describe('⭐ R4-13: маршрут к ноде — ответ гейтвея г
     expect(await routeToNode('t0k', 'hero-1')).toEqual({ url: 'wss://game.example/ws' });
   });
 });
+
+describe('⭐ R10-17: страница по https — сокет узла только `wss://`', () => {
+  it('`ws://` не на петле со страницы https — тот же хост и порт по `wss://`: `ws://` браузер не открыл бы вовсе (смешанное содержимое)', () => {
+    const PAGE = { protocol: 'https:', host: 'game.example', hostname: 'game.example' };
+    expect(nodeUrl('ws://game.example/ws/0', PAGE), 'было: ws:// — конструктор сокета бросал SecurityError').toBe('wss://game.example/ws/0');
+    expect(nodeUrl('ws://203.0.113.5:3101/ws', PAGE)).toBe('wss://203.0.113.5:3101/ws');
+    expect(nodeUrl('wss://game.example/ws/1', PAGE)).toBe('wss://game.example/ws/1');
+    // Страница по http — адрес как есть (ничего не ломаем там, где ws:// работает).
+    expect(nodeUrl('ws://203.0.113.5:3101/ws', { protocol: 'http:', host: 'game.example', hostname: 'game.example' })).toBe('ws://203.0.113.5:3101/ws');
+    // Разработка по https на петле: узел на петле браузер пускает и по ws:// — не трогаем.
+    expect(nodeUrl('ws://127.0.0.1:3001/ws', { protocol: 'https:', host: 'localhost:5173', hostname: 'localhost' })).toBe('ws://127.0.0.1:3001/ws');
+  });
+});

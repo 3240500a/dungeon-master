@@ -153,12 +153,16 @@ const isLoopback = (host: string): boolean =>
  *  • Адрес на петле (`ws://127.0.0.1:3001/ws` — умолчание одиночного процесса без `DM_NODE_URL`) достижим только с
  *    машины сервера. Страница открыта не с неё — значит, между ними прокси (Caddy), и путь тот же, но на origin страницы:
  *    иначе каждый игрок одиночного сервера за доменом стучался бы к себе на 127.0.0.1.
+ *  • ⭐ R10-17: страница по https, а узел назван `ws://` не на петле (DEPLOY, вариант Б) — `wss://` у того же хоста и порта.
+ *    `ws://` браузер со страницы https не откроет вовсе (смешанное содержимое: конструктор сокета бросает `SecurityError`);
+ *    с `wss://` узел за TLS соединится, а узел без TLS даст обычное «Сервер недоступен» с кнопкой лобби.
  */
 export function nodeUrl(raw: string, page: Pick<Location, 'protocol' | 'host' | 'hostname'> = location): string {
   const proto = page.protocol === 'https:' ? 'wss:' : 'ws:';
   let u: URL;
   try { u = new URL(raw, `${proto}//${page.host}`); } catch { return `${proto}//${page.host}/ws`; }
   if (isLoopback(u.hostname) && !isLoopback(page.hostname)) return `${proto}//${page.host}${u.pathname}${u.search}`;
+  if (proto === 'wss:' && u.protocol === 'ws:' && !isLoopback(u.hostname)) u.protocol = 'wss:';
   return u.toString();
 }
 

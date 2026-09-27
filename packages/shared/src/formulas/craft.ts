@@ -4,6 +4,7 @@ import type { BaseRoll, CraftPartPick, CraftParts, Item, ItemOrigin, Rarity, Rol
 import type { StatModifier } from '../types/attributes.js';
 import type { MaterialCost } from '../economy/materials.js';
 import { createRng, type Rng } from './rng.js';
+import { isSafeKey } from '../session/wireLimits.js';
 import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
 import { axisOf, balanceAxisOf, bladeStats, strikeAxisOf } from './bladeStats.js';
 import {
@@ -139,10 +140,9 @@ export function emptyJournal(): CraftJournal {
 
 /**
  * Безопасный ключ словаря из базы (id класса, id материала): короткий, из латиницы, цифр, `_` и `-`, и
- * НЕ ключ прототипа — `__proto__` под этот алфавит подходит, поэтому отсекается отдельно.
+ * НЕ ключ прототипа. ⚠ R10-10: определён в `session/wireLimits.ts` — тот же алфавит держит схема конфига.
  */
-export const isSafeKey = (k: string): boolean =>
-  /^[A-Za-z0-9_-]{1,64}$/.test(k) && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
+export { isSafeKey };
 
 /**
  * ЖУРНАЛ ИЗ БАЗЫ → ВАЛИДНЫЙ ЖУРНАЛ. Лежит в JSONB аккаунта, и доверять форме нельзя: старая

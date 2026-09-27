@@ -55,6 +55,8 @@ afterAll(() => { server.close(); });
 const resetRoute = async (): Promise<void> => {
   const { limits } = await import('../net/rateLimit.js');
   (limits as unknown as Record<string, { reset(k: string): void } | undefined>).route?.reset('user-1');
+  // R11-06: и потолок ручек с токеном на аккаунт (`sessionUser`) — он шире маршрутного и здесь не проверяется.
+  (limits as unknown as Record<string, { reset(k: string): void } | undefined>).account?.reset('user-1');
 };
 beforeEach(async () => { db.calls.length = 0; await resetRoute(); });
 

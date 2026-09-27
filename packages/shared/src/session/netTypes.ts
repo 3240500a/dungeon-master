@@ -204,7 +204,11 @@ export type TownCommand =
   | { cmd: 'forgeSketch'; variantId: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
   | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number> }
-  | { cmd: 'equip'; uid: string }
+  /**
+   * Надеть вещь из сумки. `slot` нет — в родной слот вещи; `'offhand'` — во вторую руку (R11-02: пупсик, брошено на ячейку
+   * «Левая рука»; так одноручное оружие встаёт вторым — дуал-вилд). Можно ли — решает ядро (`equip`, `offhandRefusal`).
+   */
+  | { cmd: 'equip'; uid: string; slot?: 'offhand' }
   | { cmd: 'unequip'; slot: string }
   /** Вложить `n` очков в атрибут (нет — одно). Пачка очков — одна команда, а не `n` кадров (R2-15). */
   | { cmd: 'allocAttr'; attr: string; n?: number }

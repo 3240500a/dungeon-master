@@ -57,3 +57,13 @@ export function isBlockedCell(grid: Grid, cx: number, cy: number): boolean {
 export function isWalkableWorld(grid: Grid, x: number, y: number): boolean {
   return !isBlockedCell(grid, Math.floor(x / TILE), Math.floor(y / TILE));
 }
+
+/**
+ * ⚠ R10-02: ДИАГОНАЛЬНЫЙ ШОВ — шаг из клетки (ax,ay) в соседнюю по диагонали (bx,by), когда ОБЕ боковые клетки (bx,ay) и
+ * (ax,by) непроходимы: клетки касаются только углом. Тело (круг, `moveWithCollision`) такой угол не проходит никогда, поэтому
+ * и взгляд (`hasLineOfSight`), и снаряд сквозь него не идут. Одна боковая стена — не шов: тело проходит, скользя по ней.
+ * Шаг не по диагонали — `false`.
+ */
+export function diagonalSealed(grid: Grid, ax: number, ay: number, bx: number, by: number): boolean {
+  return ax !== bx && ay !== by && isBlockedCell(grid, bx, ay) && isBlockedCell(grid, ax, by);
+}
