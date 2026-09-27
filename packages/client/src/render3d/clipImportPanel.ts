@@ -366,7 +366,7 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       const r = bakeFromSource(src!, {
         ...o, animationIndex: i, name: t.clip, loop: t.cyclic, locoSet: true, bakeId,
         anchorIdle: false, fps: 60,
-        rootYaw: t.rootYaw ?? false, rootPos: true,
+        rootYaw: t.rootYaw ?? false, yawFromFeet: t.yawFromFeet ?? false, rootPos: true,
         startSec: t.trim ? t.trim[0] * dur : undefined,
         endSec: t.trim ? t.trim[1] * dur : undefined,
       });

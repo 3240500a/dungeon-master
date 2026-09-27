@@ -46,6 +46,49 @@ const readOurPose = (H: Humanoid, mask: BoneMask, base: Pose | undefined, finger
   return o;
 };
 
+/**
+ * ⭐⭐ КУРС ПЕРСОНАЖА — ИЗ ОПОРНОЙ СТОПЫ. Единственный способ забрать поворот из in-place мокапа.
+ *
+ * Зачем: у пакета Kubold поворот в КОРНЕ почти нигде не лежит (дорожка `Root.quaternion` — у 7 тейков из 66),
+ * и четыре «поворота на месте» начинаются и заканчиваются на одном курсе. Взять рыск из таза там нечего:
+ * его там нет. Но поворот в тейке ЕСТЬ — он в СТОПАХ, потому что «in place» это ровно «из захвата вычли
+ * вращение корня»: планта, которая в съёме стояла на месте, после вычета поворачивается на −θ(t).
+ *
+ * ЗАМЕР (накопленный рыск опорной стопы за тейк): `TurnLt90_Loop` 85°, `TurnRt90_Loop` −85°,
+ * `TurnLt180` 161°, `TurnRt180` −166°; контроль — прямая `WalkFwdLoop` даёт −8°, то есть шум, а не поворот.
+ *
+ * ⚠ НЕДОБОР ДО НОМИНАЛА (85 вместо 90, 161 вместо 180) НЕ ВЫПРЯМЛЯЕТСЯ. Растянуть кривую под круглый угол
+ * значило бы прокрутить опорные стопы по полу на разницу — а `turnInPlace` и задуман так, что «недовёрнутая
+ * или перевёрнутая разница остаётся скруткой корпуса». 85° — это честное содержимое тейка.
+ *
+ * Опора — НИЖНЯЯ стопа; на кадре смены опоры приращение не берём (у новой ноги свой рыск, и разница между
+ * ногами поворотом не является).
+ */
+const _fq = new THREE.Quaternion(), _fv = new THREE.Vector3(), _fp = new THREE.Vector3();
+function yawFromSupportFoot(poses: readonly Pose[], hipsFull: readonly Vec3[], hipsW: number): number[] {
+  const H = buildHumanoid();                       // свой риг: пробегом по позам нельзя портить состояние основного
+  const out: number[] = [];
+  let acc = 0, prevSup: 0 | 1 | null = null, prevYaw = 0;
+  for (let i = 0; i < poses.length; i++) {
+    const f = hipsFull[i] ?? ([0, 0, 0] as const);
+    applyPoseTo(H, poses[i]!, [f[0] * hipsW, f[1] * hipsW, f[2] * hipsW]);
+    const lb = H.bones.get('LeftFoot'), rb = H.bones.get('RightFoot');
+    if (!lb || !rb) { out.push(acc); continue; }
+    const ly = lb.getWorldPosition(_fp).y, ry = rb.getWorldPosition(_fp).y;
+    const sup: 0 | 1 = ly <= ry ? 0 : 1;
+    const b = sup === 0 ? lb : rb;
+    b.getWorldQuaternion(_fq); _fv.set(0, 0, 1).applyQuaternion(_fq);
+    const yaw = Math.atan2(_fv.x, _fv.z);
+    if (sup === prevSup) {
+      let d = yaw - prevYaw; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+      acc += d;
+    }
+    prevSup = sup; prevYaw = yaw;
+    out.push(acc);
+  }
+  return out;
+}
+
 /** Доля доворота головы, которую на запекании отдаём ШЕЕ. Одним суставом размах корпуса не гасят. */
 const HEAD_NECK_SHARE = 0.5;
 /** Размах смещения таза по осям — число для панели: видно, что «сила переноса веса» реально делает. */
@@ -169,6 +212,11 @@ export interface BakeOptions {
    */
   rootPos?: boolean;
   rootYaw?: boolean;
+  /**
+   * ⭐⭐ КУРС БРАТЬ ИЗ ОПОРНОЙ СТОПЫ, А НЕ ИЗ ТАЗА (см. `yawFromSupportFoot`). Для мокапа, где поворот
+   * из корня ВЫЧТЕН: в тазу его нет, а в стопах есть. Работает только вместе с `rootYaw`.
+   */
+  yawFromFeet?: boolean;
   /**
    * ⭐⭐ КЛИП НАБОРА ХОДА — дописать метаданные набора, без которых рантайм считает импорт ЛЕГАСИ.
    *
@@ -399,13 +447,16 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
   // кадр), и мировая поза это НЕ показывала — 180° уходили в кость таза. Сторож — `clipBakeSource.test.ts`, на сам `__rootY`.
   const rootYaws: number[] = [];
   if (opts.rootYaw) {
-    let acc = 0, prev = 0;
-    for (let i = 0; i < poses.length; i++) {
-      const h = poses[i]!['Hips'];
-      const y = h ? pelvisHeading(_qa.setFromEuler(_ea.set(h[0], h[1], h[2]))) : 0;
-      if (i === 0) { prev = y; rootYaws.push(0); continue; }
-      let d = y - prev; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
-      acc += d; prev = y; rootYaws.push(acc);
+    if (opts.yawFromFeet) rootYaws.push(...yawFromSupportFoot(poses, hipsFull, hipsW));
+    else {
+      let acc = 0, prev = 0;
+      for (let i = 0; i < poses.length; i++) {
+        const h = poses[i]!['Hips'];
+        const y = h ? pelvisHeading(_qa.setFromEuler(_ea.set(h[0], h[1], h[2]))) : 0;
+        if (i === 0) { prev = y; rootYaws.push(0); continue; }
+        let d = y - prev; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+        acc += d; prev = y; rootYaws.push(acc);
+      }
     }
   }
 

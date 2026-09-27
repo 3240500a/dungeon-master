@@ -31,6 +31,13 @@ const CORE_SPEED: Record<string, number> = {
   walk_fwd: 55.7, walk_back: 55.7, walk_strafe_L: 55.7, walk_strafe_R: 55.7,
   run_fwd: 121.1, run_back: 74.0, run_strafe_L: 72.4, run_strafe_R: 75.8,
 };
+/**
+ * Замеренные углы поворотов (°, наша конвенция: L отрицательный). Снимаются ИЗ ОПОРНОЙ СТОПЫ — в корне их нет.
+ * Полоса ±6°: недобор до номинала (88 вместо 90) — это честное содержимое тейка, выпрямлять его нельзя.
+ */
+const TURN_DEG: Record<string, number> = {
+  turn_L_90: -88, turn_R_90: 88, turn_L_180: -169, turn_R_180: 165, turn_L_45: -43, turn_R_45: 43,
+};
 
 describe.skipIf(!HAVE)('набор мокапа: таблица против пакета', () => {
   if (!HAVE) {
@@ -71,8 +78,12 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
         hasYaw.set(a.name, a.tracks.some((t) => t.name === 'Root.quaternion' && t.times.length > 1));
       }
     }
-    const wrong = MOCAP_SET.filter((t) => t.rootYaw && !hasYaw.get(t.take)).map((t) => t.take);
-    expect(wrong, '⚠ снимаем рыск у тейка, в котором дорожки поворота нет — в клип уйдут нули').toEqual([]);
+    // Рыск ИЗ ТАЗА требует дорожки в файле; рыск ИЗ СТОП — нет, он на то и заведён (вращение корня вычтено).
+    const wrong = MOCAP_SET.filter((t) => t.rootYaw && !t.yawFromFeet && !hasYaw.get(t.take)).map((t) => t.take);
+    expect(wrong, '⚠ снимаем рыск из таза у тейка, в котором дорожки поворота нет — в клип уйдут нули').toEqual([]);
+    // …а из стоп — только у поворотов на месте: на едущем тейке метод копит ошибку (замер: бег −26°, старты до 378°).
+    const feet = MOCAP_SET.filter((t) => t.yawFromFeet).map((t) => t.clip);
+    expect(feet.every((c) => c.startsWith('turn_')), '⚠ съём из стоп у едущего тейка').toBe(true);
     // Контроль: тейк с полным поворотом известен и он ОДИН — если пакет обновят, тест это покажет.
     const carry = [...hasYaw].filter(([n, v]) => v && MOCAP_SET.some((t) => t.take === n)).map(([n]) => n);
     expect(carry.length, 'поворот несут 7 тейков таблицы (замер 27.09.2026)').toBe(7);
@@ -95,8 +106,10 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
         expect(r.clip.swingRef?.['RightUpperArm'], `${t.clip}: нейтраль маха`).toBeTruthy();
       }
     }
-    expect([...seen].sort(), 'ядро собирается из трёх файлов пакета').toEqual(
-      ['idle', 'run_back', 'run_fwd', 'run_strafe_L', 'run_strafe_R', 'walk_back', 'walk_fwd', 'walk_strafe_L', 'walk_strafe_R']);
+    expect([...seen].sort(), 'ядро собирается из трёх файлов пакета и закрывает ВСЕ 15 имён движка').toEqual(
+      ['idle', 'run_back', 'run_fwd', 'run_strafe_L', 'run_strafe_R',
+        'turn_L_180', 'turn_L_45', 'turn_L_90', 'turn_R_180', 'turn_R_45', 'turn_R_90',
+        'walk_back', 'walk_fwd', 'walk_strafe_L', 'walk_strafe_R']);
   }, 900000);
 
   /**
@@ -120,16 +133,27 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
     if (bad.length) console.log('швы, которые стоит свести: ' + bad.join(', '));
   }, 900000);
 
-  it('⚠ единственный тейк с полным поворотом доносит его до клипа', () => {
-    const t = MOCAP_SET.find((x) => x.rootYaw)!;
+  /**
+   * ⭐⭐ ПОВОРОТЫ ДОНОСЯТ УГОЛ ДО КАНАЛА, И СО ЗНАКОМ. Это и есть проверка съёма из опорной стопы: в корне у
+   * этих тейков поворота нет вовсе, так что ненулевой `__rootY` мог взяться только из ног.
+   * ⚠ Знак — наша конвенция (`TURN_PRESETS`: L отрицательный, R положительный). Перепутать его значит
+   * получить персонажа, который на поворот влево крутится вправо, и ни один другой сторож этого не увидит.
+   */
+  it('⭐⭐ ВСЕ ШЕСТЬ ПОВОРОТОВ НЕСУТ СВОЙ УГОЛ (снят из стоп) И СО ВЕРНЫМ ЗНАКОМ', () => {
+    const seen: string[] = [];
     for (const { src } of opened) {
-      if (!src.animations.some((a) => a.name === t.take)) continue;
-      const k = bake(src, t).clip.keys;
-      const deg = Math.abs((k[k.length - 1]!.pose[ROOT_YAW]?.[0] ?? 0) * D);
-      expect(deg, `${t.clip}: поворот из файла (177°) обязан доехать до канала`).toBeGreaterThan(170);
-      return;
+      const m = matchMocapSet(src.animations.map((a) => a.name));
+      for (const t of m.core) {
+        const want = TURN_DEG[t.clip];
+        if (want === undefined || seen.includes(t.clip)) continue;
+        seen.push(t.clip);
+        const k = bake(src, t).clip.keys;
+        const got = (k[k.length - 1]!.pose[ROOT_YAW]?.[0] ?? 0) * D;
+        expect(Math.sign(got), `${t.clip}: знак поворота (L отрицательный, R положительный)`).toBe(Math.sign(want));
+        expect(Math.abs(got - want), `${t.clip}: угол ${got.toFixed(0)}° против замеренных ${want}°`).toBeLessThan(6);
+      }
     }
-    throw new Error('тейк с поворотом в пакете не найден');
+    expect(seen.sort(), 'проверены все шесть').toEqual(['turn_L_180', 'turn_L_45', 'turn_L_90', 'turn_R_180', 'turn_R_45', 'turn_R_90']);
   }, 900000);
 
   /** Запечь тейк ровно так, как это делает кнопка переноса набора в панели импорта. */
@@ -139,7 +163,8 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
     return bakeFromSource(src, {
       character: 'mocap', weapon: 'none', animationIndex: i, name: t.clip, loop: t.cyclic,
       locoSet: true, bakeId: 1, anchorIdle: false, fps: 60, epsDeg: 3,
-      hips: 'full', ground: true, head: 'mocap', rootYaw: t.rootYaw ?? false, rootPos: true,
+      hips: 'full', ground: true, head: 'mocap',
+      rootYaw: t.rootYaw ?? false, yawFromFeet: t.yawFromFeet ?? false, rootPos: true,
       startSec: t.trim ? t.trim[0] * dur : undefined, endSec: t.trim ? t.trim[1] * dur : undefined,
     });
   }

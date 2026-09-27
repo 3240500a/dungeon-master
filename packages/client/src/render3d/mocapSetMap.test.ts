@@ -40,16 +40,33 @@ describe('таблица набора мокапа', () => {
     }
   });
 
-  it('⚠ ПОВОРОТЫ ПОМЕЧЕНЫ КАК ЗАПРЕЩЁННЫЕ — и причина в данных, а не в переписке', () => {
+  /**
+   * ⭐⭐ ПОВОРОТЫ БЕРУТ КУРС ИЗ ОПОРНОЙ СТОПЫ. В корне его нет (дорожки `Root.quaternion` у этих тейков нет,
+   * рыск из таза 0.0°), а «in place» это «из захвата вычли вращение корня» — вычтенное осталось в стопах.
+   * Флаг обязан стоять у ВСЕХ шести: забудут на одном — этот поворот молча перестанет поворачивать.
+   */
+  it('⭐⭐ ВСЕ ШЕСТЬ ПОВОРОТОВ СНИМАЮТ КУРС ИЗ СТОП', () => {
     const turns = MOCAP_SET.filter((t) => t.clip.startsWith('turn_'));
     expect(turns.length, 'шесть поворотов движок спрашивает').toBe(6);
     for (const t of turns) {
-      expect(t.blocked, `${t.clip}: запрет обязан быть с причиной`).toBeTruthy();
-      expect(t.blocked).toMatch(/__rootY/);
+      expect(t.rootYaw, `${t.clip}: курс обязан сниматься`).toBe(true);
+      expect(t.yawFromFeet, `${t.clip}: и именно из стоп — в тазу поворота нет`).toBe(true);
+      expect(t.blocked, `${t.clip}: запрета больше нет`).toBeUndefined();
     }
-    // …и ни один из них не приходит в переносимое ядро.
-    expect(matchMocapSet(MAIN_FILE).core.some((t) => t.clip.startsWith('turn_'))).toBe(false);
-    expect(matchMocapSet(MAIN_FILE).blocked.length).toBe(6);
+    // …и все шесть идут в переносимое ядро, а не мимо.
+    const m = matchMocapSet(MAIN_FILE);
+    expect(m.core.filter((t) => t.clip.startsWith('turn_')).length, 'все шесть из главного файла').toBe(6);
+    expect(m.blocked.length, 'запрещённых в наборе больше нет').toBe(0);
+  });
+
+  /**
+   * ⚠⚠ СЪЁМ ИЗ СТОП ГОДЕН ТОЛЬКО ДЛЯ ПОВОРОТОВ НА МЕСТЕ. На едущем тейке он копит ошибку (замер: бег −26°,
+   * старты с доворотом до 378° — рыск планты на быстром шаге включает вынос всей ноги). Поставить флаг
+   * едущему тейку значит вписать в клип выдуманный поворот, и он утащит за собой позу таза.
+   */
+  it('⭐⭐ И БОЛЬШЕ НИКТО ИЗ СТОП КУРС НЕ СНИМАЕТ', () => {
+    const wrong = MOCAP_SET.filter((t) => t.yawFromFeet && !t.clip.startsWith('turn_')).map((t) => t.clip);
+    expect(wrong, '⚠ едущему тейку съём из стоп вписал бы выдуманный поворот').toEqual([]);
   });
 
   /**
@@ -83,7 +100,8 @@ describe('таблица набора мокапа', () => {
   it('⚠ чужой файл блок переноса не показывает', () => {
     expect(isMocapSetFile(['mixamo.com', 'Take 001'])).toBe(false);
     expect(isMocapSetFile(MAIN_FILE)).toBe(true);
-    // ⚠ Файл ТОЛЬКО с запрещёнными тейками переносить нечем — блок обязан молчать, а не предлагать пустую кнопку.
-    expect(isMocapSetFile(['TurnLt180', 'TurnRt180'])).toBe(false);
+    // ⚠ Раньше здесь стояло `false`: файл только с поворотами переносить было нечем, они шли в `blocked`.
+    // Теперь курс снимается из опорной стопы, поворот — обычное ядро, и блок обязан показаться.
+    expect(isMocapSetFile(['TurnLt180', 'TurnRt180'])).toBe(true);
   });
 });
