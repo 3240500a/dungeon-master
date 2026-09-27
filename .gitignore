@@ -14,5 +14,6 @@ tools/deploy/local.env.ps1
 # Учётка агента для ЛОКАЛЬНОГО dev-сервера (создаётся tools/claude-admin.cmd). НИКОГДА в git.
 tools/deploy/local.claude.json
 
-# Сгенерированный набор мокапа для загрузки в редактор (пересобирается генератором, в git не нужен).
+# Наборы мокапа для загрузки в редактор (пересобираются `tools/mocapSet.ts`, в git не нужны).
 mocap_core.json
+mocap_test.json
