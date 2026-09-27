@@ -16,6 +16,7 @@
 import type * as THREE from 'three';
 import { openBakeSource, bakeFromSource, logSourceReport, type BakeSource, type BakeOptions, type BakeResult } from './clipBaker.js';
 import { isStaticBake, loopSeamGap } from './clipImport.js';
+import { matchMocapSet, type MocapTake } from './mocapSetMap.js';   // ⭐ таблица «тейк → наш клип» для переноса набора
 import { MASK_PARTS, MASK_PRESETS, presetMask, togglePart, setPartWeight, partWeight, maskLabel, PART_OF_BONE, type BoneMask, type MaskPart } from './boneMask.js';
 import { clampClip, clampSummary } from './clipClamp.js';   // ⭐ пределы суставов на импорте, по выбранным частям
 import { limitViewForBone } from './humanoidRagdoll.js';
@@ -61,6 +62,14 @@ export interface ImportPanelCallbacks {
   preview(clip: Clip | null): void;
   /** Принять клип. Панель закрывается сама. */
   commit(clip: Clip): void;
+  /**
+   * Принять ПАЧКУ клипов одним действием (перенос набора мокапа). Возвращает ИМЕНА, под которыми клипы
+   * реально легли: импорт никогда не затирает, поэтому занятое имя превращается в `walk_fwd_2` — и
+   * молча этого оставлять нельзя, иначе повторный перенос тихо копит дубли. Панель НЕ закрывается:
+   * ядро и дополнительное содержимое переносятся двумя нажатиями.
+   * Нет колбэка → блок переноса не показывается вовсе.
+   */
+  commitMany?(clips: Clip[]): string[];
   /** Ручная карта костей, сохранённая под сигнатурой рига (Ф4) — следующий файл того же пакета подхватит её. */
   loadBoneMap?(sig: string): Record<string, string> | undefined;
   saveBoneMap?(sig: string, map: Record<string, string>): void;
@@ -271,6 +280,13 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
   mapWrap.append(mapSum); box.append(mapWrap);
   const mapBody = el('div', 'max-height:190px;overflow:auto;margin-top:4px'); mapWrap.append(mapBody);
 
+  // ── ПЕРЕНОС НАБОРА МОКАПА (появляется, только если в файле нашлись тейки из таблицы) ──
+  const setWrap = el('div', 'margin:10px 0;padding:7px;background:#121a14;border:1px solid #33513c;border-radius:5px;display:none');
+  const setHead = el('div', 'color:#9ae6a0;font-weight:bold;font-size:11px;margin-bottom:3px');
+  const setBody = el('div', 'font-size:10px;color:#8a93a8;line-height:1.5;white-space:pre-wrap;max-height:150px;overflow:auto');
+  const setBtns = el('div', 'display:flex;gap:6px;margin-top:5px;flex-wrap:wrap');
+  setWrap.append(setHead, setBody, setBtns); box.append(setWrap);
+
   box.append(diag, status);
   const btns = el('div', 'display:flex;gap:6px;margin-top:6px;justify-content:flex-end'); box.append(btns);
   const takeBtn = btn('взять', () => {
@@ -333,6 +349,66 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
     }
   }
 
+  /**
+   * ПЕРЕНОС НАБОРА ОДНИМ ПРОХОДОМ. Ядро (имена, которые спрашивает движок) и дополнительное содержимое —
+   * двумя кнопками, потому что это разные решения: первое меняет картинку, второе кладёт материал на будущее.
+   *
+   * ⚠ Пакет НЕ берёт настройки «зациклить» и «якорь idle» из панели: цикличность у каждого тейка СВОЯ
+   * (`MocapTake.cyclic`), а якорь idle подставил бы стойку первым и последним кадром — цикл ходьбы от этого
+   * перестал бы сходиться. Семпл берём 60 fps: у тейков Kubold шаг кадров разный (30/60 и неровный), и на
+   * 30 ход теряет фазу постановки. Всё остальное (маска, базовая поза, таз, заземление, голова) — как в панели.
+   */
+  function batchTake(t: MocapTake, bakeId: number): Clip | string {
+    const i = src!.animations.findIndex((a) => a.name === t.take);
+    if (i < 0) return `${t.clip}: тейка «${t.take}» в файле нет`;
+    const dur = src!.animations[i]!.duration;
+    try {
+      const r = bakeFromSource(src!, {
+        ...o, animationIndex: i, name: t.clip, loop: t.cyclic, locoSet: true, bakeId,
+        anchorIdle: false, fps: 60,
+        rootYaw: t.rootYaw ?? false, rootPos: true,
+        startSec: t.trim ? t.trim[0] * dur : undefined,
+        endSec: t.trim ? t.trim[1] * dur : undefined,
+      });
+      // Статичный результат — это карта костей или дубль скелета, а не «такой тейк». В набор такое не кладём.
+      if (isStaticBake(r.stats)) return `${t.clip}: СТАТИКА (движение ${r.stats.maxMoveDeg.toFixed(1)}°) — проверь карту костей`;
+      return r.clip;
+    } catch (e) { return `${t.clip}: ${(e as Error).message}`; }
+  }
+
+  function runBatch(list: readonly MocapTake[], what: string): void {
+    if (!src || !cb.commitMany || !list.length) return;
+    const bakeId = Date.now();               // один номер съёма на весь проход — по нему аудит видит, что клипы вместе
+    const clips: Clip[] = [], bad: string[] = [];
+    for (const t of list) { const r = batchTake(t, bakeId); if (typeof r === 'string') bad.push(r); else clips.push(r); }
+    const names = clips.length ? cb.commitMany(clips) : [];
+    const renamed = names.filter((n, i) => n !== clips[i]!.name).map((n, i) => `${clips[i]!.name} → ${n}`);
+    cb.preview(null);
+    status.style.color = bad.length || renamed.length ? '#e0b060' : '#9ae6a0';
+    status.textContent = `перенесено ${what}: ${clips.length}`
+      + (renamed.length ? `\n⚠ имена были заняты (импорт не затирает): ${renamed.join(', ')}` : '')
+      + (bad.length ? `\n⚠ не взято: ${bad.join('; ')}` : '');
+  }
+
+  function drawMocapSet(): void {
+    if (!src || !cb.commitMany) return;
+    const m = matchMocapSet(src.animations.map((a) => a.name));
+    if (!m.core.length && !m.extra.length && !m.blocked.length) return;
+    setWrap.style.display = '';
+    setHead.textContent = `НАБОР МОКАПА В ЭТОМ ФАЙЛЕ: ядро ${m.core.length}, дополнительно ${m.extra.length}`
+      + (m.blocked.length ? `, нельзя ${m.blocked.length}` : '');
+    const lines: string[] = [];
+    for (const t of m.core) lines.push(`  ${t.take} → ${t.clip}  — ${t.note}`);
+    for (const t of m.blocked) lines.push(`  ⛔ ${t.take} → ${t.clip}  — ${t.blocked!}`);
+    if (m.absentCore.length) lines.push(`  ядра нет в этом файле (лежит в других файлах пакета): ${m.absentCore.join(', ')}`);
+    if (m.extra.length) lines.push(`  + дополнительно: ${m.extra.map((t) => t.clip).join(', ')}`);
+    lines.push('  пакет берётся на 60 fps, циклы по своей таблице, якорь idle выключен; остальное — как настроено выше');
+    setBody.textContent = lines.join('\n');
+    setBtns.innerHTML = '';
+    if (m.core.length) setBtns.append(btn(`перенести ядро (${m.core.length})`, () => runBatch(m.core, 'ядро')));
+    if (m.extra.length) setBtns.append(btn(`перенести дополнительно (${m.extra.length})`, () => runBatch(m.extra, 'дополнительно')));
+  }
+
   function drawDiag(): void {
     if (!src) return;
     const r = src.report;
@@ -374,7 +450,7 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
     status.style.color = '#c8b06a'; status.textContent = 'пересобираю карту…';
     src = await openBakeSource(file, map);
     cb.saveBoneMap?.(src.signature, src.boneMap);
-    drawDiag(); drawMapTable(); doBake();
+    drawDiag(); drawMapTable(); drawMocapSet(); doBake();
   }
 
   // ── старт ──
@@ -392,7 +468,7 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       const bases = cb.basePoses();
       for (const b of bases) { const op = document.createElement('option'); op.value = b.id; op.textContent = b.label; baseSel.append(op); }
       baseId = bases[0]?.id ?? ''; baseSel.value = baseId;
-      syncTrim(); drawMask(); drawClamp(); drawDiag(); drawMapTable(); doBake();
+      syncTrim(); drawMask(); drawClamp(); drawDiag(); drawMapTable(); drawMocapSet(); doBake();
     } catch (e) {
       status.style.color = '#e08080'; status.textContent = 'ошибка чтения: ' + (e as Error).message;
     }

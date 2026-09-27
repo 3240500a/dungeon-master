@@ -3461,6 +3461,26 @@ async function showImportPanel(file: File): Promise<void> {
         clipIdx = clipsHere().findIndex((x) => x.name === clip.name); frameIdx = 0; refreshAll();
       });
     },
+    /**
+     * ⭐ ПЕРЕНОС НАБОРА МОКАПА — пачка клипов ОДНИМ шагом истории. Порознь пятнадцать шагов отмены
+     * заставляли бы жать Ctrl+Z пятнадцать раз, чтобы вернуться к состоянию до переноса.
+     * Возвращаем ИМЕНА, под которыми клипы легли: `putClip(…, 'rename')` не затирает, поэтому занятое
+     * имя превращается в `walk_fwd_2` — панель обязана это показать, иначе повторный перенос тихо копит дубли.
+     */
+    commitMany: (clips) => {
+      const names: string[] = [];
+      histLib('импорт набора мокапа', () => {
+        for (const clip of clips) {
+          clip.name = (clip.name || 'anim').replace(/[^\wа-яА-Я0-9:+._-]/g, '_');
+          clip.character = curCharId; clip.weapon = weapon;
+          names.push(putClip(clip, 'rename')?.name ?? clip.name);
+        }
+        saveLib();
+        clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === names[0]));
+        frameIdx = 0; refreshAll();
+      });
+      return names;
+    },
   });
 }
 
