@@ -11,3 +11,6 @@ packages/server/data/
 
 # Локальные секреты рабочего места (setup-workstation.ps1 их генерирует). НИКОГДА в git.
 tools/deploy/local.env.ps1
+
+# Сгенерированный набор мокапа для загрузки в редактор (пересобирается генератором, в git не нужен).
+mocap_core.json

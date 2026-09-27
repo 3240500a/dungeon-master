@@ -134,6 +134,12 @@ export interface Clip {
    */
   bakeId?: number;
   /**
+   * ⭐ ОТКУДА КЛИП: `'mocap'` — снят с захвата (импорт), иначе наш процедурный запекатель.
+   * Различие не косметическое: у мокапа скорость съёма это ФАКТ ЗАХВАТА, и сравнивать её с пресетом
+   * походки бессмысленно — «пресет сейчас другой» не делает такой клип протухшим (`locoSetAudit`).
+   */
+  bakeSrc?: 'mocap';
+  /**
    * ⭐⭐ ЗАПЕЧЁННЫЙ ПОВОРОТ ТАЗА (`POSE.hipsTurn`), ° со знаком: столько статического поворота ушло в клип (`Hips` от
    * ПРИЦЕЛЬНОГО корня; поверх него в клипе ещё качание рыска, `hipsYawSwing`). Число — для подписи редактора и сверки
    * «клип снят той настройкой, что стоит сейчас»; рантайм пользуется ПОКАДРОВЫМ курсом таза самого клипа, а не им.
@@ -653,6 +659,7 @@ export function migrateClip(c0: unknown): Clip {
     bakeRev: typeof c.bakeRev === 'number' && Number.isFinite(c.bakeRev) ? c.bakeRev : undefined,
     // Номер съёма: потеряй его — и редактор перестанет видеть, что набор «таз открыт» снят СТАРОЙ походкой.
     bakeId: typeof c.bakeId === 'number' && Number.isFinite(c.bakeId) ? c.bakeId : undefined,
+    bakeSrc: c.bakeSrc === 'mocap' ? 'mocap' as const : undefined,
     // «Таз открыт»: потеряй угол или доли на чтении — рантайм не снимет отворот, и грудь уедет от прицела на 41 % угла.
     hipsYawDeg: typeof c.hipsYawDeg === 'number' && Number.isFinite(c.hipsYawDeg) ? c.hipsYawDeg : undefined,
     hipsYawW: Array.isArray(c.hipsYawW) && c.hipsYawW.length === 3 && c.hipsYawW.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)) ? [...c.hipsYawW] as number[] : undefined,

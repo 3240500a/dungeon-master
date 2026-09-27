@@ -117,7 +117,12 @@ export function auditChar(clips: readonly Clip[], charId: string, fallbackId?: s
     if (!isGait(name)) continue;                       // дальше — только про клипы ХОДА: у стойки и поворотов этих полей нет
     const want = presetSpeed(name);
     const got = bakedLocoSpeed(c);
-    if (want !== null && Math.abs(got - want) > 0.5) {
+    // ⚠ У МОКАПА СКОРОСТЬ СЪЁМА — ФАКТ ЗАХВАТА, А НЕ НАСТРОЙКА. Сравнивать её с пресетом бессмысленно:
+    // «снят на 56, пресет 40» не значит «стопы поедут» — клип помнит свою скорость, и часы читают ЕЁ.
+    // Без этой ветки весь импортированный набор светился бы красным, и панель перестала бы что-то значить.
+    if (c.bakeSrc === 'mocap') {
+      /* скорость захвата под пресет не подгоняется */
+    } else if (want !== null && Math.abs(got - want) > 0.5) {
       defects.push({ charId, name, kind: 'stale_speed', note: `снят на ${Math.round(got)} u/с, пресет сейчас ${want} — стопы поедут на разницу` });
     } else if (!isLocoClipFresh(c)) {
       defects.push({ charId, name, kind: 'stale_rev', note: 'снят С ДОВОРОТОМ таза — сектора доворота на нём выключены' });

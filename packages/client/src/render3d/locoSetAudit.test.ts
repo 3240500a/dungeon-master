@@ -223,3 +223,38 @@ describe('тег оружия у набора хода', () => {
       '⚠ редактор завёл СВОЮ копию правила — она разойдётся с поиском набора молча').toBe(true);
   });
 });
+
+/**
+ * ⭐⭐ МОКАП: СКОРОСТЬ СЪЁМА — ФАКТ ЗАХВАТА, А НЕ НАСТРОЙКА.
+ *
+ * `stale_speed` означает «клип снят на одной скорости, а пресет походки сейчас другой — стопы поедут на
+ * разницу». Для клипа НАШЕГО запекателя это правда. Для захвата — нет: актёр шёл, как шёл (замер пакета
+ * Kubold: ходьба 55.7 u/с против нашего пресета 40), клип помнит свою скорость, и часы читают ЕЁ.
+ * Без этой развилки весь импортированный набор светился бы красным целиком, а панель, которая врёт,
+ * хуже отсутствующей — по ней принимают решение «печь или не печь».
+ */
+describe('покрытие набора: клипы из захвата', () => {
+  const mocap = (name: string, spd: number): Clip => ({ ...good(name), bakeSpeed: spd, bakeSrc: 'mocap' } as unknown as Clip);
+
+  it('⭐⭐ У МОКАПА ЧУЖАЯ СКОРОСТЬ — НЕ ДЕФЕКТ', () => {
+    const set = REQUIRED_NAMES.map((n) => (isGaitName(n) ? mocap(n, n.startsWith('run_') ? 121.1 : 55.7) : good(n)));
+    const cov = auditChar(set, 'warrior');
+    expect(kinds(cov), '⚠ импортированный набор объявлен протухшим целиком').toEqual([]);
+    expect(staleNames(cov)).toEqual([]);
+  });
+
+  it('⚠ А У НАШЕГО ЗАПЕКАТЕЛЯ — ДЕФЕКТ, как и было (развилка не отменила правило)', () => {
+    const set = REQUIRED_NAMES.map((n) => (isGaitName(n) ? ({ ...good(n), bakeSpeed: 55.7 } as unknown as Clip) : good(n)));
+    const cov = auditChar(set, 'warrior');
+    expect(kinds(cov)).toContain('stale_speed');
+  });
+
+  it('⚠ и остальные дефекты у мокапа ловятся по-прежнему: нет канала опоры — это правда', () => {
+    const noSwing = REQUIRED_NAMES.map((n) => {
+      if (!isGaitName(n)) return good(n);
+      const c = mocap(n, 55.7) as unknown as { keys: { t: number; pose: Record<string, unknown> }[] };
+      return { ...c, keys: c.keys.map((k) => ({ t: k.t, pose: {} })) } as unknown as Clip;
+    });
+    expect(kinds(auditChar(noSwing, 'warrior'))).toContain('no_swing');
+  });
+});

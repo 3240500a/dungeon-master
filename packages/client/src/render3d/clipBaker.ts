@@ -579,7 +579,7 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
     name: opts.name ?? (anim.name || src.fileName.replace(/\.[^.]+$/, '')),
     character: opts.character, weapon: opts.weapon, loop, keys,
     ...(locoOn ? {
-      bakeSpeed: locoSpeed, bakeRev: LOCO_BAKE_REV,
+      bakeSpeed: locoSpeed, bakeRev: LOCO_BAKE_REV, bakeSrc: 'mocap' as const,
       ...(upperClean ? { upperPure: true as const } : {}),
       ...(swingRef ? { swingRef } : {}),
       ...(opts.bakeId ? { bakeId: opts.bakeId } : {}),

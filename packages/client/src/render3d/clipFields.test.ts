@@ -41,6 +41,7 @@ const SAMPLE: Record<string, unknown> = {
   idleEnds: true, idleEndsFrom: 'combat',
   rootYaw: true, rootPos: true,
   bakeSpeed: 120, bakeRev: 3, bakeId: 1758300000000,
+  bakeSrc: 'mocap',            // ⭐ источник клипа: захват против нашего запекателя — от него зависит вердикт аудита
   upperPure: true,
   swingRef: { RightUpperArm: [0.11, 0.22, 0.33], LeftUpperArm: [-0.11, -0.22, -0.33] } as Pose,
   hipsYawDeg: -12.5, hipsYawW: [0.5, 0.3, 0.2],

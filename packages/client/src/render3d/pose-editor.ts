@@ -4715,14 +4715,22 @@ function locoCoverageSection(): void {
   // планировщик, а панель этого не показывала вовсе: строка читалась как «чужой набор», хотя набора не было вовсе.
   const cov = auditLocoSet(library, ids, BASE_GAIT_CHAR);
   const TINT: Record<string, string> = { ok: '#46d07a', info: '#9aa3b8', warn: '#e0b050', block: '#c05050' };
-  const WORD: Record<string, string> = { ok: 'свой набор', info: 'чужой набор', warn: 'протухло', block: 'НЕТ КЛИПОВ' };
+  /**
+   * ⚠ СЛОВО — ПО ФАКТУ, А НЕ ПО УРОВНЮ ВАЖНОСТИ. `info` покрывает два РАЗНЫХ случая: «клипы одолжены у
+   * донора» и «клипы свои, но к ним есть замечания». Одна подпись на оба врала ровно там, где панель и
+   * нужна: у персонажа с ПОЛНЫМ своим набором из мокапа (15/15, замечание — нет канала опоры) читалось
+   * «чужой набор», то есть противоположное правде.
+   */
+  const wordFor = (c: { borrowed: number }, sev: string): string =>
+    sev === 'block' ? 'НЕТ КЛИПОВ' : sev === 'warn' ? 'протухло'
+      : c.borrowed > 0 ? 'чужой набор' : sev === 'ok' ? 'свой набор' : 'свой, с замечаниями';
   for (const c of cov) {
     const sev = severityOf(c);
     const row = el('div', 'display:flex;align-items:center;gap:6px;margin-top:3px;font-size:11px');
     const nm = rosterChars().find((x) => x.id === c.charId)?.name ?? c.charId;
     row.append(txt('span', 'flex:0 0 96px;color:' + (c.charId === curCharId ? '#9ae6a0' : '#cfd3e0'), nm));
     row.append(txt('span', 'flex:0 0 58px;color:#9aa3b8;font-size:10px', `${c.own}/${c.total}`));
-    row.append(txt('span', 'flex:1;font-size:10px;color:' + TINT[sev], WORD[sev]!));
+    row.append(txt('span', 'flex:1;font-size:10px;color:' + TINT[sev], wordFor(c, sev)));
     const stale = staleNames(c);
     if (stale.length && c.charId === curCharId) {
       // ⚠ Только СВОЕМУ персонажу: съём гоняет плеера текущей куклы, и печь чужого отсюда значило бы молча
