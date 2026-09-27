@@ -41,32 +41,39 @@ describe('таблица набора мокапа', () => {
   });
 
   /**
-   * ⭐⭐ ПОВОРОТЫ БЕРУТ КУРС ИЗ ОПОРНОЙ СТОПЫ. В корне его нет (дорожки `Root.quaternion` у этих тейков нет,
-   * рыск из таза 0.0°), а «in place» это «из захвата вычли вращение корня» — вычтенное осталось в стопах.
-   * Флаг обязан стоять у ВСЕХ шести: забудут на одном — этот поворот молча перестанет поворачивать.
+   * ⭐⭐ СТОРОНЫ ПОВОРОТОВ ЗЕРКАЛЬНЫ, КАК И У СТРАЙФОВ — И ЭТО ПРОВЕРЯЕТСЯ ПО ЗНАКУ АВТОРСКОЙ КРИВОЙ.
+   * Замер бинарника: `TurnLt90_Loop` несёт +90.0000°, `TurnRt90_Loop` −90.0000°. В нашей системе
+   * положительный рыск — это `turn_R` (`clipBake.TURN_PRESETS`: `turn_L` = −a, `turn_R` = +a).
+   * Значит `Lt` обязан лечь в `turn_R`. Перенос по буквам имени даёт персонажа, который на поворот
+   * влево крутится вправо: ноги переступают в одну сторону, тело едет в другую.
    */
-  it('⭐⭐ ВСЕ ШЕСТЬ ПОВОРОТОВ СНИМАЮТ КУРС ИЗ СТОП', () => {
+  it('⭐⭐ `Lt` ЛОЖИТСЯ В `turn_R`, А `Rt` В `turn_L`', () => {
+    const by = Object.fromEntries(MOCAP_SET.filter((t) => t.clip.startsWith('turn_')).map((t) => [t.clip, t.take]));
+    expect(by['turn_R_90'], 'Lt несёт +90 = наш turn_R').toBe('TurnLt90_Loop');
+    expect(by['turn_L_90'], 'Rt несёт −90 = наш turn_L').toBe('TurnRt90_Loop');
+    expect(by['turn_R_180']).toBe('TurnLt180');
+    expect(by['turn_L_180']).toBe('TurnRt180');
+    expect(by['turn_R_45'], '45° — половина того же цикла 90°').toBe('TurnLt90_Loop');
+    expect(by['turn_L_45']).toBe('TurnRt90_Loop');
+  });
+
+  it('⭐ все шесть поворотов снимают курс и ни один не запрещён', () => {
     const turns = MOCAP_SET.filter((t) => t.clip.startsWith('turn_'));
-    expect(turns.length, 'шесть поворотов движок спрашивает').toBe(6);
+    expect(turns.length).toBe(6);
     for (const t of turns) {
       expect(t.rootYaw, `${t.clip}: курс обязан сниматься`).toBe(true);
-      expect(t.yawFromFeet, `${t.clip}: и именно из стоп — в тазу поворота нет`).toBe(true);
-      expect(t.blocked, `${t.clip}: запрета больше нет`).toBeUndefined();
+      expect(t.blocked, `${t.clip}: запрета нет`).toBeUndefined();
     }
-    // …и все шесть идут в переносимое ядро, а не мимо.
-    const m = matchMocapSet(MAIN_FILE);
-    expect(m.core.filter((t) => t.clip.startsWith('turn_')).length, 'все шесть из главного файла').toBe(6);
-    expect(m.blocked.length, 'запрещённых в наборе больше нет').toBe(0);
+    expect(matchMocapSet(MAIN_FILE).core.filter((t) => t.clip.startsWith('turn_')).length).toBe(6);
+    expect(matchMocapSet(MAIN_FILE).blocked.length).toBe(0);
   });
 
   /**
-   * ⚠⚠ СЪЁМ ИЗ СТОП ГОДЕН ТОЛЬКО ДЛЯ ПОВОРОТОВ НА МЕСТЕ. На едущем тейке он копит ошибку (замер: бег −26°,
-   * старты с доворотом до 378° — рыск планты на быстром шаге включает вынос всей ноги). Поставить флаг
-   * едущему тейку значит вписать в клип выдуманный поворот, и он утащит за собой позу таза.
+   * ⚠ РЕКОНСТРУКЦИЯ ИЗ СТОП осталась в запекателе фолбэком для пакетов без авторской кривой. Здесь её
+   * не должно быть ни у кого: у Kubold кривая есть, и она точнее (0.0–0.2° против 2–15°).
    */
-  it('⭐⭐ И БОЛЬШЕ НИКТО ИЗ СТОП КУРС НЕ СНИМАЕТ', () => {
-    const wrong = MOCAP_SET.filter((t) => t.yawFromFeet && !t.clip.startsWith('turn_')).map((t) => t.clip);
-    expect(wrong, '⚠ едущему тейку съём из стоп вписал бы выдуманный поворот').toEqual([]);
+  it('⚠ никто не восстанавливает курс из стоп — есть авторская кривая', () => {
+    expect(MOCAP_SET.filter((t) => t.yawFromFeet).map((t) => t.clip)).toEqual([]);
   });
 
   /**

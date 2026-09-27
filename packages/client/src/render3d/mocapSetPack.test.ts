@@ -34,13 +34,6 @@ const CORE_SPEED: Record<string, number> = {
   // ⚠ Стороны идут за клипами: `RunLtLoop` (72.4) — это шаг в СВОЮ ЛЕВУЮ, то есть наш `run_strafe_R`.
   run_fwd: 121.1, run_back: 74.0, run_strafe_R: 72.4, run_strafe_L: 75.8,
 };
-/**
- * Замеренные углы поворотов (°, наша конвенция: L отрицательный). Снимаются ИЗ ОПОРНОЙ СТОПЫ — в корне их нет.
- * Полоса ±6°: недобор до номинала (88 вместо 90) — это честное содержимое тейка, выпрямлять его нельзя.
- */
-const TURN_DEG: Record<string, number> = {
-  turn_L_90: -88, turn_R_90: 88, turn_L_180: -169, turn_R_180: 165, turn_L_45: -43, turn_R_45: 43,
-};
 
 describe.skipIf(!HAVE)('набор мокапа: таблица против пакета', () => {
   if (!HAVE) {
@@ -73,23 +66,17 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
    * из таза, то есть портит саму позу на эти градусы. Замер: `WalkFwdStart180_L` несёт 33°, `_R` −146° —
    * ни то, ни другое не 180°, значит имени доверять нельзя, а файлу — можно только там, где поворот полный.
    */
-  it('⭐⭐ `rootYaw` СТОИТ ТОЛЬКО ТАМ, ГДЕ В ФАЙЛЕ ЕСТЬ ДОРОЖКА ПОВОРОТА', () => {
-    const hasYaw = new Map<string, boolean>();
-    for (const { src } of opened) {
-      for (const a of src.animations) {
-        if (hasYaw.has(a.name)) continue;
-        hasYaw.set(a.name, a.tracks.some((t) => t.name === 'Root.quaternion' && t.times.length > 1));
-      }
-    }
-    // Рыск ИЗ ТАЗА требует дорожки в файле; рыск ИЗ СТОП — нет, он на то и заведён (вращение корня вычтено).
-    const wrong = MOCAP_SET.filter((t) => t.rootYaw && !t.yawFromFeet && !hasYaw.get(t.take)).map((t) => t.take);
-    expect(wrong, '⚠ снимаем рыск из таза у тейка, в котором дорожки поворота нет — в клип уйдут нули').toEqual([]);
-    // …а из стоп — только у поворотов на месте: на едущем тейке метод копит ошибку (замер: бег −26°, старты до 378°).
-    const feet = MOCAP_SET.filter((t) => t.yawFromFeet).map((t) => t.clip);
-    expect(feet.every((c) => c.startsWith('turn_')), '⚠ съём из стоп у едущего тейка').toBe(true);
-    // Контроль: тейк с полным поворотом известен и он ОДИН — если пакет обновят, тест это покажет.
-    const carry = [...hasYaw].filter(([n, v]) => v && MOCAP_SET.some((t) => t.take === n)).map(([n]) => n);
-    expect(carry.length, 'поворот несут 7 тейков таблицы (замер 27.09.2026)').toBe(7);
+  /**
+   * ⚠ РЕКОНСТРУКЦИЯ КУРСА ИЗ СТОП — ТОЛЬКО ДЛЯ ПОВОРОТОВ НА МЕСТЕ, и сейчас она не нужна никому:
+   * авторская кривая читается напрямую из FBX (`tools/fbxRootCurve.ts`), а `FBXLoader` её теряет.
+   * ⚠ Прежний сторож здесь требовал, чтобы у тейка с `rootYaw` была дорожка `Root.quaternion`, ВИДИМАЯ
+   * ЗАГРУЗЧИКУ. Посылка оказалась неверной: дорожка в файле есть (40 ключей до ±90.0000°), а загрузчик
+   * отдаёт один ключ-единицу. Сторож на ложной посылке хуже отсутствующего, поэтому он снят, а угол
+   * поворота теперь проверяет сам генератор набора (`tools/mocapSet.ts`) — там кривая и читается.
+   */
+  it('⚠ съём курса из стоп не стоит у едущих тейков', () => {
+    const wrong = MOCAP_SET.filter((t) => t.yawFromFeet && !t.clip.startsWith('turn_')).map((t) => t.clip);
+    expect(wrong, '⚠ едущему тейку съём из стоп вписал бы выдуманный поворот').toEqual([]);
   });
 
   it('⭐⭐ ЯДРО ЗАПЕКАЕТСЯ: не статика, скорость съёма в полосе, метаданные набора на месте', () => {
@@ -137,23 +124,6 @@ describe.skipIf(!HAVE)('набор мокапа: таблица против п�
       }
     }
     if (bad.length) console.log('швы, которые стоит свести (`clipImport.closeLoopSeam`): ' + bad.join(', '));
-  }, 900000);
-
-  it('⭐⭐ ВСЕ ШЕСТЬ ПОВОРОТОВ НЕСУТ СВОЙ УГОЛ (снят из стоп) И СО ВЕРНЫМ ЗНАКОМ', () => {
-    const seen: string[] = [];
-    for (const { src } of opened) {
-      const m = matchMocapSet(src.animations.map((a) => a.name));
-      for (const t of m.core) {
-        const want = TURN_DEG[t.clip];
-        if (want === undefined || seen.includes(t.clip)) continue;
-        seen.push(t.clip);
-        const k = bake(src, t).clip.keys;
-        const got = (k[k.length - 1]!.pose[ROOT_YAW]?.[0] ?? 0) * D;
-        expect(Math.sign(got), `${t.clip}: знак поворота (L отрицательный, R положительный)`).toBe(Math.sign(want));
-        expect(Math.abs(got - want), `${t.clip}: угол ${got.toFixed(0)}° против замеренных ${want}°`).toBeLessThan(6);
-      }
-    }
-    expect(seen.sort(), 'проверены все шесть').toEqual(['turn_L_180', 'turn_L_45', 'turn_L_90', 'turn_R_180', 'turn_R_45', 'turn_R_90']);
   }, 900000);
 
   /**

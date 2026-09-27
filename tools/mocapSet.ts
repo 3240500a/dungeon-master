@@ -20,6 +20,7 @@ import { openBakeSource, bakeFromSource, type BakeSource } from '../packages/cli
 import { isStaticBake, stitchLocoClip } from '../packages/client/src/render3d/clipImport.js';
 import { matchMocapSet, type MocapTake } from '../packages/client/src/render3d/mocapSetMap.js';
 import type { Clip } from '../packages/client/src/render3d/clipModel.js';
+import { readRootYawCurves, sampleCurve, type RootYawCurve } from './fbxRootCurve.js';
 
 const DIR = process.env['MAP_DIR']
   ?? 'C:/work/Games_Art/Games_Art/top_down/dungeon/Assets/MovementAnimsetPro/Animations';
@@ -44,8 +45,11 @@ async function main(): Promise<void> {
   (globalThis as unknown as { window?: unknown }).window ??= { innerWidth: 1920, innerHeight: 1080 };
   const warn = console.warn; console.warn = (): void => {};
   const srcs: BakeSource[] = [];
+  /** Авторские кривые поворота корня по тейкам — их `FBXLoader` теряет (см. `fbxRootCurve.ts`). */
+  const curves = new Map<string, RootYawCurve>();
   for (const f of readdirSync(DIR).filter((x) => x.toLowerCase().endsWith('.fbx')).sort()) {
     const buf = readFileSync(path.join(DIR, f));
+    for (const [k, v] of readRootYawCurves(f, buf)) if (!curves.has(k)) curves.set(k, v);
     srcs.push(await openBakeSource(new File([buf as unknown as BlobPart], f)));
   }
   console.warn = warn;
@@ -64,6 +68,10 @@ async function main(): Promise<void> {
         // на бегу (замер: мировой скачок 179° против 26° без пинов). См. шапку `mocapSetMap.ts`.
         limbLock: { LF: false, RF: false },
         rootYaw: t?.rootYaw ?? false, yawFromFeet: t?.yawFromFeet ?? false, rootPos: false,
+        // ⚠ Курс — ИЗ АВТОРСКОЙ КРИВОЙ, если она у тейка есть. Реконструкция из стоп остаётся фолбэком.
+        ...(t?.rootYaw && curves.has(take)
+          ? { yawAt: (tSec: number): number => sampleCurve(curves.get(take)!, tSec) * Math.PI / 180 }
+          : {}),
         startSec: t?.trim ? t.trim[0] * dur : undefined, endSec: t?.trim ? t.trim[1] * dur : undefined,
       });
       if (isStaticBake(r.stats)) throw new Error(name + ': СТАТИКА — проверь карту костей');
@@ -85,12 +93,21 @@ async function main(): Promise<void> {
   writeFileSync(path.join(OUT, 'mocap_core.json'), JSON.stringify(core));
 
   // Контроль поворотов: канал несёт угол, а таз в клипе НЕ крутится ему навстречу.
-  for (const t of takes.filter((x) => x.yawFromFeet)) {
+  for (const t of takes.filter((x) => x.rootYaw)) {
     const c = core.find((x) => x.name === t.clip)!;
     const last = c.keys[c.keys.length - 1]!;
     const ry = (last.pose['__rootY']?.[0] ?? 0) * D;
     const h0 = (c.keys[0]!.pose['Hips']?.[1] ?? 0) * D, h1 = (last.pose['Hips']?.[1] ?? 0) * D;
-    console.log(`  ${t.clip.padEnd(11)} __rootY ${ry.toFixed(0).padStart(5)}°   таз в клипе ${h0.toFixed(0).padStart(4)} → ${h1.toFixed(0).padStart(4)}°`);
+    const nominal = Number(/_(\d+)$/.exec(t.clip)?.[1] ?? 0) * (t.clip.includes('_L_') ? -1 : 1);
+    const src = curves.has(t.take) ? 'кривая автора' : 'из стоп';
+    console.log(`  ${t.clip.padEnd(11)} __rootY ${ry.toFixed(1).padStart(7)}°  номинал ${String(nominal).padStart(5)}°  ` +
+      `ошибка ${(ry - nominal).toFixed(1).padStart(6)}°  таз в клипе ${h0.toFixed(0).padStart(4)} → ${h1.toFixed(0).padStart(4)}°  (${src})`);
+    // ⚠ ОТКАЗ, А НЕ ПРЕДУПРЕЖДЕНИЕ. Кривая автора точна (ровно ±90.0000 / ±180.0000), и любое расхождение
+    // больше половины градуса значит, что мы её опять потеряли и скатились в реконструкцию.
+    if (Math.abs(ry - nominal) > 0.5) throw new Error(`${t.clip}: поворот ${ry.toFixed(1)}° против номинала ${nominal}° — кривая автора не подхватилась`);
+    // ⚠ И ЗНАК. Перепутать его значит получить персонажа, который на поворот влево крутится вправо:
+    // ноги переступают в одну сторону, тело едет в другую — это и было «повернулось наполовину».
+    if (Math.sign(ry) !== Math.sign(nominal)) throw new Error(`${t.clip}: знак поворота ${ry.toFixed(1)}° не совпал с именем`);
   }
 
   // ── 2. ТЕСТОВЫЙ НАБОР: ход СШИТ, плюс всё дополнительное ──

@@ -218,6 +218,13 @@ export interface BakeOptions {
    */
   yawFromFeet?: boolean;
   /**
+   * ⭐⭐ ГОТОВАЯ КРИВАЯ КУРСА (рад) по времени ИСХОДНИКА — когда она у пакета есть в авторском виде.
+   * Точнее любой реконструкции: у Kubold кривая поворота лежит в самом FBX (`Root` → `Lcl Rotation`,
+   * 40 ключей ровно до ±90.0000°), её просто не отдаёт `FBXLoader` — см. `tools/fbxRootCurve.ts`.
+   * Как и `yawFromFeet`, подразумевает, что СНЯТАЯ ПОЗА курса НЕ несёт: вычитать его из таза нельзя.
+   */
+  yawAt?: (tSec: number) => number;
+  /**
    * ⭐⭐ КЛИП НАБОРА ХОДА — дописать метаданные набора, без которых рантайм считает импорт ЛЕГАСИ.
    *
    * Их пишет только процедурный запекатель (`clipBake.ts`), и потому любой мокап-ход до сих пор попадал в
@@ -447,7 +454,8 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
   // кадр), и мировая поза это НЕ показывала — 180° уходили в кость таза. Сторож — `clipBakeSource.test.ts`, на сам `__rootY`.
   const rootYaws: number[] = [];
   if (opts.rootYaw) {
-    if (opts.yawFromFeet) rootYaws.push(...yawFromSupportFoot(poses, hipsFull, hipsW));
+    if (opts.yawAt) { const y0 = opts.yawAt(times[0] ?? 0); for (const t of times) rootYaws.push(opts.yawAt(t) - y0); }
+    else if (opts.yawFromFeet) rootYaws.push(...yawFromSupportFoot(poses, hipsFull, hipsW));
     else {
       let acc = 0, prev = 0;
       for (let i = 0; i < poses.length; i++) {
@@ -528,7 +536,7 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
        * читалось как «топчется на месте, а потом разворачивается без подшагов»: ноги в позе переступают,
        * тело не поворачивается вовсе, и курс догоняет уже потом, помимо клипа.
        */
-      if (opts.rootYaw && !opts.yawFromFeet) pelvisPoseToChar(pose, ry, H.hipsRest);
+      if (opts.rootYaw && !opts.yawFromFeet && !opts.yawAt) pelvisPoseToChar(pose, ry, H.hipsRest);
       setRootMotion(pose, ry, tr ? tr[0] : 0, tr ? tr[2] : 0);
     }
     dense.push({ t: times[i]!, pose });
