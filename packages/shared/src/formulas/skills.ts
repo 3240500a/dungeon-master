@@ -2,6 +2,7 @@ import type { ConfigShapes } from '../config/schemas.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { SkillAllocation } from '../types/save.js';
 import type { Item, AttackType, DamageKind, WeaponClass } from '../types/items.js';
+import { isVersatile } from './versatile.js';
 
 /**
  * Чистые функции «дерево + раскладка → модификаторы статов» (модификатор × ранг).
@@ -111,13 +112,21 @@ export interface WeaponGate {
 /**
  * Подходит ли оружие (+ offhand для дуала) под ограничения скилла. ЕДИНАЯ проверка для серверного
  * гейта каста и клиентского UI (нельзя назначить / серый слот при несоответствии оружия).
+ *
+ * ⚠ C-11: руки — по ХВАТУ, а не по родному числу рук вещи. Полуторное со щитом держат одной рукой (`versatile.ts`): скилы двух
+ * рук (ветвь двуручных мечей) ему закрыты, одноручные — открыты. Раньше гейт смотрел на `item.hands` (2), и «Рассечение» ×1.4
+ * шло со щитом и бронёй щита, ради отказа от которых и есть одноручный хват.
  */
 export function skillWeaponAllowed(g: WeaponGate, weapon: Item | undefined, offhand?: Item | undefined): boolean {
   const at: AttackType = weapon?.attackType ?? 'melee';
   if (g.attackTypes?.length && !g.attackTypes.includes(at)) return false;
   if (g.damageKinds?.length && !(weapon?.damageKind && g.damageKinds.includes(weapon.damageKind))) return false;
   if (g.weaponClasses?.length && !(weapon?.weaponClass && g.weaponClasses.includes(weapon.weaponClass))) return false;
-  if (g.hands && g.hands !== 'any') { const need = g.hands === 'two' ? 2 : 1; if ((weapon?.hands ?? 1) !== need) return false; }
+  if (g.hands && g.hands !== 'any') {
+    const need = g.hands === 'two' ? 2 : 1;
+    const held = isVersatile(weapon) && offhand ? 1 : (weapon?.hands ?? 1);
+    if (held !== need) return false;
+  }
   if (g.requiresDual && !(weapon?.attackType && offhand?.attackType)) return false;
   return true;
 }

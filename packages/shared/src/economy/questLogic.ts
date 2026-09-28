@@ -265,6 +265,11 @@ export function trackFloor(save: SaveState, depth: number): TrackResult {
   return { changed, completed };
 }
 
+/** Число награды задания — целое не меньше нуля (C-02); не число, минус, NaN и бесконечность — ноль, дробь — вниз. */
+function rewardCount(v: number | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+
 export interface TurnInResult extends ActionResult {
   leveled?: boolean;
   /** Следующий квест цепочки, если авто-принят. */
@@ -289,11 +294,14 @@ export function turnInQuest(reg: ConfigRegistry, save: SaveState, questId: strin
   const item = raw ? shapeFoundWeapon(reg, raw) : null;
   const dims = reg.get('balance').inventory;
   if (item && !hasSpace(save.inventory, item.gridW, item.gridH, dims)) return { ok: false, reason: 'Нет места для награды' };
-  if (r.gold) save.gold += r.gold;
-  if (r.skillPoints) save.unspentSkillPoints += r.skillPoints;
+  // ⚠ C-02: награда — целое не меньше нуля. Схема её теперь так и держит, но задание, принятое до правки схемы, лежит в сейве со
+  // своей наградой (`activeQuestDefs`): «−450 золота» с доски или «0.5 очка» цепочки ушли бы в золото и очки как есть.
+  const gold = rewardCount(r.gold), sp = rewardCount(r.skillPoints), xp = rewardCount(r.xp);
+  if (gold) save.gold += gold;
+  if (sp) save.unspentSkillPoints += sp;
   if (item) addToInventory(save.inventory, item, dims);
-  const leveled = r.xp
-    ? gainXp(save, reg.get('balance'), questXp(save.level, reg.get('balance').xpTable, r.xp)).leveled
+  const leveled = xp
+    ? gainXp(save, reg.get('balance'), questXp(save.level, reg.get('balance').xpTable, xp)).leveled
     : false;
   prog.status = 'turned-in';
 

@@ -211,14 +211,39 @@ const MAX_REQ_TOTAL_DEFAULT = 180;
  * Масштабирует требования тиром (`mult`) и КАПИТ сумму `maxTotal` ПРОПОРЦИОНАЛЬНО: если Σ>кап —
  * все атрибуты ужимаются в (кап/Σ) раз (только сила → кап силы; сила+ловк → делится по доле).
  * `maxTotal<=0` — без капа.
+ *
+ * ⚠ V-B2-03: ужатые доли округляются НАИБОЛЬШИМ ОСТАТКОМ, а не каждая сама по себе. `Math.round` по атрибуту
+ * перелетал кап: 14:26 на t6 ужималось ровно в 66.5 + 123.5, обе половинки вверх — 67 + 124 = 191 при капе 190
+ * (копья, луки, арбалеты — из дропа, лавки, ковки и подъёма). Теперь: пол каждой доли, а недостающие до ⌊кап⌋ очки —
+ * крупнейшим дробным частям (ничья — большему атрибуту, затем порядку ключей). Сумма ужатых = ⌊кап⌋ ровно, каждый
+ * атрибут — пол или потолок своей доли. Неужатые требования округляются как прежде (`Math.round`) — они не меняются.
+ *
+ * ⚠ C-01: и НЕ ужатые — под тем же потолком. Наибольший остаток включался только при Σ СТРОГО больше капа, а Σ РОВНО на капе
+ * (или чуть ниже) шла по атрибуту и перелетала его: 37/39 × 2.5 = 92.5 + 97.5 = 190 → 93 + 98 = 191; три доли по .6 (62.6 +
+ * 62.6 + 64.6 = 189.8) → 63 + 63 + 65 = 191. Поставке такое не встречается, но ступень и базу хозяин правит живьём. Теперь
+ * округление по атрибуту — только пока его сумма ≤ ⌊кап⌋; иначе те же доли (без ужатия) раздаются наибольшим остатком до ⌊кап⌋.
  */
 function scaleReqs(reqs: Item['requirements'], mult: number, maxTotal: number = MAX_REQ_TOTAL_DEFAULT): Item['requirements'] {
-  const scaled: Partial<Record<keyof Item['requirements'], number>> = {};
+  type Attr = keyof Item['requirements'];
+  const scaled: [Attr, number][] = [];
   let total = 0;
-  for (const [k, v] of Object.entries(reqs)) { if (v !== undefined) { const s = v * mult; scaled[k as keyof Item['requirements']] = s; total += s; } }
-  const f = maxTotal > 0 && total > maxTotal ? maxTotal / total : 1;
+  for (const [k, v] of Object.entries(reqs)) { if (v !== undefined) { const s = v * mult; scaled.push([k as Attr, s]); total += s; } }
   const out: Item['requirements'] = {};
-  for (const [k, s] of Object.entries(scaled)) { const r = Math.round((s as number) * f); if (r > 0) out[k as keyof Item['requirements']] = r; }
+  const capped = maxTotal > 0 && total > maxTotal;
+  if (!capped) {
+    const rounded = scaled.map(([k, s]) => [k, Math.round(s)] as const);
+    if (!(maxTotal > 0 && rounded.reduce((n, [, r]) => n + r, 0) > Math.floor(maxTotal))) {
+      for (const [k, r] of rounded) if (r > 0) out[k] = r;
+      return out;
+    }
+  }
+  const f = capped ? maxTotal / total : 1;
+  const parts = scaled.map(([k, s], i) => { const x = s * f; const fl = Math.floor(x); return { k, i, x, r: fl, frac: x - fl }; });
+  let left = Math.floor(maxTotal) - parts.reduce((n, p) => n + p.r, 0);
+  // Сравнение дробей — с допуском: 66.5 и 123.5 после умножения бывают 66.4999… и 123.5000…, а это ничья, не «больше».
+  const order = [...parts].sort((a, b) => (Math.abs(b.frac - a.frac) > 1e-9 ? b.frac - a.frac : b.x - a.x || a.i - b.i));
+  for (const p of order) { if (left <= 0) break; p.r++; left--; }
+  for (const p of parts) if (p.r > 0) out[p.k] = p.r;
   return out;
 }
 

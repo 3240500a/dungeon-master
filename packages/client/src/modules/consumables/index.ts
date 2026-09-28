@@ -39,8 +39,8 @@ export function applyUse(app: App, item: Item): boolean {
   if (!state || !item.use) return false;
   const d = state.derived();
   const u = item.use;
-  // Мгновенный эффект (лечение/мана/снятие статусов) — общий с сервером.
-  let did = applyConsumable(state, u, d.maxHp, d.maxMana);
+  // Мгновенный эффект (лечение/мана/снятие статусов) — общий с сервером. Мана — до потолка с резервом аур (C-14, как `session.drink`).
+  let did = applyConsumable(state, u, d.maxHp, d.maxMana, state.effectiveMaxMana());
   // Временный бафф — клиентский канал potionBuffs (у сервера свой).
   if (u.buffMods?.length && (u.buffDurationSec ?? 0) > 0) {
     state.potionBuffs.push({ mods: u.buffMods.map((m) => ({ ...m })), remaining: u.buffDurationSec! });

@@ -1,6 +1,6 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { counters, readGauges } from '../net/metrics.js';
-import { heartbeat, releaseNode, touchClaims, initClusterSchema } from './registry.js';
+import { heartbeat, releaseNode, touchClaims, touchRuns, initClusterSchema } from './registry.js';
 
 /**
  * Игровая нода (Ф4.3): процесс, который занимается ТОЛЬКО комнатами.
@@ -39,12 +39,14 @@ export function nodeShutdownInstalled(): boolean { return nodeShutdown; }
  * Подключить процесс к кластеру. `charIds` — те, кого нода держит прямо сейчас: их
  * закрепление продлевается, чтобы игрок при обрыве вернулся именно сюда, к своей комнате.
  * `onLost` (R2-05) — те из них, чьё закрепление уже у ЧУЖОЙ ноды: их копии здесь проиграли.
+ * ⭐ V2: `heldRuns` — забеги, которые держат комнаты ноды (ключ, код комнаты): их держание за нодой (`run_locks`) продлевает тот же удар.
  */
 export async function joinCluster(
   nodeId: string, url: string, charIds: () => string[],
   loop: ReturnType<typeof monitorEventLoopDelay>,
   onLost?: (charIds: string[]) => void,
   onGone?: (charIds: string[]) => void,
+  heldRuns?: () => { key: string; room: string }[],
 ): Promise<void> {
   await initClusterSchema();
 
@@ -72,6 +74,15 @@ export async function joinCluster(
     // упало — сердце не бьётся: нода, не подтвердившая своих героев, живой их хозяйкой не выглядит.
     const held = charIds();
     const kept = await touchClaims(held, nodeId);
+    // ⭐ V2: и забеги комнат ноды — правило держания у них то же (`claimRule.ts`), значит и продление — до удара сердца.
+    const runs = heldRuns?.() ?? [];
+    if (runs.length) {
+      const keptRuns = await touchRuns(runs, nodeId);
+      const lostRuns = runs.filter((r) => !keptRuns.has(r.key));
+      if (lostRuns.length) {
+        console.error(`[${nodeId}] ИНЦИДЕНТ: забеги комнат ${lostRuns.map((r) => r.room).join(', ')} кластер числит за другой нодой — один забег идёт в двух местах`);
+      }
+    }
     await heartbeat(nodeId, url, {
       players: g.players, rooms: g.rooms,
       cpuSeconds: (cpu.user + cpu.system) / 1e6,

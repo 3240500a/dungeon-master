@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { EventEmitter } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
 import { ConfigRegistry } from '@dm/shared';
 import { counters } from './metrics.js';
+import { MAX_BACKPRESSURE } from './conn.js';
 
 /**
  * ТРАНСПОРТ `ws` ЦЕЛИКОМ: настоящий `attachWsServer` на порту 0 и настоящие сокеты. Здесь проверяется то, чего
@@ -120,5 +122,65 @@ describe('⭐ R4-13: путь игрового сокета за прокси п
 
   it('прочие пути игрового сокета не получают', async () => {
     for (const p of ['/wsx', '/ws/abc', '/ws/0/1', '/api/ws']) expect(await openAt(p), p).not.toBeInstanceOf(WebSocket);
+  });
+});
+
+describe('⭐ B3-V1, B3-V2: закрытие сервером — окончательно сразу (`WsConn` поверх сокета, ведущего себя как `ws`)', () => {
+  /** Сокет `ws`: `close` — только начало рукопожатия (`CLOSING`), кадры клиента библиотека отдаёт и в нём, событие `close` — позже. */
+  class FakeWs extends EventEmitter {
+    readonly OPEN = 1;
+    readyState = 1;
+    bufferedAmount = 0;
+    sent: unknown[] = [];
+    closedWith?: number;
+    send(d: unknown): void { this.sent.push(d); }
+    close(code?: number): void { if (this.readyState === 1) { this.readyState = 2; this.closedWith = code; } }
+    finish(): void { this.readyState = 3; this.emit('close'); }
+  }
+  async function conn(): Promise<{ ws: FakeWs; c: import('./conn.js').GameConn; frames: string[]; ends: () => number }> {
+    const { WsConn } = await import('./wsServer.js');
+    const ws = new FakeWs();
+    const c = new WsConn(ws as unknown as WebSocket, '127.0.0.1');
+    const frames: string[] = [];
+    let n = 0;
+    c.onMessage((raw) => frames.push(raw));
+    c.onClose(() => { n++; });
+    return { ws, c, frames, ends: () => n };
+  }
+
+  it('B3-V1: кадр клиента после закрытия сервером (сокет в CLOSING) в игру не идёт', async () => {
+    const { ws, c, frames } = await conn();
+    ws.emit('message', Buffer.from('{"t":"ping","id":1}'));
+    c.close(4008, 'rate limit');
+    expect(ws.closedWith).toBe(4008);
+    expect(c.open).toBe(false);
+    ws.emit('message', Buffer.from('{"t":"join"}'));   // клиент не отвечает на закрытие и шлёт дальше — библиотека кадр отдаёт
+    expect(frames).toEqual(['{"t":"ping","id":1}']);
+  });
+
+  it('B3-V2: закрытие сервером зовёт обработчик закрытия сразу и один раз — событие транспорта потом ничего не делает', async () => {
+    const { ws, c, ends } = await conn();
+    c.close(4001, 'replaced');
+    expect(ends(), 'снятие сессии — сразу, а не по концу рукопожатия').toBe(1);
+    ws.finish();
+    ws.emit('error', new Error('ECONNRESET'));
+    expect(ends()).toBe(1);
+  });
+
+  it('B3-V2: медленный читатель (очередь выше потолка) закрывается 1013, и обработчик закрытия позван сразу', async () => {
+    const { ws, c, ends } = await conn();
+    ws.bufferedAmount = MAX_BACKPRESSURE + 1;
+    c.send('{"t":"pong","id":1}');
+    expect(ws.closedWith).toBe(1013);
+    expect(ws.sent).toEqual([]);
+    expect(ends()).toBe(1);
+    expect(c.open).toBe(false);
+  });
+
+  it('закрытие клиентом — обработчик один раз, по событию транспорта', async () => {
+    const { ws, ends } = await conn();
+    expect(ends()).toBe(0);
+    ws.finish();
+    expect(ends()).toBe(1);
   });
 });

@@ -154,6 +154,8 @@ export const saveStateSchema = z.object({
       nodes: z.array(runNodeStateSchema).optional(),
       // R8-04: наибольшая мощь героя в этом забеге — новый узел заселяется не слабее (пишет только сервер).
       peak: z.number().optional(),
+      // V1: погиб в коопе на этом узле и с тех пор не жил — штраф за эту смерть уже в сейве (пишет только сервер).
+      deadAt: z.string().optional(),
     })
     .optional(),
 }).passthrough();

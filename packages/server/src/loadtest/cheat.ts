@@ -52,13 +52,27 @@ async function post<T>(path: string, body: unknown, token?: string): Promise<T> 
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Ф4 (E2E 28.09): адрес игрового сокета — у маршрута (`/api/route`), как у настоящего клиента. Гейтвей кластера игры не ведёт
+ * (на `/ws` он отвечает страницей, HTTP 200), одиночный сервер отвечает собой. Раньше стенд стучался в `BASE/ws` и против
+ * кластера падал на рукопожатии.
+ */
+async function routeUrl(token: string, charId: string): Promise<string> {
+  const r = await fetch(`${BASE}/api/route?charId=${encodeURIComponent(charId)}`, { headers: { authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`/api/route → ${r.status} ${await r.text()}`);
+  return ((await r.json()) as { url: string }).url;
+}
+
 async function main(): Promise<void> {
   const username = `cheat_${Math.random().toString(36).slice(2, 8)}`;
   const { token } = await post<{ token: string }>('/api/register', { username, password: 'loadtest-password' });
   const { character } = await post<{ character: { charId: string } }>(
     '/api/characters', { classId: 'warrior', name: 'Читер' }, token);
 
-  const ws = new WebSocket(BASE.replace(/^http/, 'ws') + '/ws');
+  const url = await routeUrl(token, character.charId);
+  // Счётчик повторов — у НОДЫ героя (на гейтвее кластера — сумма сердцебиений, в ней его нет): её HTTP — тот же адрес без `/ws`.
+  const nodeHttp = url.replace(/^ws/, 'http').replace(/\/ws(\/\d+)?(\?.*)?$/, '');
+  const ws = new WebSocket(url);
   let save: SaveState | undefined;
   const errors: string[] = [];
   let stashFrames = 0;
@@ -83,7 +97,7 @@ async function main(): Promise<void> {
   // а по серверному счётчику: он растёт РОВНО на отброшенные повторы.
   const send = (command: unknown, id?: number): void => { ws.send(JSON.stringify({ t: 'cmd', command, id })); };
   const dupCount = async (): Promise<number> => {
-    const text = await (await fetch(BASE + '/metrics')).text();
+    const text = await (await fetch(nodeHttp + '/metrics')).text();
     return Number(/^dm_cmd_duplicate_total (\d+)/m.exec(text)?.[1] ?? -1);
   };
   await wait(300);

@@ -4,9 +4,7 @@ import { deriveStats, finalAttributes, modifiersFromItems } from '../formulas/st
 import { passiveTreeModifiers, skillTreeModifiers } from '../formulas/skills.js';
 import { combatStatsOf, attackWeaponsOf, estimateAttack, WEAPON_ATTR } from '../formulas/playerCombat.js';
 import { abilityRankMult, abilityCooldown } from '../formulas/combat.js';
-import { itemFromBaseId } from '../formulas/itemgen.js';
-import { shapeFoundWeapon } from '../formulas/craft.js';
-import { startWeaponBaseId } from '../economy/newCharacter.js';
+import { startWeaponBaseId, starterItem } from '../economy/newCharacter.js';
 import { xpForLevel } from '../formulas/xp.js';
 import type { Rng } from '../formulas/rng.js';
 import { DEFAULT_HP_MANA_SCALING, type Attributes, type DerivedStats, type StatModifier } from '../types/attributes.js';
@@ -25,9 +23,9 @@ const ALL_ATTRS: (keyof Attributes)[] = ['strength', 'dexterity', 'intelligence'
 export function newBotSave(reg: ConfigRegistry, classId: string): SaveState {
   const cls = reg.get('classes').find((c) => c.id === classId) ?? reg.get('classes')[0]!;
   // ⚠ R14-08: та же база, что у героя игры: выключенная в редакторе не выдаётся (`startWeaponBaseId`).
+  // ⚠ V-B2-02: и та же сборка — требования по руке классу (`starterItem`): бот, как и герой, держит своё оружие.
   const weaponId = startWeaponBaseId(reg, cls);
-  const raw = weaponId ? itemFromBaseId(reg.get('items.base'), weaponId, reg.get('item-tiers'), 'start') : null;
-  const weapon = raw ? shapeFoundWeapon(reg, raw) : undefined;
+  const weapon = (weaponId ? starterItem(reg, cls, weaponId) : null) ?? undefined;
   const equipment: SaveState['equipment'] = {};
   if (weapon) equipment.weapon = weapon;
   return {

@@ -38,6 +38,14 @@ export interface GripTuning {
 /** Умолчание = `balance.versatile` в конфиге (для вызовов, которым конфиг не передан). */
 export const DEFAULT_GRIP: GripTuning = { damage: 0.88, speed: 0.92 };
 
+/**
+ * Ручки `balance.versatile` → хват. ОДИН перевод для деривации (`playerModifiers`), удара и скилов сессии: ⚠ C-15 — сессия звала
+ * `attackWeaponsOf` без хвата, и урон базового удара стоял на зашитом `DEFAULT_GRIP`, пока скорость и панели шли за ручкой.
+ */
+export function gripOf(v: { oneHandDamage: number; oneHandSpeed: number } | undefined): GripTuning {
+  return v ? { damage: v.oneHandDamage, speed: v.oneHandSpeed } : DEFAULT_GRIP;
+}
+
 /** Полуторное ли оружие: родной хват — две руки, но разрешена одна. */
 export function isVersatile(item: Item | undefined): boolean {
   return !!item && (item.hands ?? 1) >= 2 && !!item.versatile;

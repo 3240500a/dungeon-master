@@ -166,7 +166,7 @@ function stall(charId: string): () => void {
 }
 
 describe('⭐ R14-04: фиксация с неизвестным исходом легла — дописка пишет поверх неё, а не выбрасывается', () => {
-  it('⭐ A отдал X соседу по аккаунту, ПОКА висела его запись со снимком «X в сумке»: X — только у B', async () => {
+  it('⭐ A выбросил X, ПОКА висела его запись со снимком «X в сумке»: B поднимет X только после копии A поверх легшей — X только у B', async () => {
     const rm = manager();
     let X = '';
     seed('R14A', (s) => { const w = s.equipment.weapon!; delete s.equipment.weapon; w.pos = { x: 0, y: 0 }; s.inventory.push(w); X = w.uid; });
@@ -184,24 +184,29 @@ describe('⭐ R14-04: фиксация с неизвестным исходом 
     const open = stall('R14A');
     const wA = room.persist(pidA);
     await tick();
-    // Пока висит: A бросил X, B поднял, запись B легла.
+    // Пока висит: A бросил X, B тянется поднять. ⭐ V-B2-04: строка A держит X (легла повисшая — с ним), подъём ждёт записи A без него.
     wsA.push({ t: 'cmd', command: { cmd: 'drop', uid: X }, id: 1 });
     await until('X на земле', () => room.session.world.drops.some((d) => d.item?.uid === X));
     const drop = room.session.world.drops.find((d) => d.item?.uid === X)!;
     room.session.world.players[pidB]!.pos = { ...drop.pos };
     wsB.push({ t: 'cmd', command: { cmd: 'pickup', dropId: drop.id }, id: 1 });
-    await until('X у B', () => uidsOf(room.session.world.players[pidB]!.save).includes(X));
-    expect(await room.persist(pidB)).toBe('ok');
     // Фиксация A легла (снимок с X), ответ потерян.
     open();
     expect(await wA).toBe('unknown');
     const landed = db.chars.get('R14A')!.version;
     await until('A снят (4009)', () => wsA.closedWith === 4009);
+    await until('подъём B отвечен', () => wsB.frames.some((f) => f.t === 'cmdResult' && f.id === 1));
+    expect(wsB.last('cmdResult'), 'копия A без X ещё не легла — X не поднять').toMatchObject({ id: 1, ok: false });
+    expect(uidsOf(room.session.world.players[pidB]!.save)).not.toContain(X);
     await until('менеджер отпустил A', () => !rm.live.has('R14A') && !rm.inflight.has('R14A') && !rm.charOps.has('R14A'));
 
-    // A входит снова: копия «на дописать» дописывается, потом строка читается.
+    // A входит снова: копия «на дописать» дописывается (поверх легшей), потом строка читается.
     const ws2 = await joinFresh(rm, 'R14A');
     expect(ws2.last('error'), JSON.stringify(ws2.last('error'))).toBeUndefined();
+    // Копия A без X легла — X больше не его строки: B поднимает, запись B ложится.
+    wsB.push({ t: 'cmd', command: { cmd: 'pickup', dropId: drop.id }, id: 2 });
+    await until('X у B', () => uidsOf(room.session.world.players[pidB]!.save).includes(X));
+    expect(await room.persist(pidB)).toBe('ok');
     const log = db.log.filter((l) => l.startsWith('R14A')).join(' | ');
     expect(uidsOf(row('R14B')), 'X в строке B').toContain(X);
     expect(uidsOf(row('R14A')), `X не в строке A: ${log}`).not.toContain(X);

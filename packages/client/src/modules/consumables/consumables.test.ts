@@ -45,6 +45,20 @@ describe('расходники', () => {
     expect(state.mana).toBeGreaterThan(0);
   });
 
+  // ⭐ C-14: как на сервере (`session.drink`) — мана до потолка с резервом аур: у потолка зелье «без эффекта», выше не наливает.
+  it('зелье маны при ауре: у зарезервированного потолка не тратится, ниже — доливает ровно до потолка', () => {
+    const { app, state } = makeApp();
+    state.reservedManaFracProvider = () => 0.25;
+    const cap = state.effectiveMaxMana();
+    expect(cap).toBeLessThan(state.derived().maxMana);
+    state.mana = cap;
+    expect(applyUse(app, pot('mana-potion'))).toBe(false);
+    expect(state.mana).toBe(cap);
+    state.mana = cap - 1;
+    expect(applyUse(app, pot('mana-potion'))).toBe(true);
+    expect(state.mana).toBe(cap);
+  });
+
   it('противоядие снимает дебаффы', () => {
     const { app, state } = makeApp();
     state.debuffs = newDebuffState();

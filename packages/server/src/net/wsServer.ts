@@ -13,12 +13,27 @@ import { nodeShutdownInstalled } from '../cluster/node.js';
  * только специфика библиотеки: рукопожатие, heartbeat и завершение работы.
  */
 
-/** Обёртка `ws.WebSocket` → `GameConn`. Один объект на всё соединение (годится ключом Map). */
-class WsConn implements GameConn {
+/**
+ * Обёртка `ws.WebSocket` → `GameConn`. Один объект на всё соединение (годится ключом Map). Экспорт — для фаззера протокола: он гоняет
+ * НАСТОЯЩУЮ обёртку поверх сокета, ведущего себя как `ws` (`protocolFuzz.test.ts`).
+ *
+ * ⭐ B3-V1, B3-V2: ЗАКРЫТИЕ, НАЧАТОЕ СЕРВЕРОМ, — ОКОНЧАТЕЛЬНО СРАЗУ, как у uWS (`end` зовёт обработчик закрытия синхронно). У `ws`
+ * `close(code)` — только начало рукопожатия: сокет в `CLOSING`, библиотека отдаёт кадры клиента дальше, а событие `close` приходит, когда
+ * клиент ответит, или через `closeTimeout` (30 с). Клиент, не отвечающий на закрытие, держал рабочий канал команд: закрытый за поток
+ * кадров (4008), вытесненный (4001), снятый устаревшим (4009) входил тем же сокетом заново и играл; а снятие сессии при закрытии мимо
+ * менеджера (медленный читатель, 1013) ждало события — всё это время игрок сидел в комнате на мёртвом сокете (место в пати, голос).
+ * Теперь `close` сразу закрывает обёртку (`open` — ложь, кадры не идут) и зовёт обработчик закрытия (`onClose`, один раз); событие
+ * транспорта потом ничего не делает.
+ */
+export class WsConn implements GameConn {
+  /** Закрыто: сервером (`close`) или транспортом (событие `close`/`error`). Кадры больше не идут ни туда, ни сюда. */
+  private closed = false;
+  private ended = false;
+  private onEnd?: () => void;
   constructor(private readonly ws: WebSocket, readonly ip: string, readonly routePass?: string) {}
-  get open(): boolean { return this.ws.readyState === this.ws.OPEN; }
+  get open(): boolean { return !this.closed && this.ws.readyState === this.ws.OPEN; }
   send(data: string | Uint8Array): void {
-    if (this.ws.readyState !== this.ws.OPEN) return;
+    if (!this.open) return;
     // Клиент, который не успевает читать, копит неотправленное В ПАМЯТИ СЕРВЕРА. У uWS для
     // этого есть `maxBackpressure`, у `ws` — только растущий `bufferedAmount`, и его никто
     // не рубил: подвисший браузер мог тянуть сервер за собой. Порог тот же, что у uWS.
@@ -32,20 +47,33 @@ class WsConn implements GameConn {
     else this.ws.send(data, { binary: true });
   }
   close(code?: number, reason?: string): void {
+    if (this.closed) return;
+    this.closed = true;
     try { this.ws.close(code, reason); } catch { /* уже закрыт */ }
+    this.end();   // B3-V2: снятие сессии — сейчас, а не по концу рукопожатия
   }
   onMessage(cb: (raw: string) => void): void {
     // R2-01: бросок из обработчика кадра внутри события сокета — это необработанное исключение и выход процесса со
     // всеми комнатами. Менеджер ловит своё сам; здесь — последний рубеж: гасим кадр, не процесс.
     this.ws.on('message', (data: Buffer) => {
+      if (!this.open) return;   // ⭐ B3-V1: закрытый сокет (в `CLOSING` библиотека кадры ещё отдаёт) не действует
       try { cb(data.toString()); } catch (e) { frameFailed(e); }
     });
   }
   onClose(cb: () => void): void {
-    let done = false;
-    const once = (): void => { if (!done) { done = true; cb(); } };
-    this.ws.on('close', once);
-    this.ws.on('error', once);
+    this.onEnd = cb;
+    this.ws.on('close', () => this.end());
+    this.ws.on('error', () => this.end());
+    if (this.closed) this.end();   // закрыли раньше подписки — подписчик узнаёт сразу
+  }
+  /** Обработчик закрытия — ровно один раз, кто бы ни закрыл: сервер (`close`) или транспорт. Подписки ещё нет — позовёт `onClose`. */
+  private end(): void {
+    this.closed = true;
+    const cb = this.onEnd;
+    if (this.ended || !cb) return;
+    this.ended = true;
+    this.onEnd = undefined;
+    cb();
   }
 }
 

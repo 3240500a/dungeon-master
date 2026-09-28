@@ -7,7 +7,7 @@ import { FogOfWar } from '../world/fogOfWar.js';
 import { Torch } from '../world/torch.js';
 import { Lighting } from '../world/lighting.js';
 import { GameState } from '../core/gameState.js';
-import { runNodeLabel } from '../modules/run/runLabels.js';
+import { exitInteract } from '../modules/run/runExits.js';
 import { dismissAsk } from '../ui/kit.js';
 import { EntryFlow } from '../net/entryFlow.js';
 import { routeToNode } from '../net/netClient.js';
@@ -218,11 +218,12 @@ export class OnlineScene extends Phaser.Scene {
       this.fog = new FogOfWar(this, floor.grid, cols * TILE, rows * TILE);
       this.fog.revealSpawn(floor.spawn.x, floor.spawn.y);
       // Выходы на следующий узел (v2 развилка): каждый ведёт к своему ребру графа. На финале — нет выходов.
+      // ⭐ C-10: подпись (see-ahead на развилке) — из плана забега в миг показа: `runPlan` приходит ПОСЛЕ этого этажа.
       const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);
       exits.forEach((ex, i) => {
         const st = this.add.image(ex.x, ex.y, 'tile-stairs').setDepth(1);
         this.worldObjs.push(st);
-        this.interactables.push({ x: ex.x, y: ex.y, radius: 34, label: this.exitLabel(floor, i), run: () => this.descendExit(i) });
+        this.interactables.push(exitInteract(ex, floor, i, () => this.app.run?.plan, (k) => this.descendExit(k)));
       });
       // Портал возврата в город у точки входа (голосование пати).
       const back = this.add.image(floor.spawn.x, floor.spawn.y, 'portal').setDepth(1).setAlpha(0.85);
@@ -287,16 +288,6 @@ export class OnlineScene extends Phaser.Scene {
     this.interactables.push({ x: pp.x, y: pp.y, radius: 44, label: 'В подземелье (выбор сложности)', run: () => this.app.bus.emit('ui:open', { panel: 'difficulty' }) });
   }
 
-  /** Подпись выхода: на развилке (>1 ребро) — тип целевого узла (see-ahead), иначе обычный спуск. */
-  private exitLabel(floor: FloorInit, i: number): string {
-    const cur = this.app.run?.plan.nodes.find((n) => n.id === floor.runNodeId);
-    if (cur && cur.edges.length > 1) {
-      const to = cur.edges[i]?.to;
-      const tn = to ? this.app.run!.plan.nodes.find((n) => n.id === to) : undefined;
-      if (tn) return `Спуститься: ${runNodeLabel(tn.type)} (голосование)`;
-    }
-    return 'Спуститься глубже (голосование)';
-  }
   /** Спуск через i-й выход: маппит выход на i-е ребро текущего узла (targetNodeId). Читается лениво — на момент клика граф уже актуален. */
   private descendExit(i: number): void {
     const run = this.app.run;

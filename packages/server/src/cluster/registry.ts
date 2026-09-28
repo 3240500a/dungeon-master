@@ -98,6 +98,17 @@ const SCHEMA_CLUSTER = `
     ALTER TABLE login_queue ADD COLUMN IF NOT EXISTS seen_at timestamptz NOT NULL DEFAULT now();
     CREATE INDEX IF NOT EXISTS login_queue_seen ON login_queue (seen_at);
     CREATE INDEX IF NOT EXISTS login_queue_user ON login_queue (user_id);
+
+    -- ⭐ V2: забег — за одной нодой (как закрепление героя): герои одного забега входят через гейтвей куда угодно, и «Продолжить»
+    -- на соседней ноде собирало бы тот же узел во второй комнате. room — код комнаты-держателя (подпись для отказа), live_at —
+    -- когда нода подтвердила забег (продлевает сердцебиением, правило держания — как у закрепления героя, claimRule.ts).
+    CREATE TABLE IF NOT EXISTS run_locks (
+      run_key text PRIMARY KEY,
+      node_id text NOT NULL,
+      room    text NOT NULL,
+      live_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS run_locks_node ON run_locks (node_id);
   `;
 
 /** Нода объявляет себя живой и сообщает свои показатели. Зовётся раз в пару секунд. */
@@ -133,6 +144,8 @@ export async function sweepNodes(): Promise<number> {
   const rows = await q<{ id: string }>(
     `DELETE FROM cluster_nodes WHERE beat_at < now() - ($1 || ' seconds')::interval RETURNING id`,
     [String(Math.max(NODE_STALE_SEC * 6, NODE_DEAD_SEC))]);
+  // ⭐ V2: забеги снятых нод — ничьи (правило держания их и так отдаёт любому), строки — долой.
+  if (rows.length) await q('DELETE FROM run_locks WHERE node_id = ANY($1::text[])', [rows.map((r) => r.id)]);
   return rows.length;
 }
 
@@ -247,8 +260,62 @@ export async function releaseChar(charId: string, nodeId: string): Promise<void>
   await q('DELETE FROM char_claims WHERE char_id = $1 AND node_id = $2', [charId, nodeId]);
 }
 
-/** Снять все закрепления ноды — при её штатной остановке. */
+/** Снять все закрепления ноды — при её штатной остановке. ⭐ V2: и её забеги. */
 export async function releaseNode(nodeId: string): Promise<void> {
   await q('DELETE FROM char_claims WHERE node_id = $1', [nodeId]);
+  await q('DELETE FROM run_locks WHERE node_id = $1', [nodeId]);
   await q('DELETE FROM cluster_nodes WHERE id = $1', [nodeId]);
+}
+
+// ── Забеги за нодами (V2) ────────────────────────────────────────────────────
+/**
+ * ⭐ V2: ВЗЯТЬ ЗАБЕГ `runKey` ЗА НОДОЙ `nodeId` (комната `room` — подпись) — АТОМАРНО. Забираем, если строки нет, она этой же ноды (какая
+ * комната внутри ноды держит забег, решает сама нода — `RoomManager.runRooms`), или нода-держатель больше его не держит: мертва или давно
+ * не подтверждала (то же правило, что у закрепления героя, `claimHeldSql`: база лежала — удары не шли, и признак не стареет). Возвращает
+ * код комнаты-держателя на ДРУГОЙ ноде или `null` (забег наш). Не выяснили — бросок (продолжение ответит «занято»), но никогда не «наш».
+ * Два запроса, как у `claimForJoin` (R2-05): свежий снимок видит соседа, чья вставка легла, пока наша ждала.
+ */
+export async function claimRun(runKey: string, nodeId: string, room: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const up = await q1<{ node_id: string }>(
+      `INSERT INTO run_locks (run_key, node_id, room, live_at) VALUES ($1, $2, $3, now())
+       ON CONFLICT (run_key) DO UPDATE SET node_id = excluded.node_id, room = excluded.room, live_at = now()
+         WHERE run_locks.node_id = excluded.node_id
+            OR NOT EXISTS (SELECT 1 FROM cluster_nodes n
+                           WHERE n.id = run_locks.node_id AND ${claimHeldSql('run_locks', 'n', 4, 5)})
+       RETURNING node_id`,
+      [runKey, nodeId, room, ...claimHeldParams()]);
+    if (up) return null;
+    const held = await q1<{ node_id: string; room: string }>('SELECT node_id, room FROM run_locks WHERE run_key = $1', [runKey]);
+    if (held && held.node_id !== nodeId) return held.room;
+    // Строку сняли между запросами (забег кончился на её ноде) — ещё одна попытка забрать.
+  }
+  throw new Error(`забег ${runKey} за ${nodeId} не выяснен: строка исчезает между запросами`);
+}
+
+/**
+ * ⭐ V2: продлить забеги, которые держат комнаты ноды (сердцебиение, `node.ts`), — и восстановить строку, если её нет (снятие опоздало к
+ * новому держателю). Чужую строку не перехватываем. Возвращает, КОГО продлили: кого нет — того забег у другой ноды (инцидент: её правило
+ * держания решило, что мы мертвы).
+ */
+export async function touchRuns(runs: readonly { key: string; room: string }[], nodeId: string): Promise<Set<string>> {
+  if (!runs.length) return new Set();
+  const rows = await q<{ run_key: string }>(
+    `INSERT INTO run_locks (run_key, node_id, room, live_at)
+     SELECT k, $3, r, now() FROM unnest($1::text[], $2::text[]) AS t(k, r)
+     ON CONFLICT (run_key) DO UPDATE SET room = excluded.room, live_at = now() WHERE run_locks.node_id = excluded.node_id
+     RETURNING run_key`,
+    [runs.map((r) => r.key), runs.map((r) => r.room), nodeId]);
+  return new Set(rows.map((r) => r.run_key));
+}
+
+/** ⭐ V2: нода забег больше не держит (кончился, комната ушла). Только своё и только за этой комнатой — строку, уже продлённую за другой комнатой ноды, не трогаем. */
+export async function releaseRun(runKey: string, nodeId: string, room: string): Promise<void> {
+  await q('DELETE FROM run_locks WHERE run_key = $1 AND node_id = $2 AND room = $3', [runKey, nodeId, room]);
+}
+
+/** ⭐ V2: снять все забеги ноды — на её старте (комнаты прошлого процесса ушли вместе с ним, `clearAllRuns` снял и сами забеги). */
+export async function releaseNodeRuns(nodeId: string): Promise<number> {
+  const rows = await q<{ run_key: string }>('DELETE FROM run_locks WHERE node_id = $1 RETURNING run_key', [nodeId]);
+  return rows.length;
 }

@@ -37,6 +37,13 @@
   наградой: доска берёт вещь только из баз в игре (`baseInGame`, `itemgen.ts`; весь пул выключен — задание без вещи), а сдача задания,
   принятого до выключения (и звена цепочки), отдаёт золото/опыт/очки без вещи и места под неё не требует. Тест —
   `shared/src/economy/disabledBase.test.ts`.
+  ⚠ C-02: награда и вилки — целые не меньше нуля. Схема `quests.main.reward` (`gold`/`xp`/`skillPoints`) — целые ≥ 0;
+  вилки `quests.random` (`amountRange` от 1, `rewardGoldRange`/`rewardXpRange` от 0) — целые, «от» не выше «до»
+  (`questRange`). Раньше опечатка знака в редакторе (`rewardGoldRange` [−500, −400]) уводила золото героя в минус на
+  каждой сдаче, `skillPoints` 0.5 давал дробные очки, а `amountRange` [0, 0] собирал задание «0 из 0», которое не закрыть.
+  Вторая линия — `turnInQuest` (`rewardCount`): задание, принятое до правки схемы, отдаёт награду целой и не меньше нуля.
+  Тесты — `shared/config/registry.test.ts` и `questLogic.test.ts` («C-02»), профиль заданий фаззера экономики
+  (`shared/economy/economyFuzz.test.ts`: правка заданий с опечатками, инвариант I2 «числа заданий» на доске и в журнале).
 - **Хранение:** `save.quests` (прогресс) + `save.activeQuestDefs` (резолвнутые определения).
 - **Конфиг:** `quests.main`, `quests.random`, `items.base` (награды-предметы).
 - **Протокол:** C→S команды `acceptQuest`/`turnInQuest`; S→C кадр `questBoard` + событие

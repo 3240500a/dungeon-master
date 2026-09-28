@@ -337,6 +337,10 @@ export type ServerFrame =
    * Старый кадр `error` на отказ остаётся — его читают прежние клиенты.
    */
   | { t: 'cmdResult'; id?: number; cmd: string; ok: boolean; reason?: string; uid?: string; unlocked?: string[] }
-  | { t: 'error'; code: string; msg: string }
+  /**
+   * Отказ. ⭐ C-05, C-08: `roomCode` — у отказа «Продолжить», чей забег ведёт другая комната (V2): `run` — она на другой ноде кластера, `full` —
+   * в её пати нет мест. Клиент идёт по нему к ноде держателя (`join { resume }` там) или показывает лобби с этим кодом, а не только строку.
+   */
+  | { t: 'error'; code: string; msg: string; roomCode?: string }
   // Эхо на ping (тот же id) — клиент замеряет RTT.
   | { t: 'pong'; id: number };

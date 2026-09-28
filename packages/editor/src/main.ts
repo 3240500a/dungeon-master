@@ -21,6 +21,7 @@ import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 import { renderColorField, renderUploadField, renderBatchUpload, renderMaterialPanel, currentAssetCategory } from './assetFields.js';
 import { renderDocs } from './docs.js';
+import { LiveConfigBase, loadLiveConfig } from './liveConfig.js';
 
 /**
  * HTML-редактор конфигов. Страницы по механикам (по одному конфигу на страницу),
@@ -149,6 +150,11 @@ registry.loadAll();
 // Рабочая копия данных: старт со встроенных дефолтов (мгновенно), затем перекрываем
 // АКТУАЛЬНЫМ конфигом с сервера (единая истина) — loadFromServer() после первого render().
 const data: Record<string, unknown> = structuredClone(registry.snapshot());
+/**
+ * ⭐ C-09: поверх какой правды сервера рабочая копия. Пока живой конфиг не загружен, записи нет вовсе (копия — встроенные дефолты: таблица
+ * целиком затёрла бы правки на сервере); загружен — запись несёт ревизии загруженного, и сервер отказывает (409) правке поверх чужой.
+ */
+const live = new LiveConfigBase();
 
 const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : null;
 
@@ -335,16 +341,30 @@ loadFromServer(); // подтянуть актуальный конфиг с с�
  * Единая истина — серверный конфиг (дефолты + сохранённые правки редактора, персист в БД).
  * Тянем при старте, чтобы в редакторе были РЕАЛЬНЫЕ значения. Сервер недоступен — остаёмся на
  * встроенных дефолтах (править/сохранять нельзя, пока не поднят `npm run dev`).
+ * ⭐ C-09: «нельзя» — не только строкой статуса. Раньше ничего не мешало: «Применить» слало таблицу из дефолтов целиком и затирало ею все
+ * правки на сервере. Теперь запись без загруженного конфига не уходит (`live.body` → null), а загрузка повторяется, пока сервер не ответит
+ * (перезапуск под `tsx watch` — на каждую правку кода): раньше она была одна на открытие страницы.
  */
 function loadFromServer(): void {
-  fetch('/api/config')
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-    .then((snapshot: Record<string, unknown>) => {
-      Object.assign(data, snapshot);
-      render();
-      setStatus('Загружен актуальный конфиг с сервера.', '#7fd67f');
-    })
-    .catch(() => setStatus('Сервер недоступен — показаны встроенные дефолты. Запусти `npm run dev`, чтобы править и сохранять.', '#ffb020'));
+  loadLiveConfig(
+    () => fetch('/api/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() as Promise<Record<string, unknown>> : Promise.reject(new Error(String(r.status))))),
+    live,
+    {
+      loaded: (snapshot) => {
+        Object.assign(data, snapshot);   // правки, сделанные поверх дефолтов, пока сервер лежал, — прочь: их не было на чём сохранять
+        render();
+        setStatus('Загружен актуальный конфиг с сервера.', '#7fd67f');
+      },
+      failed: (_n, ms) => setStatus(`Сервер недоступен — показаны встроенные дефолты, сохранение ЗАКРЫТО (таблица из дефолтов затёрла бы правки на сервере). Жду сервер: повтор через ${Math.round(ms / 1000)} с. Запусти \`npm run dev\`.`, '#ffb020'),
+    },
+  );
+}
+
+/** ⭐ C-09: тело записи поверх загруженного конфига (`live.body`) — или отказ строкой статуса: живой конфиг ещё не загружен. */
+function liveBody(values: Record<string, unknown>): Record<string, unknown> | null {
+  const body = live.body(values);
+  if (!body) setStatus('Не сохранено: конфиг сервера ещё не загружен — показаны встроенные дефолты, и таблица из них затёрла бы правки на сервере. Жду сервер…', '#ff8080');
+  return body;
 }
 
 function entryLabel(entry: unknown, i: number): string {
@@ -1100,22 +1120,29 @@ function validatedKeys(keys: readonly string[]): Record<string, unknown> | null 
   return out;
 }
 
-/** «Применить на сервере» для набора ключей: клиенту — сразу (вью/тултипы), серверу — оверрайд в БД. */
+/** «Применить на сервере» для набора ключей: серверу — оверрайд в БД, клиенту (вью/тултипы) — как только сервер принял. */
 function applyKeys(keys: readonly string[], onOk?: () => void): void {
   const values = validatedKeys(keys);
   if (!values) return;
-  for (const [key, value] of Object.entries(values)) bc?.postMessage({ key, value }); // клиент: мгновенно (вью/тултипы)
   pushToServer(values, onOk); // сервер: персист в БД + авторитетная игра
-  setStatus('Сохранение на сервере (БД, для тестов)…', '#9fb0c0');
+}
+
+/**
+ * Открытым вкладкам игры — принятое сервером (вью/тултипы). ⭐ C-09: только ПОСЛЕ ответа сервера: раньше — до него, и вкладки показывали (и
+ * соглашались на) цены, которые сервер отклонил (422, 409) или так и не получил.
+ */
+function broadcast(values: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(values)) bc?.postMessage({ key, value });
 }
 
 /** Уже проверенные значения — в файлы `data/*.json` (и оверрайдом на сервер, см. роут). */
 function writeKeysToFile(values: Record<string, unknown>, onOk?: () => void): void {
-  for (const [key, value] of Object.entries(values)) bc?.postMessage({ key, value });
+  const body = liveBody(values);   // C-09: поверх загруженного конфига — или никак
+  if (!body) return;
   sendConfig(
-    () => devFetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) }),
+    () => devFetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
-    onOk,
+    () => { broadcast(values); onOk?.(); },
   );
   setStatus('Запись в файл…', '#9fb0c0');
 }
@@ -1154,14 +1181,25 @@ function applyToFile(): void {
  * и перезапускается на каждую правку кода (~1–2 c недоступен) — клик «Применить» может попасть
  * ровно в это окно. Сетевую ошибку/5xx/404 (сервер поднимается) ретраим; 422 (данные не прошли
  * валидацию) — не ретраим, это реальный отказ.
+ * ⭐ C-09: 409 — тоже отказ без повтора: таблица на сервере уже не та, поверх которой правка (сохранили в другой вкладке, инструментом, с другой
+ * машины), и запись затёрла бы чужую правку. Принятая запись сдвигает базу ревизиями из ответа сервера (`live.saved`).
  */
 function sendConfig(req: () => Promise<Response>, okMsg: string, onOk?: () => void, attempt = 0): void {
   req()
     .then((r) => {
-      if (r.ok) { setStatus(okMsg, '#7fd67f'); onOk?.(); return; }
+      if (r.ok) {
+        void r.json().then((j: { rev?: unknown }) => live.saved(j?.rev), () => undefined)
+          .then(() => { setStatus(okMsg, '#7fd67f'); onOk?.(); });
+        return;
+      }
       if (r.status === 422) {
         r.json().then((e: { error?: string }) => setStatus(`Сервер отклонил конфиг: ${e?.error ?? '422'}`, '#ffb020'))
           .catch(() => setStatus('Сервер отклонил конфиг (422).', '#ffb020'));
+        return;
+      }
+      if (r.status === 409) {
+        const stale = (keys?: string[]): void => setStatus(`Не сохранено: на сервере ${keys?.length ? `«${keys.map((k) => LABELS[k as ConfigKey] ?? k).join('», «')}»` : 'эта таблица'} уже не та, что загружена здесь (сохранили в другой вкладке, инструментом или с другой машины) — правка затёрла бы её. Обнови страницу редактора и повтори правку.`, '#ff8080');
+        r.json().then((e: { conflicts?: string[] }) => stale(e?.conflicts), () => stale());
         return;
       }
       throw new Error(String(r.status)); // 404/5xx — вероятно рестарт, ретраим
@@ -1181,13 +1219,17 @@ function sendConfig(req: () => Promise<Response>, okMsg: string, onOk?: () => vo
  * `/api/dev/config`, проксируется Vite на :3001) — иначе правки видит только клиент, а
  * статы/бой/лут считает сервер и в игре ничего не меняется. Клиентский путь
  * (BroadcastChannel) оставляем для мгновенного вью/тултипов.
+ * ⭐ C-09: тело — поверх загруженного конфига (`liveBody`: не загружен — не шлём вовсе), вкладкам игры — после ответа сервера.
  */
 function pushToServer(overrides: Record<string, unknown>, onOk?: () => void): void {
+  const body = liveBody(overrides);
+  if (!body) return;
   sendConfig(
-    () => devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overrides) }),
+    () => devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     'Сохранено на сервере (переживёт рестарт) и применено к игре. Balance — сразу; статы монстров/лут — со следующего этажа.',
-    onOk,
+    () => { broadcast(overrides); onOk?.(); },
   );
+  setStatus('Сохранение на сервере (БД, для тестов)…', '#9fb0c0');
 }
 
 /** Есть ли файл ассета по url. ТОЛЬКО достоверное отсутствие → false: 404 или HTML-заглушка. Транзиентную ошибку
@@ -1213,6 +1255,7 @@ async function assetExists(url: string): Promise<boolean> {
  * подтверждению удаляет из конфига и сохраняет. Решает «удалил файлы с диска, а в редакторе записи остались».
  */
 async function pruneDeadAssets(): Promise<void> {
+  if (!liveBody({})) return;   // C-09: уборка сохраняет таблицы целиком — только поверх загруженного конфига
   const textures = (data.textures as Record<string, unknown>[]) ?? [];
   const models = (data.models as Record<string, unknown>[]) ?? [];
   const materials = (data.materials as Record<string, unknown>[]) ?? [];

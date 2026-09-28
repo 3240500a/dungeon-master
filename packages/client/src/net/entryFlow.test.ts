@@ -689,3 +689,118 @@ describe('⭐ R10-17: сокет не создался (конструктор �
     }
   });
 });
+
+/**
+ * ⭐ C-05, C-08: «ПРОДОЛЖИТЬ» ОТКАЗАН — ЗАБЕГ ВЕДЁТ ДРУГАЯ КОМНАТА (V2). Сервер держит один забег в одной комнате, и «Продолжить» идёт только к
+ * ней: её нода — другая (`run`, кластер) или в её пати нет мест (`full`). Раньше отказ писался строкой на экран «Продолжить / Забросить», где
+ * поля кода нет: «Продолжить» слало тот же вход и получало тот же отказ (F5 — тот же экран), и выходом оставалось «Забросить» (штраф смерти).
+ * Теперь код держателя — полем кадра: к его ноде — сами (там снова «Продолжить»), а нет мест или идти некуда — лобби с этим кодом в поле
+ * («Войти» — к пати, «Соло» — город, забег цел).
+ */
+describe('⭐ C-05, C-08: «Продолжить», отказанный из-за забега в другой комнате, — путь в игру без «Забросить»', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  beforeEach(() => { vi.useFakeTimers(); G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body: new El('body') }; });
+  afterEach(() => { vi.useRealTimers(); delete G.document; });
+
+  const NODE0 = 'wss://game.example/ws/0';
+  const NODE1 = 'wss://game.example/ws/1';
+  const HOLDER = 'B3K9QZXA';
+  const ELSEWHERE = `Этот забег идёт в комнате ${HOLDER} — войдите к пати по коду`;
+  /** Поддельный гейтвей: по коду комнаты — нода по букве (B → NODE1), без кода — NODE0. */
+  function gateway() {
+    const calls: { roomCode?: string }[] = [];
+    const route = (_t: string, _c: string, _ticket?: string, roomCode?: string): Promise<RouteAnswer> => {
+      calls.push(roomCode ? { roomCode } : {});
+      return Promise.resolve({ url: roomCode?.startsWith('B') ? NODE1 : NODE0 });
+    };
+    return { route, calls };
+  }
+  /** Экран «Незавершённое прохождение» (забег поднят из сейва: грейс-комнаты нет) и клик «Продолжить». */
+  async function resumeClicked(c: ReturnType<typeof client>): Promise<void> {
+    c.start();
+    await vi.advanceTimersByTimeAsync(0);
+    c.net.open();
+    c.net.fire('runStatus', { hasRun: true, depth: 3 });
+    expect(c.text()).toContain('Незавершённое прохождение');
+    c.click('[data-a="resume"]');
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+  }
+
+  it('⭐ кластер: `run` с кодом держателя — маршрут к его ноде и там снова «Продолжить»; вход — экраны сняты', async () => {
+    const gw = gateway();
+    const c = client('hero-1', { route: gw.route });
+    await resumeClicked(c);
+    c.net.fire('error', { code: 'run', msg: ELSEWHERE, roomCode: HOLDER });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gw.calls.at(-1), 'было: отказ строкой на экране без поля кода').toEqual({ roomCode: HOLDER });
+    expect(c.net.urls).toEqual([NODE0, NODE1]);
+    expect(c.text()).toContain('переходим к пати');
+    c.net.open();
+    // Там — снова «Продолжить» (свой забег, где бы он ни шёл), а не вход по коду: держатель мог отпустить забег, пока шли.
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+    expect(c.net.sent.filter((f) => f.t === 'abandon'), '«Забросить» не понадобилось').toEqual([]);
+    c.net.fire('joined', {} as never);
+    expect(c.root.children, 'в игре — экранов входа нет').toHaveLength(0);
+  });
+
+  it('второй такой отказ подряд (забег переехал, гонка закрепления) — не кружим: лобби с кодом держателя в поле; «Войти» — к нему', async () => {
+    const gw = gateway();
+    const c = client('hero-1', { route: gw.route });
+    await resumeClicked(c);
+    c.net.fire('error', { code: 'run', msg: ELSEWHERE, roomCode: HOLDER });
+    await vi.advanceTimersByTimeAsync(0);
+    c.net.open();
+    c.net.fire('error', { code: 'run', msg: ELSEWHERE, roomCode: HOLDER });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gw.calls, 'маршрут к держателю — один раз на клик').toHaveLength(2);
+    expect(c.text(), 'лобби — поле кода и «Соло»').toContain('Кооп');
+    expect(c.text()).toContain(ELSEWHERE);
+    expect(c.screen()!.querySelector('.code').value, 'код держателя — уже в поле').toBe(HOLDER);
+    c.click('[data-a="join"]');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gw.calls.at(-1)).toEqual({ roomCode: HOLDER });
+    c.net.open();
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', roomCode: HOLDER });
+  });
+
+  it('⭐ пати забега полна (`full` с кодом) — лобби с кодом держателя и причиной: «Соло» — город, «Войти» — когда место освободится', () => {
+    const c = client();
+    c.start(); c.net.open();
+    c.net.fire('runStatus', { hasRun: true, depth: 2 });
+    c.click('[data-a="resume"]');
+    c.net.fire('error', { code: 'full', msg: 'В комнате нет мест', roomCode: HOLDER });
+    expect(c.text(), 'было: строка на экране «Продолжить / Забросить» — повтор давал тот же отказ').toContain('Кооп');
+    expect(c.text()).toContain(`В пати забега нет мест (комната ${HOLDER})`);
+    expect(c.text()).toContain('забег сохранён');
+    expect(c.screen()!.querySelector('.code').value).toBe(HOLDER);
+    c.click('[data-a="solo"]');
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', fresh: true });
+    expect(c.net.sent.filter((f) => f.t === 'abandon')).toEqual([]);
+  });
+
+  it('старый сервер (код только в тексте) и одиночный процесс — тоже лобби с причиной, а не тот же экран', () => {
+    for (const code of ['run', 'full'] as const) {
+      const c = client();
+      c.start(); c.net.open();
+      c.net.fire('runStatus', { hasRun: true, depth: 1 });
+      c.click('[data-a="resume"]');
+      c.net.fire('error', { code, msg: code === 'run' ? ELSEWHERE : 'В комнате нет мест' });
+      expect(c.text(), code).toContain('Кооп');
+      expect(c.text(), code).not.toContain('Незавершённое прохождение');
+      expect(c.net.urls, `${code}: без маршрута — к той же ноде не кружим`).toHaveLength(1);
+    }
+  });
+
+  it('в игре отказ `run` (спуск из города) — строкой в лог; лобби поверх мира не рисуем, сами никуда не уходим', async () => {
+    const gw = gateway();
+    const c = client('hero-1', { route: gw.route });
+    c.start();
+    await vi.advanceTimersByTimeAsync(0);
+    c.net.open(); c.net.fire('runStatus', { hasRun: false }); c.click('[data-a="solo"]'); c.net.fire('joined', {} as never);
+    c.net.fire('error', { code: 'run', msg: ELSEWHERE, roomCode: HOLDER });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.hooks.log).toEqual([ELSEWHERE]);
+    expect(c.root.children).toHaveLength(0);
+    expect(gw.calls).toHaveLength(1);
+  });
+});

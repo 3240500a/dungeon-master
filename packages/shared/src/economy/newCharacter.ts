@@ -3,10 +3,47 @@ import { baseInGame, itemFromBaseId } from '../formulas/itemgen.js';
 import { shapeFoundWeapon, tierIndex } from '../formulas/craft.js';
 import { packInventory } from '../inventory/grid.js';
 import { SAVE_VERSION, type SaveState } from '../types/save.js';
+import type { Attribute, Attributes } from '../types/attributes.js';
 import type { Item } from '../types/items.js';
 
 /** Базовая броня любого нового персонажа (поверх оружия класса). */
 const STARTER_ARMOR = ['leather-cap', 'leather-armor', 'leather-boots', 'leather-belt'];
+
+/**
+ * ⚠ V-B2-02: ВЕЩЬ КОМПЛЕКТА — ПО РУКЕ СВОЕМУ КЛАССУ. Правило R4-08 «требования держатся всё время ношения» комплект нарушал с
+ * первой секунды: требования ступени t0 (`items.base`, лестница весов) и стартовые атрибуты (`classes.startAttributes`) правятся
+ * порознь, и пять классов из семи выходили в оружии, которое сами надеть не могут (Ловчая — короткий лук на 29 Ловкости при
+ * 17, Вольный стрелок — арбалет 14/26 при 12/15). Бой брал его в полную силу, а снятое обратно не надевалось: герой без оружия
+ * до второго–четвёртого уровня. Совпадения двух таблиц не держит ни одна проверка (правка хозяина живьём, замена выключенной
+ * базы родственной — `startWeaponBaseId`), поэтому держит выдача: каждое требование вещи комплекта — не выше стартового
+ * атрибута её класса. База, ступень, статы, детали — прежние, у вещи, которую класс и так держал, не меняется ни байта.
+ * Скидка живёт только на НЕТРОНУТОЙ вещи комплекта (обычная, ступень — как у находки той же базы): подъём у кузнеца пересобирает
+ * требования от базы (`retierItem`), зачаровать (только скованное) и разобрать комплект нельзя, лавка берёт его за 1 (R3-04) —
+ * сильнее она не становится ни в чьих руках, в том числе у другого героя аккаунта через сундук.
+ */
+export function fitToClass(item: Item, start: Attributes): Item {
+  // Требование — целое (как у любой вещи), и не выше атрибута: дробный атрибут из редактора округляется вниз.
+  const cap = (a: string): number => { const v = start[a as Attribute]; return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0; };
+  if (!Object.entries(item.requirements).some(([a, v]) => v !== undefined && v > cap(a))) return item;
+  const requirements: Item['requirements'] = {};
+  for (const [a, v] of Object.entries(item.requirements)) {
+    if (v === undefined) continue;
+    const n = Math.min(v, cap(a));
+    if (n > 0) requirements[a as Attribute] = n;
+  }
+  return { ...item, requirements };
+}
+
+/**
+ * Вещь стартового комплекта класса `cls` по id базы: как найденная (§12.1, §26 — детали записаны на вещь, клинок с геометрией
+ * несёт свои статы), происхождение `start` (R3-04), требования — по руке классу (`fitToClass`, V-B2-02). `null` — базы нет.
+ * Одна сборка на героя игры (`newCharacterSave`) и бота прогона баланса (`newBotSave`).
+ */
+export function starterItem(reg: ConfigRegistry, cls: { startAttributes: Attributes }, baseId: string): Item | null {
+  const raw = itemFromBaseId(reg.get('items.base'), baseId, reg.get('item-tiers'), 'start');
+  // Броню `shapeFoundWeapon` не трогает.
+  return raw ? fitToClass(shapeFoundWeapon(reg, raw), cls.startAttributes) : null;
+}
 
 /**
  * ⚠ R14-08: ОРУЖИЕ НОВОГО ГЕРОЯ — БАЗА В ИГРЕ (`baseInGame`). `classes.startWeaponId` — голый id, и выключенную в редакторе базу
@@ -44,13 +81,13 @@ export function newCharacterSave(reg: ConfigRegistry, classId: string, name: str
   const inGame = baseInGame(reg.get('items.base'));
   const weaponId = startWeaponBaseId(reg, cls);
   for (const id of [...(weaponId ? [weaponId] : []), ...STARTER_ARMOR.filter(inGame)]) {
-    const raw = itemFromBaseId(reg.get('items.base'), id, reg.get('item-tiers'), 'start');
-    if (!raw) continue;
     // Стартовый меч — как найденный (§12.1, §26): детали записаны на вещь, клинок с геометрией несёт свои
     // статы — карточка и бой видят то же, что у находки той же базы. Броню не трогает.
     // ⚠ R3-04: комплект бесплатен и бесконечен (создал → переложил → удалил), поэтому `origin: 'start'` лавка берёт
     // за 1, а кузнец не разбирает вовсе (`shopSellPrice`, `salvagePlan`).
-    const item = shapeFoundWeapon(reg, raw);
+    // ⚠ V-B2-02: надетое держится на стартовых атрибутах — требования вещи по руке классу (`starterItem` → `fitToClass`).
+    const item = starterItem(reg, cls, id);
+    if (!item) continue;
     if (item.slot && !equipment[item.slot]) { item.pos = null; equipment[item.slot] = item; }
     else inventory.push(item);
   }

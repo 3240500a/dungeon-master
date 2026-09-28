@@ -7,7 +7,7 @@ import {
   type ConfigRegistry, type ClientFrame, type SaveState, type RunNodeState,
 } from '@dm/shared';
 import { getSession, getCharacter, putCharacter, getRunLedger } from '../db/db.js';
-import { Room, townRng, runLedgerKey, runLedgerSettled, type Farewell } from './room.js';
+import { Room, townRng, runLedgerKey, runLedgerSettled, runElsewhereMsg, type Farewell } from './room.js';
 import { limits, known, ipBucket, RecentKeys } from './rateLimit.js';
 import { sessionKey, routePassOk, ROUTE_PASS_TTL_MS } from './authSession.js';
 import { counters, setGaugeProvider } from './metrics.js';
@@ -105,10 +105,24 @@ const FRAME_BRACKETS_MAX = 64;
 const FRAME_KEYS_MAX = 128;
 /**
  * ⭐ R8-09: ПОТОЛОК КАДРА ДО ВХОДА, знаков: честные кадры лобби (вход, статус забега, «Завершить», пинг) — около 200 знаков. До
- * входа кадр 16 КБ никому не нужен, а разбирать его — время ноды без сессии и без лимита команд. Кадры вдогонку `join` (вход ещё
- * в очереди) — под общим потолком, как и прежде.
+ * входа кадр 16 КБ никому не нужен, а разбирать его — время ноды без сессии и без лимита команд. ⭐ C-06: и кадры вдогонку `join` (вход
+ * ещё в очереди) — тоже: честный клиент до `joined` шлёт только мелочь, а большие кадры за входом, ждущим зависшую базу, копились в очереди
+ * анонимного соединения по мегабайту в секунду (см. `QUEUE_BYTES_MAX`).
  */
 const LOBBY_FRAME_MAX = 1024;
+/**
+ * ⭐ C-06: ПОТОЛОК ОЧЕРЕДИ КАДРОВ СОЕДИНЕНИЯ — кадров и байт, которые стоят в ней (`handleConnection`), исполняющийся — тоже. Кадр, которому нужна
+ * база, ждёт её в очереди соединения, и всё, что пришло следом, ждёт за ним: при зависшей базе (полуоткрытое соединение после
+ * переключения, раздел сети, пул на пределе — до `query_timeout` 15 с на запрос) очередь росла без предела — до 16 КБ на кадр в темпе
+ * потолка кадров (80/с), ≈1,2 МБ/с на сокет, и у анонима за входом, ждущим поиска сессии. Сотня сокетов клала ноду нехваткой памяти — а
+ * это не исключение: ни слива, ни дописки копий, ровно в тот миг, когда копии в памяти — единственная правда (R2-08, R12-04). Переполнена —
+ * соединение закрывается (4008), как потоком кадров (`accept`). Честному хватает с запасом: кадров — больше всплеска потолка кадров
+ * (120), байт — сотни честных команд.
+ */
+const QUEUE_FRAMES_MAX = 128;
+const QUEUE_BYTES_MAX = 256 * 1024;
+/** ⭐ C-06: байт в очереди соединения без входа (кадры лобби и вдогонку входу — не больше `LOBBY_FRAME_MAX` каждый): десятки честных кадров. */
+const QUEUE_PREJOIN_BYTES = 32 * 1024;
 /**
  * ⭐ R6-09: сколько раз соединение может предъявить сессию, которой нет, — дальше оно закрывается (4008). Поток кадров лобби
  * с чужими токенами стоит сокетов, а не общего бакета адреса, в котором стоят и соседи по NAT.
@@ -220,6 +234,22 @@ function overBracketed(raw: string): boolean {
 }
 
 /**
+ * ⭐ V2: ЗАБЕГ — ЗА ОДНОЙ НОДОЙ КЛАСТЕРА (`run_locks`, `cluster/registry.ts`). Внутри ноды забег держит одна комната (`RoomManager.runRooms`),
+ * а какая нода — решает база: герои одного забега входят через гейтвей куда угодно, и «Продолжить» на соседней ноде собирало бы тот же
+ * узел во второй раз. Ставит его вход в кластер (`index.ts`, роли node и single); без него (тесты, инструменты) забег знает только нода.
+ *  • `claim` — взять забег `key` за этой нодой (комната `room` — подпись для отказа на других нодах): код комнаты-держателя на ДРУГОЙ ноде
+ *    или `null` (забег наш). Бросок — база молчит;
+ *  • `release` — нода забег больше не держит (молча: не отпущенное сердцебиение не продлит, и оно протухнет само).
+ */
+export interface RunLockStore {
+  claim(key: string, room: string): Promise<string | null>;
+  release(key: string, room: string): Promise<void>;
+}
+let runLockStore: RunLockStore | null = null;
+/** ⭐ V2: подключить хранилище забегов кластера (`null` — снять: только нода). */
+export function setRunLockStore(store: RunLockStore | null): void { runLockStore = store; }
+
+/**
  * Доступ кластера к менеджеру комнат этого процесса (Ф4): сердцебиению нужны имена живых
  * персонажей, чтобы продлить их закрепление за нодой, а сливу — дописать прогресс.
  * Менеджер в процессе один, поэтому ссылку держим здесь, а не тащим её через пять слоёв.
@@ -239,6 +269,8 @@ export const clusterHooks = {
   fenceLost(charIds: readonly string[]): void { current?.fenceLost(charIds); },
   /** R4-28: сердцебиение продлило закрепления тех, кого нода уже не держит, — снять (см. `RoomManager.releaseIdle`). */
   releaseIdle(charIds: readonly string[]): void { current?.releaseIdle(charIds); },
+  /** ⭐ V2: забеги, которые держат комнаты этой ноды (ключ и код комнаты), — сердцебиение продлевает их за нодой (`touchRuns`). */
+  heldRuns(): { key: string; room: string }[] { return current ? current.heldRuns() : []; },
 };
 
 export class RoomManager {
@@ -308,6 +340,13 @@ export class RoomManager {
   private joinsQueued = new WeakMap<GameConn, number>();
   /** ⭐ R13-08: токены (отпечатком), чью сессию база отказала при годном пропуске маршрута, — их пропуск больше не пропуск (на его срок). */
   private passRefused = new RecentKeys(ROUTE_PASS_TTL_MS + 60_000, 10_000);
+  /**
+   * ⭐ V2: ОДИН ЗАБЕГ — ОДНА КОМНАТА: ключ забега (`runLedgerKey`) → комната, которая его взяла (`Room.takeRun`). Держит, пока `holdsRun` и
+   * комната жива: сверка — на каждом вопросе (`runHolder`), уход комнаты и конец забега освобождают сами. Продолжение забега в другой
+   * комнате (спуск из города, «Продолжить» без грейса) — только если его не держит никто: иначе «Продолжить» ведёт в комнату пати, а
+   * спуск получает отказ с её кодом.
+   */
+  private runRooms = new Map<string, Room>();
 
   /** Имена персонажей с живой сессией — для продления закрепления в реестре (Ф4). */
   liveChars(): IterableIterator<string> { return this.live.keys(); }
@@ -409,16 +448,38 @@ export class RoomManager {
    */
   handleConnection(ws: GameConn): void {
     let chain: Promise<void> = Promise.resolve();
+    /** ⭐ C-06: кадров и байт в очереди соединения (стоят и исполняется) — см. `QUEUE_FRAMES_MAX`. */
+    let queued = 0;
+    let queuedBytes = 0;
     ws.onMessage((raw) => {
+      // ⭐ B3-V1: КАДР ЗАКРЫТОГО СОЕДИНЕНИЯ НЕ ДЕЙСТВУЕТ — какой бы транспорт его ни отдал. Сервер закрыл сокет (поток кадров 4008, вытеснен
+      // 4001, снят устаревшим 4009, медленный 1013) и снял его сессию сам; кадр вдогонку был бы кадром свежего соединения без входа — со своим
+      // пополнившимся бакетом, входом в лобби (и по коду в комнату честного), командами и голосами.
+      if (!ws.open) return;
       // ⭐ R2-01: НИ ОДИН КАДР НЕ БРОСАЕТ ИЗ ОБРАБОТЧИКА. Бросок здесь — это исключение внутри события сокета, то есть
       // выход процесса со всеми комнатами. Кадр `{"t":"ping","id":[[[…6000 уровней…]]]}` (12 КБ, без входа) так и
       // ронял ноду: `JSON.parse` вложенность держит, а `JSON.stringify` понга — нет. Любой такой бросок гасит кадр.
       try {
         this.onMessage(ws, raw, (clean) => {
+          // ⭐ C-06: очередь переполнена (база зависла, а кадры идут) — соединение закрывается, как потоком кадров (`accept`).
+          const cap = this.conns.has(ws) ? QUEUE_BYTES_MAX : QUEUE_PREJOIN_BYTES;
+          if (queued >= QUEUE_FRAMES_MAX || queuedBytes + raw.length > cap) {
+            counters.frameQueueOverflow++;
+            ws.close(4008, 'queue');
+            this.onClose(ws);
+            return;
+          }
+          const size = raw.length;
+          queued++; queuedBytes += size;
           // R7-04: вход в очереди — кадры игры, пришедшие за ним, ждут его, а не отбрасываются до схемы (см. `onMessage`).
           const join = clean.t === 'join';
           if (join) this.joinsQueued.set(ws, (this.joinsQueued.get(ws) ?? 0) + 1);
-          chain = chain.then(() => this.onFrame(ws, clean)).catch((e: unknown) => {
+          chain = chain.then(() => {
+            // ⭐ C-06: соединение закрылось, пока кадр стоял в очереди, — его сессию закрытие уже сняло (`onClose` — сразу); кадр игры ничей.
+            // Кадры лобби исполняются: «Завершить» — намерение игрока, а вход закрытого соединения не сядет (B3-V2).
+            if (!ws.open && !LOBBY_FRAMES.has(clean.t)) return;
+            return this.onFrame(ws, clean);
+          }).catch((e: unknown) => {
             // ⭐ R3-14: сбой ПОСЛЕ схемы (база не ответила на сессию, персонажа, закрепление) — лог через общий глушитель,
             // а не стеком на каждый кадр: поток кадров лобби без входа раньше топил лог и не получал ответа вовсе.
             // Кадр лобби ждёт ответа — «занято», а не вечное «Подключение…».
@@ -428,6 +489,7 @@ export class RoomManager {
               try { ws.send(JSON.stringify(BUSY_ERROR)); } catch { /* сокет уже закрыт */ }
             }
           }).finally(() => {
+            queued--; queuedBytes -= size;
             if (!join) return;
             const n = (this.joinsQueued.get(ws) ?? 1) - 1;
             if (n > 0) this.joinsQueued.set(ws, n); else this.joinsQueued.delete(ws);
@@ -438,12 +500,14 @@ export class RoomManager {
         this.warnFrame(e);
       }
     });
-    // Закрытие тоже ловим: отказ здесь без обработчика стал бы необработанным отказом промиса,
-    // а он по умолчанию роняет процесс со всеми комнатами.
+    // ⭐ C-06: ЗАКРЫТИЕ СНИМАЕТ СЕССИЮ СРАЗУ, а не в конце очереди кадров. Раньше оно вставало за очередью: кадр, ждущий зависшую базу, держал
+    // закрытую вкладку игроком (место в пати, голос, живая сессия), а стоявшие за ним команды исполнялись уже после закрытия. Вход, который
+    // ещё идёт, на закрытом сокете не сядет (B3-V2); команда, ждущая базу, найдёт героя снятым (`transact`). Бакеты соединения подметаются в
+    // конце очереди (`forgetConn`): стоящие кадры лобби их ещё трогают.
+    // Закрытие тоже ловим: бросок здесь — исключение внутри события сокета, то есть выход процесса со всеми комнатами.
     ws.onClose(() => {
-      chain = chain.then(() => { this.onClose(ws); }).catch((e: unknown) => {
-        console.error('[room] отказ при закрытии соединения:', e);
-      }).finally(() => { this.forgetConn(ws); });
+      try { this.onClose(ws); } catch (e) { console.error('[room] отказ при закрытии соединения:', e); }
+      chain = chain.then(() => { this.forgetConn(ws); });
     });
   }
 
@@ -550,9 +614,9 @@ export class RoomManager {
       }
     }
     if (overBracketed(raw)) { counters.framesInvalid++; return undefined; }   // R6-05: вложенность, R8-09: ширина — до разбора
-    // ⭐ R8-09: до входа (и без входа в очереди) — только кадр размера лобби: большой отбрасывается, не разбирая. Молча, как кадр
-    // игры без входа (R7-04): честный клиент такого не шлёт, а ответ на каждый стоил бы исходящего трафика.
-    if (raw.length > LOBBY_FRAME_MAX && !this.conns.has(ws) && !this.joinsQueued.has(ws)) return undefined;
+    // ⭐ R8-09: до входа — только кадр размера лобби: большой отбрасывается, не разбирая. Молча, как кадр игры без входа (R7-04): честный
+    // клиент такого не шлёт, а ответ на каждый стоил бы исходящего трафика. ⭐ C-06: и когда вход уже в очереди (см. `LOBBY_FRAME_MAX`).
+    if (raw.length > LOBBY_FRAME_MAX && !this.conns.has(ws)) return undefined;
     let frame: ClientFrame;
     try { frame = JSON.parse(raw) as ClientFrame; } catch { return undefined; }
     // Оплачен как ввод — обязан им быть: JSON берёт последний из повторённых ключей, и `{"t":"input","t":"join",…}`
@@ -575,7 +639,8 @@ export class RoomManager {
         // Комната сама по себе НЕ значит «есть забег»: она живёт и когда игрок просто стоит
         // в городе — в том числе сразу после гибели. Спрашиваем комнату, идёт ли забег на самом деле.
         const graceRoom = this.graceByChar.get(frame.charId);
-        const room = graceRoom?.inRun ? graceRoom : undefined;
+        // ⭐ C-04: припаркованный в комнате, чей забег — не его, — статус его забега (из базы), а не комнаты (см. `join`).
+        const room = graceRoom?.inRun && !graceRoom.parkedForeign(frame.charId) ? graceRoom : undefined;
         // R2-08: копию, которую база не приняла, — дописать до чтения. Не вышло — модалка по базе: это только
         // подсказка, а вход и «Завершить» сами не пойдут дальше без записанной копии. R6-06: копию героя, которого держит
         // чужая нода, — не дописывать (`settleOwned`).
@@ -696,6 +761,8 @@ export class RoomManager {
       return;
     }
     if (!this.admits(frame.charId, fresh)) { ws.send(JSON.stringify(NODE_FULL)); return; }   // R5-13
+    // ⭐ B3-V2: вход, стоявший в очереди соединения, которое сервер уже закрыл, — ничей: ни выселения живой сессии героя, ни страховки.
+    if (!ws.open) return;
     if (!(await this.claimHere(ws, frame.charId))) return;
     // Ф0.3: этот персонаж уже где-то играет — выселяем старую сессию ДО чтения сейва из БД,
     // чтобы новая прочитала уже зафиксированный прогресс, а не обогнала его.
@@ -703,6 +770,7 @@ export class RoomManager {
     // ⭐ R2-08: прощальная запись не легла (упала, висит дольше потолка) — НЕ входим со старой копией из базы.
     if (!(await this.settleFarewell(frame.charId))) { ws.send(JSON.stringify(SAVING_ERROR)); return; }
     if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
+    if (!ws.open) return;   // B3-V2
 
     // Продолжить забег: грейс-комната → возврат в ту же точку; иначе (грейс истёк / город-разрыв,
     // но save.run цел) → пересобираем забег в НОВОЙ комнате из save.run.config (тот же узел).
@@ -712,28 +780,70 @@ export class RoomManager {
     // не найдена», а не `undefined === undefined` — «Продолжить» своего забега вместо входа к другу.
     const target = code ? this.rooms.get(code) : undefined;
     if (code && !target) { ws.send(JSON.stringify(NO_ROOM)); return; }
-    const graceBefore = this.graceByChar.get(frame.charId);
-    const seqBefore = this.farewellSeq.get(frame.charId)?.seq;   // R10-05
+    let graceBefore = this.graceByChar.get(frame.charId);
+    let seqBefore = this.farewellSeq.get(frame.charId)?.seq;   // R10-05
     const home = !!target && graceBefore === target;
     if (frame.resume || home) {
+      // ⭐ C-04: «ПРОДОЛЖИТЬ» — СВОЙ ЗАБЕГ, А НЕ ГРЕЙС-КОМНАТА, КОТОРАЯ ЕГО НЕ ВЕДЁТ. Припаркованный (`safe`) ждёт реконнекта в комнате, чей
+      // забег — другой (пати в городе с чужим ему забегом, или комната забег кончила): раньше «Продолжить» сажало его туда — в город чужой
+      // пати или в подземелье её забега (голос за спуск — отказ `run`), а к своему забегу он не попадал никак. Теперь комната его отпускает
+      // (как страховка входа — без штрафа, забег цел), и «Продолжить» ведёт по его забегу (V2: к держателю или в новую комнату). По коду своей
+      // комнаты (`home`) — возвращение туда, куда просился.
+      if (frame.resume && !home && graceBefore?.parkedForeign(frame.charId)) {
+        await this.track(frame.charId, graceBefore.abandonAsDead(frame.charId, true));
+        if (!(await this.settleFarewell(frame.charId))) { ws.send(JSON.stringify(SAVING_ERROR)); return; }
+        graceBefore = this.graceByChar.get(frame.charId);
+        seqBefore = this.farewellSeq.get(frame.charId)?.seq;
+      }
       const owned = await this.ownedSave(userId, frame.charId);
       if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
       const { save, version } = await migrateLegacyWallet(userId, owned.save, owned.version, this.cfg);   // R1-06
       await this.foldRunLedger(save);   // R9-01: что взято на узлах забега без него — из свода в базе
       if (this.farewellMoved(frame.charId, graceBefore, seqBefore)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
       if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
+      if (!ws.open) return;   // ⭐ B3-V2: соединение закрыли, пока вход ждал базу, — на мёртвый сокет не садим
       const graceRoom = this.graceByChar.get(frame.charId);
       if (graceRoom) {
-        const pid = graceRoom.reconnect(ws, userId, save, version);
-        this.conns.set(ws, { pid, room: graceRoom });
-        this.live.set(save.charId, ws);
+        this.seat(ws, save.charId, graceRoom.reconnect(ws, userId, save, version), graceRoom);
         return;
       }
       if (save.run) {
-        const room = this.createRoom();
-        const pid = room.addPlayerResumeRun(ws, userId, save, version);
-        this.conns.set(ws, { pid, room });
-        this.live.set(save.charId, ws);
+        // ⭐ V2: ЗАБЕГ УЖЕ ИДЁТ В ДРУГОЙ КОМНАТЕ — «Продолжить» ведёт туда, к пати, а не собирает его во второй комнате рядом с ней. Раньше
+        // забег собирался заново всегда: тот же узел шёл в двух комнатах, и его сундуки, босс и опыт брались в каждой (V2).
+        const key = runLedgerKey(save.run.config);
+        let code: string | undefined;
+        let elsewhere: string | null = null;
+        if (!this.runHolder(key) && runLockStore) {
+          code = newCode();
+          try {
+            elsewhere = await runLockStore.claim(key, code);
+          } catch (e) {
+            console.error(`[room] забег ${key}: кластер не ответил, за кем он:`, e);
+            ws.send(JSON.stringify(BUSY_ERROR));
+            return;
+          }
+          if (this.farewellMoved(frame.charId, graceBefore, seqBefore)) { ws.send(JSON.stringify(SAVING_ERROR)); this.runFreedKey(key, code); return; }
+          if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); this.runFreedKey(key, code); return; }
+          if (!ws.open) { this.runFreedKey(key, code); return; }
+        }
+        const holder = this.runHolder(key);
+        // ⭐ C-05, C-08: ОТКАЗ — С КОДОМ ДЕРЖАТЕЛЯ ПОЛЕМ КАДРА (`roomCode`). Раньше код жил только в тексте, а на экране «Незавершённое
+        // прохождение» поля кода нет: «Продолжить» отказывало снова и снова, и выходом оставалось «Забросить» (штраф смерти). Теперь клиент
+        // идёт по коду к ноде держателя или показывает лобби с ним (там «Соло» — город без штрафа, забег цел: грейса у героя нет).
+        if (holder) {
+          if (holder.seatsTaken(frame.charId) >= MAX_PARTY) { ws.send(JSON.stringify({ ...ROOM_FULL, roomCode: holder.code })); return; }
+          this.seat(ws, save.charId, holder.addPlayer(ws, userId, save, version), holder);
+          return;
+        }
+        if (elsewhere) {
+          // ⭐ C-08: закрепление героя — снять ДО отказа: клиент идёт по коду сразу, и гейтвей, увидев живое закрепление здесь (R6-08), вернул
+          // бы его сюда же — за тем же отказом. Снятие по правилу `releaseIfIdle` (живой сессии, грейса и записей в полёте у него нет).
+          await this.releaseIfIdle(frame.charId);
+          ws.send(JSON.stringify({ t: 'error', code: 'run', msg: runElsewhereMsg(elsewhere), roomCode: elsewhere }));
+          return;
+        }
+        const room = this.createRoom(code);
+        this.seat(ws, save.charId, room.addPlayerResumeRun(ws, userId, save, version), room);
         return;
       }
       ws.send(JSON.stringify({ t: 'error', code: 'no-run', msg: 'Забег не найден' }));
@@ -758,6 +868,9 @@ export class RoomManager {
     await this.foldRunLedger(save);   // R9-01: припаркованный забег — с тем, что взято на его узлах без героя
     if (this.farewellMoved(frame.charId, graceNow, seqNow)) { ws.send(JSON.stringify(SAVING_ERROR)); return; }   // R5-10
     if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); return; }   // R5-07: слив начался, пока вход ждал базу
+    // ⭐ B3-V2: соединение закрыли, пока вход стоял в его очереди или ждал базу (поток кадров — 4008 из `accept`, медленный — 1013): `onClose`
+    // уже прошёл мимо (входа ещё не было), и сесть сейчас значило бы остаться игроком на мёртвом сокете — место в пати, голос, тело.
+    if (!ws.open) return;
     let room: Room;
     if (code) {
       const existing = this.rooms.get(code);
@@ -768,9 +881,21 @@ export class RoomManager {
     } else {
       room = this.createRoom();
     }
-    const pid = room.addPlayer(ws, userId, save, version);
+    this.seat(ws, save.charId, room.addPlayer(ws, userId, save, version), room);
+  }
+
+  /**
+   * ⭐ E2E 28.09 (фаззер протокола, большой прогон, сид 50734): ЗАПИСАТЬ ВОШЕДШЕГО — И СНЯТЬ СРАЗУ, ЕСЛИ СОКЕТ ЗАКРЫЛСЯ ПОСРЕДИ ВХОДА.
+   * Кадры входа (`joined`, этаж, сейв, лавка — десятки КБ) шлёт сама комната внутри `addPlayer`/`reconnect`/`addPlayerResumeRun`;
+   * медленный читатель упирается в потолок неотправленного посреди них, и транспорт закрывает сокет (1013) — `onClose` зовётся тут же,
+   * когда соединение ещё не записано игроком (`conns`), и проходит мимо. Раньше вход записывал его следом: мёртвый сокет оставался игроком
+   * навсегда — место в пати честного (и голос за спуск, которого не будет), живая сессия героя, комната на тике, которую не снимал никто.
+   * Проверка `ws.open` перед входом этого не ловит: закрывает сама отправка кадров входа. Оба транспорта.
+   */
+  private seat(ws: GameConn, charId: string, pid: string, room: Room): void {
     this.conns.set(ws, { pid, room });
-    this.live.set(save.charId, ws);
+    this.live.set(charId, ws);
+    if (!ws.open) this.onClose(ws);
   }
 
   /**
@@ -854,7 +979,9 @@ export class RoomManager {
     for (let attempt = 0; attempt < 2; attempt++) {
       const owned = await this.ownedSave(userId, charId);
       if (!owned?.save.run) return { saved: true };
-      applyDeathPenalty(owned.save, this.cfg.get('balance').deathPenalty, townRng());   // D10: не по часам
+      // ⭐ V1: погиб в коопе и с тех пор не жил (`run.deadAt` — штраф за эту смерть лёг вместе с меткой) — второго штрафа нет. Раньше «мёртв,
+      // оплачено» жило только в комнате: сессию погибшего сняла запись (4009, без грейса), копия легла с забегом — и «Завершить» брало ещё раз.
+      if (owned.save.run.deadAt === undefined) applyDeathPenalty(owned.save, this.cfg.get('balance').deathPenalty, townRng());   // D10: не по часам
       owned.save.run = undefined;
       if (await putCharacter(charId, userId, owned.save, owned.version) !== null) return { saved: true };
       console.warn(`[room] отклонён устаревший сейв при abandon ${charId}`);
@@ -979,6 +1106,7 @@ export class RoomManager {
       console.error(`[room] ИНЦИДЕНТ: героя ${charId} держит нода ${owner} — недописанная копия здесь забыта; отданное ею могло остаться у двоих`);
     }
     this.unsavedBackoff.delete(charId);
+    for (const room of this.drainRooms()) room.copyLost(charId);   // ⭐ V-B2-04: выброшенное забытой копией — в строке героя, не на земле
   }
 
   /**
@@ -1133,18 +1261,63 @@ export class RoomManager {
     }
   }
 
-  private createRoom(): Room {
-    let code = newCode();
+  private createRoom(want?: string): Room {
+    let code = want && !this.rooms.has(want) ? want : newCode();
     while (this.rooms.has(code)) code = newCode();
     const room = new Room(code, this.cfg, {
-      onEmpty: (c) => this.rooms.delete(c),
+      onEmpty: (c) => { this.rooms.delete(c); this.roomGone(room); },
       onGrace: (charId) => this.graceByChar.set(charId, room),
       onUngrace: (charId) => this.graceByChar.delete(charId),
       // R1-07: штраф истёкшего грейса и вайпа пати — прощальная запись: вход того же героя её дождётся.
       onFarewell: (charId, write) => { void this.track(charId, write); },
+      // ⭐ V2: один забег — одна комната (см. `runRooms`).
+      runBusy: (key, r) => { const h = this.runHolder(key); return h && h !== r ? h.code : undefined; },
+      runClaim: (key, r) => (runLockStore ? runLockStore.claim(key, r.code) : Promise.resolve(null)),
+      runTaken: (key, r) => {
+        this.runRooms.set(key, r);
+        void runLockStore?.claim(key, r.code).then((other) => {
+          if (other) console.error(`[room] ИНЦИДЕНТ: забег ${key} комнаты ${r.code} кластер числит за комнатой ${other} другой ноды`);
+        }, () => undefined);   // сердцебиение продлит и так (`touchRuns`)
+      },
+      runDropped: (key, r) => this.runFreed(key, r),
     });
     this.rooms.set(code, room);
     return room;
+  }
+
+  /** ⭐ V2: комната, которая держит забег `key` на этой ноде (жива и `holdsRun`), — или никакой. */
+  private runHolder(key: string): Room | undefined {
+    const h = this.runRooms.get(key);
+    if (h && this.rooms.get(h.code) === h && h.holdsRun(key)) return h;
+    return undefined;
+  }
+
+  /** ⭐ V2: комната `r` забег `key` больше не берёт — если его не держит никто здесь, он свободен и в кластере. */
+  private runFreed(key: string, r: Room): void {
+    if (this.runHolder(key)) return;
+    if (this.runRooms.get(key) === r) this.runRooms.delete(key);
+    void runLockStore?.release(key, r.code).catch(() => undefined);
+  }
+
+  /** ⭐ V2: взятое за нодой для «Продолжить» (комната `code` так и не завелась) — назад, если забег не держит никто здесь. */
+  private runFreedKey(key: string, code: string): void {
+    if (this.runHolder(key)) return;
+    void runLockStore?.release(key, code).catch(() => undefined);
+  }
+
+  /** ⭐ V2: комната ушла — её забеги свободны. */
+  private roomGone(room: Room): void {
+    for (const [key, r] of [...this.runRooms]) if (r === room) this.runFreed(key, room);
+  }
+
+  /** ⭐ V2: забеги, которые держат комнаты этой ноды, — для сердцебиения (`clusterHooks.heldRuns`). */
+  heldRuns(): { key: string; room: string }[] {
+    const out: { key: string; room: string }[] = [];
+    for (const [key, r] of [...this.runRooms]) {
+      if (this.runHolder(key) === r) out.push({ key, room: r.code });
+      else this.runFreed(key, r);   // держатель ушёл молча (город без участников, другой забег) — подметаем
+    }
+    return out;
   }
 
   /**

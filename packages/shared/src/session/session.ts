@@ -1,7 +1,7 @@
 import { vecLen, wrapAngle, normalizeAngle } from '../world/fastMath.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
-import type { Item, AttackType } from '../types/items.js';
+import type { Item, AttackType, ConsumableUse } from '../types/items.js';
 import type { DropPayload, ScaledMonster, MonsterFaction } from '../types/world.js';
 import type { CombatStats, DamagePacket, DamageType } from '../types/combat.js';
 import type { StatModifier } from '../types/attributes.js';
@@ -14,6 +14,7 @@ import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js'
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
 import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/resolveWeapon.js';
 import { skillWeaponAllowed } from '../formulas/skills.js';
+import { asHeld, gripOf, type GripTuning } from '../formulas/versatile.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem, itemFromBase, rollTierLevel } from '../formulas/itemgen.js';
 import { shapeFoundWeapon } from '../formulas/craft.js';
@@ -125,8 +126,12 @@ const monsterMat = (m: MonsterEntity): HitMaterial => hitMaterialOf(m.def.armorC
 /** …игрок — по своему нагруднику, иначе шлему. */
 const playerMat = (p: PlayerEntity): HitMaterial =>
   hitMaterialOf(p.save.equipment.chest?.armorClass, p.save.equipment.helm?.armorClass);
-/** Дроп выбросил игрок ДРУГОГО аккаунта (R2-02) — этому игроку его не поднять. Без владельца — общий. */
-const foreignDrop = (p: PlayerEntity, d: { owner?: string }): boolean => d.owner !== undefined && d.owner !== p.account;
+/**
+ * Дроп выбросил игрок ДРУГОГО аккаунта (R2-02) — этому игроку его не поднять. Без владельца — общий. ⭐ V-B2-04: и выброшенное другим
+ * героем, чья строка в базе вещь ещё держит (`heldBy`), — только ему самому, пока сервер не снимет метку.
+ */
+const foreignDrop = (p: PlayerEntity, d: { owner?: string; heldBy?: string }): boolean =>
+  (d.owner !== undefined && d.owner !== p.account) || (d.heldBy !== undefined && d.heldBy !== p.save.charId);
 /**
  * ⚠ R6-02: С ЧЕМ НАЧАТ ЗАМАХ — надетое (uid по слотам) и включённые ауры/стойки. Замах запоминает подпись на старте; на ударе
  * она другая — удар пропадает. Иначе темп брался бы от одного (кинжал, кольцо или аура на скорость), а урон, дальность, вес
@@ -591,7 +596,7 @@ export class GameSession {
     if (this.economy && !held) this.autoPickup(p); // прошёл над золотом — подобрал, клик не нужен
 
     if (stunned) return; // оглушён — ни атаки, ни каста, ни зелий
-    if (input?.useBelt != null && !held) this.useBeltSlot(p, snap, input.useBelt);
+    if (input?.useBelt != null && !held) this.useBeltSlot(p, input.useBelt);
     if (input?.attack) this.tryPlayerAttack(p, snap);
     if (input?.cast != null) this.castSkill(p, snap, input.cast);
     // [E] сперва открывает сундук, и только потом подбирает: иначе, стоя над только что
@@ -599,12 +604,26 @@ export class GameSession {
     if (input?.interact && !held && !this.openChest(p.id)) this.tryPickup(p);
   }
 
-  /** Выпить расходник из слота пояса: единый эффект `applyConsumable`; расход ТОЛЬКО если сработал
+  /** Выпить расходник из слота пояса: единый эффект `drink`; расход ТОЛЬКО если сработал
    *  (полное HP чистым лечением не тратит зелье). Тот же путь, что серверный `useConsumable`. */
-  private useBeltSlot(p: PlayerEntity, snap: PlayerSnapshot, slot: number): void {
+  private useBeltSlot(p: PlayerEntity, slot: number): void {
     const item = p.save.belt[slot];
     if (!item?.use) return;
-    if (applyConsumable(p, item.use, snap.derived.maxHp, snap.derived.maxMana)) p.save.belt[slot] = null;
+    if (this.drink(p.id, item.use)) p.save.belt[slot] = null;
+  }
+
+  /**
+   * ⭐ C-14: ЭФФЕКТ РАСХОДНИКА НА ГЕРОЯ — один для пояса ввода (`useBeltSlot`) и команды `useConsumable` комнаты. Мана — до
+   * ЭФФЕКТИВНОГО потолка (ауры резервируют долю пула), как реген тика: у потолка зелье маны без эффекта и не тратится, и выше
+   * потолка не наливает (иначе каст того же тика платил бы налитым сверх резерва). Правила «кто может пить» (жив, не оглушён) —
+   * у вызывающего: тик не зовёт пояс у мёртвого и оглушённого, команда отказывает своим словом. `true` — было действие.
+   */
+  drink(playerId: string, use: ConsumableUse): boolean {
+    const p = this.world.players[playerId];
+    const snap = this.snaps.get(playerId);
+    if (!p || !snap) return false;
+    const d = snap.derived;
+    return applyConsumable(p, use, d.maxHp, d.maxMana, effectivePool(d.maxMana, this.reservedFrac(p, 'mana')));
   }
 
   /** Замах удара/скилла как доля цикла атаки (масштабируется скоростью) + явный windup скилла. */
@@ -623,7 +642,7 @@ export class GameSession {
    */
   private tryPlayerAttack(p: PlayerEntity, snap: PlayerSnapshot): void {
     if (p.attackCd > 0 || p.windup) return;
-    const hands = attackWeaponsOf(p.save);
+    const hands = attackWeaponsOf(p.save, this.grip());
     const weapon = hands[p.swingHand % hands.length]; // рука этого свинга (инкремент — в исполнении)
     // Базовый удар магическим оружием (болт) — стоимость из конфига (деф. 0 = бесплатно, как физ.).
     if (weapon?.damageKind === 'magical') {
@@ -642,7 +661,7 @@ export class GameSession {
 
   /** Срабатывание базовой атаки (по завершении замаха): выбор руки, пакет урона (крит здесь), удар/снаряд. */
   private executeBasicAttack(p: PlayerEntity, snap: PlayerSnapshot): void {
-    const hands = attackWeaponsOf(p.save);
+    const hands = attackWeaponsOf(p.save, this.grip());
     const weapon = hands[p.swingHand % hands.length];
     p.swingHand++;
     const pm = this.dmods(p.debuffs);
@@ -972,6 +991,19 @@ export class GameSession {
     return this.cfg.get('balance').weaponAttrScaling;
   }
 
+  /** Хват полуторного — живые ручки `balance.versatile`, тот же перевод, что у деривации (⚠ C-15: не зашитое умолчание). */
+  private grip(): GripTuning {
+    return gripOf(this.cfg.get('balance').versatile);
+  }
+
+  /**
+   * ⭐ C-11: ОРУЖИЕ «КАК ЕГО ДЕРЖАТ» — для скилов (атака и каст), как `attackWeaponsOf` для базового удара: полуторное со щитом —
+   * урезанная копия (`versatile.ts`). Раньше скилы брали сырое двуручное из сейва: «Рассечение» со щитом било полным двуручным уроном.
+   */
+  private heldWeapon(p: PlayerEntity): Item | undefined {
+    return asHeld(p.save.equipment.weapon, p.save, this.grip());
+  }
+
   private weights(): ConfigShapes['weapon-weights'] {
     return this.cfg.get('weapon-weights');
   }
@@ -1057,8 +1089,9 @@ export class GameSession {
     if (active.category === 'curse') { this.applyCurse(p, active); return; }
     if (active.category === 'cast') {
       const element = active.element ?? abilityElementOf(active.abilityId);
-      const pk = this.castPacket(snap, p.save.equipment.weapon, active, rank, element);
-      const opts = this.skillOpts(active, element, p.save.equipment.weapon, pk);   // статусы по итоговому (конвертированному) составу
+      const weapon = this.heldWeapon(p);   // ⚠ C-11: полуторное со щитом — урезанным, как у базового удара
+      const pk = this.castPacket(snap, weapon, active, rank, element);
+      const opts = this.skillOpts(active, element, weapon, pk);   // статусы по итоговому (конвертированному) составу
       const attacker = snap.combat;
       switch (active.shape) {
         case 'dash': this.doDashAttack(p, pk, attacker, active, rank, opts); break;
@@ -1086,7 +1119,7 @@ export class GameSession {
    * ВСЕМ в дуге; дальнобой/маг → 1..N снарядов (веер `count`/`spread`, урон каждой = damageMult).
    */
   private weaponAttack(p: PlayerEntity, snap: PlayerSnapshot, active: AttackAbility, rank: number): void {
-    const weapon = p.save.equipment.weapon;
+    const weapon = this.heldWeapon(p);   // ⚠ C-11: полуторное со щитом — урезанным, как у базового удара
     const element = active.element ?? abilityElementOf(active.abilityId);
     const pm = this.dmods(p.debuffs);
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
@@ -1113,7 +1146,7 @@ export class GameSession {
     const dir = p.facing;
     const dist = active.dashDist > 0 ? active.dashDist : 130;
     const mel = this.cfg.get('balance').melee;
-    const weapon = p.save.equipment.weapon;
+    const weapon = this.heldWeapon(p);
     const halfW = swingHalfWidth(mel.baseRange * (weapon?.reachMult ?? 1), mel.baseArc * (weapon?.arcMult ?? 1));
     const from = { ...p.pos };
     const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1, this.world.obstacles);
@@ -1874,7 +1907,7 @@ export class GameSession {
    */
   openChest(playerId: string, chestId?: number): boolean {
     const p = this.world.players[playerId];
-    if (!p || !p.alive || !this.economy) return false;
+    if (!p || !this.canInteract(p) || !this.economy) return false;
     // Без id — ближайший (клавиша [E] у 2D-клиента и бота), с id — конкретный (команда веб-3D).
     // Проксимити проверяется В ОБОИХ случаях — анти-чит, как у рычага. R6-26: и видимость — сквозь стену не открыть.
     const near = (c: { pos: Vec2 }): boolean => this.within(p, c.pos, 56);
@@ -1955,16 +1988,27 @@ export class GameSession {
   /**
    * Точечный подбор дропа по id (клиентская команда «клик по предмету» — надёжно, без гонки
    * сэмплирования ввода). Возвращает поднятое (item+координаты для лога/сейва) или null, если
-   * дропа нет / далеко (>48) / за стеной (R6-26) / полный инвентарь. Сервер по результату шлёт SaveUpdate + событие.
+   * дропа нет / далеко (>48) / за стеной (R6-26) / полный инвентарь / мёртв или оглушён (C-13, `canInteract`). Сервер по результату
+   * шлёт SaveUpdate + событие.
    */
   pickupDropById(playerId: string, dropId: number): { item?: Item; x: number; y: number; thrown?: true } | null {
     const p = this.world.players[playerId];
-    if (!p || !p.alive) return null;
+    if (!p || !this.canInteract(p)) return null;
     const i = this.world.drops.findIndex((d) => d.id === dropId);
     if (i < 0) return null;
     const d = this.world.drops[i]!;
     if (!this.within(p, d.pos, 48)) return null;
     return this.takeDrop(p, i);
+  }
+
+  /**
+   * ⭐ C-13: МОЖЕТ ЛИ ГЕРОЙ ВЗАИМОДЕЙСТВОВАТЬ С МИРОМ — одно правило для [E] тика и команд по id (рычаг, сундук, подбор). Тик
+   * пропускает мёртвых и после стана возвращается до взаимодействия; команды веб-3D шли мимо: труп у рычага открывал дверь пати,
+   * оглушённый открывал сундук и подбирал вещь кликом. Рывок не гейтится: тик пропускает [E] в рывке лишь потому, что ввод ушёл в
+   * движение, а правила «в рывке нельзя» нет.
+   */
+  private canInteract(p: PlayerEntity): boolean {
+    return p.alive && !(p.stunTimer > 0);
   }
 
   /**
@@ -1992,14 +2036,14 @@ export class GameSession {
   }
 
   /**
-   * Игрок дёргает рычаг (по `leverId`), если он рядом: открывает ТОЛЬКО его дверь
+   * Игрок дёргает рычаг (по `leverId`), если он рядом и в силах (C-13, `canInteract`): открывает ТОЛЬКО его дверь
    * (`Cell.Door→Floor` в общем гриде). Возвращает `doorId` (для броадкаста) или null.
    * Мир общий → открытая дверь видна всей пати сразу.
    */
   openLever(playerId: string, leverId: number): number | null {
     const p = this.world.players[playerId];
     const lv = this.world.levers.find((l) => l.id === leverId);
-    if (!p || !lv || lv.used) return null;
+    if (!p || !lv || lv.used || !this.canInteract(p)) return null;
     if (!this.within(p, lv.pos, 56)) return null; // проксимити (анти-чит); R6-26: и видимость — не сквозь стену
     return this.openDoorOf(lv);
   }

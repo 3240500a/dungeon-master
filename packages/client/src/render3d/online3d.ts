@@ -56,7 +56,7 @@ import { forgePanel } from '../modules/town/forgePanel.js';
 import { difficultyPanel } from '../modules/town/difficultyPanel.js';
 import { stashPanel } from '../modules/town/stashPanel.js';
 import { questLogPanel } from '../modules/quests/questLogPanel.js';
-import { runNodeLabel } from '../modules/run/runLabels.js';
+import { exitInteract } from '../modules/run/runExits.js';
 import { runMapPanel } from '../modules/run/runMapPanel.js';
 import { mergePeerStatics } from '../net/peerStatics.js';
 import { EntryFlow } from '../net/entryFlow.js';
@@ -632,12 +632,13 @@ export async function startOnline3d(): Promise<void> {
     if (floor.area === 'dungeon') {
       const isFinale = (floor.exits?.length ?? 0) === 0;
       // Выходы на следующий узел (v2 развилка): лестница-меш + интерактив «Спуститься» по своему ребру графа.
+      // ⭐ C-10: подпись (see-ahead на развилке) — из плана забега в миг показа: `runPlan` приходит ПОСЛЕ этого этажа.
       const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);
       exits.forEach((ex, i) => {
         const st = new THREE.Group();
         for (let s = 0; s < 4; s++) { const step = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.9, 5, TILE - s * 5), new THREE.MeshStandardMaterial({ color: 0x2a2a33 })); step.position.set(0, -s * 5 - 2.5, s * 3); st.add(step); }
         st.position.set(ex.x, 0, ex.y); floorGroup.add(st);
-        interactables.push({ x: ex.x, y: ex.y, radius: 34, label: exitLabel(floor, i), run: () => descendExit(i) });
+        interactables.push(exitInteract(ex, floor, i, () => app.run?.plan, (k) => descendExit(k)));
       });
       // Декор узла: лавка / портал (rest → в город, финал → завершить забег). Меши строит env3d. Сундука аккаунта в
       // подземелье нет (R7-11): сервер открывает его только в городе, и генератор его на этаж не ставит.
@@ -705,16 +706,6 @@ export async function startOnline3d(): Promise<void> {
     const run = app.run;
     const cur = run?.plan.nodes.find((n) => n.id === run.currentNodeId);
     app.net.send({ t: 'descend', targetNodeId: cur?.edges[i]?.to });
-  }
-  /** Подпись выхода: на развилке (>1 ребро) — тип целевого узла (see-ahead), иначе обычный спуск. */
-  function exitLabel(floor: FloorInit, i: number): string {
-    const cur = app.run?.plan.nodes.find((n) => n.id === floor.runNodeId);
-    if (cur && cur.edges.length > 1) {
-      const to = cur.edges[i]?.to;
-      const tn = to ? app.run!.plan.nodes.find((n) => n.id === to) : undefined;
-      if (tn) return `Спуститься: ${runNodeLabel(tn.type)} (голосование)`;
-    }
-    return 'Спуститься глубже (голосование)';
   }
 
   function labelSprite(text: string): THREE.Sprite {

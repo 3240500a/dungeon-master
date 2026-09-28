@@ -6,8 +6,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
-import { ConfigRegistry, configSchemas } from '@dm/shared';
+import { ConfigRegistry, configSchemas, configRevs, type ConfigKey } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
+import { configWriter } from './configWrites.js';
 import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
 import {
   listAllCharacters, getCharacter,
@@ -91,6 +92,14 @@ async function boot(): Promise<void> {
     // R9-01: свод записей забегов (`run_ledger`) — только свежий: забеги рестарт не переживают, строки — неделю.
     const stale = await sweepRunLedger();
     if (stale) console.log(`[dm-server] убрано старых записей узлов забегов: ${stale}`);
+    // ⭐ V2: забег — за одной нодой кластера (`run_locks`): забеги прошлого процесса этой ноды ушли вместе с его комнатами, а продолжение
+    // забега (спуск из города, «Продолжить») сверяется с базой — идёт ли он уже в комнате другой ноды. До приёма соединений.
+    const { releaseNodeRuns, claimRun, releaseRun } = await import('./cluster/registry.js');
+    const { setRunLockStore } = await import('./net/roomManager.js');
+    const nodeId = process.env.DM_NODE_ID ?? 'node-0';
+    const tails = await releaseNodeRuns(nodeId);
+    if (tails) console.log(`[dm-server] снято забегов прошлого процесса ноды: ${tails}`);
+    setRunLockStore({ claim: (key, room) => claimRun(key, nodeId, room), release: (key, room) => releaseRun(key, nodeId, room) });
   }
 
   // Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы
@@ -255,8 +264,19 @@ const devGate: RequestHandler = (req, res, next) => {
 };
 /** Тело JSON инструментов (конфиг, контент поз-редактора — сотни КБ) — ставится ПОСЛЕ `devGate`. */
 const devJson = express.json({ limit: '2mb' });
+/**
+ * ⭐ C-09: запись таблиц конфига — только поверх того, что редактор загрузил (`__baseRev`, ревизии загруженного): таблица на сервере уже
+ * другая (сохранили в другой вкладке, инструментом, с другой машины; вкладка открыта при лежащем сервере — с дефолтами) — 409, ничего не
+ * записано. Сверка и запись — одним шагом (`configWriter`); ответ несёт новые ревизии (`rev`) — база следующей записи редактора.
+ */
+const writeConfig = configWriter((key) => config.get(key as ConfigKey));
+/** 409 записи конфига поверх чужой правки. */
+function staleConfig(res: Response, conflicts: string[], rev: Record<string, string>): void {
+  console.log(`[dm-server] запись конфига отклонена (на сервере новее): ${conflicts.join(', ')}`);
+  res.status(409).json({ error: 'На сервере более новая версия', conflicts, rev });
+}
 app.post('/api/dev/config', devGate, devJson, ah(async (req, res) => {
-  const overrides = (req.body ?? {}) as Record<string, unknown>;
+  const { __baseRev, ...overrides } = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в БД (на временном реестре)
     trial.loadAll();
@@ -264,10 +284,13 @@ app.post('/api/dev/config', devGate, devJson, ah(async (req, res) => {
   } catch (e) {
     return res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
   }
-  for (const [key, value] of Object.entries(overrides)) await setConfigOverride(key, value);
-  await rebuildConfig();
+  const r = await writeConfig(__baseRev, Object.keys(overrides), async () => {
+    for (const [key, value] of Object.entries(overrides)) await setConfigOverride(key, value);
+    await rebuildConfig();
+  });
+  if (!r.ok) return staleConfig(res, r.conflicts, r.rev);
   console.log(`[dm-server] конфиг сохранён из редактора: ${Object.keys(overrides).join(', ') || '—'}`);
-  res.json({ ok: true, applied: Object.keys(overrides) });
+  res.json({ ok: true, applied: Object.keys(overrides), rev: r.rev });
 }));
 
 // «Применить везде»: пишет правку прямо в ФАЙЛ-источник (data/*.json) → попадёт в git и на деплой.
@@ -276,7 +299,7 @@ app.post('/api/dev/config', devGate, devJson, ah(async (req, res) => {
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
 app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
-  const overrides = (req.body ?? {}) as Record<string, unknown>;
+  const { __baseRev, ...overrides } = (req.body ?? {}) as Record<string, unknown>;   // C-09: база — как у `/api/dev/config`
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в файл
     trial.loadAll();
@@ -285,25 +308,31 @@ app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
     return res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
   }
   const written: string[] = [];
-  try {
-    for (const [key, value] of Object.entries(overrides)) {
-      // Файл «строка на запись» (weapon-parts) пишем в его же формате и без умолчаний zod — иначе одна правка
-      // детали давала diff на весь файл (`configFileFormat.ts`).
-      const path = configFileFor(key);
-      writeFileSync(path, formatConfigFile(value, existsSync(path) ? readFileSync(path, 'utf8') : null, arrayElementSchema(key)));
-      await setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
-      written.push(key);
+  const failed: { msg?: string } = {};   // запись файла упала — 500, как было (пересборки нет)
+  const r = await writeConfig(__baseRev, Object.keys(overrides), async () => {
+    try {
+      for (const [key, value] of Object.entries(overrides)) {
+        // Файл «строка на запись» (weapon-parts) пишем в его же формате и без умолчаний zod — иначе одна правка
+        // детали давала diff на весь файл (`configFileFormat.ts`).
+        const path = configFileFor(key);
+        writeFileSync(path, formatConfigFile(value, existsSync(path) ? readFileSync(path, 'utf8') : null, arrayElementSchema(key)));
+        await setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
+        written.push(key);
+      }
+    } catch (e) {
+      failed.msg = `Не удалось записать файл: ${e instanceof Error ? e.message : String(e)}`;
+      return;
     }
-  } catch (e) {
-    return res.status(500).json({ error: `Не удалось записать файл: ${e instanceof Error ? e.message : String(e)}` });
-  }
-  // ⚠ `await`. Здесь стоял голый вызов АСИНХРОННОЙ `rebuildConfig()`, и это два дефекта разом:
-  //  • сервер отвечал «ок» ДО пересборки — редактор тут же перечитывал `/api/config` и получал СТАРОЕ
-  //    тело, то есть «сохранил, а не применилось» на ровном месте;
-  //  • отказ внутри (валидация, база) становился НЕОБРАБОТАННЫМ reject, а он в Node роняет процесс.
-  await rebuildConfig();
+    // ⚠ `await`. Здесь стоял голый вызов АСИНХРОННОЙ `rebuildConfig()`, и это два дефекта разом:
+    //  • сервер отвечал «ок» ДО пересборки — редактор тут же перечитывал `/api/config` и получал СТАРОЕ
+    //    тело, то есть «сохранил, а не применилось» на ровном месте;
+    //  • отказ внутри (валидация, база) становился НЕОБРАБОТАННЫМ reject, а он в Node роняет процесс.
+    await rebuildConfig();
+  });
+  if (!r.ok) return staleConfig(res, r.conflicts, r.rev);
+  if (failed.msg) return res.status(500).json({ error: failed.msg });
   console.log(`[dm-server] конфиг записан в ФАЙЛ (+БД): ${written.join(', ') || '—'}`);
-  res.json({ ok: true, written });
+  res.json({ ok: true, written, rev: r.rev });
 }));
 
 // Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).
@@ -362,10 +391,15 @@ async function applyFileChange(_key: string, file: string): Promise<void> {
 
 app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
   if (!await devGuard(req, res)) return;
-  await deleteConfigOverride(req.params.key);
-  await rebuildConfig();
-  console.log(`[dm-server] конфиг сброшен к дефолту: ${req.params.key}`);
-  res.json({ ok: true, reset: req.params.key });
+  const key = req.params.key;
+  // ⭐ C-09: сброс — в той же очереди записей конфига (без базы: «сбросить» — осознанно поверх любого); ответ несёт ревизию сброшенной
+  // таблицы — база следующей записи редактора.
+  await writeConfig(undefined, [], async () => {
+    await deleteConfigOverride(key);
+    await rebuildConfig();
+  });
+  console.log(`[dm-server] конфиг сброшен к дефолту: ${key}`);
+  res.json({ ok: true, reset: key, ...(Object.prototype.hasOwnProperty.call(configSchemas, key) ? { rev: configRevs([key], (k) => config.get(k as ConfigKey)) } : {}) });
 }));
 
 // ── Контент 3D поз-редактора (единая истина: сервер) ─────────────────────────────
@@ -572,7 +606,7 @@ if (ROLE === 'node' || ROLE === 'single') {
   const nodeId = process.env.DM_NODE_ID ?? 'node-0';
   const url = process.env.DM_NODE_URL ?? `ws://127.0.0.1:${PORT}/ws`;
   await joinCluster(nodeId, url, () => clusterHooks.liveCharIds(), clusterLoop,
-    (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone));
+    (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone), () => clusterHooks.heldRuns());   // V2: и забеги
   installNodeShutdown(nodeId, (budgetMs) => clusterHooks.flushAll(budgetMs));
   console.log(`[${nodeId}] в кластере: ${url}`);
 }

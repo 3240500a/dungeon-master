@@ -24,7 +24,8 @@
   Движок — `session.ts` (`AttackSeries`), сторож — `session/multiHit.test.ts`.
 - **Модель узла:** `node.effect.active` дискриминирована по **`category`** (attack/cast/curse/aura/stance/
   buff); пассив-узел — `effect.modifiers` (%-стат ветки). Гейт оружия/рук — из ветки
-  (`weaponClasses`/`attackType`/`damageKind`/`hands`/`requiresDual`), штампуется на способность.
+  (`weaponClasses`/`attackType`/`damageKind`/`hands`/`requiresDual`), штампуется на способность. ⚠ C-11: `hands` — по ХВАТУ
+  (`skillWeaponAllowed`): полуторное со щитом держат одной рукой — скилы `hands:'two'` ему закрыты, `hands:'one'` открыты.
 - **Конфиг:** `skill-tree` (branches[] с group/resource/classId?/гейт; nodes[] `kind` active/passive,
   `cost.type='points'`, `x,y,notable`).
 - **Хранение:** `save.skills` (nodeId→ранг), `save.hotbar` (слот→nodeId).

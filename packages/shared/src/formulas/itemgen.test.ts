@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import {
   pickDropBase, generateItem, rollRarity, rollAffixes, itemFromBase,
-  DEFAULT_ROLL_SPREAD, bakedExtras, baseStatRange, fixedBaseRoll, inferTierId, retierItem, scaleBaseStats, shapedBaseStats, shapeOfItem,
+  DEFAULT_ROLL_SPREAD, bakedExtras, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, retierItem, scaleBaseStats, shapedBaseStats, shapeOfItem,
 } from './itemgen.js';
 import { createRng } from './rng.js';
 
@@ -249,6 +249,36 @@ describe('сочетания аффиксов: теги базы (PoE2) + рол
 describe('кап суммы требований (maxTotalRequirement)', () => {
   const sum = (it: { requirements: Record<string, number | undefined> }): number =>
     Object.values(it.requirements).reduce<number>((s, v) => s + (v ?? 0), 0);
+
+  /**
+   * ПРАВИЛО КАПА ЦЕЛИКОМ — одна проверка на все случаи (V-B2-03 и C-01). Доля атрибута — требование × множитель ступени,
+   * а при Σ > кап ещё × (кап / Σ). Если округление каждой доли (`Math.round`) укладывается в ⌊кап⌋ и ужимать не пришлось — оно
+   * и есть ответ (прежние вещи не меняются). Иначе сумма — ровно ⌊кап⌋, и каждый атрибут — пол или потолок своей доли.
+   * Отдаёт найденные расхождения; `kind` — какой ветке правила подчинился случай.
+   */
+  const reqRule = (tag: string, req: Record<string, number | undefined>, got: Record<string, number | undefined>, mult: number, cap: number):
+    { kind: 'round' | 'capped' | 'on-cap'; bad: string[] } => {
+    const exact = Object.entries(req).filter(([, v]) => v !== undefined).map(([k, v]) => [k, v! * mult] as const);
+    const total = exact.reduce((n, [, v]) => n + v, 0);
+    const n = Object.values(got).reduce<number>((s, v) => s + (v ?? 0), 0);
+    const bad: string[] = [];
+    if (cap > 0 && n > cap) bad.push(`${tag}: ${JSON.stringify(got)} = ${n} > кап ${cap}`);
+    for (const [k, v] of Object.entries(got)) if (!(v !== undefined && Number.isInteger(v) && v > 0)) bad.push(`${tag}: ${k}=${v}`);
+    const capped = cap > 0 && total > cap;
+    const shares = exact.map(([k, v]) => [k, capped ? v * cap / total : v] as const);
+    const rounded = shares.reduce((s, [, v]) => s + Math.round(v), 0);
+    if (!capped && !(cap > 0 && rounded > Math.floor(cap))) {
+      const want = Object.fromEntries(shares.map(([k, v]) => [k, Math.round(v)] as const).filter(([, v]) => v > 0));
+      if (JSON.stringify(got) !== JSON.stringify(want)) bad.push(`${tag}: неужатое изменилось ${JSON.stringify(got)} ≠ ${JSON.stringify(want)}`);
+      return { kind: 'round', bad };
+    }
+    if (n !== Math.floor(cap)) bad.push(`${tag}: ${capped ? 'ужатое' : 'на капе'} ${JSON.stringify(got)} = ${n} ≠ ${Math.floor(cap)}`);
+    for (const [k, share] of shares) {
+      const r = got[k] ?? 0;
+      if (r < Math.floor(share - 1e-9) || r > Math.ceil(share + 1e-9)) bad.push(`${tag}: ${k} ${r} вне пола/потолка доли ${share}`);
+    }
+    return { kind: capped ? 'capped' : 'on-cap', bad };
+  };
   const mk = (cap: number): ReturnType<typeof generateItem> =>
     generateItem(bases, affixes, uniques,
       { dropBias: 0, itemLevel: 90, baseId: 'maul', tiers, rarities, forceRarity: 'normal', maxReqTotal: cap },
@@ -260,6 +290,101 @@ describe('кап суммы требований (maxTotalRequirement)', () => {
     expect(sum(b)).toBeLessThanOrEqual(90);
     expect(sum(b)).toBeLessThan(sum(a)); // кап 90 реально ужимает
     expect(Object.keys(a.requirements)).toEqual(['strength']); // тяжёлое = только сила → весь кап в силу
+  });
+
+  // ⭐ V-B2-03: ужатие — по доле, а округление было по атрибуту: арбалет 14:26 на t6 при капе 190 → 66.5 + 123.5 → 67 + 124 = 191.
+  // Правило теперь одно: ужатые доли — наибольшим остатком (сумма = ⌊кап⌋ ровно, каждый атрибут — пол или потолок своей доли);
+  // неужатые — `Math.round` по атрибуту, как было. Проверка — по ВСЕМ базам × ступеням × кузнечной скидке и по всем путям рождения
+  // (дроп/лавка — `generateItem`, ковка — `buildCraftShell`, подъём — `retierItem`).
+  it('V-B2-03: сумма требований ≤ кап на всех путях; ужатые — ровно ⌊кап⌋, неужатые — прежнее округление', () => {
+    const cap = reg.get('balance').maxTotalRequirement;
+    const bad: string[] = [];
+    const crossbow = bases.find((b) => b.id === 'crossbow')!;
+    const t6 = tiers.find((t) => t.id === 't6')!;
+    expect(retierItem(crossbow, itemFromBase(crossbow, tiers), t6, { maxReqTotal: 190 }).requirements, 'минимальное воспроизведение')
+      .toEqual({ strength: 66, dexterity: 124 });
+    const check = (tag: string, b: (typeof bases)[number], got: Record<string, number | undefined>, mult: number): void => {
+      bad.push(...reqRule(tag, b.requirements, got, mult, cap).bad);
+    };
+    let capped = 0;
+    for (const b of bases.filter((x) => x.kind !== 'consumable' && Object.keys(x.requirements).length)) {
+      const shell = itemFromBase(b, tiers);
+      for (const t of tiers) {
+        for (const disc of [0, 0.15, 0.2, 0.25, 0.3, 1 / 3]) {
+          const tag = `${b.id} ${t.id} скидка ${disc.toFixed(2)}`;
+          const mult = t.reqMult * (1 - disc);
+          check(`${tag} подъём`, b, retierItem(b, shell, t, { reqDiscount: disc, maxReqTotal: cap }).requirements, mult);
+          check(`${tag} ковка`, b, buildCraftShell(b, t, cap, { reqDiscount: disc }).requirements, mult);
+          if (Object.values(b.requirements).reduce<number>((n, v) => n + (v ?? 0), 0) * mult > cap) capped++;
+        }
+        // Дроп/лавка: ступень выбирает сам генератор (окно базы) — множитель берём с той, что вышла.
+        const drop = generateItem(bases, affixes, uniques, { dropBias: 1, itemLevel: t.minItemLevel, tierLevel: t.minItemLevel,
+          baseId: b.id, tiers, rarities, forceRarity: 'normal', maxReqTotal: cap }, createRng(1));
+        check(`${b.id} ${drop.tier} дроп`, b, drop.requirements, tiers.find((x) => x.id === drop.tier)?.reqMult ?? 1);
+      }
+    }
+    expect(capped, 'проверка видела ужатые вещи').toBeGreaterThan(0);
+    expect(bad).toEqual([]);
+  });
+
+  // ⭐ C-01: правка V-B2-03 была частичной — наибольший остаток включался только при Σ СТРОГО больше капа. Σ РОВНО на капе шла
+  // старой дорогой (`Math.round` по атрибуту) и перелетала его: 37/39 × 2.5 = 92.5 + 97.5 = 190 → 93 + 98 = 191. На поставке
+  // таких чисел нет (скрытая), но ступень или базу хозяин правит живьём — и дроп, лавка, ковка и подъём отдают вещь сверх капа.
+  it('C-01: сумма РОВНО на капе тоже не перелетает его — на всех путях рождения', () => {
+    const b = { ...bases.find((x) => x.id === 'crossbow')!, requirements: { strength: 37, dexterity: 39 } };
+    const t = { ...tiers.find((x) => x.id === 't2')!, reqMult: 2.5 };
+    const shell = itemFromBase(b, tiers);
+    expect(retierItem(b, shell, t, { maxReqTotal: 190 }).requirements, 'подъём').toEqual({ strength: 92, dexterity: 98 });   // ничья — большему
+    expect(buildCraftShell(b, t, 190).requirements, 'ковка').toEqual({ strength: 92, dexterity: 98 });
+    // Кузнечная скидка 0.2 при множителе 3.125 — те же 2.5.
+    const forge = { ...t, reqMult: 3.125 };
+    expect(sum(retierItem(b, shell, forge, { reqDiscount: 0.2, maxReqTotal: 190 })), 'подъём со скидкой').toBe(190);
+    expect(sum(buildCraftShell(b, forge, 190, { reqDiscount: 0.2 })), 'ковка со скидкой').toBe(190);
+    // Дроп/лавка: та же база на той же ступени.
+    const drop = generateItem([b], affixes, uniques, { dropBias: 1, itemLevel: t.minItemLevel, tierLevel: t.minItemLevel,
+      baseId: b.id, tiers: tiers.map((x) => (x.id === t.id ? t : x)), rarities, forceRarity: 'normal', maxReqTotal: 190 }, createRng(1));
+    expect(drop.tier).toBe(t.id);
+    expect(sum(drop), 'дроп').toBe(190);
+    // Не только ровные .5: три доли по .6 — 62.6 + 62.6 + 64.6 = 189.8 ≤ 190, а `Math.round` давал 63 + 63 + 65 = 191.
+    const tri = { ...b, requirements: { strength: 313, dexterity: 313, intelligence: 323 } };
+    const got = retierItem(tri, itemFromBase(tri, tiers), { ...t, reqMult: 0.2 }, { maxReqTotal: 190 }).requirements;
+    expect(sum({ requirements: got })).toBe(190);
+    expect(reqRule('три по .6', tri.requirements, got, 0.2, 190)).toEqual({ kind: 'on-cap', bad: [] });
+  });
+
+  // ⭐ C-01 целиком: правило капа — свойство, а не пара примеров. Случайные базы (1–4 атрибута), множители ступени (восьмые доли —
+  // ровные .5 — и произвольные), кузнечные скидки и капы (ровно на сумме, около неё, дробные, случайные) — через подъём и ковку.
+  // Прежняя проверка шла только по поставке, где ровной посадки на кап нет, и потому этого класса не видела.
+  it('C-01: правило капа держится на любых базах, ступенях, скидках и капах (сидированный перебор)', () => {
+    const rng = createRng(1501);
+    const attrs = ['strength', 'dexterity', 'intelligence', 'vitality'] as const;
+    const proto = bases.find((x) => x.id === 'crossbow')!;
+    const seen = { round: 0, capped: 0, 'on-cap': 0 };
+    const bad: string[] = [];
+    for (let i = 0; i < 4000; i++) {
+      const req: Record<string, number> = {};
+      for (const a of attrs) if (rng.chance(0.6)) req[a] = rng.int(1, 80);
+      if (!Object.keys(req).length) req.strength = rng.int(1, 80);
+      const reqMult = rng.chance(0.6) ? rng.int(2, 96) / 8 : Math.round(rng.float(0.3, 12) * 1000) / 1000;
+      const disc = rng.pick([0, 0, 0.15, 0.2, 0.25, 1 / 3]);
+      const mult = reqMult * (1 - disc);
+      const total = Object.values(req).reduce((n, v) => n + v * mult, 0);
+      const cap = rng.pick([total, Math.round(total), Math.floor(total), Math.ceil(total), Math.floor(total) + 0.5, rng.int(20, 400), 0]);
+      const b = { ...proto, requirements: req };
+      const t = { ...tiers[0]!, reqMult };
+      const tag = `${JSON.stringify(req)} × ${reqMult} скидка ${disc.toFixed(2)} кап ${cap}`;
+      for (const [path, got] of [
+        ['подъём', retierItem(b, itemFromBase(b, tiers), t, { reqDiscount: disc, maxReqTotal: cap }).requirements],
+        ['ковка', buildCraftShell(b, t, cap, { reqDiscount: disc }).requirements],
+      ] as const) {
+        const r = reqRule(`${tag} ${path}`, req, got, mult, cap);
+        seen[r.kind]++;
+        bad.push(...r.bad);
+      }
+    }
+    expect(seen['on-cap'], 'перебор видел посадку ровно на кап (дорогу C-01)').toBeGreaterThan(50);
+    expect(seen.capped, 'и ужатые').toBeGreaterThan(50);
+    expect(bad.slice(0, 10)).toEqual([]);
   });
 });
 

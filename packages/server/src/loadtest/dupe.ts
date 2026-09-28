@@ -34,10 +34,28 @@ async function post<T>(path: string, body: unknown, token?: string): Promise<T> 
 
 interface Session { ws: WebSocket; room: string; playerId: string; }
 
+/**
+ * Ф4 (E2E 28.09): адрес ноды героя — у маршрута (`/api/route`), как у настоящего клиента; одиночный сервер отвечает собой.
+ * Раньше стенд стучался в `BASE/ws`, а гейтвей кластера игры не ведёт (на `/ws` отвечает страницей, HTTP 200).
+ */
+async function routeUrl(token: string, charId: string): Promise<string> {
+  const r = await fetch(`${BASE}/api/route?charId=${encodeURIComponent(charId)}`, { headers: { authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`/api/route → ${r.status} ${await r.text()}`);
+  return ((await r.json()) as { url: string }).url;
+}
+
+/** Адреса живых нод кластера (`/api/cluster` — служебная ручка, отвечает самой машине). Одиночный сервер — одна или ни одной. */
+async function clusterNodes(): Promise<string[]> {
+  const r = await fetch(`${BASE}/api/cluster`).catch(() => undefined);
+  if (!r?.ok) return [];
+  const body = (await r.json().catch(() => ({}))) as { nodes?: { url: string; draining: boolean }[] };
+  return (body.nodes ?? []).filter((n) => !n.draining).map((n) => n.url);
+}
+
 /** Пытается войти в НОВУЮ комнату указанным персонажем. Резолвится на `joined`, реджектится на `error`. */
-function openSession(label: string, token: string, charId: string): Promise<Session> {
+function openSession(label: string, url: string, token: string, charId: string): Promise<Session> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(BASE.replace(/^http/, 'ws') + '/ws');
+    const ws = new WebSocket(url);
     const timer = setTimeout(() => { ws.close(); reject(new Error(`${label}: сервер не ответил за 5 с`)); }, 5000);
     ws.on('open', () => ws.send(JSON.stringify({ t: 'join', token, charId, fresh: true })));
     ws.on('error', (e) => { clearTimeout(timer); reject(e); });
@@ -63,7 +81,8 @@ async function main(): Promise<void> {
   const { character } = await post<{ character: { charId: string } }>('/api/characters', { classId: 'warrior', name: 'Dup' }, token);
   console.log(`PoC дюпа: персонаж ${character.charId}`);
 
-  const a = await openSession('сессия A', token, character.charId);
+  const urlA = await routeUrl(token, character.charId);
+  const a = await openSession(`сессия A (${urlA.split('?')[0]})`, urlA, token, character.charId);
   let aClosed = false;
   a.ws.on('close', () => { aClosed = true; });
   await new Promise((r) => setTimeout(r, 500));
@@ -76,8 +95,12 @@ async function main(): Promise<void> {
   // Дюп — это третий случай: B вошёл, а A остался жив. Тогда две копии сейва пишутся
   // независимо, last-writer-wins, и предмет из сундука возвращается в инвентарь.
   let dupe = false;
+  // Ф4, R1-08: в кластере B входит ПРЯМО В ДРУГУЮ НОДУ, мимо маршрута гейтвея (изменённый клиент) — самый трудный случай: там
+  // этого героя не знает никто, держит его только закрепление в базе. Одиночный сервер — тот же адрес.
+  const other = (await clusterNodes()).find((u) => u.split('?')[0] !== urlA.split('?')[0]);
+  const urlB = other ?? await routeUrl(token, character.charId);
   try {
-    const b = await openSession('сессия B (тот же charId!)', token, character.charId);
+    const b = await openSession(`сессия B (тот же charId!${other ? `, другая нода ${other}` : ''})`, urlB, token, character.charId);
     await new Promise((r) => setTimeout(r, 1500)); // даём серверу закрыть выселенную сессию
     if (aClosed) {
       console.log(`\n✓ Инвариант держится: B вошёл в ${b.room}, сессия A выселена и отключена.`);
@@ -88,7 +111,14 @@ async function main(): Promise<void> {
     }
     b.ws.close();
   } catch {
-    console.log('\n✓ Инвариант держится: второй вход тем же персонажем отклонён.');
+    // Отказ второму годится, только если первая сессия жива: иначе героя не держит никто — это уже потеря входа, а не отказ.
+    await new Promise((r) => setTimeout(r, 500));
+    if (aClosed) {
+      dupe = true;
+      console.log('\n✗ Второй вход отклонён, а первая сессия закрыта: герой выброшен из игры.');
+    } else {
+      console.log('\n✓ Инвариант держится: второй вход тем же персонажем отклонён, первая сессия жива.');
+    }
   }
   a.ws.close();
   process.exit(dupe ? 1 : 0);

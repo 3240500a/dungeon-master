@@ -66,15 +66,18 @@ export function entryScreens(root: () => HTMLElement, onShow?: () => void): Entr
         <div style="font-size:16px">Подключение к серверу…</div>
         <div class="status" style="margin-top:8px;font-size:12px;color:#8f897c"></div></div>`);
     },
-    showLobby(go: (o: JoinOpts) => void) {
+    showLobby(go: (o: JoinOpts) => void, roomCode?: string) {
+      // ⭐ C-05: код, куда «Продолжить» не пустило (пати забега), — в поле: «Войти» ведёт к ней, как только там будет место.
+      const prefill = (b: HTMLElement): void => { if (roomCode) (b.querySelector('.code') as HTMLInputElement).value = roomCodeOf(roomCode, false); };
       // Уже на экране — не пересоздаём: набранный код комнаты не должен пропадать.
-      if (kind === 'lobby') { onShow?.(); return; }
+      if (kind === 'lobby') { onShow?.(); if (box) prefill(box); return; }
       const b = open('lobby', `<div style="${CARD};padding:24px;min-width:280px">
         <div style="font-size:18px;margin-bottom:14px">Кооп</div>
         <button data-a="solo" style="display:block;width:100%;margin:6px 0;padding:8px;background:#1e2a3a;color:#cfe0f2;border:1px solid #6f9bcf;border-radius:6px;cursor:pointer">Соло (комната на 1)</button>
         <button data-a="host" style="display:block;width:100%;margin:6px 0;padding:8px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Создать комнату</button>
         <div style="display:flex;gap:6px;margin-top:6px"><input class="code" placeholder="КОД" maxlength="${ROOM_CODE_LEN}" style="flex:1;text-transform:uppercase;padding:8px;background:#0f131a;color:#e6ddc9;border:1px solid #2b323f;border-radius:6px"><button data-a="join" style="padding:8px 12px;background:#3a2c15;color:#f0d9a8;border:1px solid #e39a3c;border-radius:6px;cursor:pointer">Войти</button></div>
         ${STATUS}</div>`);
+      prefill(b);
       on(b, '[data-a="solo"]', () => go({ fresh: true }));
       on(b, '[data-a="host"]', () => go({ fresh: true }));
       // ⭐ R4-12: код доходит до сервера ЦЕЛИКОМ. Браузер режет вставку по `maxlength` раньше любого `trim`: « A7K3F9XY»

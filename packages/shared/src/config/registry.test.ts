@@ -216,3 +216,66 @@ describe('⚠ R10-10: id материала и шаблона доски — б�
     for (const t of r.get('quests.random')) expect(isSafeKey(t.id), t.id).toBe(true);
   });
 });
+
+/**
+ * ⚠ C-02: НАГРАДА И ВИЛКИ ЗАДАНИЙ — ЦЕЛЫЕ, НЕ МЕНЬШЕ НУЛЯ, ВИЛКА НЕ ПЕРЕВЁРНУТА. Схемы `quests.main`/`quests.random` пускали любое
+ * число: опечатка знака в редакторе (`rewardGoldRange` [−500, −400]) — и каждая сдача задания этого шаблона уводила золото героя в
+ * минус (100 → −353), `skillPoints` 0.5 в цепочке давал дробные очки скилов, и всё это писалось в базу. `amountRange` [0, 0] собирал
+ * задание, которое не выполнить никогда: счётчик «0 из 0» не сдвигается, и «выполнено» не наступает.
+ */
+describe('⚠ C-02: награда и вилки заданий', () => {
+  /** Свежий реестр на каждую попытку: принятая правка не должна течь в соседнюю проверку. */
+  const fresh = (): ConfigRegistry => { const x = new ConfigRegistry(); x.loadAll(); return x; };
+  type RangeKey = 'amountRange' | 'rewardGoldRange' | 'rewardXpRange';
+  const withRange = (key: RangeKey, v: unknown) => () => {
+    const x = fresh();
+    const tpls = structuredClone(x.get('quests.random')) as unknown as Record<string, unknown>[];
+    tpls[0]![key] = v;
+    x.reload({ 'quests.random': tpls });
+  };
+  const withReward = (patch: Record<string, unknown>) => () => {
+    const x = fresh();
+    const main = structuredClone(x.get('quests.main'));
+    main[0]!.reward = { ...main[0]!.reward, ...patch };
+    x.reload({ 'quests.main': main });
+  };
+
+  it('⭐ вилка доски: минус, дробь, перевёрнутая, ноль заданий — отказ валидации; целые по порядку — можно', () => {
+    const bad: [RangeKey, unknown][] = [
+      ['rewardGoldRange', [-500, -400]], ['rewardGoldRange', [10.5, 20]], ['rewardGoldRange', [200, 80]], ['rewardGoldRange', [-1, 5]],
+      ['rewardXpRange', [-10, 5]], ['rewardXpRange', [80, 180.5]], ['rewardXpRange', [240, 110]],
+      ['amountRange', [0, 0]], ['amountRange', [0, 3]], ['amountRange', [1.5, 3]], ['amountRange', [12, 5]], ['amountRange', [-2, 3]],
+    ];
+    for (const [key, v] of bad) expect(withRange(key, v), `${key} ${JSON.stringify(v)}`).toThrow();
+    const ok: [RangeKey, unknown][] = [
+      ['rewardGoldRange', [0, 0]], ['rewardGoldRange', [7, 7]], ['rewardXpRange', [0, 0]], ['amountRange', [1, 1]], ['amountRange', [2, 9]],
+    ];
+    for (const [key, v] of ok) expect(withRange(key, v), `${key} ${JSON.stringify(v)}`).not.toThrow();
+  });
+
+  it('⭐ награда цепочки: золото −1000.25 и −1, очки 0.5 и −1, опыт −5 и 1.5 — отказ валидации; ноль и целые — можно', () => {
+    for (const bad of [{ gold: -1000.25 }, { gold: -1 }, { gold: 10.5 }, { skillPoints: 0.5 }, { skillPoints: -1 }, { xp: -5 }, { xp: 1.5 }]) {
+      expect(withReward(bad), JSON.stringify(bad)).toThrow();
+    }
+    for (const ok of [{ gold: 0 }, { gold: 100 }, { skillPoints: 0 }, { skillPoints: 2 }, { xp: 0 }, { xp: 250 }]) {
+      expect(withReward(ok), JSON.stringify(ok)).not.toThrow();
+    }
+  });
+
+  it('встроенные данные — все такие; задание с доски из любого шаблона выполнимо, награда — целые не меньше нуля', () => {
+    const r = fresh();
+    for (const q of r.get('quests.main')) {
+      for (const k of ['gold', 'xp', 'skillPoints'] as const) {
+        const v = q.reward[k];
+        if (v !== undefined) expect(Number.isSafeInteger(v) && v >= 0, `${q.id}.${k}=${v}`).toBe(true);
+      }
+    }
+    for (const tpl of r.get('quests.random')) {
+      for (let seed = 1; seed <= 50; seed++) {
+        const q = questFromTemplate(tpl, createRng(seed), `c02${seed}`);
+        for (const o of q.objectives) expect(Number.isSafeInteger(o.amount) && o.amount >= 1, `${q.id} ${o.id}=${o.amount}`).toBe(true);
+        for (const v of [q.reward.gold, q.reward.xp]) expect(Number.isSafeInteger(v) && v! >= 0, `${q.id} ${JSON.stringify(q.reward)}`).toBe(true);
+      }
+    }
+  });
+});

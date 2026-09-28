@@ -303,3 +303,55 @@ describe('⚠ R6-13: начатое задание доски не пропад�
     expect(save.quests.map((q) => q.questId)).toEqual([C.id]);
   });
 });
+
+/**
+ * ⚠ C-02: СДАЧА НЕ УВОДИТ ЗОЛОТО И ОЧКИ В МИНУС И В ДРОБЬ. Схема заданий теперь держит награду целой и не меньше нуля
+ * (`registry.test.ts`), но задание, принятое ДО правки схемы, лежит в сейве со своей наградой (`activeQuestDefs`): «−450 золота»
+ * с доски и «0.5 очка» цепочки дожили бы до сдачи. Вторая линия — сама сдача: награда — целое не меньше нуля.
+ */
+describe('⚠ C-02: награда сдачи — целое не меньше нуля', () => {
+  const r = reg();
+  const stored = (id: string, reward: QuestDef['reward']): QuestDef => ({
+    id, name: 'Записано до правки', description: '', objectives: [{ id: 'o1', type: 'reach-floor', amount: 1 }], reward,
+  });
+  const done = (save: SaveState, def: QuestDef): void => {
+    expect(acceptQuest(save, def).ok).toBe(true);
+    expect(trackFloor(save, 1).completed).toEqual([def.id]);
+  };
+
+  it('⭐ золото −450, очки −1, опыт −10: сдача проходит, но золото, очки и опыт не убывают', () => {
+    const save = newBotSave(r, 'warrior');
+    save.gold = 100;
+    const before = { gold: save.gold, sp: save.unspentSkillPoints, xp: save.xp, level: save.level };
+    const def = stored('rnd_rnd-delve_neg0', { gold: -450, skillPoints: -1, xp: -10 });
+    done(save, def);
+    expect(turnInQuest(r, save, def.id).ok).toBe(true);
+    expect(save.gold, 'было: 100 → −350').toBe(before.gold);
+    expect(save.unspentSkillPoints).toBe(before.sp);
+    expect(save.xp).toBe(before.xp);
+    expect(save.level).toBe(before.level);
+  });
+
+  it('⭐ дробь 10.7 золота и 1.9 очка: выдано 10 и 1 — числа сейва остаются целыми', () => {
+    const save = newBotSave(r, 'warrior');
+    save.gold = 100;
+    const sp = save.unspentSkillPoints;
+    const def = stored('main-legacy-frac', { gold: 10.7, skillPoints: 1.9 });
+    done(save, def);
+    expect(turnInQuest(r, save, def.id).ok).toBe(true);
+    expect(save.gold).toBe(110);
+    expect(save.unspentSkillPoints).toBe(sp + 1);
+    expect(Number.isSafeInteger(save.gold) && Number.isSafeInteger(save.unspentSkillPoints)).toBe(true);
+  });
+
+  it('честная награда — как и была: целое золото и очки выдаются ровно', () => {
+    const save = newBotSave(r, 'warrior');
+    save.gold = 100;
+    const sp = save.unspentSkillPoints;
+    const def = stored('main-legacy-int', { gold: 150, skillPoints: 1 });
+    done(save, def);
+    expect(turnInQuest(r, save, def.id).ok).toBe(true);
+    expect(save.gold).toBe(250);
+    expect(save.unspentSkillPoints).toBe(sp + 1);
+  });
+});

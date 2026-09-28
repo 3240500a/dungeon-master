@@ -662,6 +662,7 @@ describe('RoomManager — раунд 2: кадр-убийца, прощальн�
   it('⭐ R2-08: прощальная запись упала — повторный вход НЕ читает сейв до неё: копия дописывается первой', async () => {
     const { charId: a, uid: x } = seedDropper('fw-fail');
     const ws1 = await joined(a);
+    db.failFor = a;                               // ⭐ V-B2-04: запись выброса (она — сразу) упала
     ws1.push({ t: 'cmd', command: { cmd: 'drop', uid: x }, id: 1 });
     await settle();
     expect(ws1.last('cmdResult')).toMatchObject({ id: 1, ok: true });
@@ -1599,6 +1600,7 @@ describe('RoomManager — раунд 3: финал без партнёра, не
       x = w.uid;
     });
     const ws = await joined(a);
+    db.failFor = a;                                    // ⭐ V-B2-04: запись выброса (она — сразу) упала
     ws.push({ t: 'cmd', command: { cmd: 'drop', uid: x }, id: 1 });
     await settle();
     expect(ws.last('cmdResult')).toMatchObject({ id: 1, ok: true });

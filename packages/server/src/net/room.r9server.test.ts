@@ -171,6 +171,9 @@ describe('⭐ R9-07: унесённый спуском отключившийс�
     room.descend(a);
     room.castVote(b, true);
     expect(inner(room).area).toBe('dungeon');
+    // Тик — не планировщиком: тело A (1 HP, монстр вплотную) стоит в бою (R14-01), и под нагрузкой полного прогона планировщик успевал
+    // за время ожиданий добить его — метка уходила в «погиб» (`endLinger`), и тест падал от часов, а не от правила.
+    room.stop();
     const w = inner(room).session.world;
     w.players[b]!.pos = { ...w.spawn };
     const p = w.players[a]!;

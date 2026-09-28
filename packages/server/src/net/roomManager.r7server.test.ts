@@ -273,7 +273,7 @@ describe('⭐ R7-03: вход «заново» того, чей забег па�
 });
 
 describe('⭐ R7-09: копия, забытая из-за чужого закрепления, — инцидент, а не строка лога', () => {
-  it('P передал вещь Q (один аккаунт), пока база лежала; закрепление P ушло другой ноде — копия забыта со счётчиком и «ИНЦИДЕНТ» в лог', async () => {
+  it('P выбросил вещь, пока база лежала (Q её не поднимет — V-B2-04); закрепление P ушло другой ноде — копия забыта со счётчиком и «ИНЦИДЕНТ» в лог', async () => {
     const acc = 'user-r709-acc';
     const base = cfg.get('items.base').find((b) => b.kind === 'armor' && b.enabled !== false)!;
     const item = itemFromBaseId(cfg.get('items.base'), base.id, cfg.get('item-tiers'), 'drop') as Item;
@@ -291,13 +291,14 @@ describe('⭐ R7-09: копия, забытая из-за чужого закр�
     qp.pos = { ...drop.pos };
     wq.push({ t: 'cmd', command: { cmd: 'pickup', dropId: drop.id }, id: 1 });
     await settle(10);
-    expect(qp.save.inventory.some((i) => i.uid === item.uid), 'Q поднял').toBe(true);
+    // ⭐ V-B2-04: строка P вещь держит (его запись без неё не легла) — соседу по аккаунту её не поднять: иначе она у двоих.
+    expect(qp.save.inventory.some((i) => i.uid === item.uid), 'Q не поднял').toBe(false);
     wp.close();
     await settle(10);
     expect(inner().unsaved.has(p.charId), 'копия P ждёт дописи').toBe(true);
     wq.close();
     await settle(10);
-    expect(saved(q.charId).inventory.some((i) => i.uid === item.uid), 'у Q в базе вещь есть').toBe(true);
+    expect(saved(q.charId).inventory.some((i) => i.uid === item.uid), 'у Q в базе вещи нет').toBe(false);
     db.down.delete(p.charId);
     reg.owner = 'node-9';                                    // закрепление P у другой ноды
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);

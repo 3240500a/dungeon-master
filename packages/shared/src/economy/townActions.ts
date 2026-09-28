@@ -117,13 +117,17 @@ export interface Vitals { hp: number; mana: number; debuffs: DebuffState; }
  * полям — ЕДИНАЯ истина для клиента и сервера. Возвращает false, если ничего не
  * изменилось (полное HP у чистого лечения). Бафф-моды (buffMods) обрабатываются
  * отдельно на стороне вызывающего (у клиента и сервера — разные каналы).
+ *
+ * ⚠ C-14: `manaCap` — ЭФФЕКТИВНЫЙ потолок маны (ауры резервируют долю пула: `effectivePool`). Сила зелья — от полного пула, а
+ * налить можно только до потолка: у потолка зелье «без эффекта» и не тратится. Раньше сравнение шло с полным `maxMana` — зелье у
+ * зарезервированного потолка уходило, реген тика срезал ману обратно, а каст того же тика тратил налитое сверх резерва.
  */
-export function applyConsumable(t: Vitals, use: ConsumableUse, maxHp: number, maxMana: number): boolean {
+export function applyConsumable(t: Vitals, use: ConsumableUse, maxHp: number, maxMana: number, manaCap: number = maxMana): boolean {
   let did = false;
   const heal = (use.heal ?? 0) + (use.healPct ?? 0) * maxHp;
   if (heal > 0 && t.hp < maxHp) { t.hp = Math.min(maxHp, t.hp + heal); did = true; }
   const mana = (use.mana ?? 0) + (use.manaPct ?? 0) * maxMana;
-  if (mana > 0 && t.mana < maxMana) { t.mana = Math.min(maxMana, t.mana + mana); did = true; }
+  if (mana > 0 && t.mana < manaCap) { t.mana = Math.min(manaCap, t.mana + mana); did = true; }
   if (use.cure) {
     const keys = Object.keys(t.debuffs);
     if (keys.length) { for (const k of keys) delete (t.debuffs as Record<string, unknown>)[k]; did = true; }
@@ -1351,16 +1355,24 @@ export function setBinding(reg: ConfigRegistry, save: SaveState, slot: number, v
   return { ok: true };
 }
 
-/** Кладёт расходник из инвентаря в первый свободный слот пояса (ёмкость — beltSlots надетого пояса). */
+/**
+ * Кладёт расходник из инвентаря в первый свободный слот пояса (ёмкость — beltSlots надетого пояса).
+ *
+ * ⚠ V-B2-01: сначала ВСЕ проверки, сейв — только на успехе. Пояс добивался пустыми ячейками до ёмкости ДО проверок, и отказ
+ * («Предмет не в инвентаре», «Не расходник», «Пояс полон») менял сейв: `[]` → `[null,null,null,null]`, а `moveBelt` без
+ * отката — автосейв писал это в базу. Недостающие хвостовые ячейки (пояс короче ёмкости) — свободные; ячейка за ёмкостью —
+ * не место (колба там висела бы «в лимбо», вне видимых слотов).
+ */
 export function moveToBelt(save: SaveState, uid: string): ActionResult {
   const cap = save.equipment.belt?.beltSlots ?? 0;
   if (cap <= 0) return { ok: false, reason: 'Пояс не надет' };
-  while (save.belt.length < cap) save.belt.push(null);
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
   if (save.inventory[idx]!.kind !== 'consumable') return { ok: false, reason: 'Не расходник' };
-  const slot = save.belt.findIndex((s) => !s);
+  let slot = -1;
+  for (let i = 0; i < cap && slot < 0; i++) if (!save.belt[i]) slot = i;
   if (slot < 0) return { ok: false, reason: 'Пояс полон' };
+  while (save.belt.length < cap) save.belt.push(null);
   save.belt[slot] = save.inventory.splice(idx, 1)[0]!;
   return { ok: true };
 }

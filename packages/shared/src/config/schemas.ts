@@ -2755,12 +2755,26 @@ const objectiveTypeEnum = z.enum([
   'talk-npc',
 ]);
 
+/**
+ * ⚠ C-02: НАГРАДА ЗАДАНИЯ — ЦЕЛЫЕ НЕ МЕНЬШЕ НУЛЯ. Сдача (`turnInQuest`) прибавляет их к золоту и очкам скилов героя, и схема
+ * пускала любое число: опечатка знака в редакторе уводила золото героя в минус, `skillPoints` 0.5 давал дробные очки, и всё это
+ * писалось в базу. `xp` — промилле опыта уровня (`questXp`).
+ */
 const questRewardSchema = z.object({
-  gold: z.number().optional(),
-  xp: z.number().optional(),
-  skillPoints: z.number().optional(),
+  gold: z.number().int().min(0).optional(),
+  xp: z.number().int().min(0).optional(),
+  skillPoints: z.number().int().min(0).optional(),
   itemBaseId: z.string().optional(),
 });
+
+/**
+ * ⚠ C-02: ВИЛКА ШАБЛОНА ДОСКИ [от, до] — целые не меньше `min`, «от» не выше «до». Задание катается `rng.int(от, до)`: на дробной
+ * вилке оно даёт дробь, на отрицательной — минус, на перевёрнутой — число мимо вилки. Число целей — от единицы: «0 из 0» не
+ * сдвигается, и задание не закрыть никогда.
+ */
+const questRange = (min: number) =>
+  z.tuple([z.number().int().min(min), z.number().int().min(min)])
+    .refine(([lo, hi]) => lo <= hi, 'вилка перевёрнута: «от» выше «до» (C-02)');
 
 export const questsMainSchema = z.array(
   z.object({
@@ -2789,10 +2803,10 @@ export const questsRandomSchema = z.array(
     /** Активен ли шаблон случайного квеста (выключенный не попадает на доску). */
     enabled: z.boolean().default(true),
     objectiveType: objectiveTypeEnum,
-    amountRange: z.tuple([z.number(), z.number()]),
+    amountRange: questRange(1),
     targetPool: z.array(z.string()),
-    rewardGoldRange: z.tuple([z.number(), z.number()]),
-    rewardXpRange: z.tuple([z.number(), z.number()]),
+    rewardGoldRange: questRange(0),
+    rewardXpRange: questRange(0),
     rewardItemPool: z.array(z.string()).optional(),
   }),
 );

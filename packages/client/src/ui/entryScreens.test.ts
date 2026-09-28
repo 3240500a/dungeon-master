@@ -133,3 +133,23 @@ describe('⭐ R4-12: код комнаты из поля лобби — цели
     expect(pastedRoomCode('A7K3 F9XY')).toBe(CODE);
   });
 });
+
+describe('⭐ C-05: лобби с кодом пати забега, куда «Продолжить» не пустило', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  beforeEach(() => { G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body: new El('body') }; });
+  afterEach(() => { delete G.document; });
+
+  it('код держателя — уже в поле: «Войти» уходит с ним; лобби уже на экране — код вписан, экран не пересоздан', () => {
+    const root = new El('ui-root');
+    const gone: JoinOpts[] = [];
+    const view = entryScreens(() => root as unknown as HTMLElement);
+    view.showLobby((o) => gone.push(o));
+    const box = root.children.at(-1)!;
+    expect(box.querySelector('.code').value).toBe('');
+    view.showLobby((o) => gone.push(o), CODE.toLowerCase());
+    expect(root.children.at(-1), 'тот же экран').toBe(box);
+    expect(box.querySelector('.code').value).toBe(CODE);
+    box.querySelector('[data-a="join"]').click();
+    expect(gone).toEqual([{ roomCode: CODE }]);
+  });
+});

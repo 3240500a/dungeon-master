@@ -66,6 +66,11 @@ export const counters = {
   /** Кадров, на которых обработчик бросил синхронно (R2-01): кадр погашен, процесс жив. Ноль на исправном сервере. */
   frameErrors: 0,
   /**
+   * ⭐ C-06: соединений, закрытых за переполненную очередь кадров (4008): кадры шли, пока кадр перед ними ждал базу. Растёт вместе с долгими
+   * ответами базы — у честного клиента очередь с запасом; без них — поток кадров за нарочно медленным запросом.
+   */
+  frameQueueOverflow: 0,
+  /**
    * Записей сундука, отклонённых по версии (D8): два героя одного аккаунта тронули сундук
    * одновременно. В отличие от `saveConflicts` это НЕ инцидент — так бывает законно; вторая
    * запись откатывается целиком, и игрок видит «попробуйте ещё раз».
@@ -204,6 +209,7 @@ export function renderMetrics(): string {
   g('dm_cmd_stash_rate_limited_total', 'Команд сундука отклонено лимитом чтений сундука (R12-13)', counters.cmdStashRateLimited, 'counter');
   g('dm_ledger_confiscated_total', 'Вещей чужого аккаунта или отозванных изъято из сейва на записи (R2-02)', counters.ledgerConfiscated, 'counter');
   g('dm_frame_errors_total', 'Кадров, погашенных из-за исключения в обработчике (R2-01; ОШИБКА, если растёт)', counters.frameErrors, 'counter');
+  g('dm_frame_queue_overflow_total', 'Соединений закрыто за переполненную очередь кадров (C-06)', counters.frameQueueOverflow, 'counter');
   g('dm_stash_conflicts_total', 'Записей сундука отклонено по версии (D8)', counters.stashConflicts, 'counter');
   g('dm_save_errors_total', 'Записей сейва, упавших с ошибкой базы', counters.saveErrors, 'counter');
   g('dm_farewell_retry_failed_total', 'Фоновых попыток дописать недописанную копию героя, снова упавших (R3-19)', counters.farewellRetryFailed, 'counter');
