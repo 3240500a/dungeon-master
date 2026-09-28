@@ -114,6 +114,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   ragdoll.setPelvis(new THREE.Vector3(opts.x, PELVIS_Y, opts.z), new THREE.Quaternion());
 
   const player = new PosePlayer(target, () => weaponGroups, content, weapon, gx, plant, twistStates);
+  /**
+   * ⭐ ФАЗА ЖИВОЙ СТОЙКИ — ОТ ТОЧКИ СПАВНА, а не от случайного числа: то же место даёт ту же фазу, значит
+   * кадр воспроизводим, и сторожа не начинают мигать. Разброс 0…20 с перекрывает самый длинный айдл
+   * пакета (15.8 с); `stancePoseAt` всё равно берёт остаток от длительности.
+   */
+  player.setIdlePhase(((Math.abs(Math.sin(opts.x * 12.9898 + opts.z * 78.233)) * 43758.5453) % 20));
   const ground = newGhostGround();     // сглаженный прижим низшей стопы к полу (общий с редактором)
 
   // ── C6b: слой скинов (импортные GLB по слотам) поверх процедурного solid — только для игрока (classId).

@@ -2370,6 +2370,24 @@ export class PosePlayer {
   private dirWarp: DirWarp = { ...DIR_WARP0 };
   /** Часы ЖИВОЙ СТОЙКИ (сек). Многокадровый idle играет по ним циклом; однокадровый их не замечает. */
   private idleT = 0;
+  /**
+   * ⭐⭐ СОБСТВЕННАЯ ФАЗА ЖИВОЙ СТОЙКИ ЭТОЙ КУКЛЫ (сек). Ноль — прежнее поведение бит в бит.
+   *
+   * ЗАЧЕМ. Пока стойки были ОДНОКАДРОВЫМИ, общие часы никому не мешали. С живой стойкой стая, заспавненная
+   * одним тиком, начинает озираться ХОРОМ: голова у живого айдла ходит на 21–56°, и это самое заметное, что
+   * есть на экране. Разводим фазы — как `Cycle Offset` у Unity.
+   *
+   * ⚠ СБРОС ВОЗВРАЩАЕТ ИМЕННО СЮДА, А НЕ В НОЛЬ: иначе каждый `resetGaitState` (смена режима) снова сводил
+   * бы всю стаю в одну фазу. При этом ЗАПЕКАНИЕ по-прежнему стартует с нуля — оно эту ручку не трогает,
+   * а умолчание 0.
+   */
+  private idlePhase0 = 0;
+  /** Задать собственную фазу живой стойки (сек). Зовёт игра при создании куклы; редактор и запекатель — нет. */
+  setIdlePhase(sec: number): void {
+    if (!Number.isFinite(sec)) return;
+    this.idlePhase0 = Math.max(0, sec);
+    this.idleT = this.idlePhase0;
+  }
   /** Секция локомоции (Ф5б): разгон / цикл / остановка. Меток в клипе нет — всегда цикл. */
   private locoSec: LocoSectionState = { section: 'idle', t: 0 };
   /** Текущая доля клипа локомоции (едет к цели за `LOCO_FADE`) — см. комментарий на месте чтения. */
@@ -2783,7 +2801,7 @@ export class PosePlayer {
     this.colPrev.has = false; this.colFade.w = 0;
     this.leadRate = 0; this.turnAccelHold = false; this.turnPinnedFor = 0; this.turning = false;
     this.prevAim = this.aimYaw; this.aimStableFor = 0; this.aimGap = 0; this.aimRate = 0;
-    this.idleT = 0; this.atkLegsW = 0; this.legsHeld = false;
+    this.idleT = this.idlePhase0; this.atkLegsW = 0; this.legsHeld = false;   // ⚠ в СВОЮ фазу, а не в ноль — см. `idlePhase0`
     this.modeSnap = null; this.modeBlend = 0;
     this.freshCache.has = false;
   }

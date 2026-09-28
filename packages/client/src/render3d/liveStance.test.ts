@@ -8,6 +8,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { resolveStancePose, type StanceLookup } from './poseLayers.js';
+import { PosePlayer, emptyGrid, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { makeStand } from './parityHarness.js';
 import type { Pose } from './clipModel.js';
 
 /** Безоружная база: «дышит» — грудь и шея ходят по синусу, плюс смещение таза. */
@@ -87,5 +89,47 @@ describe('живая стойка под статичной позой оруж�
 
   it('БЕЗОРУЖНЫЙ случай шов не трогает: сборка и без него отдаёт живую базу', () => {
     expect(span('none', 'Chest', { live: isLive })).toBeCloseTo(span('none', 'Chest'), 6);
+  });
+});
+
+/**
+ * ⭐ СОБСТВЕННАЯ ФАЗА ЖИВОЙ СТОЙКИ. Пока стойки были однокадровыми, общие часы никому не мешали; с живой
+ * стойкой стая, заспавненная одним тиком, озиралась бы ХОРОМ (голова ходит на 21–56°).
+ * ⚠ Умолчание — НОЛЬ: на этом стоит запекание, оно обязано стартовать с нуля.
+ */
+describe('фаза живой стойки', () => {
+  /** Контент с ЖИВОЙ стойкой: поза зависит от времени `t`, как многокадровый клип. */
+  const liveContent = (): PoseContent => ({
+    charId: 'warrior',
+    resolveUpper: (_w: string, _c?: number, t = 0): UpperPose => ({
+      swing: 0, pose: { Chest: [0.5 * Math.sin(t), 0, 0], Hips: [0, 0, 0] },
+    }),
+  } as unknown as PoseContent);
+  const chestAt = (phase: number): number => {
+    const st = makeStand({ content: liveContent(), grid: emptyGrid(), mix: 1 });
+    st.player.setIdlePhase(phase);
+    const f = st.run({ vz: 0, frames: 1 });
+    const q = f[f.length - 1]!.local.get('Chest')!;
+    st.dispose();
+    return q.x;
+  };
+
+  it('⭐⭐ ДВЕ КУКЛЫ С РАЗНОЙ ФАЗОЙ стоят по-разному — стая не озирается хором', () => {
+    const a = chestAt(0), b = chestAt(1.6);
+    expect(Math.abs(a - b), `фаза не развела кукол: ${a} против ${b}`).toBeGreaterThan(1e-3);
+  });
+
+  it('умолчание — НОЛЬ: запекание обязано стартовать с нуля', () => {
+    // Сравниваем с ЯВНО выставленным нулём, а не с абсолютным числом: поза проходит через весь конвейер,
+    // и её значение зависит от ручек. Инвариант же ровно один — «не звали ручку» ≡ «выставили 0».
+    const st = makeStand({ content: liveContent(), grid: emptyGrid(), mix: 1 });
+    const dflt = st.run({ vz: 0, frames: 1 });
+    st.dispose();
+    expect(Math.abs(dflt[dflt.length - 1]!.local.get('Chest')!.x - chestAt(0)), 'умолчание разошлось с явным нулём').toBeLessThan(1e-9);
+  });
+
+  it('⚠ СБРОС возвращает в СВОЮ фазу, а не в ноль — иначе стая снова сойдётся', () => {
+    const body = String(Object.getOwnPropertyDescriptor(PosePlayer.prototype, 'resetGaitState')?.value ?? '');
+    expect(body, 'сброс обязан класть idlePhase0, а не литеральный 0').toMatch(/idleT = this\.idlePhase0/);
   });
 });
