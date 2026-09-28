@@ -263,7 +263,20 @@ const devGate: RequestHandler = (req, res, next) => {
   });
 };
 /** Тело JSON инструментов (конфиг, контент поз-редактора — сотни КБ) — ставится ПОСЛЕ `devGate`. */
-const devJson = express.json({ limit: '2mb' });
+/**
+ * ⚠⚠ ЛИМИТ 2 МБ ЛОМАЛ ПУБЛИКАЦИЮ ПОЗ-РЕДАКТОРА, И ЧИНИЛСЯ ОН НЕ ТАМ, ГДЕ БОЛЕЛО.
+ *
+ * Публикация шлёт ВСЕ грязные ключи ОДНИМ телом, а `pe_clips` с перенесённым мокап-набором это уже
+ * ~1.5 МБ сам по себе. ЗАМЕР (живой браузер, POST на эту же ручку): 0.5 МБ → 200, 1.9 МБ → доехало,
+ * 2.5 МБ → `TypeError: Failed to fetch`, 4 МБ → то же. То есть при превышении браузер получает НЕ 413,
+ * а обрыв, и клиент честно пишет «сервер недоступен — правки остались локально». Отсюда и «часть
+ * отправляет, часть нет»: мелкие ключи проходят, большой рвёт всю посылку.
+ *
+ * 24 МБ — с запасом на библиотеку клипов целиком (68 клипов мокап-набора + авторские). Ручка под
+ * `devGate`: тело читает только тот, кому она открыта, поэтому анонимной нагрузки это не добавляет
+ * (ровно тот довод, по которому общий `express.json` отсюда убрали).
+ */
+const devJson = express.json({ limit: '24mb' });
 /**
  * ⭐ C-09: запись таблиц конфига — только поверх того, что редактор загрузил (`__baseRev`, ревизии загруженного): таблица на сервере уже
  * другая (сохранили в другой вкладке, инструментом, с другой машины; вкладка открыта при лежащем сервере — с дефолтами) — 409, ничего не
@@ -606,7 +619,10 @@ if (ROLE === 'node' || ROLE === 'single') {
   const nodeId = process.env.DM_NODE_ID ?? 'node-0';
   const url = process.env.DM_NODE_URL ?? `ws://127.0.0.1:${PORT}/ws`;
   await joinCluster(nodeId, url, () => clusterHooks.liveCharIds(), clusterLoop,
-    (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone), () => clusterHooks.heldRuns());   // V2: и забеги
+    (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone), () => clusterHooks.heldRuns(),   // V2: и забеги
+    // ⭐ ENV1: забег, числящийся за другой нодой, комната отпускает; нода кластера держит аренду и на её исходе отгораживает себя сама
+    // (одиночному процессу отдавать героев некому — аренды у него нет).
+    { runsLost: (runs) => clusterHooks.fenceRuns(runs), lease: ROLE === 'node' });
   installNodeShutdown(nodeId, (budgetMs) => clusterHooks.flushAll(budgetMs));
   console.log(`[${nodeId}] в кластере: ${url}`);
 }

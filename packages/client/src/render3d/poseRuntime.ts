@@ -1775,11 +1775,10 @@ export function applyBaseGrip(weaponGroups: THREE.Group[], charId: string, weapo
  * Возвращает три величины ровно в том виде, в каком их ждёт `buildHumanoid`, и теми же чистыми
  * функциями, что зовёт редактор (`bodyMorph.ts`) — иначе это была бы вторая правда о телосложении.
  */
-export function loadMorph(charId: string, fallbackId?: string): { profile?: BodyProfile; build?: BuildScale; boneScale?: BoneScale } {
+export function loadMorph(charId: string, fallbackId?: string): BodyMorph | null {
   const cfg = readJSON<Record<string, BodyMorph>>('pe_morph', {});
   const m = cfg[charId] ?? (fallbackId ? cfg[fallbackId] : undefined);
-  if (!m || !Object.keys(m).length) return {};
-  return { profile: morphToProfile(m), build: morphToBuild(m), boneScale: morphToBoneScale(m) };
+  return m && Object.keys(m).length ? m : null;
 }
 export function loadTwistStates(charId: string, fallbackId?: string): TwistStates {
   const cfg = readJSON<Record<string, TwistCfgStored>>('pe_twist', {});

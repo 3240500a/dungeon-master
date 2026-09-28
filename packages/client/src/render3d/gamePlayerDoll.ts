@@ -21,6 +21,7 @@ import { attachWeapons , hostWeaponOnHand, disposeWeaponGroup} from './weapon3d.
 import { applyCraftLooks } from './craftWeapon3d.js';
 import { weaponLookSig, type ConfigRegistry, type WeaponLook } from '@dm/shared';
 import { charFor } from './chars3d.js';
+import { composeProfile, composeBuild, composeBoneScale } from './bodyMorph.js';   // ⭐ морф поверх модели — тем же кодом, что у редактора
 import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel, applyWeaponModels } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 
@@ -76,13 +77,13 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
    * Явно переданное (атлас модели, `boneOffsets`) главнее: морф это НАСТРОЙКА АВТОРА поверх процедурной
    * болванки, а не поверх геометрии конкретной модели.
    */
-  const morph = opts.classId ? loadMorph(opts.classId) : opts.gaitId ? loadMorph(opts.gaitId, opts.gaitFallback) : {};
+  const morph = opts.classId ? loadMorph(opts.classId) : opts.gaitId ? loadMorph(opts.gaitId, opts.gaitFallback) : null;
   const gender = opts.gender ?? ch?.gender ?? 'male';
-  const build = opts.build ?? morph.build ?? ch?.build ?? {};
+  const build = morph ? composeBuild(opts.build ?? ch?.build, morph) : (opts.build ?? ch?.build ?? {});
   const col = opts.colors ?? {};
 
-  const profile = opts.profile ?? morph.profile;   // модульные пропорции: solid/target строятся с ним, импорт-скин конформится к solid
-  const boneScale = opts.boneScale ?? morph.boneScale;   // пер-костные множители из ФБХ → физ-скелет повторяет модель 1:1
+  const profile = morph ? composeProfile(opts.profile, morph) : opts.profile;   // ⚠ ПЕРЕМНОЖАЕМ с пропорциями модели, а не подменяем (см. `composeProfile`)
+  const boneScale = morph ? composeBoneScale(opts.boneScale, morph) : opts.boneScale;   // атлас × морф
   const boneOffsets = opts.boneOffsets;   // ПОЛНЫЕ rest-офсеты из ФБХ (приоритет) — точная геометрия скелета
   const group = new THREE.Group();
   // solid — ВИДИМЫЙ humanoid-меш, ведём результатом физики (как призрак в редакторе). Оружие на кистях.

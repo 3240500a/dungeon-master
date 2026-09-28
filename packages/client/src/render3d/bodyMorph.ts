@@ -110,6 +110,37 @@ export function morphToBoneScale(m: BodyMorph): BoneScale {
   return bs;
 }
 
+/**
+ * ⭐⭐ КОМПОЗИЦИЯ МОРФА С ГЕОМЕТРИЕЙ МОДЕЛИ — ОДИН КОД НА РЕДАКТОР И ИГРУ.
+ *
+ * ⚠ МОРФ ПЕРЕМНОЖАЕТСЯ, А НЕ ЗАМЕНЯЕТ. Первая врезка в игру сделала «взять морф, если своего нет», и это
+ * НЕ РАБОТАЛО ВОВСЕ: игра ВСЕГДА передаёт профиль, `boneScale` и `boneOffsets` модели (`resolvePlayerLook`),
+ * поэтому морф никогда не брался, и правка длины ног в редакторе в игре не меняла ничего.
+ *
+ * ⚠ И ДЛИНА ЖИВЁТ ИМЕННО В ПРОФИЛЕ. `buildHumanoid` берёт офсет кости модели и УМНОЖАЕТ его на профиль
+ * (`офсет × lenMult(профиль)`), поэтому морф доезжает до геометрии даже когда офсеты модели есть и имеют
+ * приоритет над `boneScale`. Заменить профиль модели морфом — значит потерять пропорции модели.
+ */
+export function composeProfile(base: BodyProfile | undefined, m: BodyMorph): BodyProfile {
+  const mp = morphToProfile(m);
+  if (!base) return mp;
+  return {
+    height: (base.height ?? 1) * (mp.height ?? 1), arm: (base.arm ?? 1) * (mp.arm ?? 1),
+    leg: (base.leg ?? 1) * (mp.leg ?? 1), torso: (base.torso ?? 1) * (mp.torso ?? 1),
+    girth: (base.girth ?? 1) * (mp.girth ?? 1),
+  };
+}
+/** Толщина: ручные ползунки персонажа × обхваты морфа. */
+export function composeBuild(base: BuildScale | undefined, m: BodyMorph): BuildScale {
+  const b = morphToBuild(m), c = base ?? {};
+  return { arm: (c.arm ?? 1) * (b.arm ?? 1), leg: (c.leg ?? 1) * (b.leg ?? 1), torso: (c.torso ?? 1) * (b.torso ?? 1), head: (c.head ?? 1) * (b.head ?? 1) };
+}
+/** Пер-костные множители: атлас × морф. Пусто — `undefined`, чтобы не навязывать риг-рецепту лишнего. */
+export function composeBoneScale(base: BoneScale | undefined, m: BodyMorph): BoneScale | undefined {
+  const merged = mergeBoneScale(base, morphToBoneScale(m));
+  return Object.keys(merged).length ? merged : undefined;
+}
+
 /** Слить морф с пропорциями, снятыми с модели (атлас), — они перемножаются. */
 export function mergeBoneScale(atlas: BoneScale | undefined, morph: BoneScale): BoneScale {
   const out: BoneScale = { ...(atlas ?? {}) };

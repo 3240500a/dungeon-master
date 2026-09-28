@@ -336,7 +336,13 @@ export async function publish(keys?: readonly string[]): Promise<PublishResult> 
   let res: Response;
   try {
     res = await devFetch('/api/dev/pose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch { return { ok: false, saved: [], conflicts: [], error: 'сервер недоступен — правки остались локально' }; }
+  } catch {
+    // ⚠ БРОШЕННЫЙ fetch — ЭТО НЕ ТОЛЬКО «СЕРВЕР ЛЁГ». При теле сверх лимита ручки браузер получает обрыв, а
+    // не 413, и прежнее сообщение уводило в сторону: сервер-то запущен. Показываем РАЗМЕР — по нему сразу
+    // видно, дело в объёме или в связи. ЗАМЕР на старом лимите 2 МБ: 1.9 МБ доезжало, 2.5 МБ рвалось.
+    const mb = (new Blob([JSON.stringify(body)]).size / (1024 * 1024)).toFixed(1);
+    return { ok: false, saved: [], conflicts: [], error: 'сервер не принял посылку (' + mb + ' МБ) — правки остались локально. Если сервер запущен, дело в размере: публикуй ключи по отдельности.' };
+  }
 
   if (res.status === 409) {
     let conflicts: string[] = [];

@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { loadMorph, localStorageContent } from './poseRuntime.js';
+import { composeProfile, composeBuild, composeBoneScale } from './bodyMorph.js';
 import type { Clip } from './clipModel.js';
 
 const store: Record<string, string> = {};
@@ -22,28 +23,47 @@ const clip = (name: string, character = 'warrior', weapon = 'sword'): Clip =>
 
 describe('телосложение доезжает до игры', () => {
   it('⚠ БЕЗ записи — ничего не навязываем (прежнее поведение бит в бит)', () => {
-    expect(loadMorph('warrior')).toEqual({});
+    expect(loadMorph('warrior')).toBeNull();
     store['pe_morph'] = JSON.stringify({ warrior: {} });
-    expect(loadMorph('warrior'), 'пустая запись — тоже «не трогай»').toEqual({});
+    expect(loadMorph('warrior'), 'пустая запись — тоже «не трогай»').toBeNull();
   });
 
-  it('⭐⭐ ЕСТЬ запись — игра получает профиль, телосложение и пер-костные множители', () => {
+  it('⭐⭐ ЕСТЬ запись — игра её видит', () => {
     store['pe_morph'] = JSON.stringify({ warrior: { height: 1.1, legs: 1.2, shoulders: 1.15 } });
-    const m = loadMorph('warrior');
-    expect(m.profile, 'профиль пропорций').toBeTruthy();
-    expect(m.build, 'телосложение').toBeTruthy();
-    expect(m.boneScale, 'пер-костные множители').toBeTruthy();
+    expect(loadMorph('warrior')?.legs).toBe(1.2);
   });
 
   it('донор работает так же, как у остальных ключей', () => {
     store['pe_morph'] = JSON.stringify({ warrior: { height: 1.1 } });
-    expect(loadMorph('c_custom', 'warrior').profile, 'фолбэк на донора').toBeTruthy();
-    expect(loadMorph('c_custom').profile, 'без донора — пусто').toBeUndefined();
+    expect(loadMorph('c_custom', 'warrior'), 'фолбэк на донора').toBeTruthy();
+    expect(loadMorph('c_custom'), 'без донора — пусто').toBeNull();
   });
 
   it('⚠ МУСОР в ключе не роняет игру', () => {
     store['pe_morph'] = '{ не json';
-    expect(loadMorph('warrior')).toEqual({});
+    expect(loadMorph('warrior')).toBeNull();
+  });
+
+  /**
+   * ⚠⚠ ГЛАВНОЕ: МОРФ ПЕРЕМНОЖАЕТСЯ С ПРОПОРЦИЯМИ МОДЕЛИ, А НЕ ЗАМЕНЯЕТ ИХ. Первая врезка сделала
+   * «взять морф, если своего нет» — и не работала вовсе: игра ВСЕГДА передаёт профиль модели
+   * (`resolvePlayerLook`), поэтому морф не брался никогда, и длина ног в игре не менялась.
+   */
+  it('⭐⭐ ДЛИНА ЕДЕТ ЧЕРЕЗ ПРОФИЛЬ и перемножается с моделью', () => {
+    const model = { height: 1.05, leg: 0.9, arm: 1, torso: 1, girth: 1 };
+    const p = composeProfile(model, { legs: 1.2 });
+    expect(p.leg, 'нога модели × нога морфа').toBeCloseTo(0.9 * 1.2, 6);
+    expect(p.height, 'рост модели сохранён').toBeCloseTo(1.05, 6);
+    expect(composeProfile(undefined, { legs: 1.2 }).leg, 'без модели — чистый морф').toBeCloseTo(1.2, 6);
+    expect(composeProfile(model, {}).leg, 'пустой морф модель не трогает').toBeCloseTo(0.9, 6);
+  });
+
+  it('толщина и пер-костные множители тоже перемножаются', () => {
+    expect(composeBuild({ arm: 1.2 }, { armGirth: 1.5, weight: 1 }).arm).toBeCloseTo(1.2 * 1.5, 6);
+    const bs = composeBoneScale({ Neck: 1.1 }, { shoulders: 1.3 });
+    expect(bs?.Neck, 'атласная кость сохранена').toBeCloseTo(1.1, 6);
+    expect(bs?.LeftShoulder, 'кость морфа добавлена').toBeCloseTo(1.3, 6);
+    expect(composeBoneScale(undefined, {}), 'пусто — undefined, чтобы не навязывать рецепту лишнего').toBeUndefined();
   });
 });
 
