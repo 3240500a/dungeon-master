@@ -36,8 +36,8 @@ describe('состав стойки приходит из резолвера, а
     const trace: StanceLayerInfo[] = [];
     resolveStancePose(find, 'sword+shield', 0, { trace, weight: (i) => (i === 'shield' ? 0.4 : 0.9) }, 0);
     expect(trace).toEqual([
-      { item: 'sword', hand: 'main', kind: 'additive', weight: 0.9 },
-      { item: 'shield', hand: 'off', kind: 'additive', weight: 0.4 },
+      { item: 'sword', hand: 'main', kind: 'additive', weight: 0.9, applied: true },
+      { item: 'shield', hand: 'off', kind: 'additive', weight: 0.4, applied: true },
     ]);
   });
 
@@ -55,13 +55,30 @@ describe('состав стойки приходит из резолвера, а
     expect(trace[0]!.hand, 'конфиг сказал «в левую» — значит в левую').toBe('off');
   });
 
-  it('ЕСТЬ авторская поза на точный ключ — не смешивается НИЧЕГО, и трасса пуста', () => {
-    // Это не дыра, а ответ на вопрос «почему сила смешивания ни на что не влияет»: для такого ключа
-    // автор задал стойку целиком, и слои в ней не участвуют. Пустая трасса это и показывает.
+  /**
+   * ⭐⭐ СОСТАВ РУК И «ЧТО ПРИМЕНИЛОСЬ» — РАЗНЫЕ ВОПРОСЫ, и раньше они были склеены.
+   *
+   * Трасса заполнялась ТОЛЬКО там, где слой реально складывался, поэтому у оружия со своей авторской
+   * стойкой она оставалась ПУСТОЙ — а по ней решается, что у персонажа в руках. ЗАМЕР до правки:
+   * «есть точная стойка sword» + оружие `sword` → главная «none». Ломалось от этого не только окно
+   * отладки: панель маха рисует ручки лишь ЗАНЯТОЙ руке (обе подписывались «пусто — машет как в клипе»),
+   * а `frameSwing` резолвит мах ПО ЭТОМУ ЖЕ составу — то есть настройки предмета не применялись и в игре.
+   *
+   * Теперь рука держит предмет ровно тогда, когда он есть в КЛЮЧЕ, а `applied` говорит, лёг ли слой.
+   */
+  it('⭐⭐ ЕСТЬ авторская поза на точный ключ — слои не легли, но РУКИ ЗАНЯТЫ', () => {
     const trace: StanceLayerInfo[] = [];
     const withPair = (k: 'idle' | 'combat_idle', item: string): Pose | null => (item === 'sword+shield' ? SWORD : find(k, item));
     resolveStancePose(withPair, 'sword+shield', 0, { trace }, 0);
-    expect(trace).toHaveLength(0);
+    expect(trace.map((l) => [l.item, l.hand, l.applied]), 'состав рук обязан быть известен всегда')
+      .toEqual([['sword', 'main', false], ['shield', 'off', false]]);
+  });
+
+  it('⚠ ПРЕДМЕТ БЕЗ АВТОРСКОЙ ПОЗЫ всё равно занимает руку — иначе его мах не настроить', () => {
+    const trace: StanceLayerInfo[] = [];
+    const onlyBase = (k: 'idle' | 'combat_idle', item: string): Pose | null => (item === 'none' ? find(k, 'none') : null);
+    resolveStancePose(onlyBase, 'sword+shield', 0, { trace }, 0);
+    expect(trace.map((l) => [l.item, l.applied])).toEqual([['sword', false], ['shield', false]]);
   });
 
   it('боевая стойка не удваивает состав — `one()` зовётся дважды, а предмет один', () => {

@@ -250,7 +250,15 @@ export interface StanceOpts {
   fidget?: { pose: Pose; scope: 'base' | 'item'; w: number };
 }
 /** Один подмешанный предмет: что, в какую руку, чем и с какой силой. */
-export interface StanceLayerInfo { item: string; hand: 'main' | 'off'; kind: LayerKind; weight: number }
+export interface StanceLayerInfo {
+  item: string; hand: 'main' | 'off'; kind: LayerKind; weight: number;
+  /**
+   * ⚠ ЛЁГ ЛИ СЛОЙ НА САМОМ ДЕЛЕ. Состав рук и «что применилось» — РАЗНЫЕ вопросы, и путать их дорого:
+   * рука держит меч независимо от того, заавторена ли под него поза, а инспектор слоёв обязан показывать
+   * только то, что действительно применено.
+   */
+  applied: boolean;
+}
 
 export function resolveStancePose(
   find: StanceLookup,
@@ -274,6 +282,35 @@ export function resolveStancePose(
   /** Поза С ПРЕДМЕТОМ поверх уже собранной стойки (`scope: 'item'`). */
   const overItem = (p: Pose | null): Pose | null =>
     (p && fg && fg.scope === 'item' ? blendTwo(p, fg.pose, Math.min(1, fg.w)) : p);
+  /**
+   * ⭐⭐ СОСТАВ РУК — ИЗ КЛЮЧА ОРУЖИЯ, А НЕ ИЗ ТОГО, НАШЛАСЬ ЛИ ПОЗА ПРЕДМЕТА.
+   *
+   * ⚠ БЫЛО НАОБОРОТ, И ЭТО ЛОМАЛО ДВЕ ВЕЩИ СРАЗУ. Трасса заполнялась только там, где слой реально
+   * складывался, поэтому: (а) при оружии со СВОЕЙ авторской стойкой точный ключ коротит сборку и трасса
+   * оставалась ПУСТОЙ; (б) без заавторенной позы предмета слой не складывался тоже. ЗАМЕР: «есть точная
+   * стойка sword» + оружие `sword` → главная «none»; «стойки нет» + `sword+shield` → обе «none».
+   * Следствия были не косметические: панель маха рисует ручки только занятой руке (обе подписывались
+   * «пусто — машет как в клипе»), а `frameSwing` РЕЗОЛВИТ МАХ ПО ЭТОМУ ЖЕ СОСТАВУ — то есть настройки
+   * предмета не применялись и в игре, рука получала умолчания пустой.
+   *
+   * Теперь рука держит предмет ровно тогда, когда он есть в КЛЮЧЕ, а «лёг ли слой» — отдельное поле.
+   */
+  if (opts.trace) {
+    const [mI, oI] = splitHands(weapon);
+    const mK = mI !== 'none' ? kindOf(mI) : 'additive';
+    if (mI !== 'none') {
+      opts.trace.push({ item: mI, hand: opts.hand?.(mI) ?? 'main', kind: mK, weight: weightOf(mI), applied: false });
+    }
+    // Двуручное занимает ОБЕ руки: `override` владеет верхом, и офф-рука в сборке не участвует — но она ЗАНЯТА.
+    if (oI !== 'none' && mK !== 'override') {
+      opts.trace.push({ item: oI, hand: opts.hand?.(oI) ?? 'off', kind: kindOf(oI) === 'override' ? 'additive' : kindOf(oI), weight: weightOf(oI), applied: false });
+    }
+  }
+  /** Отметить в трассе, что слой этого предмета реально лёг. */
+  const markApplied = (item: string): void => {
+    const e = opts.trace?.find((l) => l.item === item);
+    if (e) e.applied = true;
+  };
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
     const at = (k: 'idle' | 'combat_idle', i: string, tt: number): Pose | null => find(k, i, tt) ?? (k === 'combat_idle' ? find('idle', i, tt) : null);
     const exact = find(kind, weapon, t);
@@ -320,7 +357,7 @@ export function resolveStancePose(
       layers.push({ pose: off ? asOffHandPose(mp) : mp, base: off ? asOffHandPose(ref) : ref,
         mask: two ? UPPER_ALL_MASK : off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(m), kind: mKind });
       // Трассу пишем только на спокойном проходе: `one()` зовётся дважды (relax + combat), состав тот же.
-      if (opts.trace && kind === 'idle') opts.trace.push({ item: m, hand: off ? 'off' : 'main', kind: mKind, weight: weightOf(m) });
+      if (kind === 'idle') markApplied(m);
     }
     if (!two && o !== 'none') {
       // ⭐⭐ СНАЧАЛА ИЩЕМ РАБОТУ, СДЕЛАННУЮ В СЛОТЕ ОФФ-РУКИ (`none+щит`): она УЖЕ на левой руке,
@@ -336,7 +373,7 @@ export function resolveStancePose(
         // вовсе — маска и так берёт левую руку. Проверено мутацией: ветка ничего не меняла.
         layers.push({ pose: off ? asOffHandPose(op) : op, base: off ? asOffHandPose(ref) : ref,
           mask: off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(o), kind: k2 });
-        if (opts.trace && kind === 'idle') opts.trace.push({ item: o, hand: off ? 'off' : 'main', kind: k2, weight: weightOf(o) });
+        if (kind === 'idle') markApplied(o);
       }
     }
     return overItem(layers.length ? composeStance(base, layers) : base);   // 2. сборка (нет предметов → чистая база)
