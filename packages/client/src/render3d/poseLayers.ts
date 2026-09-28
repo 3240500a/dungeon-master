@@ -23,7 +23,7 @@
  */
 import * as THREE from 'three';
 import { blendTwo, clipPoseAt, isAngleKey, type Pose } from './clipModel.js';
-import { boneWeight, type BoneMask } from './boneMask.js';
+import { boneWeight, fullMask, type BoneMask } from './boneMask.js';
 
 /** Двуручное держится ОБЕИМИ руками: его поза — не добавка к свободной руке, а другой верх целиком. */
 export const TWO_HANDED = new Set(['greatsword', 'greataxe', 'greatmaul', 'halberd', 'spear', 'staff', 'bow', 'crossbow']);
@@ -102,6 +102,20 @@ function keyBlend(key: string, cur: readonly [number, number, number], to: reado
 
 /** Вес ключа в маске. Спец-ключи (`__wpnMain`, `__hipsD`…) костями не являются — им маска не мешает. */
 const maskW = (mask: BoneMask, key: string): number => (key.startsWith('__') ? 1 : boneWeight(mask, key));
+
+/**
+ * ⚠ СЛУЖЕБНЫЕ КАНАЛЫ НАБОРА ХОДА В СТОЙКУ НЕ ПУСКАЕМ. `maskW` отдаёт любому `__`-ключу вес 1 (маска
+ * костями не управляет), поэтому `__swing`/`__rootY`/`__rootP` живой базы уехали бы в собранную стойку
+ * и подменили бы опору и курс. Смещение таза (`__hipsD`) — наоборот, часть дыхания и остаётся.
+ */
+const onlyBody = (p: Pose): Pose => {
+  let drop = false;
+  for (const k in p) if (k.startsWith('__') && k !== '__hipsD') { drop = true; break; }
+  if (!drop) return p;
+  const o: Pose = {};
+  for (const k in p) if (!k.startsWith('__') || k === '__hipsD') o[k] = p[k]!;
+  return o;
+};
 
 /**
  * Собрать стойку: база плюс слои по порядку.
@@ -211,6 +225,15 @@ export interface StanceOpts {
    * с первой ровно в тот день, когда правила сборки поменяются, и врать будет именно окно отладки.
    */
   trace?: StanceLayerInfo[];
+  /**
+   * ⭐⭐ МНОГОКАДРОВА ЛИ СТОЙКА НА ЭТОМ КЛЮЧЕ. Нужно ровно для одного решения: авторская поза оружия
+   * (один кадр) — ЯКОРЬ, а движение ЖИВОЙ безоружной базы кладётся на неё дельтой. Без этого точный
+   * ключ короткозамыкает всю сборку, и с мечом тело встаёт насмерть (замер: 0.00° на ВСЕХ костях
+   * против 3.42° по груди у безоружного).
+   *
+   * Не задано — прежнее поведение бит в бит (ветка не включается).
+   */
+  live?: (kind: 'idle' | 'combat_idle', item: string) => boolean;
 }
 /** Один подмешанный предмет: что, в какую руку, чем и с какой силой. */
 export interface StanceLayerInfo { item: string; hand: 'main' | 'off'; kind: LayerKind; weight: number }
@@ -226,9 +249,29 @@ export function resolveStancePose(
   if (opts.trace) opts.trace.length = 0;
   const kindOf = (i: string): LayerKind => opts.kind?.(i) ?? (isTwoHanded(i) ? 'override' : 'additive');
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
-    const exact = find(kind, weapon, t);
-    if (exact) return exact;                                  // 1. авторская на точный ключ
     const at = (k: 'idle' | 'combat_idle', i: string, tt: number): Pose | null => find(k, i, tt) ?? (k === 'combat_idle' ? find('idle', i, tt) : null);
+    const exact = find(kind, weapon, t);
+    if (exact) {
+      /**
+       * ⭐⭐ ЖИВАЯ БАЗА ПОД СТАТИЧНОЙ СТОЙКОЙ ОРУЖИЯ. Авторская поза на точный ключ — ЯКОРЬ (оружие
+       * держится ровно как поставил автор), а дыхание безоружного айдла приезжает на неё ДЕЛЬТОЙ.
+       *
+       * ⚠ БЕЗ ЭТОГО ДАННЫМИ НЕ ОБОЙТИСЬ В ПРИНЦИПЕ: у одноручного оружия ключ точной стойки и ключ
+       * предмета — ОДНА И ТА ЖЕ строка (`splitHands('sword')` → `['sword','none']`), поэтому сборка
+       * слоями для меча не запускается НИКОГДА. ЗАМЕР: с мечом размах позы в покое 0.00° на всех
+       * костях против 3.42° по груди и 11.5° по шее у безоружного — тело вставало насмерть.
+       *
+       * Референс дельты — база НА НУЛЕ (`at(kind,'none',0)`), как и у дельт предметов: считать её от
+       * живой базы значит ровно компенсировать дыхание (`Make Additive` в Unreal устроен так же).
+       * Якорь при этом не сдвигается: |поза(t=0) − авторская стойка| = 0.000000°.
+       */
+      const liveNow = opts.live && !opts.live(kind, weapon) && opts.live(kind, 'none') ? at(kind, 'none', t) : null;
+      const liveRef = liveNow ? at(kind, 'none', 0) : null;
+      if (liveNow && liveRef) {
+        return composeStance(exact, [{ pose: onlyBody(liveNow), base: liveRef, mask: fullMask(), weight: 1, kind: 'additive' }]);
+      }
+      return exact;                                           // 1. авторская на точный ключ
+    }
     const base = at(kind, 'none', t);
     const [m, o] = splitHands(weapon);
     if (!base) return at(kind, m, t);                         // 3. базы нет — старое поведение

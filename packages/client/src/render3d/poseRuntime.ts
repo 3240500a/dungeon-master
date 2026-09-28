@@ -1453,6 +1453,8 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
       // разбор ОДИН, а в инспектор состав КОПИРУЕТСЯ: отдать ему сам массив значило бы, что тот живёт до след. кадра.
       const pose = resolveStancePose(look, weapon, combat,
         { weight: (it) => anim.weightOf(it), kind: (it) => anim.kindOf(it), hand: (it) => anim.handOf(it),
+          // ⭐ живая ли стойка на ключе — тем же резолвом ролей, что и сама поза (иначе вторая правда)
+          live: (k, i) => (bound(k, i)?.keys.length ?? 0) > 1,
           trace: layersOut }, t);
       if (layerTrace.on) { layerTrace.items.length = 0; for (const l of layersOut) layerTrace.items.push(l); }
       if (!pose) return null;

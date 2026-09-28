@@ -6122,7 +6122,9 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   // РАЗБОР ВХОДОВ у них один, а не тем, что числа похожи.
   const layersOut: StanceLayerInfo[] = [];
   const pose = resolveStancePose(look, wpn, combat,
-    { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it), trace: layersOut }, t);
+    { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it), trace: layersOut,
+      // ⭐ то же правило, что в игре: признак берётся у ТОГО ЖЕ клипа, что отдаёт позу (редактор ≡ игра)
+      live: (k, i) => (lookClip(k, i)?.keys.length ?? 0) > 1 }, t);
   const lk = layersFor(wpn);
   let main = 'none', off = 'none';
   for (const l of layersOut) { if (l.hand === 'main') main = l.item; else off = l.item; }
