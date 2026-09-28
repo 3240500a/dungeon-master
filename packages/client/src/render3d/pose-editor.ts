@@ -14,7 +14,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, physCatalogOff, physCatalogHalf, clothColliderCount, RAG_OF_HUMAN, type PhysSize, type LimitView } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, shapeRot, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, physCatalogOff, physCatalogHalf, clothColliderCount, RAG_OF_HUMAN, type PhysSize, type LimitView } from './humanoidRagdoll.js';
 import { PHYS_PRESETS, presetBodies } from './physRig.js';
 import { scaleJointsToScreen } from './humanoid.js';                       // Ф13.1: суставы постоянного экранного размера
 import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф13.4: тот же радиус, что у сервера   // Ф11: набор физ-тел настраивается в редакторе
@@ -81,6 +81,7 @@ import { hipsOffset, setHipsOffset, normalizeClipHips, fingersAnimated } from '.
 import { blendTwo, clipPoseAt, clipSegmentAt, segmentPose, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
   type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
+import { shapeFrame, dragPos, dragRot, dragSize, modeOf } from './physShapeGizmo.js';   // ⭐ правка физ-тел мышью: перевод «драг → числа оверрайда» чистый и покрыт тестами
 
 import type { ImportPanel } from './clipImportPanel.js';
 import { getPref, setPref, migrateFromUi } from './editorPrefs.js';
@@ -91,7 +92,7 @@ const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, 
  * СОСТОЯНИЕ ИНТЕРФЕЙСА (`pe_ui`) — ОДИН словарь на всё (Ф26.2). Было два независимых чтения того же ключа
  * и запись целиком — любое новое поле затирало бы соседей. Здесь же живут прозрачности и (дальше) свёрнутость свитков.
  */
-interface UiState { pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number; open?: Record<string, boolean>; clipKind?: string; clipSort?: string; panelW?: number }
+interface UiState { pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number; aMesh?: number; open?: Record<string, boolean>; clipKind?: string; clipSort?: string; panelW?: number }
 const ui: UiState = (() => { try { return JSON.parse(localStorage.getItem('pe_ui') || '{}') as UiState; } catch { return {}; } })();
 migrateFromUi(ui as Record<string, unknown>);   // разовый переезд: прозрачности/свитки уже настроены — не терять
 /**
@@ -102,8 +103,12 @@ migrateFromUi(ui as Record<string, unknown>);   // разовый переезд
 function saveUi(): void {
   for (const k of Object.keys(ui) as (keyof UiState)[]) setPref(k, ui[k] as never);
 }
-/** Прозрачность скелета и ручек: по жалобе «скелет слишком активный, не видно, как выглядит меш». */
-let aSkel = ui.aSkel ?? 0.55, aHandle = ui.aHandle ?? 0.7;
+/**
+ * Прозрачность скелета и ручек: по жалобе «скелет слишком активный, не видно, как выглядит меш».
+ * ⭐ И ОБРАТНАЯ ЖАЛОБА — прозрачность САМОГО МЕША: сквозь модель смотрят на скелет и на физ-тела (их ещё и
+ * правят мышью). Умолчание 1 — вид ни у кого не поедет молча; гашение — в `meshAlpha.ts` (клон материала).
+ */
+let aSkel = ui.aSkel ?? 0.55, aHandle = ui.aHandle ?? 0.7, aMesh = ui.aMesh ?? 1;
 const V = (): THREE.Vector3 => new THREE.Vector3();
 const Q = (): THREE.Quaternion => new THREE.Quaternion();
 
@@ -309,7 +314,8 @@ function attachBoneGizmo(nm: string): void {
   gizmo.showX = !lk[0]; gizmo.showY = !lk[1]; gizmo.showZ = !lk[2];
   gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy);
 }
-gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) beginProxyDrag(); dragUndo = plantDrag >= 0 ? null : snapshot(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { bakeBodyFollow(); if (dragUndo) { const before = dragUndo, after = snapshot(); history.push('правка позы', () => restore(before), () => restore(after)); dragUndo = null; } if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
+gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (gizmo.object === physHandle) { if (dragging) { physGrab = { pos: physHandle.position.clone(), quat: physHandle.quaternion.clone() }; } else { commitPhysDrag(); } return; }   // физ-тело: своя ветка целиком — ни в позу, ни в историю позы оно не пишет
+  if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) beginProxyDrag(); dragUndo = plantDrag >= 0 ? null : snapshot(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { bakeBodyFollow(); if (dragUndo) { const before = dragUndo, after = snapshot(); history.push('правка позы', () => restore(before), () => restore(after)); dragUndo = null; } if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
 
 const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизмо предела выбранного сустава (на манекене)
 let showLimits = getPref('limitGizmo', true);                       // рисовать пределы выбранного сустава (дефолт вкл)
@@ -445,6 +451,10 @@ function applyAlpha(): void {
   for (const m of human.meshes) put(m.material as THREE.Material, aSkel);
   for (const m of boneView.meshes) put(m.material as THREE.Material, aSkel);
   for (const h of allHandles) put(h.material as THREE.Material, aHandle);
+  // ⚠ МЕШ МОДЕЛИ — НЕ ОТСЮДА. Его материал ЧУЖОЙ и ОБЩИЙ (`getMaterial` отдаёт один инстанс на `materialId`,
+  // он же на игровой кукле «Теста»), а сам меш пересобирается асинхронно внутри вкладки «Модели». Поэтому
+  // значение живёт здесь, а применяет его вкладка — через клон материала (`meshAlpha.ts`).
+  modelsTab.setMeshAlpha(aMesh);
 }
 const rig = {
   hipsPos: V(), hipsQuat: Q(), hipsHandle: mkHandle(0xf0c020, 2.3, true),
@@ -1628,6 +1638,9 @@ canvas.addEventListener('pointerdown', (ev) => {
     }
   }
   activeKey = null; activePole = null; activeGaze = false; activeShoulder = null;
+  // ФИЗ-ТЕЛА (Ф28.5) — ПОСЛЕ ручек, но ДО костей: тела крупные и закрывают собой кости, поэтому ловим их
+  // только в явном режиме правки («тела: мышью») и только когда они видны. Иначе всё как было.
+  if (pickPhysBody()) { refreshPose(); return; }
   // Кости + меши оружия (оружие — вращение вокруг хвата).
   // Ф13.3: ФАЛАНГИ кликабельны ТОЛЬКО в режиме хвата, и тогда — только они (плюс сама кисть).
   // Иначе клик по кисти постоянно попадал бы в палец, а в режиме хвата оружие перехватывало бы
@@ -1655,6 +1668,7 @@ canvas.addEventListener('pointermove', (ev) => {
   if (hit) turnAim = Math.atan2(hit.point.x, hit.point.z);   // yaw к точке: forward=+Z → atan2(x,z)
 });
 gizmo.addEventListener('objectChange', () => {
+  if (gizmo.object === physHandle) return;   // физ-тело показываем в цикле (после покадрового синка), а пишем по отпусканию
   if (dragMark) {                                            // тянем авторский маркер (плант/обвод): мировая дельта → body-local (fwd,lat)
     const d = dragMark.mesh.position.clone().sub(plantGrab);
     const s = Math.sin(gaitYaw), c = Math.cos(gaitYaw);
@@ -2178,6 +2192,7 @@ function ringBone(): string | null {
 const hiMesh = (nm: string | null): void => highlight(nm ? boneMeshes().find((x) => x.userData.bone === nm) ?? null : null);
 function ringsOn(): void {
   if (shiftRings || gizmo.dragging) return;
+  if (gizmo.object === physHandle) return;   // Shift на физ-теле значит «крутить тело», а не «кольца кости»
   const nm = ringBone(); if (!nm || !human.bones.get(nm)) return;
   shiftRings = { key: activeKey, pole: activePole, sel: selected };
   activeKey = null; activePole = null; selected = nm;
@@ -2195,8 +2210,27 @@ function ringsOff(): void {
   else gizmo.detach();
   refreshPose();
 }
-addEventListener('keydown', (e) => { if (e.key === 'Shift') { applySnap(true); ringsOn(); } });
-addEventListener('keyup', (e) => { if (e.key === 'Shift') { applySnap(); ringsOff(); } });
+/**
+ * ⭐ ОДИН РАЗБОР МОДИФИКАТОРОВ НА ВЕСЬ ВЬЮПОРТ. У костей Shift уже значил «крутить» (кольца, Ф21.1) — у
+ * физ-тел он значит то же, а Alt добавляет масштаб, которого в редакторе не было ни у чего. Состояние клавиш
+ * держим явно: `keyup` может не прийти вовсе (Alt+Tab, клик мимо окна) — тогда его чинит `shiftReset`.
+ */
+let shiftDown = false, altDown = false;
+/** Режим гизмо физ-тела по зажатым клавишам (перевод — в `physShapeGizmo.modeOf`, он же в тесте). */
+function syncPhysMode(): void {
+  if (gizmo.object !== physHandle || gizmo.dragging) return;
+  const m = modeOf({ shift: shiftDown, alt: altDown });
+  if (gizmo.mode !== m) { gizmo.setMode(m); parkPhysHandle(); }
+}
+addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') { shiftDown = true; applySnap(true); ringsOn(); syncPhysMode(); }
+  // ⚠ Alt без preventDefault уводит фокус в меню окна (Windows) — гизмо остаётся без клавиатуры.
+  else if (e.key === 'Alt') { altDown = true; if (gizmo.object === physHandle) e.preventDefault(); syncPhysMode(); }
+});
+addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') { shiftDown = false; applySnap(); ringsOff(); syncPhysMode(); }
+  else if (e.key === 'Alt') { altDown = false; syncPhysMode(); }
+});
 /**
  * АВАРИЙНЫЙ СБРОС «ЗАЛИПШЕГО» SHIFT (Ф23.2).
  *
@@ -2206,7 +2240,7 @@ addEventListener('keyup', (e) => { if (e.key === 'Shift') { applySnap(); ringsOf
  * так выглядит жалоба «через какое-то время пропал Shift и вращение»: вращение и ЕСТЬ кольца.
  * Снап залипал точно так же — поэтому сбрасываем оба.
  */
-function shiftReset(): void { ringsOff(); applySnap(); }
+function shiftReset(): void { shiftDown = false; altDown = false; ringsOff(); applySnap(); syncPhysMode(); }
 addEventListener('blur', shiftReset);
 document.addEventListener('visibilitychange', () => { if (document.hidden) shiftReset(); });
 addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); } if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); history.redo(); } });
@@ -2575,7 +2609,7 @@ function applyChar(id: string): void {
   loadTwistCfg(id);                                           // профиль скрутки корпуса (torso-lead) этого персонажа
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { rootTurn.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-  gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
+  gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = []; physSel = null;   // и выбор физ-тела: гизмо отцеплено, подсветка без него врёт
   human = stampRig(buildHumanoid({ ...rigRecipe(), style: manStyle() })); curHumanStyle = manStyle();   // Ф27: геометрия — только из рецепта
   normalizeHipsOfChar(id);   // Ф12: rest-высота ЭТОГО тела только что стала известна — переводим его клипы в дельту
   modelsTab.refreshProfile();   // Ф15.1: морф этого персонажа обязан уехать И в риг-источник, иначе меш не поедет за скелетом
@@ -2595,7 +2629,7 @@ function rebuildManikin(): void {
   fbik = null;   // солвер связан с КОНКРЕТНЫМ скелетом (топология/длины) — пересобрать
   const pose = readPoseFull();
   rootTurn.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
-  gizmo.detach(); selMesh = null; selected = null;
+  gizmo.detach(); selMesh = null; selected = null; physSel = null;
   human = stampRig(buildHumanoid({ ...rigRecipe(), style: manStyle() })); curHumanStyle = manStyle();   // Ф27: геометрия — только из рецепта
   human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
   rootTurn.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();   // под шарниром корня (`rootTurn`), не в сцене
@@ -2822,7 +2856,8 @@ for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 // Ф15.1 + Ф20.1: риг-источник строится ТЕМ ЖЕ профилем И ТЕМ ЖЕ boneScale, что манекен —
 // иначе кости модели стоят не там, где нарисованы кости редактора (колено расходилось на 2.37u).
-const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale());
+const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale(),
+  (a) => { aMesh = a; ui.aMesh = a; saveUi(); });   // ползунок прозрачности меша — личная настройка вида (`pe_prefs`)
 
 function refreshAll(): void { syncRootView(); for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else if (tab === 'graph') renderGraph(); else if (tab === 'test') renderTest(); else modelsTab.render(body); if (tab !== 'graph' && graphField) graphField.style.display = 'none'; syncTestTab(); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
@@ -3008,12 +3043,13 @@ function poseTools(): void {
       const out = el('span', 'width:32px;text-align:right;color:#cfd3e0'); out.textContent = get().toFixed(2);
       const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = '0.15'; r.max = '1'; r.step = '0.05'; r.value = String(get());
       r.oninput = () => { set(parseFloat(r.value)); out.textContent = get().toFixed(2); applyAlpha(); };
-      r.onchange = () => { ui.aSkel = aSkel; ui.aHandle = aHandle; saveUi(); };
+      r.onchange = () => { ui.aSkel = aSkel; ui.aHandle = aHandle; ui.aMesh = aMesh; saveUi(); };
       row.append(r, out); body.append(row);
     };
     const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'ПРОЗРАЧНОСТЬ'; body.append(ah);
     arow('скелет', () => aSkel, (v) => { aSkel = v; });
     arow('хелперы', () => aHandle, (v) => { aHandle = v; });
+    arow('модель', () => aMesh, (v) => { aMesh = v; });   // тот же ползунок есть и во вкладке «Модели» — состояние одно
   }
   {   // Ф27.2 — РАСХОЖДЕНИЕ РИГОВ числом, а не по скриншоту. «призрак↔меш» обязано быть 0.00u ВСЕГДА;
       // «манекен↔призрак» — честная разница заземления и физ-бленда по `match` (то, что увидит игра).
@@ -3709,11 +3745,8 @@ function physSizeSection(): void {
   if (!bodies.some((b) => b.name === sizeBody)) sizeBody = bodies[0]!.name;
   const cur = bodies.find((b) => b.name === sizeBody)!;
   const ov = PHYS_SIZES[sizeBody] ?? {};
-  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => {
-    fn(PHYS_SIZES[sizeBody] ??= {});
-    saveRagdollConfig(); savePoseKey('pe_ragdoll');
-    if (rebuild) { rebuildRagdoll(); renderAnim(); }
-  };
+  // ⭐ Тот же шов, которым пишет гизмо во вьюпорте (`applyPhysSize`): панель и мышь правят ОДНИ поля одним кодом.
+  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => applyPhysSize(sizeBody, fn, rebuild);
   const r1 = el('div', 'display:flex;gap:3px;align-items:center'); body.append(r1);
   const bsel = document.createElement('select'); bsel.style.cssText = impInput + ';flex:1';
   for (const b2 of bodies) { const o = document.createElement('option'); o.value = b2.name; o.textContent = PHYS_LABEL[b2.name] ?? b2.name; o.selected = b2.name === sizeBody; bsel.append(o); }
@@ -3757,9 +3790,26 @@ function physSizeSection(): void {
     pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
     pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
     pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; setPref('boxes', showBoxes); applyBoxVis(); renderAnim(); }); }, showBoxes),
+    // Правка мышью требует ВИДИМЫХ тел — включаем их заодно, иначе кнопка выглядит сломанной.
+    pbtn(physEdit ? 'тела: мышью' : 'тела: ползунками', () => {
+      void ensurePhysics().then(() => {
+        physEdit = !physEdit; setPref('physEdit', physEdit);
+        if (physEdit && !showBoxes) { showBoxes = true; setPref('boxes', true); applyBoxVis(); }
+        if (!physEdit) selectPhysBody(null);
+        renderAnim();
+      });
+    }, physEdit),
   );
   const hint = el('div', 'color:#6b7180;font-size:10px');
   hint.textContent = '«С костей» даёт анкер и ось. «По мешу» ещё и толщину — по вершинам кости, как в Unreal.'; body.append(hint);
+  if (physEdit) {
+    const h2 = el('div', 'color:#9ae6a0;font-size:10px');
+    h2.textContent = 'Во вьюпорте: клик по телу — выбрать, тянуть — сдвиг, Shift — поворот, Alt — масштаб (вдоль/поперёк). Сустав не двигается.';
+    body.append(h2);
+    const h3 = el('div', 'color:#6b7180;font-size:10px');
+    h3.textContent = 'Модель закрывает тела — убавь «прозрачность меша» во вкладке «Модели».';
+    body.append(h3);
+  }
   if (meshFitNote) { const n = el('div', 'color:#9ae6a0;font-size:10px'); n.textContent = meshFitNote; body.append(n); }
 }
 function physRigSection(): void {
@@ -5882,6 +5932,139 @@ let showBoxes = getPref('boxes', false);   // дебаг: сырые физ-бо
  * везде, где группа появляется в сцене, а кнопки только переключают флаг.
  */
 function applyBoxVis(): void { if (ragdoll) ragdoll.group.visible = showBoxes; }
+
+/**
+ * ⭐⭐ ПРАВКА ФИЗ-ТЕЛ ПРЯМО ВО ВЬЮПОРТЕ (Ф28.5): выбрал тело → тянешь, Shift — крутишь, Alt — масштабируешь.
+ *
+ * ЗАЧЕМ. Ползунками («длина ½», «ширина ×», «сдвиг X/Y/Z», «поворот X/Y/Z») тело настраивается вслепую:
+ * смотришь на модель, а правишь число в панели. Та же конвенция, что уже есть у костей (Shift → кольца
+ * поворота, Ф21.1), теперь и у тел — плюс масштаб на Alt, которого в редакторе не было ни у чего.
+ *
+ * ⚠ ПИШЕМ В ТЕ ЖЕ ПОЛЯ, ЧТО И ПОЛЗУНКИ (`PHYS_SIZES[имя]`: `pos`/`rot`/`len`/`w`/`d`), через ОДИН шов
+ * `applyPhysSize`. Иначе вьюпорт и панель разошлись бы: панель показывала бы не то, что видно глазами.
+ * `anchor` мышью не трогаем НИКОГДА — это точка сустава и рест-трансляция скелета: сдвинув её, сдвинешь
+ * сустав и всю цепь ниже.
+ *
+ * ⚠ ЧЕТЫРЕ ГРАБЛИ, ИЗ-ЗА КОТОРЫХ НАИВНАЯ ВРЕЗКА НЕ РАБОТАЕТ:
+ *  1. Меш тела — НЕ хозяин своего трансформа: `poseShapes()` переписывает ему position/quaternion КАЖДЫЙ
+ *     кадр. Поэтому гизмо цепляется к СВОЕЙ пустышке (`physHandle`), как это сделано у костей (`boneProxy`),
+ *     а живой показ правки накладывается на меш ПОСЛЕ синка (`previewPhysDrag` в цикле).
+ *  2. Разворот формы ЗАПЕЧЁН В ГЕОМЕТРИЮ, поэтому `mesh.quaternion` — это угол КОСТИ. Сдвиг и поворот
+ *     снимаем в осях кости (там же их хранит `shapeOff`/`shapeRot`), а для масштаба строим рамку ФОРМЫ
+ *     (`shapeFrame`), иначе «тянуть в длину» на косой кости толстило бы тело.
+ *  3. Пересборка куклы сносит группу и меши — поэтому меш ищем ПО ИМЕНИ (`userData.physBody`) каждый раз,
+ *     а не держим ссылку.
+ *  4. Пересборка на каждый кадр драга неподъёмна (это полная пересборка Jolt-куклы), поэтому во время драга
+ *     показываем правку трансформом меша, а в данные пишем ОДИН раз — по отпусканию, как и ползунки.
+ */
+let physEdit = getPref('physEdit', false);
+let physSel: string | null = null;
+const physHandle = new THREE.Object3D(); physHandle.name = 'physHandle'; scene.add(physHandle);
+/** Снимок ручки на захвате: от него считается дельта драга (ТС снимает свою точку отсчёта в pointerDown). */
+let physGrab: { pos: THREE.Vector3; quat: THREE.Quaternion } | null = null;
+let physSelMat: THREE.Material | null = null;   // подсветка выбранного тела (у всех тел материал ОБЩИЙ — нужен свой клон)
+
+/** Меш-призрак тела по имени. Ищем каждый раз: пересборка куклы делает НОВЫЕ меши. */
+function physMesh(name: string | null): THREE.Mesh | null {
+  if (!name || !ragdoll) return null;
+  return (ragdoll.group.children.find((o) => o.userData.physBody === name) as THREE.Mesh | undefined) ?? null;
+}
+/** Активное тело каталога по имени (уже с применёнными оверрайдами — `physBodies()` отдаёт `sized`). */
+function physBodyOf(name: string | null): ReturnType<typeof physBodies>[number] | null {
+  return name ? physBodies().find((b) => b.name === name) ?? null : null;
+}
+/** Полудлина, которую показывает ползунок «длина (½)» — её же множит масштаб гизмо (одно число на оба пути). */
+function physLenOf(b: { shape: { k: string; h?: number[]; r?: number; half?: number }; off: [number, number, number] }, ov: PhysSize): number {
+  const ax = bodyAxis(b as Parameters<typeof bodyAxis>[0]);
+  const s = b.shape;
+  const cur = s.k === 'box' ? s.h![ax]! : s.k === 'sphere' ? s.r! : s.half!;
+  return ov.len ?? cur;
+}
+/** ⭐ ОДИН ШОВ ЗАПИСИ РАЗМЕРОВ: им пишут и ползунки панели, и гизмо во вьюпорте. */
+function applyPhysSize(name: string, fn: (o: PhysSize) => void, rebuild = true): void {
+  fn(PHYS_SIZES[name] ??= {});
+  saveRagdollConfig(); savePoseKey('pe_ragdoll');
+  if (rebuild) { rebuildRagdoll(); redrawPanel(); }
+}
+/** Перерисовать панель ТОЙ вкладки, что открыта. Правка из вьюпорта не имеет права подменить содержимое панели. */
+function redrawPanel(): void { if (tab === 'anim') renderAnim(); else refreshAll(); }
+/** Выбрать тело во вьюпорте: панель переключается на него же (у них одно состояние — `sizeBody`). */
+function selectPhysBody(name: string | null): void {
+  physSel = name;
+  if (name) { sizeBody = name; redrawPanel(); }
+  if (!name) { if (gizmo.object === physHandle) gizmo.detach(); return; }
+  parkPhysHandle();
+  gizmo.setSpace('local'); gizmo.setMode(modeOf({ shift: shiftDown, alt: altDown })); gizmo.attach(physHandle);
+}
+/** Поставить ручку на выбранное тело (кадр кости — для сдвига/поворота, кадр формы — для масштаба). */
+function parkPhysHandle(): void {
+  const m = physMesh(physSel), b = physBodyOf(physSel);
+  if (!m || !b) return;
+  physHandle.position.copy(m.position);
+  physHandle.quaternion.copy(gizmo.mode === 'scale'
+    ? shapeFrame(m.quaternion, shapeRot(b), b.shape.k, bodyAxis(b))
+    : m.quaternion);
+  physHandle.scale.set(1, 1, 1);
+  physHandle.updateMatrixWorld(true);
+}
+/** Живой показ драга: накладывается на меш ПОСЛЕ покадрового синка, иначе его тут же затрёт `poseShapes`. */
+function previewPhysDrag(): void {
+  if (!physGrab || gizmo.object !== physHandle) return;
+  const m = physMesh(physSel); if (!m) return;
+  if (gizmo.mode === 'translate') m.position.add(_pgV.copy(physHandle.position).sub(physGrab.pos));
+  else if (gizmo.mode === 'rotate') m.quaternion.premultiply(_pgQ.copy(physHandle.quaternion).multiply(_pgQ2.copy(physGrab.quat).invert()));
+  else m.scale.copy(physHandle.scale);
+  m.updateMatrixWorld(true);
+}
+const _pgV = new THREE.Vector3(), _pgQ = new THREE.Quaternion(), _pgQ2 = new THREE.Quaternion();
+/** Записать правку в данные — ровно в те поля, что правят ползунки. */
+function commitPhysDrag(): void {
+  const name = physSel, b = physBodyOf(name);
+  if (!name || !b || !physGrab) return;
+  const ov = PHYS_SIZES[name] ?? {};
+  const mode = gizmo.mode;
+  const grabQ = physGrab.quat.clone(), grabP = physGrab.pos.clone();
+  physGrab = null;
+  if (mode === 'translate') {
+    const d = _pgV.copy(physHandle.position).sub(grabP);
+    if (d.lengthSq() < 1e-8) return;
+    // Ручка стояла в кадре КОСТИ — в нём же хранится `pos` (`shapeOff` складывает `off + pos`).
+    const p = dragPos(ov.pos, d, grabQ);
+    applyPhysSize(name, (o) => { o.pos = p; });
+  } else if (mode === 'rotate') {
+    if (physHandle.quaternion.angleTo(grabQ) < 1e-4) return;
+    const r = dragRot(physHandle.quaternion, grabQ, ov.rot);
+    applyPhysSize(name, (o) => { o.rot = r; });
+  } else {
+    const s = physHandle.scale;
+    if (Math.abs(s.x - 1) < 1e-4 && Math.abs(s.y - 1) < 1e-4 && Math.abs(s.z - 1) < 1e-4) return;
+    const size = dragSize(b.shape.k, physLenOf(b, ov), ov, s);
+    applyPhysSize(name, (o) => { if (size.len !== undefined) o.len = size.len; if (size.w !== undefined) o.w = size.w; if (size.d !== undefined) o.d = size.d; });
+  }
+}
+/**
+ * Подсветка выбранного тела. Материал у всех тел ОБЩИЙ (один `ghostMat` на куклу), поэтому выбранному
+ * подсовываем СВОЙ клон, а остальным возвращаем общий. Дёшево (ссылка), и переживает пересборку куклы.
+ */
+function paintPhysSel(): void {
+  if (!ragdoll) return;
+  const kids = ragdoll.group.children as THREE.Mesh[];
+  const base = kids.find((m) => m.userData.physBody !== physSel)?.material as THREE.Material | undefined;
+  if (!base) return;
+  if (!physSelMat) { const c = base.clone() as THREE.MeshStandardMaterial; c.color?.setHex(0xffb15a); c.opacity = 0.75; physSelMat = c; }
+  for (const m of kids) m.material = (physEdit && m.userData.physBody === physSel) ? physSelMat : base;
+}
+/** Клик во вьюпорте по физ-телу. `true` — взяли тело (дальше кости не трогаем). */
+function pickPhysBody(): boolean {
+  if (!physEdit || !ragdoll || !showBoxes) return false;
+  const hit = ray.intersectObjects(ragdoll.group.children, false)[0];
+  if (!hit) { if (physSel) selectPhysBody(null); return false; }
+  const nm = hit.object.userData.physBody as string | undefined;
+  if (!nm) return false;
+  fkProxyBone = null; selected = null; highlight(null); activeKey = null; activePole = null;
+  selectPhysBody(nm);
+  return true;
+}
 let footGround = getPref('groundFeet', true);   // заземление стоп (foot-IK) на физ-теле; выкл → авторская ротация стопы видна
 let ragdoll: HumanoidRagdoll | null = null;
 let reviveT = -1; const reviveFrom = new THREE.Vector3(); const reviveDur = 0.9;   // плавное вставание с пола
@@ -7533,7 +7716,12 @@ function loop(): void {
   // Ф27.6: боксы физ-тел — НА ТОМ ЖЕ СКЕЛЕТЕ, что виден. Сырое физ-состояние не заземлено и
   // не сбленжено к позе по `match`, поэтому оверлей висел ниже призрака на 1.15u и стоял
   // под своим углом (1.2–14.8°) — жалоба «бокс вертикальный, а кость под углом».
-  if (showBoxes && ragdoll) ragdoll.poseShapes(viewRig());
+  if (showBoxes && ragdoll) {
+    ragdoll.poseShapes(viewRig());
+    // ⚠ СТРОГО ПОСЛЕ синка: он переписывает мешам трансформ, и живой показ драга пропал бы в тот же кадр.
+    if (gizmo.dragging && gizmo.object === physHandle) previewPhysDrag(); else if (physSel) parkPhysHandle();
+    paintPhysSel();
+  }
   if (testTab.active) {
     testTab.frame(Math.min(dt, 0.1));
     if (testStatus && testStatus.isConnected) testStatus.textContent = testTab.status();
@@ -7546,7 +7734,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, fitPhysToMesh, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, setArmPole: (m: 'anatomical' | 'legacy'): void => { ARM_POLE = m === 'legacy' ? armPoleLegacy : armPoleAnatomical; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, applyPose, swivelFromHinge, get selected() { return selected; }, get gripMode() { return gripMode; }, pickSet: () => ({ onModelBones: onModelBones(), meshes: boneMeshes().length, fingers: boneMeshes().filter((m) => isHandBone(m.userData.bone as string)).length, visible: boneMeshes().filter((m) => m.visible).length }), pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, fitPhysToMesh, bodyAxis, physHandle, selectPhysBody, commitPhysDrag, parkPhysHandle, applyPhysSize, get physSel() { return physSel; }, get physEdit() { return physEdit; }, get physGrab() { return physGrab; }, previewPhysDrag, setPhysEdit: (v: boolean): void => { physEdit = v; if (v) { showBoxes = true; applyBoxVis(); } else selectPhysBody(null); }, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle, mesh: aMesh }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number, me?: number): void => { aSkel = sk; aHandle = hd; if (me !== undefined) aMesh = me; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, setArmPole: (m: 'anatomical' | 'legacy'): void => { ARM_POLE = m === 'legacy' ? armPoleLegacy : armPoleAnatomical; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, applyPose, swivelFromHinge, get selected() { return selected; }, get gripMode() { return gripMode; }, pickSet: () => ({ onModelBones: onModelBones(), meshes: boneMeshes().length, fingers: boneMeshes().filter((m) => isHandBone(m.userData.bone as string)).length, visible: boneMeshes().filter((m) => m.visible).length }), pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   get player() { return lp(); }, locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },

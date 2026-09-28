@@ -19,7 +19,7 @@ import { FINGER_GEO, FINGER_SEG } from './humanoid.js';                         
 import { EXTRA_JOINTS } from './jointLimits.js';                                                          // пределы пальцев — тоже ОДНИ
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
-type Vec3 = [number, number, number];
+export type Vec3 = [number, number, number];
 type Con =
   // swing: диапазоны АСИММЕТРИЧНЫ по осям (planeLim вокруг plane-оси, normalLim вокруг normal=twist×plane, twistLim вокруг twist).
   // Числа в каталоге — КАНОН (конвенция ЛЕВОЙ кости). У правой кости ОСИ свои, и там, где ось не зеркальна левой,
@@ -678,7 +678,7 @@ export function shapeOff(b: { off: Vec3; pos?: Vec3 }): Vec3 {
   const p = b.pos; return p ? [b.off[0] + p[0], b.off[1] + p[1], b.off[2] + p[2]] : b.off;
 }
 const _srE = new THREE.Euler(), _srQ = new THREE.Quaternion();
-function shapeRot(b: { off: Vec3; shape: PhysShape; rot?: Vec3 }): THREE.Quaternion {
+export function shapeRot(b: { off: Vec3; shape: PhysShape; rot?: Vec3 }): THREE.Quaternion {
   const q = new THREE.Quaternion();
   if (b.shape.k === 'sphere') return q;                       // шар симметричен — разворот бессмыслен
   const round = b.shape.k === 'cylinder' || b.shape.k === 'capsule' || b.shape.k === 'taper';
@@ -782,7 +782,9 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       : s.k === 'taper' ? new THREE.CylinderGeometry(s.r2, s.r, s.half * 2, 12)
       : new THREE.BoxGeometry(s.h[0] * 2, s.h[1] * 2, s.h[2] * 2);
     if (s.k !== 'sphere') geo.applyQuaternion(shapeRot(b));   // разворот запекаем в геометрию (И ДЛЯ БОКСА) — меш ведётся кватернионом тела
-    const m = new THREE.Mesh(geo, ghostMat); group.add(m); return m;
+    const m = new THREE.Mesh(geo, ghostMat);
+    m.userData.physBody = b.name;   // ⭐ имя тела на меше — по нему редактор узнаёт, за какое тело взялись во вьюпорте
+    group.add(m); return m;
   });
   const offs = B.map((b) => new THREE.Vector3(...shapeOff(b)));   // Ф28.2: то же смещение, что у физ-формы
 

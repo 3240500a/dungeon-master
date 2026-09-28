@@ -41,6 +41,8 @@ export interface EditorPrefs {
   tab?: string;              // выбранная вкладка панели
   charId?: string; weapon?: string; clip?: string;   // на чём остановился
   pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number;
+  aMesh?: number;            // прозрачность импортного меша (сквозь модель видно скелет и физ-тела)
+  physEdit?: boolean;        // правка физ-тел прямо во вьюпорте (мышью, а не только ползунками)
   open?: Record<string, boolean>;                    // свёрнутость свитков
   clipKind?: string; clipSort?: string; panelW?: number;
   [k: string]: unknown;

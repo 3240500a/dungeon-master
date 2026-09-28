@@ -17,6 +17,7 @@ import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js'
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
 import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile.js';
 import { saveConfigSection, mergedConfig } from './configEdits.js';
+import { fadeTree } from './meshAlpha.js';   // прозрачность импортного меша: гасим КЛОН материала, а не общий
 
 /** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). character = атлас (один GLB + slots). */
 interface ModelEntry {
@@ -52,6 +53,10 @@ export interface ModelsTabHandle {
   hasFingers(): boolean;
   /** Ф15.1: пересобрать риг-источник под новый морф персонажа (скелет и меш обязаны ехать вместе). */
   refreshProfile(): void;
+  /** Прозрачность импортного меша (1 — непрозрачен): сквозь модель смотрят на скелет и физ-тела.
+   *  Значение хранит редактор (личная настройка вида), применяет вкладка — меши живут у неё и пересобираются асинхронно. */
+  setMeshAlpha(a: number): void;
+  meshAlpha(): number;
   debug(): Record<string, unknown>;         // состояние (тесты/дебаг): атлас, сабмеши, видимость слотов, профиль
   dispose(): void;
 }
@@ -88,7 +93,10 @@ function slotOfSubmesh(name: string): ModelEntry['slot'] | undefined {
  * `charProfile`/`charBoneScale` — ГЕОМЕТРИЯ МАНЕКЕНА, переданная снаружи. Риг-источник `asmSrc` ОБЯЗАН
  * строиться ТЕМ ЖЕ, чем манекен, иначе кости модели встают НЕ там, где нарисованы кости редактора.
  */
-export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProfile | undefined, charBoneScale?: () => BoneScale | undefined): ModelsTabHandle {
+export function createModelsTab(
+  scene: THREE.Scene, charProfile?: () => BodyProfile | undefined, charBoneScale?: () => BoneScale | undefined,
+  onMeshAlpha?: (a: number) => void,   // ползунок прозрачности двинули — редактору сохранить в личных настройках
+): ModelsTabHandle {
   let cfg: AssetCfg = { models: [], materials: [], textures: [] };
   let loaded: THREE.Group | null = null;
   let rig: RetargetRig | null = null;
@@ -160,10 +168,22 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     const atlas = curAtlas();
     if (!atlas) return;
     seedVisible(atlas);
+    fadeTree(asmSkin.atlasExport()?.root ?? null, 1);   // клоны прежней сборки — вернуть и отпустить до пересборки
     asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
     await healFingerOffsets(atlas);
     await healStaleMapOffsets(atlas);
+    applyMeshAlpha();   // ⚠ сборка назначает мешам материалы заново — без этого ручка молча откатывалась бы
   }
+
+  /**
+   * ПРОЗРАЧНОСТЬ ИМПОРТНОГО МЕША — чтобы сквозь модель было видно скелет и физ-тела.
+   *
+   * Значение держит редактор (личная настройка вида, `pe_prefs`), а вкладка только показывает ползунок и
+   * применяет: меши атласа живут ЗДЕСЬ и пересобираются асинхронно, поэтому применять их обязана вкладка.
+   * Само гашение — `meshAlpha.ts`: клон материала, а не правка общего (он же висит на игровой кукле «Теста»).
+   */
+  let meshAlpha = 1;
+  function applyMeshAlpha(): void { fadeTree(asmSkin?.atlasExport()?.root ?? null, meshAlpha); }
 
   /**
    * ⭐⭐ САМО-ЛЕЧЕНИЕ ЗАМЕРОВ, СНЯТЫХ С НЕВЕРНОЙ КОСТИ.
@@ -736,6 +756,22 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     };
     slider('рост', 'height', 0.7, 1.4); slider('руки', 'arm', 0.6, 1.6); slider('ноги', 'leg', 0.6, 1.6); slider('торс', 'torso', 0.7, 1.4); slider('толщина', 'girth', 0.6, 1.8);
     body.append(prof);
+
+    // Прозрачность меша — вид, а не контент: сквозь модель смотрят на скелет и физ-тела.
+    const alp = el('div', boxCss);
+    alp.append(el('div', headCss, 'Прозрачность меша (сквозь модель видно скелет и физ-тела):'));
+    {
+      const r = el('div', rowFlex);
+      r.append(el('span', lblCss, 'непрозр.'));
+      // Нижняя граница 0.15 — как у ползунков прозрачности скелета и хелперов: ползунок один и тот же, просто
+      // показан в двух местах, и разъехавшиеся пределы читались бы как «в одном месте работает, в другом нет».
+      const s = document.createElement('input'); s.type = 'range'; s.min = '0.15'; s.max = '1'; s.step = '0.05'; s.value = String(meshAlpha); s.style.flex = '1';
+      const v = el('span', 'color:#c8b06a;font-size:10px;min-width:30px', meshAlpha.toFixed(2));
+      // oninput — вживую: гашение правит ОДНО число у уже готового клона, шейдеры не пересобираются.
+      s.oninput = () => { const a = parseFloat(s.value); v.textContent = a.toFixed(2); meshAlpha = a; applyMeshAlpha(); onMeshAlpha?.(a); };
+      r.append(s, v); alp.append(r);
+    }
+    body.append(alp);
   }
 
   function mkSelect(opts: string[], val: string, on: (v: string) => void): HTMLSelectElement {
@@ -779,6 +815,8 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   return {
     render,
     drive(source) { driveAsm(source); },
+    setMeshAlpha(a) { meshAlpha = a; applyMeshAlpha(); },
+    meshAlpha: () => meshAlpha,
     hideMannequin: () => false,   // показываем И скелет-манекен, И меш (позинг импортного персонажа: кости поверх модели)
     importUrl: (url) => importAtlas(() => loadModelUrl(url), url.split('/').pop() ?? 'character'),   // тест/дебаг: импорт атласа
     importRev: () => importRev,               // растёт на КАЖДОМ явном импорте атласа (замеры по модели протухли)

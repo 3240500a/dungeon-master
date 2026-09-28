@@ -13,6 +13,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { dedupeSkeletons, type DedupeReport } from './skeletonDedupe.js';
 import { assertGlbUsable } from './glbCheck.js';
 import { mergeIdenticalSkins } from './glbNormalize.js';
+import { withOpaque } from './meshAlpha.js';   // ⚠ ползунок прозрачности редактора не имеет права попасть в GLB
 
 /** Отчёт схлопывания по последней разобранной модели (для панели «Модели» — там видно, чем выгнали ассет). */
 let _lastDedupe: DedupeReport | null = null;
@@ -150,9 +151,14 @@ export async function loadModelUrl(url: string): Promise<THREE.Group> {
  *    ломаться было нечему, файл как файл.
  */
 export async function exportGLB(obj: THREE.Object3D, animations?: THREE.AnimationClip[]): Promise<ArrayBuffer> {
+  // ⚠ ЭКСПОРТ ВИДИТ ТОЛЬКО ОРИГИНАЛЬНЫЕ МАТЕРИАЛЫ. Ползунок «прозрачность меша» в редакторе вешает на меши
+  // КЛОНЫ с `transparent: true`, а `GLTFExporter` записал бы такой материал как `alphaMode: BLEND` — и деталь
+  // уехала бы в игру полупрозрачной у всех игроков. Один шов на все пути экспорта (атлас, части, оружие, клипы).
+  const backOpaque = withOpaque(obj);
   const raw = await new Promise<ArrayBuffer>((resolve, reject) =>
     new GLTFExporter().parse(obj, (res) => resolve(res as ArrayBuffer), (e) => reject(e),
-      animations && animations.length ? { binary: true, animations, onlyVisible: false } : { binary: true, onlyVisible: false }));
+      animations && animations.length ? { binary: true, animations, onlyVisible: false } : { binary: true, onlyVisible: false }))
+    .finally(backOpaque);
   const { out } = mergeIdenticalSkins(raw);
   assertGlbUsable(out);
   return out;
