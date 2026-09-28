@@ -234,6 +234,20 @@ export interface StanceOpts {
    * Не задано — прежнее поведение бит в бит (ветка не включается).
    */
   live?: (kind: 'idle' | 'combat_idle', item: string) => boolean;
+  /**
+   * ⭐⭐ РЕДКАЯ ВСТАВКА В ПОКОЙ этого кадра (планировщик — `idleFidget.ts`). Нет — ветка не берётся и
+   * поведение прежнее бит в бит.
+   *
+   * `scope: 'base'` — вставка ПОДМЕНЯЕТ БЕЗОРУЖНУЮ БАЗУ, поэтому дельта предмета и авторский якорь
+   * ложатся ПОВЕРХ: одна пачка «переступил» играет со ВСЕМ оружием (замер: размах за вставку безоружный
+   * = с мечом, голова 26.8 → 26.8°, шея 31.2 → 31.2°; якорь меча не сдвинут — 1.7e-6°).
+   * `scope: 'item'` — это ПОЛНАЯ авторская поза С ПРЕДМЕТОМ (прокрут меча): крутить мечом нечем, если
+   * позы меча во вставке нет, поэтому она блендится поверх УЖЕ СОБРАННОЙ стойки.
+   *
+   * ⚠ РЕФЕРЕНС ДЕЛЬТЫ ПРЕДМЕТА ОСТАЁТСЯ ЧИСТОЙ БАЗОЙ. Посчитать его от ПОДМЕНЁННОЙ базы — значит ровно
+   * скомпенсировать вставку, и с оружием она пропадёт. Та же грабля, что с дыханием.
+   */
+  fidget?: { pose: Pose; scope: 'base' | 'item'; w: number };
 }
 /** Один подмешанный предмет: что, в какую руку, чем и с какой силой. */
 export interface StanceLayerInfo { item: string; hand: 'main' | 'off'; kind: LayerKind; weight: number }
@@ -248,6 +262,18 @@ export function resolveStancePose(
   const weightOf = opts.weight ?? ((): number => 1);
   if (opts.trace) opts.trace.length = 0;
   const kindOf = (i: string): LayerKind => opts.kind?.(i) ?? (isTwoHanded(i) ? 'override' : 'additive');
+  /**
+   * Вставка этого кадра, уже отфильтрованная от служебных каналов набора хода. ⚠ Фильтр обязателен:
+   * `maskW` отдаёт любому `__`-ключу вес 1, и мокап-вставка отдала бы в стойку опору (`__swing`) и курс
+   * (`__rootY`) — то есть подменила бы опорную ногу и развернула персонажа.
+   */
+  const fg = opts.fidget && opts.fidget.w > 1e-4 ? { ...opts.fidget, pose: onlyBody(opts.fidget.pose) } : null;
+  /** База с подмешанной вставкой (`scope: 'base'`). Вес — огибающая планировщика. */
+  const withFidget = (p: Pose | null): Pose | null =>
+    (p && fg && fg.scope === 'base' ? blendTwo(p, fg.pose, Math.min(1, fg.w)) : p);
+  /** Поза С ПРЕДМЕТОМ поверх уже собранной стойки (`scope: 'item'`). */
+  const overItem = (p: Pose | null): Pose | null =>
+    (p && fg && fg.scope === 'item' ? blendTwo(p, fg.pose, Math.min(1, fg.w)) : p);
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
     const at = (k: 'idle' | 'combat_idle', i: string, tt: number): Pose | null => find(k, i, tt) ?? (k === 'combat_idle' ? find('idle', i, tt) : null);
     const exact = find(kind, weapon, t);
@@ -265,16 +291,19 @@ export function resolveStancePose(
        * живой базы значит ровно компенсировать дыхание (`Make Additive` в Unreal устроен так же).
        * Якорь при этом не сдвигается: |поза(t=0) − авторская стойка| = 0.000000°.
        */
-      const liveNow = opts.live && !opts.live(kind, weapon) && opts.live(kind, 'none') ? at(kind, 'none', t) : null;
-      const liveRef = liveNow ? at(kind, 'none', 0) : null;
+      // ⚠ УСЛОВИЕ ЖИВОЙ ВЕТКИ ПУСКАЕТ И ВСТАВКУ: сегодня оно требует МНОГОКАДРОВУЮ безоружную базу, и у
+      // персонажа с ОДНОКАДРОВОЙ базой вставка «переступил» не доехала бы до вооружённого тела вовсе.
+      const wantLive = !!opts.live && !opts.live(kind, weapon) && (opts.live(kind, 'none') || !!(fg && fg.scope === 'base'));
+      const liveNow = wantLive ? withFidget(at(kind, 'none', t)) : null;
+      const liveRef = liveNow ? at(kind, 'none', 0) : null;   // ⚠ референс — ЧИСТАЯ база, без вставки
       if (liveNow && liveRef) {
-        return composeStance(exact, [{ pose: onlyBody(liveNow), base: liveRef, mask: fullMask(), weight: 1, kind: 'additive' }]);
+        return overItem(composeStance(exact, [{ pose: onlyBody(liveNow), base: liveRef, mask: fullMask(), weight: 1, kind: 'additive' }]));
       }
-      return exact;                                           // 1. авторская на точный ключ
+      return overItem(exact);                                 // 1. авторская на точный ключ
     }
-    const base = at(kind, 'none', t);
+    const base = withFidget(at(kind, 'none', t));
     const [m, o] = splitHands(weapon);
-    if (!base) return at(kind, m, t);                         // 3. базы нет — старое поведение
+    if (!base) return overItem(at(kind, m, t));               // 3. базы нет — старое поведение
     // ⚠ РЕФЕРЕНС ДЕЛЬТЫ — БАЗА НА НУЛЕ, а не живая. Если считать дельту от дышащей базы, она будет
     // ровно компенсировать дыхание, и рука с предметом застынет: на маске оверлея жизнь пропадёт.
     // Так же устроен `Make Additive` в Unreal — базовая поза аддитива фиксированная.
@@ -310,7 +339,7 @@ export function resolveStancePose(
         if (opts.trace && kind === 'idle') opts.trace.push({ item: o, hand: off ? 'off' : 'main', kind: k2, weight: weightOf(o) });
       }
     }
-    return layers.length ? composeStance(base, layers) : base;   // 2. сборка (нет предметов → чистая база)
+    return overItem(layers.length ? composeStance(base, layers) : base);   // 2. сборка (нет предметов → чистая база)
   };
   const relaxed = one('idle');
   if (!relaxed || combat <= 0.001) return relaxed;

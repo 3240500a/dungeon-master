@@ -120,6 +120,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
    * пакета (15.8 с); `stancePoseAt` всё равно берёт остаток от длительности.
    */
   player.setIdlePhase(((Math.abs(Math.sin(opts.x * 12.9898 + opts.z * 78.233)) * 43758.5453) % 20));
+  player.setIdleBreaks(true);   // редкие вставки в покой — только у игровых кукол; запекатель их не включает
   const ground = newGhostGround();     // сглаженный прижим низшей стопы к полу (общий с редактором)
 
   // ── C6b: слой скинов (импортные GLB по слотам) поверх процедурного solid — только для игрока (classId).

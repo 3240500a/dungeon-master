@@ -133,3 +133,58 @@ describe('фаза живой стойки', () => {
     expect(body, 'сброс обязан класть idlePhase0, а не литеральный 0').toMatch(/idleT = this\.idlePhase0/);
   });
 });
+
+/**
+ * ⭐⭐ РЕДКАЯ ВСТАВКА В ПОКОЙ на том же шве. Два класса: подмена БАЗЫ (играет со всем оружием) и поза
+ * С ПРЕДМЕТОМ (прокрут меча). Проверяем ровно то, на чём этот шов ломается.
+ */
+describe('вставка в покой на шве стойки', () => {
+  const fgPose: Pose = {
+    Chest: [0.9, 0, 0], Neck: [0.8, 0, 0], LeftUpperLeg: [0.3, 0, 0],
+    __swing: [0, 1, 0],            // служебные каналы набора хода — в стойку попасть НЕ ДОЛЖНЫ
+    __rootY: [2.5, 0, 0],
+  };
+  const withFg = (scope: 'base' | 'item', w: number): Pose =>
+    resolveStancePose(look, 'sword', 0, { live: isLive, fidget: { pose: fgPose, scope, w } }, 0.7)!;
+
+  it('⭐ БАЗОВАЯ вставка доезжает до тела С ОРУЖИЕМ', () => {
+    const off = resolveStancePose(look, 'sword', 0, { live: isLive }, 0.7)!;
+    const on = withFg('base', 1);
+    expect(Math.abs(on['Neck']![0] - off['Neck']![0]), 'шея обязана уехать во вставку').toBeGreaterThan(0.3);
+    expect(Math.abs(on['LeftUpperLeg']![0] - off['LeftUpperLeg']![0]), 'ноги тоже — стойка это всё тело').toBeGreaterThan(0.1);
+  });
+
+  it('⭐⭐ ЯКОРЬ ОРУЖИЯ ВСТАВКОЙ НЕ СДВИНУТ — меч держится как поставил автор', () => {
+    const on = withFg('base', 1);
+    for (const k of ['RightUpperArm', 'RightLowerArm', '__wpnMain']) {
+      const got = on[k]!, want = swordPose[k]!;
+      for (let j = 0; j < 3; j++) expect(got[j], `${k}[${j}] уехал от авторской стойки`).toBeCloseTo(want[j]!, 6);
+    }
+  });
+
+  it('⚠ СЛУЖЕБНЫЕ КАНАЛЫ вставки в стойку не пускаются', () => {
+    const on = withFg('base', 1);
+    expect(on['__swing'], '⚠ канал опоры подменил бы опорную ногу').toBeUndefined();
+    expect(on['__rootY'], '⚠ канал курса развернул бы персонажа').toBeUndefined();
+  });
+
+  it('ВЕС огибающей работает как доля: 0 — прежняя поза, 1 — вставка целиком', () => {
+    const off = resolveStancePose(look, 'sword', 0, { live: isLive }, 0.7)!;
+    expect(withFg('base', 0)['Neck']![0], 'нулевой вес = ветка не берётся').toBeCloseTo(off['Neck']![0]!, 6);
+    const half = withFg('base', 0.5)['Neck']![0]!;
+    const full = withFg('base', 1)['Neck']![0]!;
+    expect(Math.abs(half - off['Neck']![0]!)).toBeLessThan(Math.abs(full - off['Neck']![0]!));
+  });
+
+  it('⭐ ПОЗА С ПРЕДМЕТОМ (прокрут меча) кладётся ПОВЕРХ собранной стойки', () => {
+    const on = withFg('item', 1);
+    expect(on['Chest']![0], 'корпус обязан уехать в позу вставки').toBeCloseTo(fgPose['Chest']![0]!, 3);
+    expect(on['RightUpperArm']![0], '⚠ рука тоже — иначе мечом крутить нечем').not.toBeCloseTo(swordPose['RightUpperArm']![0]!, 3);
+  });
+
+  it('БЕЗ поля `fidget` поведение прежнее БИТ В БИТ', () => {
+    const a = resolveStancePose(look, 'sword', 0, { live: isLive }, 0.7)!;
+    const b = resolveStancePose(look, 'sword', 0, { live: isLive, fidget: { pose: fgPose, scope: 'base', w: 0 } }, 0.7)!;
+    for (const k in a) for (let j = 0; j < 3; j++) expect(b[k]![j]).toBeCloseTo(a[k]![j]!, 9);
+  });
+});

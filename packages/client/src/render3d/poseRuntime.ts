@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets, type StanceFoot, locoVal } from './gaitKnobs.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
+import { makeFidgetState, stepIdleBreak, type FidgetState } from './idleFidget.js';
+import { IDLE_BREAK_DEF, type FidgetCfg, type IdleBreakCfg } from './animConfig.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections, clipChannelAt } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
@@ -169,6 +171,9 @@ export function blendTwist(s: TwistStates, speed: number): TwistProfile {
 export const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
+/** Вставка в покой, доезжающая до резолвера стойки: поза кадра, её класс и вес огибающей. */
+export interface StanceFidget { pose: Pose; scope: 'base' | 'item'; w: number }
+
 export interface PoseContent {
   /** Чей это контент — ключ `pe_swing` и прочих пер-персонажных настроек. Нет поля (тесты) — умолчания класса предмета. */
   charId?: string;
@@ -182,7 +187,15 @@ export interface PoseContent {
    * донора класс без своего `run_fwd` уезжает на процедурный планировщик прямо в игре.
    */
   gaitFallbackId?: string;
-  resolveUpper(weapon: string, combat?: number, t?: number): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle; t — время живой стойки (сек), 0 = первый кадр
+  resolveUpper(weapon: string, combat?: number, t?: number, fidget?: StanceFidget | null): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle; t — время живой стойки (сек), 0 = первый кадр
+  /** Пул редких вставок в покой для этой оси и того, что реально в руках. Нет метода — вставок нет. */
+  fidgets?(kind: 'idle' | 'combat_idle', items: readonly string[]): FidgetCfg[];
+  /** Длительность вставки (сек); 0 — клипа нет, планировщик её не запустит. */
+  fidgetDur?(clip: string): number;
+  /** Поза вставки в момент `t` (сек). ⚠ БЕЗ заворота: вставка однократна, в отличие от стойки-цикла. */
+  fidgetPose?(clip: string, t: number): Pose | null;
+  /** Расписание вставок (порог покоя, пауза, кроссфейд). */
+  idleBreak?(): IdleBreakCfg;
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
   /** Клип состояния (`stagger`, `knockdown_fall`, `getup`…) по привязке из `pe_anim`. Нет клипа → null. */
   stateClip?(state: string): Clip | null;
@@ -526,9 +539,9 @@ const CLIP_ARM_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightL
  * `Neck`/`Head` попали бы в «правую руку» (поймано сторожом изоляции частей: вес руки двигал голову).
  */
 const ARM_SEAM_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', ...UPPER_BONES] as const;
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0, atkLegs?: number, armsFrom: Pose | null = null, refFrom: Pose | null = null): void {
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0, atkLegs?: number, armsFrom: Pose | null = null, refFrom: Pose | null = null, fidget: StanceFidget | null = null): void {
   const H = human.bones;
-  const up = content.resolveUpper(weapon, combat, idleT);
+  const up = content.resolveUpper(weapon, combat, idleT, fidget);
   // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
   const sb = t.sb ?? 0;
   const eDownB = gx.armDown + ((gx.armDownRun ?? gx.armDown) - gx.armDown) * sb;
@@ -1124,9 +1137,9 @@ const _spE = new THREE.Euler(), _spQ = new THREE.Quaternion();
 const stancePelvisQuat = (rx: number, ry: number, rz: number, w: number, wYaw: number): THREE.Quaternion =>
   _spQ.setFromEuler(_spE.set(rx * w, ry * wYaw, rz * w, 'XYZ'));
 
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number, clipOnly = false, locoRef: Pose | null = null): void {
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number, clipOnly = false, locoRef: Pose | null = null, fidget: StanceFidget | null = null): void {
   human.reset();
-  const up0 = content.resolveUpper(weapon, combat, idleT);
+  const up0 = content.resolveUpper(weapon, combat, idleT, fidget);
   const idle = up0?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   frameLayers(up0, t.sb ?? 0, combat, clipOnly);   // ⭐ веса «локомоция ↔ стойка» по частям → `_lw` (читает и `applyUpper` ниже)
   frameSwing(up0, content.charId ?? '', t.sb ?? 0, combat, content.fallbackId);   // ⭐ мах каждой руки по предмету в ней → `_sw*`
@@ -1211,7 +1224,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // сглажена (`LOCO_FADE`) и та же, что у ног. ⚠ Мгновенная скорость там не годится: на остановке она падает в ноль
   // за кадр, а фаза клипа замирает — рука щёлкала бы со взмаха в стойку.
   applyUpper(human, weaponGroups, gx, clipOnly ? locoMix : armMag, t, content, weapon, atk, combat, fade, idleT, atkLegs,
-    clipOnly && locoMix > 0.001 ? locoPose : null, clipOnly && locoMix > 0.001 ? locoRef : null);
+    clipOnly && locoMix > 0.001 ? locoPose : null, clipOnly && locoMix > 0.001 ? locoRef : null, fidget);
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   // ⭐⭐ ЩИТ: ПОЗА — ТОЛЬКО НА УДАРЕ, ХВАТ — ВСЕГДА.
@@ -1407,6 +1420,13 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
   const stance = (w: string): Clip | null => find('idle', charId, w) ?? (fallbackId ? find('idle', fallbackId, w) : null);
   const combatStance = (w: string): Clip | null => find('combat_idle', charId, w) ?? (fallbackId ? find('combat_idle', fallbackId, w) : null);   // боевая стойка (нет → null → фолбэк на relaxed idle)
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
+  /**
+   * Клип вставки — ПО ИМЕНИ, как и роли стоек: привязка по ссылке, переименовывать ничего не надо.
+   * Оружие в ключе не участвует: условие «с чем играть» задано МЕСТОМ записи в `pe_anim`, а не именем.
+   */
+  const clipByName = (nm: string): Clip | null =>
+    clips.find((c) => c.name === nm && c.character === charId)
+    ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null);
   const anim = readAnimCfg(readJSON<unknown>('pe_anim', {}), charId, fallbackId);   // контроллер: предметы + привязки клипов
   // ⭐ ХВАТ ЖИВЁТ ЗДЕСЬ, А НЕ В КЛИПЕ (см. `liveGrip`). Ключ `pe_gripposes` — тот же, что у редактора.
   const gripCfg = readJSON<GripConfig>('pe_gripposes', EMPTY_GRIP_CONFIG());
@@ -1435,7 +1455,7 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
      * СОБИРАЕТСЯ из безоружной базы и дельт предметов по рукам (`resolveStancePose`). Тот же вызов
      * стоит в редакторе — правило «редактор ≡ игра» держится кодом, а не дисциплиной.
      */
-    resolveUpper(weapon: string, combat = 0, t = 0): UpperPose | null {
+    resolveUpper(weapon: string, combat = 0, t = 0, fidget: StanceFidget | null = null): UpperPose | null {
       // ⚠⚠ ЗДЕСЬ СТОЯЛ ФОЛБЭК «нет позы на точный ключ — возьми БАЗОВОЕ оружие» (`sword+shield` →
       // `sword`), и он УБИВАЛ ВСЮ СБОРКУ СЛОЯМИ. Резолвер спрашивает точный ключ ПЕРВЫМ и, получив
       // ответ, возвращает его сразу — то есть на `sword+shield` приходила чистая стойка меча, и щит
@@ -1455,6 +1475,7 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
         { weight: (it) => anim.weightOf(it), kind: (it) => anim.kindOf(it), hand: (it) => anim.handOf(it),
           // ⭐ живая ли стойка на ключе — тем же резолвом ролей, что и сама поза (иначе вторая правда)
           live: (k, i) => (bound(k, i)?.keys.length ?? 0) > 1,
+          ...(fidget ? { fidget } : {}),
           trace: layersOut }, t);
       if (layerTrace.on) { layerTrace.items.length = 0; for (const l of layersOut) layerTrace.items.push(l); }
       if (!pose) return null;
@@ -1470,6 +1491,16 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
                clipName: lead?.name, fingersAnimated: fingersAnimated(lead) };
     },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
+    fidgets: (kind, itemsInHand) => anim.fidgets(kind, itemsInHand),
+    idleBreak: () => anim.idleBreak(),
+    fidgetDur: (nm) => { const c = clipByName(nm); return c ? clipDur(c) : 0; },
+    fidgetPose: (nm, tt) => {
+      const c = clipByName(nm); if (!c) return null;
+      const d = clipDur(c);
+      // ⚠ БЕЗ ЗАВОРОТА (в отличие от `stancePoseAt`): вставка играется ОДИН раз и замирает на последнем кадре,
+      // а гасит её огибающая планировщика. Заворот превратил бы редкую вставку в второй бесконечный цикл.
+      return d > 0 ? clipPoseAt(c, Math.min(1, Math.max(0, tt / d))) : c.keys[0]?.pose ?? null;
+    },
     /** Клип состояния по привязке (`pe_anim.states`), иначе по имени состояния как есть. */
     stateClip(state: string): Clip | null { return byName(anim.stateName(state)); },
     /**
@@ -2387,7 +2418,33 @@ export class PosePlayer {
     if (!Number.isFinite(sec)) return;
     this.idlePhase0 = Math.max(0, sec);
     this.idleT = this.idlePhase0;
+    // Расписание вставок берёт сид ОТТУДА ЖЕ: фазы дыхания и вставок разведены ОДНОЙ причиной, а не двумя.
+    this.fidget = makeFidgetState(Math.round(this.idlePhase0 * 1e6) | 0, this.idlePhase0);
   }
+  /** Состояние редких вставок в покой (`idleFidget.ts`). */
+  private fidget: FidgetState = makeFidgetState(1);
+  /**
+   * ⚠ ВСТАВКИ ВЫКЛЮЧЕНЫ ПО УМОЛЧАНИЮ. Их включают игровая кукла и превью редактора; ЗАПЕКАТЕЛЬ — нет,
+   * поэтому запекание остаётся детерминированным, а все нынешние тесты и наборы — бит в бит.
+   */
+  private idleBreaks = false;
+  setIdleBreaks(on: boolean): void { this.idleBreaks = on; if (!on) this.cancelFidget(); }
+  /** Оборвать играющую вставку МЯГКО (гашением), а не кадром: удар, смена оружия, сброс. */
+  private cancelFidget(): void { if (this.fidget.clip) this.fidget.fading = true; }
+  /** Вставка этого кадра для резолвера стойки (null — её нет). */
+  private fidgetArg(): StanceFidget | null {
+    const f = this.fidget;
+    if (!f.clip || f.w <= 1e-4 || !this.content.fidgetPose) return null;
+    const pose = this.content.fidgetPose(f.clip, f.t);
+    return pose ? { pose, scope: f.scope, w: f.w } : null;
+  }
+  /** Что играет прямо сейчас — для строки инспектора и для превью редактора. */
+  get fidgetNow(): { clip: string; t: number; w: number } | null {
+    const f = this.fidget;
+    return f.clip ? { clip: f.clip, t: f.t, w: f.w } : null;
+  }
+  /** Запустить вставку немедленно (кнопка «▶ проиграть сейчас» в редакторе). */
+  playFidgetNow(): void { this.fidget.calmFor = 1e6; this.fidget.wait = 0; }
   /** Секция локомоции (Ф5б): разгон / цикл / остановка. Меток в клипе нет — всегда цикл. */
   private locoSec: LocoSectionState = { section: 'idle', t: 0 };
   /** Текущая доля клипа локомоции (едет к цели за `LOCO_FADE`) — см. комментарий на месте чтения. */
@@ -2748,6 +2805,22 @@ export class PosePlayer {
    * ⚠ X/Z — ДЕЛЬТОЙ поверх того, что положил конвейер (0 стоя, `hipsRest + __hipsD` клипа под клипом), а не
    * присвоением: клип поворота снят БЕЗ таза стойки (см. `clipBake.procedural`), его сдвиг — собственное движение.
    */
+  /**
+   * ⭐ ТИК РЕДКИХ ВСТАВОК. Условие покоя считается на УЖЕ СУЩЕСТВУЮЩИХ защёлках — ни одной новой сущности:
+   * `still` (у неё свой гистерезис против дребезга), не крутимся и не решаем о повороте, свободен слот
+   * действия, не в стане и не сбиты, ноги не догибает планировщик.
+   * ⚠ Слот действия здесь только ЧИТАЕТСЯ: вставка его не занимает, поэтому повороты на месте продолжают
+   * работать. Занятый слот вырубал бы их на всю длину вставки — замер: 28 кадров поворота против 0.
+   */
+  private stepFidget(dt: number, clipOnly: boolean): void {
+    if (!this.idleBreaks || !clipOnly || !this.content.fidgets || !this.content.fidgetDur) return;
+    const calm = this.still && !this.turning && !this.turnMode && !this.atk.clip
+      && !this.stunned && !this.downed && this.legMag < 0.05;
+    const kind = this.combat > 0.5 ? 'combat_idle' : 'idle';
+    const [m, o] = splitHands(this.weapon);
+    const pool = this.content.fidgets(kind, [m, o]);
+    stepIdleBreak(this.fidget, dt, calm, this.content.idleBreak?.() ?? IDLE_BREAK_DEF, pool, (c) => this.content.fidgetDur!(c));
+  }
   private applyStancePelvis(legFree: number, clipFree: number): number {
     const st = _stancePelvis;
     const w = stancePelvisKnob() * clamp(legFree, 0, 1) * clamp(clipFree, 0, 1);
@@ -2772,6 +2845,7 @@ export class PosePlayer {
    */
   setWeapon(w: string): void {
     if (w !== this.weapon && this.seamW > 0) this.seamRestart = true;
+    if (w !== this.weapon) this.cancelFidget();   // вставка снята под ДРУГОЕ оружие — держать её нельзя
     this.weapon = w; this.measureStance();
   }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
@@ -2802,6 +2876,7 @@ export class PosePlayer {
     this.leadRate = 0; this.turnAccelHold = false; this.turnPinnedFor = 0; this.turning = false;
     this.prevAim = this.aimYaw; this.aimStableFor = 0; this.aimGap = 0; this.aimRate = 0;
     this.idleT = this.idlePhase0; this.atkLegsW = 0; this.legsHeld = false;   // ⚠ в СВОЮ фазу, а не в ноль — см. `idlePhase0`
+    this.cancelFidget();
     this.modeSnap = null; this.modeBlend = 0;
     this.freshCache.has = false;
   }
@@ -3158,6 +3233,7 @@ export class PosePlayer {
     // чтобы шов не лез в состояние базы, а база не знала про планировщик.
     if (!clipOnly) this.plannerLegs(legsHeld || turnLegs, this.legMag > 0.5 && !legsHeld && !turnLegs);
     this.idleT += dt;
+    this.stepFidget(dt, clipOnly);
     // ⚠ В «только клипы» планировщик НЕ ОБНОВЛЯЕТСЯ: цели нейтральные, а ось ходьба↔бег — ВЕС БЕГА КЛИПОВ по скорости.
     // ⭐ Было `(v − speedWalk) / (speedRun − speedWalk)` — ось планировщика 40…115, а клипы сняты на 50.4 / 102: свой
     // темп клип получал только ВНЕ своей скорости (замер: цикл на 50.4 длиннее планировщика на 6.2 %, на 102 короче
@@ -3348,7 +3424,7 @@ export class PosePlayer {
     // ⚠ Источник опоры — В ТРАССУ ДО отрисовки строки: строку «НОГИ / ТАЗ» пишет сам `gaitToHumanoid`,
     // и флаг, поставленный после него, показывал бы ПРОШЛЫЙ кадр.
     if (layerTrace.on) layerTrace.swingGuessed = this.swingGuessed;
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW, clipOnly, locoRef);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW, clipOnly, locoRef, this.fidgetArg());
     if (layerTrace.on) {
       layerTrace.speed = Math.hypot(this.vx, this.vz);
       layerTrace.sb = tg.sb ?? 0; layerTrace.st = tg.st ?? 0;

@@ -4137,6 +4137,7 @@ function clipSection(): void {
       // клип как угодно названный — и делается это здесь, где его и называют, а не на другой вкладке.
       roleBtn(c, 'idle', '🧍 спокойная'),
       roleBtn(c, 'combat_idle', '⚔ боевая'),
+      fidgetBtn(c),
       pbtn(c.loop ? '↻ луп' : '→ 1 раз', () => histLib('луп клипа', () => { c.loop = !c.loop; saveLib(); refreshAll(); }), c.loop),
       pbtn('⚙ запечь физику', () => { void bakeCurrentClip(); }),
     );
@@ -5746,6 +5747,38 @@ function roleBtn(c: Clip, kind: 'idle' | 'combat_idle', label: string): HTMLElem
   b.title = on
     ? `«${c.name}» сейчас ${kind === 'idle' ? 'спокойная' : 'боевая'} стойка для «${weapon}». Снять — если имя конвенционное, роль останется за ним по имени.`
     : `назначить «${c.name}» ${kind === 'idle' ? 'спокойной' : 'боевой'} стойкой для «${weapon}» (привязка по ссылке — имя любое)`;
+  return b;
+}
+/**
+ * ⭐⭐ «✨ ВСТАВКА» — редкая вставка в покой (`idleFidget.ts`): персонаж стоит долго и раз в полминуты
+ * переступает или крутит мечом.
+ *
+ * ⚠ МЕСТО ЗАПИСИ = УСЛОВИЕ НА ОРУЖИЕ, ровно как у ролей стоек: при оружии «нет» вставка ложится в
+ * `base.fidgets` и играет СО ВСЕМ оружием (она подменяет безоружную БАЗУ, а дельта предмета и авторский
+ * якорь ложатся поверх); при выбранном оружии — в `items.<оружие>.fidgets`, и тогда она требует этот
+ * предмет в руках. Отдельного поля «требует предмет» нет нарочно: оно смогло бы разойтись с
+ * действительностью, а место в данных разойтись не может.
+ */
+function fidgetList(item: string): (string | { clip: string; weight?: number; blend?: number })[] {
+  if (item === 'none') { const b = ((animStore[curCharId] ??= {}).base ??= {}); return (b.fidgets ??= []); }
+  const c = animItem(item) as { fidgets?: (string | { clip: string })[] };
+  return (c.fidgets ??= []) as (string | { clip: string; weight?: number; blend?: number })[];
+}
+const fidgetHas = (item: string, nm: string): boolean =>
+  fidgetList(item).some((f) => (typeof f === 'string' ? f : f?.clip) === nm);
+function fidgetBtn(c: Clip): HTMLElement {
+  const on = fidgetHas(weapon, c.name);
+  const b = pbtn('✨ вставка', () => {
+    const arr = fidgetList(weapon);
+    const i = arr.findIndex((f) => (typeof f === 'string' ? f : f?.clip) === c.name);
+    if (i >= 0) arr.splice(i, 1); else arr.push(c.name);
+    saveAnim(); refreshAll();
+  }, on);
+  b.title = on
+    ? `«${c.name}» — редкая вставка в покой для «${weapon}». Нажми, чтобы убрать.`
+    : weapon === 'none'
+      ? `сделать «${c.name}» редкой вставкой в покой. Оружие «нет» ⇒ вставка играет СО ВСЕМ оружием (подменяет безоружную базу, хват и якорь остаются авторскими)`
+      : `сделать «${c.name}» редкой вставкой в покой ТОЛЬКО для «${weapon}» (например прокрут меча — он требует меч в руке)`;
   return b;
 }
 function goFrame(i: number): void {
