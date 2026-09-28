@@ -16,7 +16,7 @@ import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdol
 import { pickAttack, ATTACK_VARY } from './attackPick.js';   // ⭐ очередь ударов: порядок + шанс разнообразия
 import { GAIT } from './gaitKnobs.js';
 import { BASE_GAIT_CHAR } from './locoBlend.js';   // ⭐ донор набора хода — один на игроков и монстров
-import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, loadMorph, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons , hostWeaponOnHand, disposeWeaponGroup} from './weapon3d.js';
 import { applyCraftLooks } from './craftWeapon3d.js';
 import { weaponLookSig, type ConfigRegistry, type WeaponLook } from '@dm/shared';
@@ -71,12 +71,18 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const twistStates = opts.classId ? loadTwistStates(opts.classId) : opts.gaitId ? loadTwistStates(opts.gaitId, opts.gaitFallback) : loadTwistStates('__none__');
   let weapon = opts.weapon;
   const ch = opts.classId ? charFor(opts.classId) : null;
+  /**
+   * ⭐⭐ ТЕЛОСЛОЖЕНИЕ ИЗ ПОЗ-РЕДАКТОРА (`pe_morph`) — ЗДЕСЬ, иначе «редактор ≡ игра» рвётся на пропорциях.
+   * Явно переданное (атлас модели, `boneOffsets`) главнее: морф это НАСТРОЙКА АВТОРА поверх процедурной
+   * болванки, а не поверх геометрии конкретной модели.
+   */
+  const morph = opts.classId ? loadMorph(opts.classId) : opts.gaitId ? loadMorph(opts.gaitId, opts.gaitFallback) : {};
   const gender = opts.gender ?? ch?.gender ?? 'male';
-  const build = opts.build ?? ch?.build ?? {};
+  const build = opts.build ?? morph.build ?? ch?.build ?? {};
   const col = opts.colors ?? {};
 
-  const profile = opts.profile;   // модульные пропорции: solid/target строятся с ним, импорт-скин конформится к solid
-  const boneScale = opts.boneScale;   // пер-костные множители из ФБХ → физ-скелет повторяет модель 1:1
+  const profile = opts.profile ?? morph.profile;   // модульные пропорции: solid/target строятся с ним, импорт-скин конформится к solid
+  const boneScale = opts.boneScale ?? morph.boneScale;   // пер-костные множители из ФБХ → физ-скелет повторяет модель 1:1
   const boneOffsets = opts.boneOffsets;   // ПОЛНЫЕ rest-офсеты из ФБХ (приоритет) — точная геометрия скелета
   const group = new THREE.Group();
   // solid — ВИДИМЫЙ humanoid-меш, ведём результатом физики (как призрак в редакторе). Оружие на кистях.

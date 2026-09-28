@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets, type StanceFoot, locoVal } from './gaitKnobs.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
+import { morphToProfile, morphToBuild, morphToBoneScale, type BodyMorph } from './bodyMorph.js';
+import type { BodyProfile, BoneScale } from './bodyProfile.js';
+import type { BuildScale } from './humanoid.js';   // ⭐ телосложение: те же чистые функции, что у редактора
 import { makeFidgetState, stepIdleBreak, type FidgetState } from './idleFidget.js';
 import { IDLE_BREAK_DEF, type FidgetCfg, type IdleBreakCfg } from './animConfig.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
@@ -1431,6 +1434,8 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
     clips.find((c) => c.name === nm && c.character === charId)
     ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null);
   const anim = readAnimCfg(readJSON<unknown>('pe_anim', {}), charId, fallbackId);   // контроллер: предметы + привязки клипов
+  /** Авторский список ударов (`pe_attacks`): персонаж → оружие → имена клипов В ПОРЯДКЕ СЕРИИ. */
+  const atkCfg = readJSON<Record<string, Record<string, string[]>>>('pe_attacks', {});
   // ⭐ ХВАТ ЖИВЁТ ЗДЕСЬ, А НЕ В КЛИПЕ (см. `liveGrip`). Ключ `pe_gripposes` — тот же, что у редактора.
   const gripCfg = readJSON<GripConfig>('pe_gripposes', EMPTY_GRIP_CONFIG());
   const gripMemo = new WeakMap<object, Map<string, Pose>>();
@@ -1547,8 +1552,31 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
     },
     // Базовая атака: ВСЕ hit_*-клипы оружия (стабильный цикл по имени), фолбэк по оружию (экип→база→главная) и персонажу.
     attackClips(weapon: string): Clip[] {
+      /**
+       * ⭐⭐ АВТОРСКИЙ СПИСОК УДАРОВ (`pe_attacks`) БЬЁТ КОНВЕНЦИЮ ИМЁН.
+       *
+       * ⚠ ДО ЭТОГО ИГРА ЕГО НЕ ЧИТАЛА ВОВСЕ: она сгребала ВСЁ, что начинается на `hit_`, и сортировала по
+       * алфавиту. Редактор же даёт отметить, какие клипы удары и В КАКОМ ПОРЯДКЕ, — и этот выбор никуда не
+       * доезжал. Отсюда два разных поведения на одних данных: серия в редакторе одна, в игре другая, и
+       * клип с именем на `hit_`, который автор в серию НЕ клал, всё равно бил.
+       *
+       * Привязка — по имени, как у ролей стоек: переименовывать ничего не надо. Порядок берём АВТОРСКИЙ,
+       * без сортировки — он и есть последовательность серии.
+       */
+      const listed = (id: string): Clip[] => {
+        for (const cand of weaponChain(weapon)) {
+          const names = atkCfg[id]?.[cand];
+          if (!Array.isArray(names) || !names.length) continue;
+          const set = names.map((nm) => clips.find((c) => c.name === nm && c.character === id)).filter((c): c is Clip => !!c);
+          if (set.length) return set;
+        }
+        return [];
+      };
       const pick = (id: string): Clip[] => { for (const cand of weaponChain(weapon)) { const set = clips.filter((c) => c.character === id && c.weapon === cand && c.name.startsWith('hit_')); if (set.length) return set.slice().sort((a, b) => a.name.localeCompare(b.name)); } return []; };
-      const own = pick(charId); return own.length ? own : (fallbackId ? pick(fallbackId) : []);
+      // Список автора → его же у донора → конвенция имён (как было). Пустой список = «автор не отмечал», а не «ударов нет».
+      return listed(charId).length ? listed(charId)
+        : (fallbackId && listed(fallbackId).length ? listed(fallbackId)
+          : (pick(charId).length ? pick(charId) : (fallbackId ? pick(fallbackId) : [])));
     },
     // Поза щита per-оружие: idle_<weaponKey> (фолбэк idle_shield) + вес (perWeapon[wk] ?? базовый mix). Нет клипа — нет оверлея.
     shieldOverlay(weaponKey: string): { pose: Pose; mix: number } | null { const c = stance(weaponKey) ?? stance('shield'); if (!c || !c.keys.length) return null; const cfg = shieldCfg[charId] ?? (fallbackId ? shieldCfg[fallbackId] : undefined); const mix = cfg?.perWeapon?.[weaponKey] ?? cfg?.mix ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
@@ -1736,6 +1764,23 @@ export function applyBaseGrip(weaponGroups: THREE.Group[], charId: string, weapo
   });
 }
 /** Профили скрутки корпуса per-state (стой/ходьба/бег) per-char из pe_twist; фолбэк (монстры → Волкодав). */
+/**
+ * ⭐⭐ ТЕЛОСЛОЖЕНИЕ ПЕРСОНАЖА (`pe_morph`) — ОДИН ЗАГРУЗЧИК НА РЕДАКТОР И ИГРУ.
+ *
+ * ⚠ ДО ЭТОГО `pe_morph` ЧИТАЛ ТОЛЬКО ПОЗ-РЕДАКТОР: в `online3d`, `gamePlayerDoll` и `modelSkin` слова
+ * morph не было вовсе. То есть автор крутил рост, длину ног и обхваты, видел их на манекене — а в игру
+ * не ехало НИЧЕГО, и «редактор ≡ игра» рвалось на самом заметном: на пропорциях тела.
+ * Ключ уже лежал в `POSE_KEYS` и публиковался — не хватало ровно чтения на игровой стороне.
+ *
+ * Возвращает три величины ровно в том виде, в каком их ждёт `buildHumanoid`, и теми же чистыми
+ * функциями, что зовёт редактор (`bodyMorph.ts`) — иначе это была бы вторая правда о телосложении.
+ */
+export function loadMorph(charId: string, fallbackId?: string): { profile?: BodyProfile; build?: BuildScale; boneScale?: BoneScale } {
+  const cfg = readJSON<Record<string, BodyMorph>>('pe_morph', {});
+  const m = cfg[charId] ?? (fallbackId ? cfg[fallbackId] : undefined);
+  if (!m || !Object.keys(m).length) return {};
+  return { profile: morphToProfile(m), build: morphToBuild(m), boneScale: morphToBoneScale(m) };
+}
 export function loadTwistStates(charId: string, fallbackId?: string): TwistStates {
   const cfg = readJSON<Record<string, TwistCfgStored>>('pe_twist', {});
   const raw = cfg[charId] ?? (fallbackId ? cfg[fallbackId] : undefined);
