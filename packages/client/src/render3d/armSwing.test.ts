@@ -291,3 +291,64 @@ describe('щит: поза только на ударе, хват всегда',
     expect(overlay.R, 'и главную руку он не трогает').toBeCloseTo(noOverlay.R, 1);
   });
 });
+
+/**
+ * ⭐⭐ СИЛА МАХА ОТДЕЛЬНО ВПЕРЁД / ВБОК / НАЗАД.
+ *
+ * ЗАМЕР ДО ПРАВКИ: размах плеча с мечом и щитом 26.8° / 26.8° / 26.9° — различать было НЕЧЕМ, и сами
+ * клипы одинаковы (run_fwd 63.0°, run_strafe_R 63.0°, run_strafe_L 63.0°, run_back 63.1°): планировщик
+ * писал руки, не спрашивая направления. Поэтому раздельная настройка — единственный путь, кроме
+ * авторинга восьми клипов.
+ */
+describe('мах рук по направлению', () => {
+  const store = (side?: Record<string, number>, back?: Record<string, number>): SwingStore =>
+    readSwingStore({ warrior: { sword: { run: { arm: { k: 0.8 } }, ...(side ? { side } : {}), ...(back ? { back } : {}) } } });
+  const kOf = (st: SwingStore, dir: { st: number; bt: number } | null): number =>
+    lookupItemSwing(st, 'warrior', 'sword', 1, 0, undefined, dir).arm.k;
+
+  it('⚠ БЕЗ поправок направление ничего не меняет — старые записи бит в бит', () => {
+    const st = store();
+    const base = kOf(st, null);
+    for (const d of [{ st: 0, bt: 0 }, { st: 1, bt: 0 }, { st: 1, bt: 1 }, { st: 0.5, bt: 0.5 }]) {
+      expect(kOf(st, d), `направление ${JSON.stringify(d)} не должно трогать мах`).toBeCloseTo(base, 9);
+    }
+    expect(base, 'сама база на месте').toBeCloseTo(0.8, 6);
+  });
+
+  it('⭐⭐ ВБОК И НАЗАД настраиваются ПОРОЗНЬ', () => {
+    const st = store({ arm: 0.5 }, { arm: 0.25 });
+    expect(kOf(st, { st: 0, bt: 0 }), 'вперёд — как было').toBeCloseTo(0.8, 6);
+    expect(kOf(st, { st: 1, bt: 0 }), 'вбок — вполсилы').toBeCloseTo(0.4, 6);
+    expect(kOf(st, { st: 1, bt: 1 }), 'назад — четверть').toBeCloseTo(0.2, 6);
+  });
+
+  it('⭐ ДИАГОНАЛЬ — доли, а не провал: сумма весов ровно 1', () => {
+    const st = store({ arm: 0.5 }, { arm: 0 });
+    // вперёд-вбок пополам: wF = 0.5, wS = 0.5 ⇒ множитель 0.5·1 + 0.5·0.5 = 0.75
+    expect(kOf(st, { st: 0.5, bt: 0 })).toBeCloseTo(0.8 * 0.75, 6);
+    // назад-наискосок: wB = 0.5, wS = 0.5 ⇒ 0.5·0.5 + 0.5·0 = 0.25
+    expect(kOf(st, { st: 1, bt: 0.5 })).toBeCloseTo(0.8 * 0.25, 6);
+  });
+
+  it('часть без своего числа берёт число ПЛЕЧА — покрутил руку, локоть пошёл следом', () => {
+    const st = store({ arm: 0.5 });
+    const set = lookupItemSwing(st, 'warrior', 'sword', 1, 0, undefined, { st: 1, bt: 0 });
+    const base = lookupItemSwing(st, 'warrior', 'sword', 1, 0, undefined, null);
+    expect(set.elbow.k / base.elbow.k, 'локоть получил ту же поправку').toBeCloseTo(0.5, 3);
+  });
+
+  it('⚠ ЯКОРЬ (хват) поправкой НЕ ТРОГАЕТСЯ — просили силу маха, а не «держи иначе»', () => {
+    const st = store({ arm: 0.2 }, { arm: 0.2 });
+    const a0 = lookupItemSwing(st, 'warrior', 'sword', 1, 0, undefined, null).arm.a;
+    const a1 = lookupItemSwing(st, 'warrior', 'sword', 1, 0, undefined, { st: 1, bt: 1 }).arm.a;
+    expect(a1, 'покой руки обязан остаться').toBeCloseTo(a0, 9);
+  });
+
+  it('⚠ РАЗБОР СЫРОГО JSON не выбрасывает поправки (иначе правка живёт до перезагрузки)', () => {
+    const parsed = readSwingStore({ warrior: { sword: { side: { arm: 0.5 }, back: { elbow: 0.3 } } } });
+    expect(parsed['warrior']?.['sword']?.side).toEqual({ arm: 0.5 });
+    expect(parsed['warrior']?.['sword']?.back).toEqual({ elbow: 0.3 });
+    expect(readSwingStore({ warrior: { sword: { side: 'мусор', back: { arm: 'ой' } } } })['warrior']?.['sword']?.side).toBeUndefined();
+    expect(readSwingStore({ warrior: { sword: { side: { arm: 9 } } } })['warrior']?.['sword']?.side, 'число зажимается в 0…2').toEqual({ arm: 2 });
+  });
+});

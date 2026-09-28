@@ -32,7 +32,7 @@ import { deriveFingerAxes, type FingerAxes } from './fingerAxes.js';            
 import { fingersAnimated } from './clipModel.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
 import { blendArmKey, swingRefOf, type ArmWeights } from './armBlend.js';
-import { lookupItemSwing, readSwingStore, ARM_BONE_OF, TWO_HANDED_ITEMS, type SwingSet, type SwingStore } from './layerWeights.js';   // ⭐ мах по ПРЕДМЕТУ в руке   // ⭐⭐ якорь + аддитивный мах (см. шапку armBlend.ts)
+import { lookupItemSwing, readSwingStore, ARM_BONE_OF, TWO_HANDED_ITEMS, type SwingSet, type SwingStore, type SwingDir } from './layerWeights.js';   // ⭐ мах по ПРЕДМЕТУ в руке   // ⭐⭐ якорь + аддитивный мах (см. шапку armBlend.ts)
 import { lookupLayers, resolveLayers, fillLayers, newResolvedLayers, readLayerStore, LAYER_LEGACY_DEFAULT, LAYER_PARTS, type LayerEntry, type LayerStore, type ResolvedLayers, type SwayStore } from './layerWeights.js';   // ⭐ веса «локомоция ↔ стойка» по частям тела
 export interface UpperPose {
   pose: Pose; swing: number;                 // idle-поза верха + остаточный мах (0..1) — ЛЕГАСИ: одно число на весь верх
@@ -513,14 +513,14 @@ export function resetSwingSnapshot(): void { swingSnapshot = null; }
  * ⚠ ПОД ПЕРЕКРЫТИЕМ ЗАПЕКАНИЯ ОБЕ РУКИ СЧИТАЮТСЯ ПУСТЫМИ — иначе мах, ужатый под меч, запёкся бы в клип и лёг
  * ВТОРОЙ раз при проигрывании. Ровно та же грабля, что уже была у таза стойки и у весов частей.
  */
-function frameSwing(up: UpperPose | null, charId: string, sb: number, combat: number, fallbackId?: string): void {
+function frameSwing(up: UpperPose | null, charId: string, sb: number, combat: number, fallbackId?: string, dir?: SwingDir | null): void {
   const m = layerBakeOverride ? 'none' : (up?.hands?.main ?? 'none');
   // ⭐ ДВУРУЧНОЕ ЗАНИМАЕТ ОБЕ РУКИ. В составе стойки его слой ОДИН (`override` на весь верх, офф-рука не участвует —
   // см. `resolveStancePose`), поэтому вторая рука приехала бы сюда «пустой» и махала бы как свободная. Правило
   // принадлежит КЛАССУ предмета, поэтому живёт здесь, а не в контенте: иначе его пришлось бы повторить в редакторе.
   const o = layerBakeOverride ? 'none' : (TWO_HANDED_ITEMS.has(m) ? m : (up?.hands?.off ?? 'none'));
-  Object.assign(_swMain, lookupItemSwing(swingStore(), charId, m, sb, combat, fallbackId));
-  Object.assign(_swOff, lookupItemSwing(swingStore(), charId, o, sb, combat, fallbackId));
+  Object.assign(_swMain, lookupItemSwing(swingStore(), charId, m, sb, combat, fallbackId, dir));
+  Object.assign(_swOff, lookupItemSwing(swingStore(), charId, o, sb, combat, fallbackId, dir));
 }
 /** Разобрать веса кадра в `_lw`. `clipHead` — режим «только клипы» (умолчание головы 0), иначе смешанный (1). */
 function frameLayers(up: UpperPose | null, sb: number, combat: number, clipHead: boolean): void {
@@ -1142,7 +1142,10 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   const up0 = content.resolveUpper(weapon, combat, idleT, fidget);
   const idle = up0?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   frameLayers(up0, t.sb ?? 0, combat, clipOnly);   // ⭐ веса «локомоция ↔ стойка» по частям → `_lw` (читает и `applyUpper` ниже)
-  frameSwing(up0, content.charId ?? '', t.sb ?? 0, combat, content.fallbackId);   // ⭐ мах каждой руки по предмету в ней → `_sw*`
+  // ⚠⚠ НАПРАВЛЕНИЕ БЕРЁТСЯ ИЗ `t.dir`, А НЕ ИЗ `t.st`/`t.bt`. ЗАМЕР: в «только клипы» (а игра ходит ТОЛЬКО
+  // так) цели планировщика нейтральные — `CLIP_ONLY_TG` кладёт `st: 0, bt: 0` на ВСЕХ направлениях, включая
+  // чистый ход спиной. По этой же причине инспектор «◫ слои» никогда не пишет «вбок NN %» в игре.
+  frameSwing(up0, content.charId ?? '', t.sb ?? 0, combat, content.fallbackId, t.dir ?? null);   // ⭐ мах каждой руки по предмету в ней → `_sw*`
   readStancePelvis(idle, human.hipsRest.y);   // ⭐ таз стойки → scratch; кладёт его `PosePlayer.step` ПОСЛЕ клипов и шва (см. `_stancePelvis`)
   const m = legMag;
   // Трасса собирается СНИЗУ ВВЕРХ, в порядке наложения слоёв — так же, как её показывает корень графа.
@@ -3266,6 +3269,7 @@ export class PosePlayer {
       // Ось ходьба↔бег остаётся общей с планировщиком: это скорость, у неё мёртвой зоны нет.
       const dir = locoDirWeights(fwdC, latC);
       const axes = { sb: tg.sb ?? 0, st: dir.st, bt: dir.bt };
+      tg.dir = { st: dir.st, bt: dir.bt };   // ⭐ мах рук по направлению читает ЭТО, а не пороги планировщика
       // ⚠⚠ ИМЯ ЧЕСТНОЕ, А НЕ «ВПРАВО». `latC ≥ 0` — ход вдоль ЛОКАЛЬНОГО +X, а +X — это сторона костей
       // `Left*`, то есть СВОЯ ЛЕВАЯ сторона персонажа (модель смотрит в +Z; правая тройка Three). Клип и карта
       // настроек, которые здесь выбираются, исторически названы `strafe_R`/`STRAFE_R` — имена зеркальны анатомии

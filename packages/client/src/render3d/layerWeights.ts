@@ -289,7 +289,39 @@ export const ARM_PARTS: readonly { id: ArmPart; label: string }[] = [
 export interface SwingPair { a: number; k: number }
 export type SwingSet = Record<ArmPart, SwingPair>;
 export type ItemSwing = Partial<Record<ArmPart, Partial<SwingPair>>>;
-export interface SwingEntry { walk?: ItemSwing; run?: ItemSwing; combat?: { walk?: ItemSwing; run?: ItemSwing } }
+/**
+ * ⭐⭐ ПОПРАВКА НАПРАВЛЕНИЯ — МНОЖИТЕЛЬ МАХА (`k`) на часть руки, 0…2. Нет ключа — поправки НЕТ ВОВСЕ, и
+ * кадр считается ровно как считался.
+ *
+ * ЗАЧЕМ. Жалоба автора: «сделай силу маха отдельно при беге вперёд, вбок и назад». ЗАМЕР показал, что
+ * сегодня различать НЕЧЕМ: размах плеча с мечом и щитом 26.8° / 26.8° / 26.9° (вперёд / вбок / назад) —
+ * 0.1° это шум выборки. И сами клипы одинаковы: собственный размах плеча run_fwd 63.0°, run_strafe_R 63.0°,
+ * run_strafe_L 63.0°, run_back 63.1° — планировщик писал руки, не спрашивая направления. То есть раздельная
+ * настройка это ЕДИНСТВЕННЫЙ путь, кроме авторинга восьми клипов.
+ *
+ * ⚠ МНОЖИТЕЛЬ НА `k`, А НЕ ВТОРАЯ ПАРА `{a,k}` — и это не экономия, а смысл. Просьба про СИЛУ маха, а сила
+ * целиком в `k`: у `armBlend` амплитуда живёт ТОЛЬКО в члене `slerp(I, Δ, k)` и от якоря `a` не зависит
+ * вовсе (сторож «амплитуда не зависит от якоря»). Поправка на `a` двигала бы ХВАТ — «оружие держится как я
+ * настроил» сломалось бы по направлению, чего никто не просил.
+ *
+ * ⚠ И НЕ ТРЕТЬЯ КОЛОНКА: колонка дала бы 2 скорости × 2 боя × 3 части × {a,k} × 3 направления = 36 чисел на
+ * предмет. Здесь потолок 3 × 2 = 6, а в коротком виде одно число на предмет (плечо), потому что локоть и
+ * кисть наследуют его.
+ *
+ * Диапазон 0…2, а не 0…1: «вбок машет ШИРЕ» должно быть выразимо. Потолок всё равно ставит `clamp01(k)` —
+ * `k = 1` это и есть клип, шире клипа взяться нечему, и панель обязана сказать это словом.
+ */
+export type SwingDirMul = Partial<Record<ArmPart, number>>;
+export interface SwingEntry {
+  walk?: ItemSwing; run?: ItemSwing;
+  combat?: { walk?: ItemSwing; run?: ItemSwing };
+  /** Поправка для хода ВБОК (необязательная). */
+  side?: SwingDirMul;
+  /** Поправка для хода НАЗАД (необязательная). */
+  back?: SwingDirMul;
+}
+/** Доли направления кадра: `st` — вбок, `bt` — назад (те же, что у `locoBlend.locoDirWeights`). */
+export interface SwingDir { st: number; bt: number }
 /** Содержимое ключа `pe_swing`: персонаж → ПРЕДМЕТ (не ключ оружия!) → настройка. */
 export type SwingStore = Record<string, Record<string, SwingEntry>>;
 
@@ -332,19 +364,20 @@ const pair = (v: unknown, d: SwingPair): SwingPair => {
  * Локоть без своей записи наследует ПЛЕЧО той же скорости — иначе «покрутил плечо, а локоть остался» читается поломкой.
  */
 export function lookupItemSwing(store: SwingStore | null | undefined, charId: string, item: string,
-  sb: number, combat: number, fallbackId?: string): SwingSet {
+  sb: number, combat: number, fallbackId?: string, dir?: SwingDir | null): SwingSet {
   const d = swingDefault(item);
   const e = store?.[charId]?.[item] ?? (fallbackId ? store?.[fallbackId]?.[item] : undefined);
   const s = clamp01(sb), c = clamp01(combat);
   const at = (col: ItemSwing | undefined, p: ArmPart, base: SwingPair): SwingPair => pair(col?.[p], base);
   const out = {} as SwingSet;
+  let rawArmK = d.arm.k;   // плечо БЕЗ поправки направления — базa наследования локтя
   for (const p of ['arm', 'elbow', 'wrist'] as const) {
     // ⭐ ЛОКОТЬ БЕЗ СВОЕЙ ЗАПИСИ ИДЁТ ЗА ПЛЕЧОМ, НО В ПРОПОРЦИИ КЛАССА. Слепое наследование убило бы умолчание
     // класса («локоть тише плеча»), а полная независимость читалась бы поломкой: покрутил плечо — локоть не
     // шелохнулся. Поэтому база локтя = разрешённое плечо × (умолчание локтя / умолчание плеча): не трогали ничего —
     // ровно умолчание класса; подняли плечо — локоть идёт следом, оставаясь тише.
     const base = p === 'elbow'
-      ? { a: out.arm.a, k: d.arm.k > 1e-6 ? clamp01(out.arm.k * (d.elbow.k / d.arm.k)) : d.elbow.k }
+      ? { a: out.arm.a, k: d.arm.k > 1e-6 ? clamp01(rawArmK * (d.elbow.k / d.arm.k)) : d.elbow.k }
       : d[p];
     const w = at(e?.walk, p, base), r = at(e?.run, p, base);
     let a = lerp(w.a, r.a, s), k = lerp(w.k, r.k, s);
@@ -352,9 +385,31 @@ export function lookupItemSwing(store: SwingStore | null | undefined, charId: st
       const cw = at(e.combat.walk, p, w), cr = at(e.combat.run, p, r);
       a = lerp(a, lerp(cw.a, cr.a, s), c); k = lerp(k, lerp(cw.k, cr.k, s), c);
     }
-    out[p] = { a: clamp01(a), k: clamp01(k) };
+    // ⚠⚠ ЛОКОТЬ НАСЛЕДУЕТ ПЛЕЧО ДО ПОПРАВКИ НАПРАВЛЕНИЯ, А НЕ ПОСЛЕ. Иначе поправка ложится на него ДВАЖДЫ:
+    // один раз через унаследованное плечо, второй — своя. Сторож поймал это числом: 0.25 вместо 0.5.
+    if (p === 'arm') rawArmK = clamp01(k);
+    out[p] = { a: clamp01(a), k: clamp01(k * dirMul(e, p, dir)) };
   }
   return out;
+}
+
+/**
+ * ⭐ ДОЛИ НАПРАВЛЕНИЯ, СУММА КОТОРЫХ ТОЖДЕСТВЕННО 1 — без деления на сумму и без вырожденного случая:
+ *   вбок `wS = st·(1 − bt)`, назад `wB = bt`, вперёд `wF = (1 − st)(1 − bt)`, и `wF + wS + wB ≡ 1`.
+ * Это В ТОЧНОСТИ те доли, которыми рантайм мешает САМИ КЛИПЫ (`blendLocoPose`), — одна умственная модель
+ * на слой клипов и на слой настройки, а не две.
+ * Нетронутая поправка даёт множитель ровно 1 (а не «1 в пределах эпсилона»), поэтому старые записи идут
+ * бит в бит. Часть без своего числа берёт число ПЛЕЧА: покрутил руку — локоть и кисть пошли следом.
+ */
+function dirMul(e: SwingEntry | undefined, p: ArmPart, dir: SwingDir | null | undefined): number {
+  if (!e || !dir || (!e.side && !e.back)) return 1;
+  const st = clamp01(dir.st), bt = clamp01(dir.bt);
+  const wS = st * (1 - bt), wB = bt, wF = (1 - st) * (1 - bt);
+  const mul = (d: SwingDirMul | undefined): number => {
+    const v = d?.[p] ?? d?.arm;
+    return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(2, v)) : 1;
+  };
+  return wF + wS * mul(e.side) + wB * mul(e.back);
 }
 
 /** Разобрать сырой `pe_swing` (чужой JSON): мусор отброшен, числа зажаты. */
@@ -381,6 +436,23 @@ export function readSwingStore(raw: unknown): SwingStore {
       const w = col(src.walk), r = col(src.run);
       if (w) entry.walk = w;
       if (r) entry.run = r;
+      // ⚠ БЕЗ ЭТОГО ПОПРАВКИ МОЛЧА ПРОПАДАЮТ. `readSwingStore` копирует ключи ПОИМЁННО, и незнакомое поле
+      // просто не доезжает: правка работала бы до перезагрузки редактора, а потом исчезала — и на сервер
+      // не уехала бы тоже. Замер это и показал на подложенном `{ side: {...}, back: {...} }`.
+      const dirMulOf = (v: unknown): SwingDirMul | undefined => {
+        if (!v || typeof v !== 'object') return undefined;
+        const o: SwingDirMul = {};
+        for (const p of ['arm', 'elbow', 'wrist'] as const) {
+          // ⚠ СВОЙ РАЗБОР, А НЕ ОБЩИЙ `num`: тот зажимает в 0…1 (он для весов), а множитель бывает до 2 —
+          // «вбок машет ШИРЕ» должно быть выразимо. Сторож поймал это на подложенном 9 → ждали 2, получили 1.
+          const raw = (v as Record<string, unknown>)[p];
+          if (typeof raw === 'number' && Number.isFinite(raw)) o[p] = Math.max(0, Math.min(2, raw));
+        }
+        return Object.keys(o).length ? o : undefined;
+      };
+      const sd = dirMulOf(src.side), bk = dirMulOf(src.back);
+      if (sd) entry.side = sd;
+      if (bk) entry.back = bk;
       if (src.combat && typeof src.combat === 'object') {
         const cc = src.combat as Record<string, unknown>;
         const cw = col(cc.walk), cr = col(cc.run);

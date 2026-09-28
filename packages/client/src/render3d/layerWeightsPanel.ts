@@ -119,11 +119,47 @@ export function createLayerWeightsPanel(host: LayerPanelHost): LayerPanel {
           if (detail) box.append(swingRow(charId, item, own, def, part, sp.id, 'покой', 'a'));
         }
       }
+      // ⭐ НАПРАВЛЕНИЕ — ПОСЛЕДНИМИ ДВУМЯ РЯДАМИ, ВСЕГДА ВИДНЫ (не под «подробно»): владелец просил их явно и
+      // сам же не нашёл панель, так что прятать их нельзя. 1.00 = «как вперёд», то есть поправки нет.
+      box.append(dirRow(charId, item, own, 'side', 'вбок ×', 'множитель маха при ходе ВБОК: 1 — как вперёд, 0.5 — вполсилы, выше 1 — шире (потолок всё равно клип)'));
+      box.append(dirRow(charId, item, own, 'back', 'назад ×', 'множитель маха при ходе НАЗАД: 1 — как вперёд, 0 — рука стоит в стойке'));
       const rst = mk('button', css.btn, 'вернуть умолчания «' + item + '»');
       rst.onclick = () => { delete host.swing()[charId]?.[item]; host.save(); render(); };
       box.append(rst);
     }
     root.append(box);
+  };
+  /**
+   * ⭐⭐ ПОПРАВКА НАПРАВЛЕНИЯ — множитель маха для хода ВБОК и НАЗАД. Отдельный ряд, а не третья колонка:
+   * колонка дала бы 36 чисел на предмет, а тут одно число на направление (локоть и кисть идут за плечом).
+   * ⚠ ЗАМЕР: сегодня мах одинаков во всех направлениях (26.8 / 26.8 / 26.9°), и клипы тоже
+   * (63.0 / 63.0 / 63.1°) — планировщик писал руки, не спрашивая направления. Поэтому раздельная
+   * настройка это единственный путь, кроме авторинга восьми клипов.
+   */
+  const dirRow = (charId: string, item: string, own: SwingEntry | undefined,
+    which: 'side' | 'back', label: string, hint: string): HTMLElement => {
+    const mine = own?.[which]?.arm;
+    const row = mk('div', css.cell);
+    row.append(mk('span', css.cellName, label));
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = '0'; sl.max = '2'; sl.step = '0.05'; sl.value = String(mine ?? 1); sl.style.flex = '1';
+    const val = mk('span', css.val, (mine ?? 1).toFixed(2));
+    val.style.color = mine !== undefined ? '#9ae6a0' : '#6b7180';
+    val.title = mine !== undefined ? 'своя запись' : 'поправки нет — мах такой же, как вперёд';
+    const rst = mk('span', css.rst, mine !== undefined ? '↺' : '');
+    rst.title = 'снять поправку — направление перестанет отличаться от «вперёд»';
+    sl.title = hint;
+    sl.oninput = () => {
+      const v = parseFloat(sl.value);
+      const e = ((host.swing()[charId] ??= {})[item] ??= {});
+      ((e[which] ??= {})).arm = v;
+      val.textContent = v.toFixed(2); val.style.color = '#9ae6a0'; rst.textContent = '↺';
+      host.save();
+    };
+    sl.onchange = () => render();
+    rst.onclick = () => { const e = host.swing()[charId]?.[item]; if (e) delete e[which]; host.save(); render(); };
+    row.append(sl, val, rst);
+    return row;
   };
   /** Своя запись предмета (создаётся по первому касанию ползунка — разрежённой, только тронутая ячейка). */
   const swingEntryOf = (charId: string, item: string): SwingEntry | undefined => host.swing()[charId]?.[item];

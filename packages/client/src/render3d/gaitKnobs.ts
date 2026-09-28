@@ -39,6 +39,12 @@ export interface StanceFoot {
 }
 
 export interface PoseTargets {
+  /**
+   * ⭐ ДОЛИ НАПРАВЛЕНИЯ ЭТОГО КАДРА (`locoDirWeights`): `st` — вбок, `bt` — назад. Отдельно от `st`/`bt`
+   * ниже НАРОЧНО: те — пороги колонок ПЛАНИРОВЩИКА, и в режиме «только клипы» они нейтральные нули на всех
+   * направлениях (`CLIP_ONLY_TG`), а игра ходит только так. Читает мах рук по направлению.
+   */
+  dir?: { st: number; bt: number };
   hipL: number; hipR: number; knL: number; knR: number;
   /** Боковой вынос бедра (+ = наружу/вправо). Без него приставные шаги вырождаются в топтание. */
   hipLatL: number; hipLatR: number;
