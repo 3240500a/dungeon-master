@@ -177,6 +177,88 @@ describe.runIf(!!uWS)('⭐ R5-01: кривой HTTP-запрос не роняе
   });
 });
 
+/**
+ * ⭐⭐ ОТКАЗ EXPRESS ДО ЧТЕНИЯ ТЕЛА ОБЯЗАН ДОЕХАТЬ ДО КЛИЕНТА, А НЕ ПРЕВРАТИТЬСЯ В «СЕРВЕР НЕДОСТУПЕН».
+ *
+ * ЖИВАЯ БЕДА. `devGate` отвечает 401/403/429, НЕ ЧИТАЯ ТЕЛА (R4-11). Нода закрывает такой ответ при непрочитанном
+ * теле СБРОСОМ, а сброс выбрасывает из приёмного буфера собеседника уже пришедшие байты ответа — настоящий 401
+ * исчезал, прокси видел `read ECONNRESET` и отвечал своим 502, `devFetch` не узнавал 401 и НЕ ПРЕДЛАГАЛ ВОЙТИ.
+ * Публикация поз-редактора (5.6 МБ) вставала на этом намертво, а мелкие ключи проходили — тот же отказ умещался
+ * в буфер. Лечится дочитыванием тела в никуда на стороне express (`drainRequest`).
+ *
+ * Здесь настоящий uWS с `proxyToExpress` перед http-сервером, который отказывает ДО чтения тела — в двух вариантах.
+ */
+describe.runIf(!!uWS)('⭐⭐ отказ до чтения тела: 401 доезжает, а не становится обрывом', () => {
+  const BIG = 5 * 1024 * 1024;
+  let proxyPort = 0;
+  let proxyToken: unknown = null;
+  let upstream: import('node:http').Server | null = null;
+  /** Отпускает ли апстрим отказ ПОСЛЕ дочитывания тела (`holdRefusal`) или сразу, как было до правки. */
+  let afterBody = true;
+  beforeAll(async () => {
+    const { proxyToExpress } = await import('./uwsServer.js');
+    const { createServer } = await import('node:http');
+    const up = createServer((req, res) => {
+      // Отказ решён ДО тела — ровно как `devGate`; отличается только МОМЕНТ ОТПРАВКИ.
+      const refuse = (): void => { res.statusCode = 401; res.setHeader('content-type', 'application/json'); res.end('{"error":"Требуется вход"}'); };
+      if (!afterBody) { refuse(); return; }
+      req.on('data', () => undefined);   // дочитываем в никуда: память не растёт
+      req.on('error', () => undefined);
+      req.on('end', refuse);
+      req.resume();
+    });
+    upstream = up;
+    await new Promise<void>((resolve) => up.listen(0, '127.0.0.1', () => resolve()));
+    const httpPort = (up.address() as { port: number }).port;
+    const u = uWS as unknown as { App(): { any(p: string, h: (res: unknown, req: unknown) => void): { listen(h: string, p: number, cb: (t: unknown) => void): void } } } & UwsLike;
+    await new Promise<void>((resolve, reject) => {
+      u.App().any('/*', (res, req) => proxyToExpress(res as never, req as never, httpPort)).listen('127.0.0.1', 0, (t) => {
+        if (!t) { reject(new Error('uWS не занял порт')); return; }
+        proxyToken = t; proxyPort = u.us_socket_local_port(t); resolve();
+      });
+    });
+  });
+  afterAll(() => { if (uWS && proxyToken) uWS.us_listen_socket_close(proxyToken); upstream?.close(); });
+
+  /** POST тела `bytes` байт через прокси → статус и тело ответа (или `net` — соединение оборвалось без ответа). */
+  async function post(bytes: number): Promise<{ status: number | 'net'; body: string }> {
+    const { request } = await import('node:http');
+    const body = Buffer.alloc(bytes, 0x61);
+    return new Promise((resolve) => {
+      const r = request({
+        host: '127.0.0.1', port: proxyPort, path: '/api/dev/pose', method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': String(body.length) },
+      }, (res) => {
+        let out = '';
+        res.on('data', (c: Buffer) => { out += c.toString('utf8'); });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: out }));
+      });
+      r.on('error', () => resolve({ status: 'net', body: '' }));
+      r.end(body);
+    });
+  }
+
+  it('⭐⭐ отказ отпущен ПОСЛЕ дочитывания тела (`holdRefusal`) — 401 доезжает и на мелком теле, и на 5 МБ', async () => {
+    afterBody = true;
+    const small = await post(512);
+    expect(small.status, 'мелкое тело доезжало и раньше').toBe(401);
+    const big = await post(BIG);
+    expect(big.status, `⭐ ГЛАВНОЕ: на 5 МБ клиент видит ОТКАЗ, а не обрыв — иначе \`devFetch\` не предложит войти (ответ: ${big.body})`).toBe(401);
+    expect(big.body, 'ответ отказа дословно').toContain('Требуется вход');
+  });
+
+  it('⚠ отказ отправлен ДО тела (как было) — прокси не называет это «не достучался»: связь была', async () => {
+    afterBody = false;
+    const r = await post(BIG);
+    // Сброс — гонка: ответ иногда успевает, иногда пропадает. Требуем одного: либо честный 401, либо 502 с ЧЕСТНЫМ
+    // именем происходящего. Прежняя формулировка увела бы владельца искать упавший сервер вместо повторного входа.
+    if (r.status === 401) return;
+    expect(r.status, 'ответ прокси, а не молчание').toBe(502);
+    expect(r.body, 'сказано, что соединение оборвал express, и что делать').toMatch(/оборвал соединение/);
+    expect(r.body, '⚠ прежняя формулировка «не достучался» здесь — ложь').not.toMatch(/не достучался/);
+  });
+});
+
 describe('⭐ R5-01: последний рубеж — необработанное исключение начинает обычный слив, а не обрывает процесс', () => {
   it('исключение → лог и слив ОДИН раз (повторы — только в лог); процесс не выходит сам', async () => {
     const { installCrashDrain } = await import('./internalRoutes.js');

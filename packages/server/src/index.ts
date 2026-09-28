@@ -19,7 +19,7 @@ import {
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
-import { startUwsServer } from './net/uwsServer.js';
+import { startUwsServer, bodyCapFor } from './net/uwsServer.js';   // потолок тела пути — один и тот же у прокси и у дочитывания отказа
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { renderMetrics } from './net/metrics.js';
 import { originAllowed, parseOrigins, keyMatches } from './net/adminAccess.js';
@@ -31,7 +31,7 @@ import { sessionUser, primeKnown, setRoutePassKey } from './net/authSession.js';
 import { setDeviceKey } from './net/deviceToken.js';
 import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
-import { ah, httpErrors, queryText, warnHttp } from './net/asyncRoute.js';
+import { ah, httpErrors, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -257,9 +257,19 @@ async function devGuard(req: Request, res: Response): Promise<boolean> {
  * ⭐ R6-04: так же и JSON-ручки инструментов (`devJson`): общего разбора тела больше нет.
  */
 const devGate: RequestHandler = (req, res, next) => {
-  void devGuard(req, res).then((ok) => { if (ok) next(); }).catch((e: unknown) => {
+  // ⭐⭐ ОТКАЗ УХОДИТ ТОЛЬКО ПОСЛЕ ДОЧИТЫВАНИЯ ТЕЛА (`holdRefusal`). Решение принимается как и раньше — ДО тела
+  // (R4-11), и тело по-прежнему не собирается: байты выбрасываются по мере прихода. Откладывается лишь ОТПРАВКА,
+  // иначе на запросе без keep-alive (а прокси шлёт именно такой) нода уничтожает сокет сразу после ответа, клиент
+  // получает сброс, и сброс уносит сам ответ: на посылке поз-редактора 5.6 МБ настоящий 401 не доезжал ни до
+  // прокси, ни до редактора — вместо предложения войти владелец видел «прокси не достучался до express».
+  const hold = holdRefusal(req, res);
+  void devGuard(req, res).then((ok) => {
+    if (ok) { hold.pass(); next(); return; }   // доступ есть — тело нетронутым уходит разборщику ручки
+    hold.sendAfterBody(bodyCapFor(req.path));
+  }).catch((e: unknown) => {
     warnHttp(e, 'отказ в обработчике');   // R11-11: через глушитель, как `ah`
     if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
+    hold.sendAfterBody(bodyCapFor(req.path));
   });
 };
 /** Тело JSON инструментов (конфиг, контент поз-редактора — сотни КБ) — ставится ПОСЛЕ `devGate`. */

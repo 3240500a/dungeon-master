@@ -349,13 +349,27 @@ function forwardRequest(
   // через общий пул Node (в Node 24 он держит соединения живыми) — соединение делили чужие клиенты, и сбитая длина одного
   // становилась чужим запросом у express.
   const forward = (body: Buffer): void => {
+    /** Тело ушло в сокет: дальнейший сброс — это ответ express, потерянный вместе со сбросом, а не «нет связи». */
+    let wrote = false;
     if (!bodiless) headers['content-length'] = String(body.length);
     const upstream = httpRequest(
       { host: '127.0.0.1', port: httpPort, path, method, headers, agent: false },
       (up) => relayResponse(res, up, method, isAborted, onAbort, relaying),
     );
     onAbort(() => upstream.destroy());   // R7-10: клиент ушёл — запрос к express больше не нужен
-    upstream.on('error', (e) => { refuse('502 Bad Gateway', JSON.stringify({ error: `прокси не достучался до express: ${e.message}` })); });
+    // ⚠ СБРОС ПОСЛЕ ОТПРАВКИ ТЕЛА — ЭТО НЕ «НЕ ДОСТУЧАЛСЯ», И ЭТА ФОРМУЛИРОВКА УВОДИЛА В СТОРОНУ ПОЛДНЯ.
+    // Express, отказавший ДО чтения тела (`devGate`: 401/403/429), закрывает соединение сбросом, а сброс уносит из
+    // приёмного буфера и сам ответ — прокси видит только `read ECONNRESET`. Достучался он прекрасно, и отказ был
+    // осмысленный. Лечится на стороне express (`drainRequest`), а здесь — честное имя происходящего: связь была.
+    upstream.on('error', (e) => {
+      const code = (e as NodeJS.ErrnoException).code;
+      const cut = wrote && (code === 'ECONNRESET' || code === 'EPIPE');
+      refuse('502 Bad Gateway', JSON.stringify({
+        error: cut
+          ? `express оборвал соединение, не дочитав тело (${(body.length / (1024 * 1024)).toFixed(1)} МБ) — его ответ пропал вместе со сбросом. Обычно это отказ входа или прав: войди заново и повтори`
+          : `прокси не достучался до express: ${e.message}`,
+      }));
+    });
     // R12-01: соединение — прокси: пока оно открыто, express не верит на нём «петле без заголовков» без доказательства.
     upstream.on('socket', (s) => {
       s.once('connect', () => {
@@ -366,6 +380,7 @@ function forwardRequest(
       });
     });
     upstream.end(body.length ? body : undefined);
+    wrote = true;
   };
 
   // У запросов без тела ждать `onData` нельзя — переправляем сразу.
