@@ -177,33 +177,35 @@ export interface WorldSnapshot {
 // ⭐ R8-14: и сырьё — `maxMaterials` (ковка, улучшение, починка: больше показанного — отказ), и выход разбора — `minYield`
 // (нижняя граница вилки «от–до»: меньше — отказ, вещь цела). id материала → число; нет поля — как раньше.
 // R9-04: у разборов ещё `avgYield` — средний выход карточки (`salvageMean`): низ дробной доли — 0 при любой правке выхода.
+// ⭐ V-B3-07: у команд кузницы, скупки и разбора (`CONFIG_CONSENT_CMDS`) — `cfgRev`, ревизия конфига, с которого нарисовано окно
+// (`ConfigRegistry.revision`): у сервера другая — отказ «Цена изменилась» до исполнения, клиент перечитывает конфиг. Нет поля — как раньше.
 export type TownCommand =
   | { cmd: 'buy'; uid: string; maxGold?: number }
-  | { cmd: 'sell'; uid: string; minGold?: number }
-  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number; maxMaterials?: Record<string, number> }
-  | { cmd: 'forgeReroll'; uid: string; maxGold?: number }
+  | { cmd: 'sell'; uid: string; minGold?: number; cfgRev?: string }
+  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string }
+  | { cmd: 'forgeReroll'; uid: string; maxGold?: number; cfgRev?: string }
   /** Починка сломанного трофея: снимает флаг за золото и материалы. */
-  | { cmd: 'forgeRepair'; uid: string; maxGold?: number; maxMaterials?: Record<string, number> }
+  | { cmd: 'forgeRepair'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string }
   /** Сдать всё сырьё из сумки в общий сундук аккаунта. */
   | { cmd: 'depositMaterials' }
   /** Разбор у кузнеца: полный выход материалов; найденное оружие открывает журнал кузнеца (§12). */
-  | { cmd: 'forgeSalvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number> }
+  | { cmd: 'forgeSalvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string }
   /**
    * ⭐ Сковать оружие из деталей (docs/CRAFT_WEAPONS.md). `nonce` — ключ идемпотентности заявки (D4):
    * придумывает клиент, сервер помнит его на АККАУНТЕ вместе с вещью. Повтор того же ключа — даже
    * после реконнекта или на другой ноде — отвечает прежней вещью, а не кует вторую. Заявка — только
    * `{id, step}` четырёх гнёзд, хват и доводка: базу, имя, ступень и цену сервер выводит сам.
    */
-  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number; maxMaterials?: Record<string, number> }
+  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string }
   /** Зачаровать СКОВАННУЮ обычную вещь из сумки до магической или редкой — за золото (§13). */
-  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number }
+  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number; cfgRev?: string }
   /**
    * Потратить эскиз (жалость разбора, §12): открыть в журнале аккаунта выбранную деталь `variantId`. Ключевую форму
    * НЕОТКРЫТОГО типа эскиз не открывает (`sketchable`). R3-11: раньше эскизы копились, а потратить их было нечем.
    */
-  | { cmd: 'forgeSketch'; variantId: string }
+  | { cmd: 'forgeSketch'; variantId: string; cfgRev?: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
-  | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number> }
+  | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string }
   /**
    * Надеть вещь из сумки. `slot` нет — в родной слот вещи; `'offhand'` — во вторую руку (R11-02: пупсик, брошено на ячейку
    * «Левая рука»; так одноручное оружие встаёт вторым — дуал-вилд). Можно ли — решает ядро (`equip`, `offhandRefusal`).
@@ -269,7 +271,9 @@ export type ClientFrame =
 export type ServerFrame =
   | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState }
   // Ответ на runStatus: есть ли незавершённый забег (+ код комнаты и этаж для модалки).
-  | { t: 'runStatus'; hasRun: boolean; roomCode?: string; depth?: number }
+  // ⭐ R16 C-09: `dead` — герой в этом забеге погиб и штраф за смерть взят: «Завершить» — без штрафа (V1), «Продолжить» — мёртвым ждать пати
+  // (K1). Нет поля — сервер старше его: экран говорит, как раньше.
+  | { t: 'runStatus'; hasRun: boolean; roomCode?: string; depth?: number; dead?: boolean }
   // Подтверждение abandon: забег заброшен (персонаж погиб со штрафом) — клиент открывает лобби.
   | { t: 'abandoned' }
   | { t: 'snapshot'; snap: WorldSnapshot }

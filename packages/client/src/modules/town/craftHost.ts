@@ -116,6 +116,8 @@ export function gameCraftHost(link: ForgeLink, memo: CraftMemo = pageMemo): Craf
     // Журнала ещё нет (кадр `stash` не пришёл) — окно его и не открывает; пустой здесь — только страховка.
     journal: () => link.stash?.forgeJournal ?? emptyJournal(),
     save,
+    // V-B3-03: скованная вещь ложится в сумку героя — окно гасит «Ковать», если она не ляжет (`craftFits`), как и сервер.
+    bag: () => save().inventory,
     find: (uid) => (link.state ? findOwned(save(), uid) : null),
     craft: (input, maxGold, maxMaterials) => {
       if (memo.busy) return { ok: false, reason: BUSY };

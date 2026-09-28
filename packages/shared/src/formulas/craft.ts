@@ -268,7 +268,8 @@ export const clampStep = (p: WeaponPart, step: number): number => clamp(Math.rou
  * Сборка по умолчанию для семейства: в каждом гнезде вариант с осью ближе всего к нулю («эталон»),
  * у ключа — эталон базы с самым высоким потолком (при равенстве — эталонной базы класса, чья своя скорость
  * ближе всего к ×1, потом — с самым богатым пулом форм: у меча это длинный, а не короткий с его +6 %); материалы —
- * `step`, прижатый к окну формы.
+ * `step`, прижатый к окну формы. `null` — семейство сейчас не куётся: в каком-то гнезде нет ни одной включённой детали
+ * (хозяин снял гнездо с игры в редакторе — схема это разрешает; окно ковки говорит это, а не падает: V-B3-06).
  */
 export function defaultParts(reg: ConfigRegistry, weaponClass: string, hands: number, step = 1): CraftParts | null {
   const keySlot = keySlotOf(reg, weaponClass);
@@ -279,7 +280,8 @@ export function defaultParts(reg: ConfigRegistry, weaponClass: string, hands: nu
     const b = reg.get('items.base').find((x) => x.id === id);
     return Math.abs(b ? baseFlat(b, 'attackSpeed') + b.baseStats.filter((m) => m.stat === 'attackSpeed' && m.kind === 'increased').reduce((s, m) => s + m.value, 0) : 0);
   };
-  const keyGroup = [...keyVariantsByBase(reg, weaponClass, hands)]
+  // V-B3-06: база, чьи формы все выключены в редакторе, в эталон не годится — иначе `null` («семейство не куётся») при живых формах других баз.
+  const keyGroup = keyVariantsByBase(reg, weaponClass, hands).filter((g) => g.variants.length > 0)
     .sort((a, b) => hiOf(b.baseId) - hiOf(a.baseId) || speedOff(a.baseId) - speedOff(b.baseId) || b.variants.length - a.variants.length)[0];
   const pick = (slot: CraftSlot): CraftPartPick | undefined => {
     const pool = slot === keySlot ? (keyGroup?.variants ?? []) : variantsFor(reg, weaponClass, slot, hands);

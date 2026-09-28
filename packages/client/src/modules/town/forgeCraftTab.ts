@@ -1,7 +1,7 @@
 import { anatomyOf } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { COLORS, mk } from '../../ui/kit.js';
-import { craftWindow, initialCraftState, type CraftWindowState } from './craftPanel.js';
+import { craftWindow, forgeableFamilies, initialCraftState, type CraftWindowState } from './craftPanel.js';
 import { gameCraftHost } from './craftHost.js';
 import { resumePreview3d, weaponPreview3d } from './craftPreview3d.js';
 import { craftMeshConfigVersion } from './craftMesh/configVersion.js';
@@ -31,10 +31,15 @@ let stand: { key: string; el: HTMLElement } | null = null;
 /** Размер стенда в окне кузницы — уже, чем колонка песочницы редактора. */
 const STAND = { width: 200, height: 340 };
 
-/** Первое открытие — класс того, что в руках (если его куют), иначе меч. */
+/**
+ * Первое открытие — класс того, что в руках (если его куют), иначе меч. V-B3-06: «куют» — кузнец сейчас собирает хоть одно
+ * его семейство (гнездо класса могли снять с игры в редакторе); иначе — первый класс, который он куёт.
+ */
 function startClass(app: App): string {
+  const reg = app.config;
+  const ok = (c: string | undefined): c is string => !!c && !!anatomyOf(reg, c) && forgeableFamilies(reg, c).length > 0;
   const cls = app.state?.save.equipment.weapon?.weaponClass;
-  return cls && anatomyOf(app.config, cls) ? cls : 'sword';
+  return ok(cls) ? cls : ok('sword') ? 'sword' : reg.get('weapon-anatomy').map((a) => a.id).find(ok) ?? 'sword';
 }
 
 export function renderCraftTab(app: App, body: HTMLElement): void {

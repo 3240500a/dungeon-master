@@ -440,6 +440,7 @@ describe('⭐ R8-04: мощь узла помнит снаряжение, над
       w.players[to]!.pos = { ...w.players[from]!.pos };
       for (const it of [...save.inventory]) await room.handleCmd(from, { cmd: 'drop', uid: it.uid }, undefined);
       for (const d of [...w.drops]) await room.handleCmd(to, { cmd: 'pickup', dropId: d.id }, undefined);
+      await settle();   // ⭐ R16 C-04: выброшенное — в сумку после записи поднявшего, а обработчик её не ждёт
     };
     await handOver(m.pid, t.pid, M.save);
     expect(M.save.inventory.length + Object.keys(M.save.equipment).length, 'основной гол').toBe(0);

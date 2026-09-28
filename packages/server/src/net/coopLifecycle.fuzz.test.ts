@@ -23,12 +23,15 @@ import { fuzzRng, mixSeed, shrinkOps, type FuzzRng } from './coopLifecycle.fuzzK
  *  3 — штраф смерти — один за смерть; без штрафа тому, кто ушёл спокойно (из города, припаркованный забег, спокойный уход из боя);
  *      ⭐ C-03: и НЕ МЕНЬШЕ — «Завершить» забега ожившего героя (пати увела его дальше или в город, вошёл живым) штраф берёт
  *      (`3-missing-penalty`); ⭐ C-04: похороны комнаты (вайп, грейс, уход пати с этажа) не штрафуют и не снимают чужой ей забег
- *      (`3-foreign-run-buried`);
+ *      (`3-foreign-run-buried`); ⭐ R16 C-03: зато в подземелье — только участники его забега (`3-dungeon-foreign-run`: гость с чужим ей
+ *      забегом был вне правил бегства), и сбежавшего посреди боя без штрафа не отпускает никто (`3-fled-released`);
  *  4 — здоровье/мана/выносливость не выше максимума и не растут даром (выход/вход, код, арена, город) сверх регена и зелий;
  *  5 — никто не застревает: в конце каждый герой проходит «статус → Завершить (если забег) → вход» и стоит в городе; ⭐ C-04: «Продолжить»
  *      припаркованного не сажает в комнату, чей забег — не его (`5-resume-foreign-run`); ⭐ C-05: у забега в сейве всегда есть путь в игру без
  *      штрафа — «Продолжить» входит или отказывает С КОДОМ комнаты, что держит его забег, а на «нет мест» «Соло» — город, забег цел
- *      (`5-resume-dead-end`; проверяется и перед эпилогом, пока комнаты живы; пятый герой — операция `recruit`, из своего потока);
+ *      (`5-resume-dead-end`; проверяется и перед эпилогом, пока комнаты живы; пятый герой — операция `recruit`, из своего потока); ⭐ R16 C-09:
+ *      экран «Продолжить / Забросить» не врёт о цене — статус забега сказал «погиб в нём, штраф взят» (`dead`) ⇔ «Завершить» с того же
+ *      экрана штрафа не берёт (`5-status-promise`; «статус перед Завершить» — флаг `ask` операции `abandon`, из своего потока);
  *  6 — ничего не бросает (исключения команд и кадров, шага комнаты, необработанные отказы);
  *  7 — у героя одна пишущая копия во всех комнатах; живая сессия держит версию базы (не зомби); ⭐ C-06: закрытое соединение — не
  *      сессия сразу, а не в конце очереди своих кадров (`7-closed-still-live`);
@@ -40,8 +43,8 @@ import { fuzzRng, mixSeed, shrinkOps, type FuzzRng } from './coopLifecycle.fuzzK
  * `DM_FUZZ_OPS` — длина последовательности, `DM_FUZZ_FAULTS=0` — без сбоев базы, `DM_FUZZ_SHRINK=0` — без сжатия,
  * `DM_FUZZ_SHRINK_KNOWN=1` — сжимать и известные корни, `DM_FUZZ_TRACE=1` — печатать операции и состояние после каждой (с
  * `DM_FUZZ_TRACE_LOG=1` — и лог комнаты и менеджера за операцию), `DM_FUZZ_LOG=<файл>` — нарушения сразу в файл (большой прогон),
- * `DM_FUZZ_HEAP=N` — куча каждые N сидов, `DM_FUZZ_SELFTEST=v1|v2|c03|c04|c05|c06|c12` — самопроверка (вернуть исправленный корень — фаззер
- * обязан найти),
+ * `DM_FUZZ_HEAP=N` — куча каждые N сидов, `DM_FUZZ_SELFTEST=v1|v2|c03|c04|c05|c06|c12|r16c03|c09` — самопроверка (вернуть исправленный корень —
+ * фаззер обязан найти),
  * `DM_FUZZ_REPLAY='{"seed":…,"ops":[…]}'` — повтор последовательности. Нарушение печатается с сидом и СЖАТОЙ последовательностью
  * (выбрасываются куски, пока нарушение с той же меткой воспроизводится). Большой прогон — параллельно, диапазонами сидов:
  *   DM_FUZZ_SEEDS=200 DM_FUZZ_SEED0=10000 npx vitest run packages/server/src/net/coopLifecycle.fuzz.test.ts
@@ -265,6 +268,7 @@ class FakeConn implements GameConn {
     if (typeof raw !== 'string') return;
     const f = JSON.parse(raw) as ServerFrame;
     if (FUZZ_SELFTEST === 'c05' && f.t === 'error') delete f.roomCode;   // C-05: отказ без кода держателя — как до правки
+    if (FUZZ_SELFTEST === 'c09' && f.t === 'runStatus') delete f.dead;   // R16 C-09: статус без «смерть оплачена» — как до правки
     this.frames.push(f);
     FakeConn.onFrame?.(this, f);
     if (this.frames.length > 400) this.frames.splice(0, 200);
@@ -296,6 +300,8 @@ type RoomIn = Tickable & {
   code: string; area: 'town' | 'dungeon' | 'arena'; depth: number; difficultyId: string;
   clients: Map<string, ClientIn>; disconnected: Map<string, InfoIn>; lingering: Map<string, { pid: string; p: PlayerIn; info: InfoIn }>;
   staleFarewells: Map<string, { charId: string; farewell: { saved: boolean } }>;
+  /** ⭐ K3: выброшенное, которое сейчас поднимают (`Room.pickThrown`: запись поднимающего в пути) — до её конца вещь не в сумке. */
+  carrying: Set<DropIn>;
   runConfig: RunConfig | null; runPlan: RunPlan | null; runNodeId: string | null; nodeState: RunNodeState | null;
   decor: { kind: string; x: number; y: number }[];
   session: {
@@ -323,7 +329,11 @@ type Others = 'none' | 'yes' | 'no';
 type Op =
   | { k: 'join'; h: number; mode: 'fresh' | 'resume' | 'code' | 'friend'; r: number; reuse: boolean }
   | { k: 'status'; h: number }
-  | { k: 'abandon'; h: number }
+  /**
+   * ⭐ R16 C-09: `ask` — экран входа: статус забега и «Завершить» с него же, одним соединением (кадры героя — по очереди), и что экран обещал
+   * (`runStatus.dead` — «без штрафа»), то «Завершить» и сделало (`5-status-promise`). Флаг — из своего потока (`W.ask`).
+   */
+  | { k: 'abandon'; h: number; ask?: boolean }
   | { k: 'leave'; h: number }
   | { k: 'close'; h: number }
   | { k: 'move'; h: number; to: Where; r: number }
@@ -407,6 +417,17 @@ interface W {
   aux: FuzzRng;
   /** ⭐ C-05: свой поток и у новых героев (`recruit`) — прежние операции и ветераны идут как шли, новые лишь вставлены. */
   crew: FuzzRng;
+  /** ⭐ R16 C-09: свой поток и у «статус перед Завершить» (`abandon.ask`) — последовательность операций та же. */
+  ask: FuzzRng;
+  /**
+   * ⭐ R16 C-09: «Завершить» операции со статусом перед ним (`abandon.ask`): соединение, герой, чисто ли (ни его кадров лобби в очереди, ни
+   * живой сессии, сбоев базы на начало — `faults`), и что сказал статус в миг ответа (`st`: `dead`, есть ли забег, жива ли сессия, и есть ли
+   * забег у копии, которую «Завершить» бросит, — грейс-копия или строка базы).
+   */
+  asked: {
+    conn: FakeConn; charId: string; quiet: boolean; faults: number;
+    st?: { dead: boolean; hasRun: boolean; live: boolean; hadRun: boolean; grace: boolean };
+  } | null;
   /** ⭐ C-03: штрафов, взятых с героя за прогон (не сбрасывается проверкой): «Завершить» ожившего обязано его сдвинуть. */
   penaltyCount: Map<string, number>;
   ticking: Set<RoomIn>; lobbies: FakeConn[];
@@ -416,6 +437,11 @@ interface W {
   violations: Violation[]; seen: Set<string>;
   penalties: Penalty[];
   sinks: Set<string>; lastLoc: Map<string, string>;
+  /**
+   * ⭐ K3: поднимаемое (запись поднимающего в пути, `carrying`), чья земля ушла (смена этажа, снятие комнаты): `groundGone` его стоком не
+   * числит — легла запись, вещь в сумке. Не легла — ушло с землёй (сток): это решает проверка, когда запись кончилась.
+   */
+  carryGone: Set<string>;
   /** Чей штраф взял вещь (для корня нарушения, если она вернётся уже не к нему — на землю, соседу). */
   sunkBy: Map<string, string>;
   /** Проданное за операцию (законный сток). */
@@ -605,7 +631,23 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
     for (const it of data.tabs.flat()) { put(it.uid, `stash:${userId}`); if (tracked(it)) trackedUid.add(it.uid); }
   }
   const rooms = allRooms(w);
-  for (const room of rooms) for (const d of room.session.world.drops) if (d.kind === 'item' && d.item) { put(d.item.uid, `ground:${room.code}`); if (tracked(d.item)) trackedUid.add(d.item.uid); }
+  // ⭐ K3: и поднимаемое с земли, ушедшей, пока запись поднимающего в пути (`carrying`): в сумку вещь переходит только после неё.
+  for (const room of rooms) {
+    const ds = room.session.world.drops;
+    const ground = room.carrying?.size ? [...ds, ...[...room.carrying].filter((d) => !ds.includes(d))] : ds;
+    for (const d of ground) if (d.kind === 'item' && d.item) { put(d.item.uid, `ground:${room.code}`); if (tracked(d.item)) trackedUid.add(d.item.uid); }
+  }
+  // ⭐ K3: поднимаемое, чья земля ушла, пока запись поднимающего была в пути (`carryGone`): легла — вещь в его сумке; ещё в пути — земля
+  // (`carrying`); строка базы её держит (исход неизвестен, копию ещё дописывают) — судьбу решит дописка. Иначе ушло с землёй ушедшего этажа —
+  // сток. Сама проверка его на земле могла и не видеть: выброс, подъём и смена этажа — одна операция (голосование решилось снятием соседа), и
+  // последним местом вещи числилась сумка выбросившего.
+  for (const uid of [...w.carryGone]) {
+    const ls = where.get(uid);
+    if (ls?.some((l) => l.startsWith('ground:'))) continue;
+    if (!ls && [...db.rows.values()].some((r) => r.json.includes(uid))) continue;
+    w.carryGone.delete(uid);
+    if (!ls) { w.sinks.add(uid); w.lastLoc.delete(uid); }
+  }
   for (const [uid, ls] of where) {
     const settled = ls.filter((l) => !(l.startsWith('hero:') && pendingChars.has(l.slice(5))));
     if (settled.length > 1) violate(w, '1-dup-item', `вещь ${uid} сразу в: ${ls.join(', ')}`);
@@ -670,6 +712,25 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
     if (counted.length) { h.penaltyEv = Math.max(h.penaltyEv, ...counted.map((p) => p.ev)); h.lastPen = counted.reduce((a, b) => (b.ev > a.ev ? b : a)); h.cap = null; }
   }
   w.penalties.length = 0;
+
+  // 5 (R16 C-09): ЭКРАН ВХОДА НЕ ВРЁТ О ЦЕНЕ «ЗАВЕРШИТЬ». Статус забега сказал `dead` («погиб в нём, штраф взят» — «Забросить» без штрафа) —
+  // «Завершить» с того же экрана штрафа не берёт; не сказал — берёт. Раньше статус этого не знал, и экран погибшему твердил «штраф золота и
+  // части предметов» за бесплатный выход, толкая к «Продолжить», которое вернёт его мёртвым. Сверка — только чистой пары: ни его кадров лобби в
+  // очереди, ни живой сессии (её «Завершить» выселяет — правда уже её), ни сбоев базы за операцию; «Завершить» прошло, и забег было что бросать.
+  const ask = w.asked;
+  if (ask && op?.k === 'abandon') {
+    w.asked = null;
+    const st = ask.st;
+    const h = w.heroes.find((x) => x.charId === ask.charId);
+    const done = ask.conn.frames.some((f) => f.t === 'abandoned');
+    if (h && st && done && ask.quiet && !st.live && st.hasRun && st.hadRun && db.consumed === ask.faults) {
+      const charged = took.some((p) => p.charId === ask.charId && PROMISE_SRC.has(p.src));
+      tally(`promise:${st.dead ? 'free' : 'cost'}:${st.grace ? 'grace' : 'row'}`);
+      if (charged === st.dead) {
+        violate(w, '5-status-promise', `${ask.charId}: экран «Продолжить / Забросить» ${st.dead ? 'обещал «без штрафа» (`dead`), а «Завершить» оштрафовал' : 'пугал штрафом, а «Завершить» его не взял (смерть оплачена — `dead` не сказан)'}; до операции ${JSON.stringify(pre.get(ask.charId))}, операция ${op ? fmt(op) : 'эпилог'}`, h);
+      }
+    }
+  }
 
   // 4: зелье и бой (вампиризм, жизнь за убийство) лечат законно — и у снятого той же операцией (запись сессии упала): его следующее
   // наблюдение — с чистого листа.
@@ -755,6 +816,24 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
   }
   for (const [, rs] of byRun) if (rs.length > 1) w.concurrent = true;
   for (const [, rs] of byRun) if (rs.length > 1 && !w.violations.some((v) => v.inv === '8-run-in-two-rooms')) violate(w, '8-run-in-two-rooms', `один забег в подземелье двух комнат сразу: ${rs.join(', ')}; операция ${op ? fmt(op) : 'эпилог'}`);
+  // 3 (R16 C-03): В ПОДЗЕМЕЛЬЕ — ТОЛЬКО УЧАСТНИКИ ЕГО ЗАБЕГА. Подключённый (сессия, тело в бою) и ждущий реконнекта не припаркованным — с забегом
+  // комнаты: гость с ЧУЖИМ ей забегом вне правил бегства (похороны и страховка входа его забег не трогают, `foreignRun`) — уход из боя ему даром.
+  // ⭐ E2E 28.09 (сид 60995): и подземелье без забега — окно вайпа (`wipe` снял забег комнаты, этаж с монстрами ещё стоит): любой свой забег
+  // в нём чужой. Раньше проверка пропускала такие комнаты, и вход по коду в окно вайпа ловила только `3-fled-released` на эпилоге.
+  for (const room of rooms) {
+    if (room.area !== 'dungeon') continue;
+    const key = room.runConfig ? runLedgerKey(room.runConfig) : '—';
+    const foreign = (s: SaveState | undefined): string | null => (s?.run?.config && runLedgerKey(s.run.config) !== key ? runLedgerKey(s.run.config) : null);
+    for (const pid of room.clients.keys()) {
+      const s = room.session.world.players[pid]?.save;
+      const own = foreign(s);
+      if (own) violate(w, '3-dungeon-foreign-run', `${s!.charId} в подземелье комнаты ${room.code} (её забег ${key}) со своим забегом ${own}; операция ${op ? fmt(op) : 'эпилог'}`, w.heroes.find((x) => x.charId === s!.charId));
+    }
+    for (const [charId, info] of room.disconnected) {
+      const own = info.safe ? null : foreign(info.save);
+      if (own) violate(w, '3-dungeon-foreign-run', `${charId} ждёт реконнекта в подземелье комнаты ${room.code} (её забег ${key}) со своим забегом ${own}; операция ${op ? fmt(op) : 'эпилог'}`, w.heroes.find((x) => x.charId === charId));
+    }
+  }
   // 8: записи узлов — на входе не меньше известного, и одно не берётся дважды.
   for (const room of rooms) {
     if (room.area !== 'dungeon' || !room.runConfig || !room.nodeState) continue;
@@ -796,6 +875,14 @@ const tally = (k: string): void => { stats.set(k, (stats.get(k) ?? 0) + 1); };
 function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
   if (c.run !== db.run) return;
   if (f.t === 'joined') c.roomCode = f.roomCode;
+  // 5 (R16 C-09): обещание экрана входа — в миг ответа статуса: что сказано (`dead`), жива ли сессия и есть ли забег у копии, которую бросит
+  // «Завершить» (грейс-копия, нет её — строка базы; как решает сам кадр `abandon`).
+  if (f.t === 'runStatus' && w.asked?.conn === c && !w.asked.st) {
+    const charId = w.asked.charId;
+    const grace = rmOf(w).graceByChar.get(charId);
+    const hadRun = grace ? !!grace.disconnected.get(charId)?.save.run : !!rowSave(charId)?.run;
+    w.asked.st = { dead: f.dead === true, hasRun: f.hasRun, live: rmOf(w).live.has(charId), hadRun, grace: !!grace };
+  }
   if (f.t === 'areaChanged') tally(`area:${(f.floor as { area?: string }).area}`);
   else if (f.t === 'cmdResult') tally(`cmd:${f.cmd}:${f.ok ? 'ok' : 'no'}`);
   else if (f.t === 'error') tally(`err:${f.code}`);
@@ -818,7 +905,9 @@ function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
   const h = w.heroes[c.hero]!;
   // Жив ли герой в этот миг (вход — после восстановления «каким ушёл», переход — после оживления этажом). Жив не на арене — новая жизнь:
   // следующий штраф не второй за ту же смерть, пулы — с чистого листа. Снимок после операции мог его не застать (сессию сняла запись).
-  const pid = f.t === 'joined' ? f.playerId : rmOf(w).conns.get(c)?.pid;
+  // Кадр этажа посреди входа (сборка узла продолжением сразу за `attach`) приходит раньше, чем менеджер запомнил соединение (`conns`), —
+  // игрок по сокету в клиентах комнаты (как у фаззера кластера: иначе «встал на узле мёртвым», K1, проверка не видит).
+  const pid = f.t === 'joined' ? f.playerId : rmOf(w).conns.get(c)?.pid ?? [...room.clients.values()].find((cl) => cl.ws === c)?.pid;
   const p = pid ? room.session.world.players[pid] : undefined;
   // 2: погибший (не оживавший) — живым в ТОМ ЖЕ забеге, но в другой комнате («Продолжить» в новую комнату, вход по коду).
   if (p?.alive && room.area === 'dungeon' && room.runConfig && h.deadRun && room !== h.deadRoom && runLedgerKey(room.runConfig) === h.deadRun) {
@@ -856,6 +945,11 @@ function deathPaid(w: W, h: Hero): boolean {
 }
 /** ⭐ C-03: штрафы, бросающие забег сейва (`Penalty.run`): «Завершить», похороны копии и по строке базы. */
 const ABANDON_SRC: ReadonlySet<string> = new Set(['abandonStored', 'abandonAsDead', 'stored', 'bury', 'buryFled']);
+/**
+ * ⭐ R16 C-09: штрафы, которые берёт «Завершить» (цена, о которой говорит экран входа): сам «Завершить» (из грейса и по строке базы), его
+ * запись по строке (копию обогнали) и тело в бою, погибшее и ещё не оплаченное (`endLinger` — первым делом «Завершить»).
+ */
+const PROMISE_SRC: ReadonlySet<string> = new Set(['abandonStored', 'abandonAsDead', 'stored', 'linger']);
 /** ⭐ C-03: `next` бросает забег, в котором смерть `prev` не случилась: погиб гостем в чужом ему забеге — свой эта смерть не оплатила. */
 function guestDeath(prev: Penalty, next: Penalty): boolean {
   return (prev.src === 'death' || prev.src === 'linger') && ABANDON_SRC.has(next.src) && next.run !== null && prev.where !== next.run;
@@ -1001,7 +1095,18 @@ async function exec(w: W, op: Op): Promise<void> {
       return;
     }
     case 'status': lobby(w, heroOf(w, op.h), { t: 'runStatus' }); await drain(); return;
-    case 'abandon': lobby(w, heroOf(w, op.h), { t: 'abandon' }); await drain(); return;
+    case 'abandon': {
+      const h = heroOf(w, op.h);
+      if (!op.ask) { lobby(w, h, { t: 'abandon' }); await drain(); return; }
+      // ⭐ R16 C-09: экран входа — статус забега, и «Завершить» с него же (одно соединение: кадры по очереди). Обещание экрана записывает
+      // `noteFrame` в миг ответа, сверяет — `check`.
+      const quiet = !w.pending.some((p) => p.charId === h.charId) && !rmOf(w).live.has(h.charId);
+      const ws = lobby(w, h, { t: 'runStatus' });
+      w.asked = { conn: ws, charId: h.charId, quiet, faults: db.consumed };
+      lobby(w, h, { t: 'abandon' }, ws);
+      await drain(3);
+      return;
+    }
     case 'leave': send(w, heroOf(w, op.h), { t: 'leave' }); await drain(); return;
     case 'close': {
       const h = heroOf(w, op.h);
@@ -1259,6 +1364,16 @@ async function exec(w: W, op: Op): Promise<void> {
     }
   }
 }
+/**
+ * ⭐ R16 C-09: герой вне игры, чья смерть в забеге оплачена по правде сервера: ждёт пати мёртвым в грейсе (`paid`) или «мёртв, оплачено» в
+ * копии либо строке (`run.deadAt`). Только выбор героя для вставки — само обещание сверяет `check` с исходом «Завершить».
+ */
+function paidOut(w: W, h: Hero): boolean {
+  const grace = rmOf(w).graceByChar.get(h.charId);
+  const info = grace?.disconnected.get(h.charId);
+  if (info) return !!info.save.run && (info.paid || info.save.run.deadAt !== undefined);
+  return rowSave(h.charId)?.run?.deadAt !== undefined;
+}
 /** ⭐ C-12: тиры сложности по порядку (открытие — по глубине предыдущего). */
 const tierIds = (): string[] => cfg.get('difficulties').map((d) => d.id);
 
@@ -1281,11 +1396,19 @@ function genOp(w: W, rng: FuzzRng): Op {
   }
   // ⭐ C-05: новый герой — из своего потока (`crew`): ни основной поток, ни поток ветеранов на эту операцию не тратятся.
   if (hs.length < HEROES_MAX && w.crew.chance(0.02)) return { k: 'recruit' };
+  // ⭐ R16 C-09: погибший вне игры (ждёт пати мёртвым — `paid`, или «мёртв, оплачено» в сейве — `run.deadAt`) — экран входа: статус и
+  // «Завершить» с него (`5-status-promise`). Из своего потока (`ask`): основной на эту операцию не тратится. Без вставки такая пара
+  // случайным «Завершить» почти не выпадала — обещание «без штрафа» не проверялось вовсе.
+  const deadOut = off.filter((h) => paidOut(w, h));
+  if (deadOut.length && w.ask.chance(0.3)) return { k: 'abandon', h: w.ask.pick(deadOut).i, ask: true };
   const diff = (): number | undefined => (w.aux.chance(0.5) ? w.aux.int(tierIds().length) : undefined);
   const table: [number, () => Op][] = [
     [off.length ? 14 : 3, () => ({ k: 'join', h: rng.chance(0.75) ? pickFrom(off) : any(), mode: rng.pick(['fresh', 'resume', 'resume', 'code', 'friend', 'friend'] as const), r: rng.next(), reuse: rng.chance(0.5) })],
     [2, () => ({ k: 'status', h: any() })],
-    [2.5, () => ({ k: 'abandon', h: rng.chance(0.7) ? pickFrom(off) : any() })],
+    [2.5, () => {
+      const op: Op = { k: 'abandon', h: rng.chance(0.7) ? pickFrom(off) : any() };
+      return w.ask.chance(0.6) ? { ...op, ask: true } : op;   // ⭐ R16 C-09: из своего потока — основной не сдвигается
+    }],
     [3 * L, () => ({ k: 'leave', h: pickFrom(live) })],
     [5 * L, () => ({ k: 'close', h: pickFrom(live) })],
     [8 * L, () => ({ k: 'move', h: pickFrom(live), to: rng.pick(['entry', 'exit', 'portal', 'away', 'monster', 'monster', 'drop', 'chest'] as const), r: rng.next() })],
@@ -1479,8 +1602,9 @@ async function run(seed: number, script: Op[] | null, nOps: number, stopAt: stri
   const ticking = new Set<RoomIn>();
   const w: W = {
     seed, heroes: [], rm: null as unknown as RmIn, rng: fuzzRng(mixSeed(seed, 0x0b5)), aux: fuzzRng(mixSeed(seed, 0xa11)), crew: fuzzRng(mixSeed(seed, 0xc4e)), penaltyCount: new Map(),
+    ask: fuzzRng(mixSeed(seed, 0xc09)), asked: null,
     ticking, born: new WeakSet(), lobbies: [], pending: [], violations: [], seen: new Set(),
-    penalties: [], sinks: new Set(), lastLoc: new Map(), sunkBy: new Map(), sold: new Set(), concurrent: false, ev: 0, recs: new Map(), roomSeen: new WeakMap(), ids: new WeakMap(), idSeq: 0,
+    penalties: [], sinks: new Set(), carryGone: new Set(), lastLoc: new Map(), sunkBy: new Map(), sold: new Set(), concurrent: false, ev: 0, recs: new Map(), roomSeen: new WeakMap(), ids: new WeakMap(), idSeq: 0,
     errors: [], cmdFailed0: counters.cmdFailed, frameErrors0: counters.frameErrors, op: -1, opRef: null, stepped: false,
   };
   cur = w;
@@ -1569,7 +1693,8 @@ beforeAll(async () => {
   // а пустая комната — совсем): иначе такая вещь читалась бы пропажей без стока.
   const groundGone = (room: RoomIn): void => {
     if (!cur?.born.has(room)) return;
-    for (const d of room.session.world.drops) if (d.kind === 'item' && d.item) cur.sinks.add(d.item.uid);
+    // ⭐ K3: поднимаемое (запись поднимающего в пути) с землёй не уходит — легла запись, вещь в его сумке; не легла — пропажа проверкой (сток).
+    for (const d of room.session.world.drops) if (d.kind === 'item' && d.item) (room.carrying?.has(d) ? cur.carryGone : cur.sinks).add(d.item.uid);
   };
   after('enterNode', (room) => { if (cur?.born.has(room)) { noteReached(cur, room, [...room.clients.keys()]); noteRevived(cur, room); } }, groundGone);
   // Город оживляет всех в комнате (и тех, чей сокет уже закрыт, но закрытие до комнаты ещё не дошло: кадр им не уйдёт).
@@ -1650,6 +1775,17 @@ beforeAll(async () => {
       return r;
     });
   }
+  // 3 (R16 C-03): БЕГСТВО ИЗ БОЯ ДАРОМ НЕ ОТПУСКАЕТСЯ. Отпустить ждущего без штрафа (`releaseParked`: страховка входа, похороны чужого забега,
+  // комната ушла в другой) можно припаркованного (`safe`), погибшего (`paid`) или ушедшего спокойно — а не сбежавшего посреди боя (`fled`).
+  around(proto, 'releaseParked', (self, a, call) => {
+    const room = self as RoomIn;
+    const w = cur;
+    const [charId, info] = a as [string, InfoIn];
+    if (w?.born.has(room) && !info.safe && !info.paid && info.fled) {
+      violate(w, '3-fled-released', `${charId}: комната ${room.code} (${room.area}, забег ${room.runConfig ? runLedgerKey(room.runConfig) : '—'}) отпустила без штрафа сбежавшего из боя (его забег ${info.save.run?.config ? runLedgerKey(info.save.run.config) : '—'}); операция ${opText(w)}`, heroBy(w, charId));
+    }
+    return call();
+  });
   // 5 (C-04): «ПРОДОЛЖИТЬ» — В СВОЙ ЗАБЕГ. Припаркованный (`safe`) возвращается реконнектом только в комнату, которая ведёт его забег.
   around(proto, 'reconnect', (self, a, call) => {
     const room = self as RoomIn;
@@ -1696,6 +1832,8 @@ beforeAll(async () => {
     vi.spyOn(rmProto, 'onClose').mockImplementation(function (this: unknown, ...a: unknown[]) { void Promise.resolve().then(() => onClose.apply(this, a)); });
   }
   if (FUZZ_SELFTEST === 'c12') vi.spyOn(proto, 'tierOpenHere').mockReturnValue(true);
+  // ⭐ R16 C-03: вход по коду в подземелье чужого забега со своим припаркованным — снова пускается (фаззер обязан найти `3-dungeon-foreign-run`).
+  if (FUZZ_SELFTEST === 'r16c03') vi.spyOn(proto, 'runClashOn').mockReturnValue(false);
   cfg = new ConfigRegistry();
   cfg.loadAll();
   // Лимиты частоты — не предмет этого фаззера: операции идут быстрее живого клиента по поддельным часам.
@@ -1977,4 +2115,121 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
     { k: 'join', h: 4, mode: 'code', r: 0, reuse: false },
     { k: 'join', h: 0, mode: 'resume', r: 0, reuse: false },
   ], '5-resume-dead-end');
+
+  // ── АРТЕФАКТ СТЕНДА (прогон после прохода правок 2, K3 `pickThrown`): вещь, чья земля ушла, пока запись поднимающего была в пути, `groundGone`
+  // стоком не числил, а проверка на земле её не видела (выброс, подъём и уход с этажа — одна операция: голосование решилось снятием соседа,
+  // чья запись — исход неизвестен), — и числила пропажей из сумки выбросившего. Теперь это решает проверка по концу записи (`carryGone`).
+  // B поднимает брошенное A; его запись с вещью — исход неизвестен (легла), B снят, спуск A решён: вещь на земле города за B, дописка копии B
+  // без неё легла — вещь ушла с землёй (сток по дизайну).
+  fixedRoot('стенд: подъём соседа в пути, пока пати ушла с этажа, — вещь ушла с землёй, а не пропала без стока', 4001125, [
+    { k: 'join', h: 2, mode: 'code', r: 0.25370119884610176, reuse: false },
+    { k: 'fault', f: 'unknownLanded', h: 2 },
+    { k: 'join', h: 3, mode: 'code', r: 0.8304552910849452, reuse: true },
+    { k: 'descend', h: 3, r: 0.2834240226075053, others: 'none', near: true, pause: false, diff: 3 },
+    { k: 'trade', h: 3, r: 0.6582428661640733 },
+  ], '1-item-lost');
+  // То же с арены: город с арены решён снятием соседа, пока его подъём брошенного в пути.
+  fixedRoot('стенд: подъём соседа в пути, пока пати ушла с арены, — вещь ушла с землёй, а не пропала без стока', 4002646, [
+    { k: 'recruit' },
+    { k: 'join', h: 2, mode: 'friend', r: 0.7211114533711225, reuse: false },
+    { k: 'join', h: 0, mode: 'code', r: 0.014242968522012234, reuse: false },
+    { k: 'arena', h: 2, others: 'yes', pause: false },
+    { k: 'town', h: 0, others: 'none', near: true, pause: true },
+    { k: 'fault', f: 'unknownLanded', h: 2 },
+    { k: 'trade', h: 0, r: 0.5909510210622102 },
+  ], '1-item-lost');
+
+  // ── НАЙДЕНО ПРОГОНОМ ПОСЛЕ ПРОХОДА ПРАВОК 2, ИСПРАВЛЕНО (проход правок 3).
+  // A1-arena-home-regen: A и B на арене комнаты X (тело города каждого — `arenaHome` с меткой времени входа `at`). B уходит в свою комнату,
+  // бьётся до 5% и возвращается в X по коду, пока арена идёт: `attach` освежал его тело города пулами сейва (`freshLeft`, R12-02), но метку `at`
+  // оставлял прежней — и конец арены (`leaveArena`) начислял реген за ВСЁ время с первого входа, поверх пулов, где этот реген уже учтён,
+  // а урон взят позже (1.4 → 25.5 из 30 за 1.6 с; арена дольше — полное здоровье, мана и выносливость даром). Теперь пулы сейва — вместе с
+  // меткой «сейчас». Первый повтор — усиленный (арена 100 с), второй — сжатый фаззером (сид 4002867, 2.4 → 4.5 за 1.6 с).
+  fixedRoot('A1: вернувшийся на идущую арену не получает реген за время, проведённое в другой комнате', 7, [
+    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
+    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
+    { k: 'arena', h: 0, others: 'yes', pause: true },
+    { k: 'step', n: 3000 },
+    { k: 'join', h: 1, mode: 'fresh', r: 0, reuse: false },
+    { k: 'descend', h: 1, r: 0, others: 'none', near: true, pause: true },
+    { k: 'hurt', h: 1, frac: 0.05 },
+    { k: 'town', h: 1, others: 'none', near: true, pause: true },
+    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
+    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
+  ], '4-free-restore');
+  fixedRoot('A1 (сид 4002867): реген конца арены — не за время в другой комнате', 4002867, [
+    { k: 'join', h: 3, mode: 'friend', r: 0.7577773036900908, reuse: false },
+    { k: 'arena', h: 3, others: 'yes', pause: true },
+    { k: 'join', h: 1, mode: 'fresh', r: 0.39206379326060414, reuse: false },
+    { k: 'join', h: 2, mode: 'friend', r: 0.4502187557518482, reuse: true },
+    { k: 'descend', h: 2, r: 0.40180207462981343, others: 'none', near: false, pause: true },
+    { k: 'join', h: 3, mode: 'friend', r: 0.659697197843343, reuse: true },
+    { k: 'step', n: 90 },
+    { k: 'descend', h: 3, r: 0.8251447721850127, others: 'yes', near: false, pause: true },
+    { k: 'hurt', h: 3, frac: 0.1 },
+    { k: 'join', h: 0, mode: 'friend', r: 0.1408002208918333, reuse: false },
+    { k: 'town', h: 1, others: 'yes', near: true, pause: true },
+    { k: 'leave', h: 2 },
+    { k: 'join', h: 3, mode: 'friend', r: 0.34869159501977265, reuse: true },
+    { k: 'close', h: 0 },
+    { k: 'town', h: 3, others: 'none', near: true, pause: true },
+  ], '4-free-restore');
+
+  // ── R16 (ревью сервера), ИСПРАВЛЕНО. C-03: B паркует свой забег X (этаж соло, портал, закрыл вкладку в городе) и входит по коду к A в
+  // подземелье забега Y: `joinRun` отдаёт забег комнаты только тому, у кого его нет, — B в бою со своим X. Ранен посреди боя, закрыл вкладку
+  // (тело в бою, бегство) и ушёл «Соло»: страховка входа (`abandonAsDead`) и похороны (город, спуск пати) чужой забег отпускали без штрафа —
+  // с добычей и 30 % здоровья. Теперь такой вход — отказ `run` (самопроверка `DM_FUZZ_SELFTEST=r16c03` его снимает: повтор падает).
+  const r16c03 = (exit: Op[]): Op[] => [
+    { k: 'join', h: 1, mode: 'fresh', r: 0, reuse: false },
+    { k: 'descend', h: 1, r: 0, others: 'none', near: false, pause: true },
+    { k: 'town', h: 1, others: 'none', near: true, pause: true },
+    { k: 'close', h: 1 },
+    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
+    { k: 'descend', h: 0, r: 0, others: 'none', near: false, pause: true },
+    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
+    { k: 'move', h: 1, to: 'monster', r: 0.1 },
+    { k: 'hurt', h: 1, frac: 0.3 },
+    { k: 'close', h: 1 },
+    ...exit,
+  ];
+  fixedRoot('R16 C-03a: гость с припаркованным забегом не входит в подземелье чужого — бегство «Соло» не даром', 7,
+    r16c03([{ k: 'join', h: 1, mode: 'fresh', r: 0, reuse: false }]), '3-dungeon-foreign-run');
+  fixedRoot('R16 C-03b: …и пати, ушедшая в город, не уносит его из боя даром', 7,
+    r16c03([{ k: 'wait', ms: 1600 }, { k: 'town', h: 0, others: 'none', near: true, pause: false }]), '3-dungeon-foreign-run');
+  // ⭐ E2E 28.09 (большой прогон, сид 60995, сжато 140 → 9): ОКНО ВАЙПА. h0 и h1 прошли узел и вернулись в город (забег припаркован у обоих),
+  // h0 вышел, h1 спустился один и погиб — вайп снял забег комнаты, до города 4 с (`WIPE_RETURN_MS`), этаж с монстрами стоит. h0 входит по коду
+  // в это окно со своим припаркованным забегом — C-03 требовал забег у комнаты и пускал; h0 у монстра — и уход из боя отпускался даром
+  // (`foreignRun` без забега комнаты). Теперь такой вход — отказ `run`.
+  fixedRoot('E2E 28.09: вход по коду в окно вайпа со своим забегом — отказ, бегство из боя не даром', 60995, [
+    { k: 'join', h: 0, mode: 'friend', r: 0.14394234027713537, reuse: false },
+    { k: 'descend', h: 0, r: 0.3915926623158157, others: 'yes', near: true, pause: true },
+    { k: 'join', h: 1, mode: 'code', r: 0.38067897595465183, reuse: false },
+    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
+    { k: 'close', h: 0 },
+    { k: 'descend', h: 1, r: 0.8706523871514946, others: 'yes', near: false, pause: true },
+    { k: 'kill', h: 1, body: false },
+    { k: 'join', h: 0, mode: 'friend', r: 0.13522273022681475, reuse: false },
+    { k: 'move', h: 0, to: 'monster', r: 0.6776168735232204 },
+  ], '3-');
+
+  // ── R16 (ревью клиента), ИСПРАВЛЕНО. C-09: трое в коопе спускаются, h1 гибнет на узле (штраф взят) и закрывает вкладку — ждёт пати мёртвым
+  // (`paid`). Экран входа: статус забега не говорил, что смерть оплачена, и «Незавершённое прохождение» грозило «штраф золота и части
+  // предметов», а «Завершить» с него штрафа (верно, V1) не брало — бесплатный выход выглядел платным. Теперь статус несёт `dead`
+  // (самопроверка `DM_FUZZ_SELFTEST=c09` его снимает: повтор падает на `5-status-promise`). Сжато фаззером (сид 1, 40 сидов — 9 таких).
+  fixedRoot('R16 C-09: погибший, ждущий пати, — экран «Продолжить / Забросить» говорит «без штрафа», и «Завершить» его не берёт', 1, [
+    { k: 'join', h: 2, mode: 'friend', r: 0.6585034593008459, reuse: false },
+    { k: 'fault', f: 'unknownLost', h: null },
+    { k: 'join', h: 1, mode: 'code', r: 0.4984316201880574, reuse: true },
+    { k: 'close', h: 2 },
+    { k: 'join', h: 2, mode: 'friend', r: 0.46297631599009037, reuse: true },
+    { k: 'leave', h: 2 },
+    { k: 'join', h: 1, mode: 'code', r: 0.8807855825871229, reuse: false },
+    { k: 'join', h: 0, mode: 'friend', r: 0.8267209047917277, reuse: false },
+    { k: 'descend', h: 1, r: 0.9967779582366347, others: 'yes', near: false, pause: true },
+    { k: 'descend', h: 1, r: 0.5323676853440702, others: 'yes', near: true, pause: true, diff: 1 },
+    { k: 'descend', h: 1, r: 0.47436228673905134, others: 'yes', near: false, pause: false },
+    { k: 'descend', h: 1, r: 0.7458896802272648, others: 'yes', near: true, pause: true },
+    { k: 'close', h: 1 },
+    { k: 'abandon', h: 1, ask: true },
+  ], '5-status-promise');
 });

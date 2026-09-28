@@ -15,6 +15,7 @@ import { tickScheduler } from './scheduler.js';
 import { migrateLegacyWallet } from './accountStash.js';
 import { releaseChar, claimForJoin, claimOwner } from '../cluster/registry.js';
 import { isDraining } from '../cluster/node.js';
+import { leaseLost } from '../cluster/lease.js';
 
 /**
  * Ф4.1: ПЕРВАЯ БУКВА КОДА — это нода, на которой живёт комната. Благодаря ей «зайти к другу
@@ -148,6 +149,8 @@ const NO_ROOM = { t: 'error', code: 'no-room', msg: 'Комната не най�
 const JOIN_RATE = { t: 'error', code: 'rate', msg: 'Слишком часто — подождите немного' } as const;
 /** R4-18: пати полна. */
 const ROOM_FULL = { t: 'error', code: 'full', msg: 'В комнате нет мест' } as const;
+/** ⭐ R16 C-03: по коду — в подземелье чужого забега, а у героя припаркован свой (`Room.runClashOn`; тот же отказ, что голосу за спуск, R4-25). */
+const RUN_CLASH_JOIN = { t: 'error', code: 'run', msg: 'У вас незавершённый забег — продолжите или завершите его, прежде чем идти в чужой' } as const;
 /**
  * R3-12: нода сливается (SIGTERM, `/internal/drain`) — новых сессий и штрафов не заводим: запись сейвов слива уже идёт,
  * а начатое после неё процесс оборвал бы выходом. Клиент повторит вход — гейтвей уведёт его на живую ноду.
@@ -271,6 +274,8 @@ export const clusterHooks = {
   releaseIdle(charIds: readonly string[]): void { current?.releaseIdle(charIds); },
   /** ⭐ V2: забеги, которые держат комнаты этой ноды (ключ и код комнаты), — сердцебиение продлевает их за нодой (`touchRuns`). */
   heldRuns(): { key: string; room: string }[] { return current ? current.heldRuns() : []; },
+  /** ⭐ ENV1: эти забеги комнат ноды реестр числит за другой нодой — комнаты их отпускают (см. `RoomManager.fenceRuns`). */
+  fenceRuns(runs: readonly { key: string; room: string }[]): void { current?.fenceRuns(runs); },
 };
 
 export class RoomManager {
@@ -627,6 +632,9 @@ export class RoomManager {
 
   /** Кадры, которым нужна база: идут по очереди соединения (см. `handleConnection`). */
   private async onFrame(ws: GameConn, frame: ClientFrame): Promise<void> {
+    // ⭐ ENV1: аренда ноды кончилась (`lease.ts`) — ни входа, ни «Завершить», ни команды: героев и забеги ноды реестр вправе отдать другой, а
+    // процесс вот-вот уходит (`node.ts`, `checkLease`). Лобби — «перезапускаемся»: клиент повторит через гейтвей.
+    if (leaseLost()) { if (LOBBY_FRAMES.has(frame.t)) ws.send(JSON.stringify(DRAINING_ERROR)); return; }
 
     // Есть ли незавершённый забег? Грейс-комната (из подземелья, ещё жива) ИЛИ сохранённый `save.run`
     // (город-разрыв / истёкший грейс / реконнект). Модалка «Продолжить/Завершить» появляется ВСЕГДА,
@@ -649,7 +657,11 @@ export class RoomManager {
         const run = owned?.save.run;
         const hasRun = !!room || !!run;
         const depth = room?.currentDepth ?? (run ? runDepthOf(run.currentNodeId) : 0);
-        ws.send(JSON.stringify({ t: 'runStatus', hasRun, roomCode: room?.code, depth }));
+        // ⭐ R16 C-09: погиб в этом забеге, и штраф за смерть взят — «Завершить» без второго (V1), «Продолжить» — мёртвым ждать пати (K1). По
+        // тому же правилу, что сам кадр `abandon` ниже: есть грейс-комната — её копия (`deathPaid`), нет — строка базы (`run.deadAt`). Раньше
+        // экран этого не знал и погибшему тоже твердил «Забросить — штраф», толкая к «Продолжить», которое вернёт его мёртвым.
+        const dead = hasRun && (graceRoom ? graceRoom.deathPaid(frame.charId) : run?.deadAt !== undefined);
+        ws.send(JSON.stringify({ t: 'runStatus', hasRun, roomCode: room?.code, depth, dead }));
       });
       return;
     }
@@ -832,6 +844,7 @@ export class RoomManager {
         // идёт по коду к ноде держателя или показывает лобби с ним (там «Соло» — город без штрафа, забег цел: грейса у героя нет).
         if (holder) {
           if (holder.seatsTaken(frame.charId) >= MAX_PARTY) { ws.send(JSON.stringify({ ...ROOM_FULL, roomCode: holder.code })); return; }
+          this.endDeadRun(save, holder);   // ⭐ K1: пати забега в городе — погибший входит к ней без забега (её спуск оживит его вместе с ней)
           this.seat(ws, save.charId, holder.addPlayer(ws, userId, save, version), holder);
           return;
         }
@@ -881,7 +894,26 @@ export class RoomManager {
     } else {
       room = this.createRoom();
     }
+    this.endDeadRun(save, room);   // ⭐ K1
+    // ⭐ R16 C-03: В ПОДЗЕМЕЛЬЕ — ТОЛЬКО УЧАСТНИКИ ЕГО ЗАБЕГА. Вход по коду с припаркованным своим забегом в подземелье чужого сажал гостя вне
+    // всех правил бегства: `joinRun` отдаёт забег комнаты только тому, у кого его нет, а похороны и страховка входа чужой забег не трогают
+    // (C-04) — закрыть вкладку посреди боя и уйти «Соло» (или дождаться города либо спуска пати) стоило ноль, запаркованный на один этаж забег
+    // был страховкой от любого боя. Проверка — вплотную к входу (без ожиданий между ней и `addPlayer`): комната сменить область не успеет.
+    if (room.runClashOn(save)) { ws.send(JSON.stringify(RUN_CLASH_JOIN)); return; }
     this.seat(ws, save.charId, room.addPlayer(ws, userId, save, version), room);
+  }
+
+  /**
+   * ⭐ K1: ПОГИБШИЙ ВХОДИТ НЕ В ПОДЗЕМЕЛЬЕ СВОЕГО ЗАБЕГА — ЗАБЕГ ЕМУ ОКОНЧЕН, БЕЗ ШТРАФА. Сейв — «погиб в этом забеге и с тех пор не жил»
+   * (`run.deadAt`: штраф уже взят), а комнаты, где его ждали бы, нет: её процесс упал или слит (на одной ноде погибшего держит её грейс, и
+   * вход в другую комнату снимает его забег страховкой — `abandonAsDead`, оплаченная смерть — без штрафа). Раньше вход в город, «Соло» или
+   * по коду снимал метку («вошёл живым»), и спуск из города продолжал забег живым на узле смерти; оставлять метку в городе — значило
+   * «Завершить» потом бесплатно, хотя герой уже жил. Теперь — как страховка: забег снят, штрафа нет (оплачен), вход — без забега. В
+   * подземелье своего забега (пати его продолжила) он входит с ним — мёртвым, ждать пати (`Room.deadBySave`).
+   */
+  private endDeadRun(save: SaveState, room: Room): void {
+    if (save.run?.deadAt === undefined || room.inDungeonOf(save.run.config)) return;
+    save.run = undefined;
   }
 
   /**
@@ -1193,21 +1225,52 @@ export class RoomManager {
       void this.serial(id, async () => {
         const owner = await claimOwner(id);
         if (owner === null || owner === NODE_ID) return;
-        const ws = this.live.get(id);
-        const conn = ws ? this.conns.get(ws) : undefined;
-        const grace = this.graceByChar.get(id);
-        if ((ws && conn) || grace) console.warn(`[room] закрепление ${id} у ноды ${owner} — здешняя копия снята`);
-        if (ws && conn) {
-          this.live.delete(id);
-          this.conns.delete(ws);
-          this.inputRate.delete(ws);
-          conn.room.fence(id);
-        }
-        grace?.fence(id);
+        this.fenceHere(id, `закрепление ${id} у ноды ${owner}`);
         // ⭐ R6-06: и копия, которую база не приняла, — тоже проигравшая: забыть, не дописывая. Раньше здесь была ещё попытка,
         // и её отказ по версии клал штраф брошенного здесь забега на строку героя, живого на ноде-владельце (R4-15).
         this.forgetUnsaved(id, owner);
       }).catch((e: unknown) => console.error(`[room] снятие проигравшей копии ${id}:`, e));
+    }
+  }
+
+  /**
+   * R2-05: копию героя здесь снять без записи — живую сессию (4009, как устаревшую), ждущего реконнекта забыть без штрафа. `only` — только
+   * в этой комнате (ENV1: забег комнаты — за другой нодой; ушедший с тех пор в другую комнату этой ноды снят не будет).
+   */
+  private fenceHere(id: string, why: string, only?: Room): void {
+    const ws = this.live.get(id);
+    const conn = ws ? this.conns.get(ws) : undefined;
+    const live = !!ws && !!conn && (!only || conn.room === only);
+    const grace = this.graceByChar.get(id);
+    const waits = !!grace && (!only || grace === only);
+    if (live || waits) console.warn(`[room] ${why} — здешняя копия снята`);
+    if (live) {
+      this.live.delete(id);
+      this.conns.delete(ws!);
+      this.inputRate.delete(ws!);
+      conn!.room.fence(id);
+    }
+    if (waits) grace!.fence(id);
+    else if (only && !live) only.fence(id);   // тело в бою без сессии и грейса
+  }
+
+  /**
+   * ⭐ ENV1: ЗАБЕГ КОМНАТЫ РЕЕСТР ЧИСЛИТ ЗА ДРУГОЙ НОДОЙ (сердцебиение: `touchRuns` его не продлил) — комната его отпускает, а не играет
+   * дальше. Раньше была только строка «ИНЦИДЕНТ»: один забег шёл в подземелье двух комнат двух нод, и сундуки, босс и опыт узла брались в
+   * каждой. Правда забега — у ноды, которая его держит: героев этой комнаты снимаем, как проигравшие копии (`fenceHere`: без записи, без
+   * штрафа — взятое здесь после последней записи уходит, как с упавшим процессом), комната пустеет и уходит; «Продолжить» ведёт их к
+   * держателю (V2). Их закрепления — за этой нодой: вернуться могут и сюда.
+   */
+  fenceRuns(runs: readonly { key: string; room: string }[]): void {
+    for (const { key, room: code } of runs) {
+      const room = this.rooms.get(code);
+      if (!room || this.runRooms.get(key) !== room) continue;
+      for (const id of room.heroIds()) {
+        void this.serial(id, async () => {
+          if (this.rooms.get(code) !== room || this.runRooms.get(key) !== room) return;
+          this.fenceHere(id, `забег ${key} комнаты ${code} — за другой нодой`, room);
+        }).catch((e: unknown) => console.error(`[room] снятие копии ${id} с забегом другой ноды:`, e));
+      }
     }
   }
 

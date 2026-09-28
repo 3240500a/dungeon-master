@@ -2173,6 +2173,95 @@ describe('⚠ R10-02: снаряд не пролетает диагональн�
 });
 
 /**
+ * ⚠ C-10: СНАРЯД ГАСНЕТ О ПРЕГРАДУ ДЕКОРА, ЗАКРЫВАЮЩУЮ ОБЗОР (`blocksSight`). Подшаг снаряда смотрел только клетки сетки: стрела и
+ * выстрел жезла пролетали высокую колонну насквозь, а удар, нова, проклятие, прыжок и рывок её уважают (R5-05: «только то, что
+ * видишь»), монстр за ней героя не видит (ИИ без видимости) и выстрелить в ответ не может. Тем же путём и снаряд монстра летел
+ * сквозь колонну в героя, успевшего за неё зайти. Низкий декор (`blocksSight: false`) обзор не трогает — над ним снаряд летит.
+ * (Скрытое: в `objects` сегодня нет преграждающих объектов; его включит первая же правка редактора.)
+ */
+describe('⚠ C-10: снаряд не пролетает преграду декора, закрывающую обзор', () => {
+  /** Коридор 20×7: герой класса `cls` в (3,3), неподвижный неубиваемый монстр в (12,3), колонна r=14 в (8,3) — между ними. */
+  function corridor(blocksSight: boolean, cls = 'archer') {
+    const r = reg();
+    const s = new GameSession(r, 11, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, cls));
+    const g = makeGrid(20, 7, Cell.Wall);
+    for (let y = 1; y < 6; y++) for (let x = 1; x < 19; x++) g[y]![x] = Cell.Floor;
+    const at = cellToWorld(3, 3), mAt = cellToWorld(12, 3), pillar = cellToWorld(8, 3);
+    const target = tankMon(r, mAt.x, mAt.y, 'undead');
+    target.def.ai = 'stationary';
+    s.enterFloor(1, { grid: g, spawn: at, monsters: [target], obstacles: [{ x: pillar.x, y: pillar.y, shape: 'circle', r: 14, blocksSight }] });
+    return { s, p, at, m: s.world.monsters[0]!, pillar };
+  }
+  /** Лучник стреляет вдоль коридора `ticks` тиков (стоит на месте); → [вылетело стрел, попаданий по монстру, дальний x стрелы]. */
+  function volley(blocksSight: boolean, ticks = 150): [number, number, number] {
+    const { s, p, at } = corridor(blocksSight);
+    const seen = new Set<number>();
+    let hits = 0, maxX = 0;
+    for (let i = 0; i < ticks; i++) {
+      p.pos = { ...at };
+      for (const e of s.tick(1 / 30, { p1: { ...idle, facing: 0, attack: true } })) if (e.type === 'hit' && e.target === 'monster') hits++;
+      for (const pr of s.world.projectiles) if (pr.owner === 'player') { seen.add(pr.id); maxX = Math.max(maxX, pr.pos.x); }
+    }
+    return [seen.size, hits, maxX];
+  }
+
+  it('⭐ стрела гаснет о колонну: ни одного попадания по монстру за ней, дальше колонны не летит', () => {
+    const [shots, hits, maxX] = volley(true);
+    expect(shots, 'лучник стрелял').toBeGreaterThan(0);
+    expect(hits, 'сквозь колонну, закрывающую обзор').toBe(0);
+    expect(maxX, 'стрела не за колонной').toBeLessThan(cellToWorld(8, 3).x);
+  });
+
+  it('контроль: низкий декор (обзор не закрывает) — те же стрелы летят над ним и попадают', () => {
+    const [shots, hits] = volley(false);
+    expect(shots).toBeGreaterThan(0);
+    expect(hits).toBeGreaterThan(0);
+  });
+
+  /** Снаряд монстра из-за колонны в героя: выпущен вдоль коридора (как выстрел по герою, пока тот был виден) — → попаданий. */
+  function monsterShot(blocksSight: boolean): number {
+    const { s, p, at, m } = corridor(blocksSight);
+    for (let i = 0; i < 60 && !s.world.projectiles.length; i++) { p.pos = { ...at }; s.tick(1 / 30, { p1: { ...idle, facing: 0, attack: true } }); }
+    const pr = s.world.projectiles[0]!;
+    expect(pr, 'заготовка снаряда').toBeTruthy();
+    s.world.projectiles = [Object.assign(pr, { owner: 'monster' as const, ownerId: m.id, pos: { x: m.pos.x - 20, y: m.pos.y }, vel: { x: -260, y: 0 }, ttl: 2.5 })];
+    let hits = 0;
+    for (let i = 0; i < 60; i++) {
+      p.pos = { ...at };
+      for (const e of s.tick(1 / 30, { p1: idle })) if (e.type === 'hit' && e.target === 'player') hits++;
+    }
+    return hits;
+  }
+
+  it('⭐ снаряд монстра тоже гаснет о колонну; без неё — попадает', () => {
+    expect(monsterShot(true), 'сквозь колонну в героя').toBe(0);
+    expect(monsterShot(false), 'контроль: над низким декором').toBeGreaterThan(0);
+  });
+
+  it('⭐ бумеранг о колонну разворачивается к владельцу, а не бьёт монстра за ней', () => {
+    const { s, p, at, m, pillar } = corridor(true, 'mage');
+    p.save.skills['b-fire-a1'] = 5;   // «Огненный шар» — бумеранг (shape boomerang)
+    const hp0 = m.hp;
+    let cast = false, maxX = 0, turned = false, hits = 0;
+    for (let i = 0; i < 240; i++) {
+      p.pos = { ...at }; p.mana = 999;
+      const ev = s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: cast ? null : 'b-fire-a1' } });
+      if (s.world.projectiles.length) cast = true;
+      for (const e of ev) if (e.type === 'hit' && e.target === 'monster') hits++;
+      for (const pr of s.world.projectiles) { maxX = Math.max(maxX, pr.pos.x); if (pr.returning) turned = true; }
+      if (cast && !s.world.projectiles.length) break;
+    }
+    expect(cast, 'бумеранг вылетел').toBe(true);
+    expect(turned, 'развернулся').toBe(true);
+    expect(maxX, 'не за колонной').toBeLessThan(pillar.x);
+    expect(hits, 'монстр за колонной не задет').toBe(0);
+    expect(m.hp).toBe(hp0);
+    expect(s.world.projectiles.length, 'вернулся к владельцу и погас').toBe(0);
+  });
+});
+
+/**
  * ⭐ R14-05: МЁРТВЫЙ ВЕЩЕЙ НЕ БРОСАЕТ. Вещь на курсоре в момент смерти и клик по миру мимо окна смерти (или «Выбросить» из меню)
  * клали её к трупу: поднять её мёртвый не может (`pickupDropById`), чужой аккаунт — тоже (R2-02), а смена этажа и вайп стирают землю.
  */

@@ -3,9 +3,11 @@ import { type Rng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { spawnWeightAt, weightedPickId, rarityAtDepth } from '../formulas/spawnWeight.js';
 import { startChallenge, challengeAtFloor } from '../formulas/power.js';
-import { Cell, cellToWorld } from '../world/grid.js';
+import { Cell, TILE, cellToWorld } from '../world/grid.js';
+import { pushOutObstacle } from '../world/movement.js';
 import type { MonsterSpawn } from '../session/session.js';
-import { type DungeonLayout } from './floorCommon.js';
+import { nearestFree, type DungeonLayout } from './floorCommon.js';
+import { decorSpecsFor, obstaclesFromDecor } from './decor.js';
 
 /** Первая клетка-ПОЛ в прямоугольнике комнаты (фолбэк, если случайные промахи по стене/пустоте нерегулярной комнаты). */
 function firstFloorCell(grid: DungeonLayout['grid'], r: DungeonLayout['rooms'][number]): { cx: number; cy: number } | null {
@@ -89,6 +91,21 @@ export function spawnPacksEl(
     return undefined;
   };
 
+  // ⚠ V-RF-05: не на преграду декора — те же коллайдеры, что получит сессия (`obstaclesFromDecor` по спекам `objects`), с тем же
+  // запасом, что у сундука (R9-16). Монстр, заселённый в колонну, выдавливался из неё в первом же тике — и толчок, не видевший
+  // стен, уводил его в стену и за диагональный шов. Клетка под преградой — ближайшая свободная той же комнаты БЕЗ броска:
+  // поток `rng` тот же, и без преграждающего декора (сегодня его нет) заселение не меняется ни на монстра.
+  // Раскладка из тестов и инструментов бывает без `decor` (заселение читало только `rooms` + `grid`) — тогда преград нет.
+  const decor = (layout.decor as DungeonLayout['decor'] | undefined) ?? [];
+  const decorSpecs = decor.length ? decorSpecsFor(reg.get('objects'), reg.get('models'), undefined) : [];
+  const blockers = decorSpecs.length ? obstaclesFromDecor(decor, new Map(decorSpecs.map((s) => [s.id, s]))) : [];
+  const underDecor = (cx: number, cy: number): boolean => {
+    if (!blockers.length) return false;
+    const w = cellToWorld(cx, cy);
+    return blockers.some((o) => pushOutObstacle(w.x, w.y, TILE / 4, o) !== null);
+  };
+  const free = (cx: number, cy: number): boolean => layout.grid[cy]?.[cx] === Cell.Floor && !underDecor(cx, cy);
+
   const spawns: MonsterSpawn[] = [];
   for (const room of layout.rooms) {
     if (room.type === 'entrance') continue;
@@ -110,6 +127,8 @@ export function spawnPacksEl(
         let cy = rng.int(room.y + 1, room.y + room.h - 2);
         for (let t = 0; t < 6 && layout.grid[cy]?.[cx] !== Cell.Floor; t++) { cx = rng.int(room.x + 1, room.x + room.w - 2); cy = rng.int(room.y + 1, room.y + room.h - 2); }
         if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
+        // V-RF-05: свободной нет — остаётся, где был (толчок из преграды стен теперь не пересекает), и число монстров то же.
+        if (underDecor(cx, cy)) { const fc = nearestFree(room, { cx, cy }, free); if (fc) { cx = fc.cx; cy = fc.cy; } }
         const w = cellToWorld(cx, cy);
         const id = entry.role ? pickByRole(entry.role) : wpick(pool);
         // Редкость монстра по «галкам роли» (шансы magic/rare пачки): rare первым, остаток — обычный.

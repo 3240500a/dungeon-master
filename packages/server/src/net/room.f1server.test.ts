@@ -124,6 +124,7 @@ describe('⭐ V-B2-04: выброшенное — чужой руке тольк
     expect(uids(room.session.world.players[pb]!.save), 'пока строка A держит вещь — у B её нет').not.toContain(x);
     open();
     await pick;
+    await settle();   // ⭐ R16 C-04: ответ подъёма выброшенного — когда его запись ляжет, а не внутри обработчика
     expect(wsB.result(1), 'поднял, как только запись A легла').toMatchObject({ ok: true });
     expect(uids(db.data.get(a.charId)!), 'в строке A вещи уже нет').not.toContain(x);
     expect(await room.persist(pb)).toBe('ok');
@@ -145,6 +146,7 @@ describe('⭐ V-B2-04: выброшенное — чужой руке тольк
     expect(d.heldBy, 'запись A легла — метка снята').toBeUndefined();
     room.setInput(pb, idle(true));
     room.step();
+    await settle();   // ⭐ K3: выброшенное [E] кладёт в сумку после записи поднявшего с ним
     expect(uids(room.session.world.players[pb]!.save), 'теперь [E] берёт').toContain(x);
   });
 
@@ -153,11 +155,17 @@ describe('⭐ V-B2-04: выброшенное — чужой руке тольк
     const open = stall(a.charId);
     await room.handleCmd(pa, { cmd: 'drop', uid: x }, 1);
     const d = room.session.world.drops.find((q) => q.item?.uid === x)!;
-    await room.handleCmd(pa, { cmd: 'pickup', dropId: d.id }, 2);
+    const pick = room.handleCmd(pa, { cmd: 'pickup', dropId: d.id }, 2);
+    await settle();
+    // ⭐ K3: запись выброса в пути (её снимок — без вещи): подъём ждёт её и пишет свою, с вещью, — в сумке без строки вещь не бывает.
+    expect(uids(room.session.world.players[pa]!.save), 'пока пишется выброс — вещь на земле').not.toContain(x);
+    open();
+    await pick;
+    await settle();   // R16 C-04
     expect(wsA.result(2)).toMatchObject({ ok: true });
     expect(uids(room.session.world.players[pa]!.save)).toContain(x);
-    open();
-    await settle();
+    expect(uids(db.data.get(a.charId)!), 'и в строке A').toContain(x);
+    expect(room.session.world.drops.some((q) => q.item?.uid === x), 'с земли убрана').toBe(false);
   });
 
   it('⭐ копия выбросившего проиграла (строку обогнали) — вещь в его строке, и с земли она уходит: ни у кого второй', async () => {

@@ -279,7 +279,9 @@ describe('⭐ R14-07: слив ноды ждёт и свод записей за
     expect(room.ledgerOut.size, 'очередь свода комнаты пуста').toBe(0);
   });
 
-  it('свод не ложится весь бюджет — ИНЦИДЕНТ в лог и +1 к dm_ledger_drain_lost_total (сейвы легли — героев в инциденте нет)', async () => {
+  // ⭐ K2 (фаззер кластера B1): строка героя не обгоняет свод его забега — свод не ложится, не ложится и сейв, чей снимок несёт его записи
+  // (иначе продолжение забега другим собрало бы узел без взятого: сундук и опыт второй раз). Раньше здесь сейвы ложились без свода.
+  it('свод не ложится весь бюджет — ИНЦИДЕНТ в лог и +1 к dm_ledger_drain_lost_total; сейв героя забега — тоже ИНЦИДЕНТ, а не запись поперёд свода', async () => {
     const rm = manager();
     seed('R14E');
     const ws = await joinFresh(rm, 'R14E');
@@ -295,9 +297,11 @@ describe('⭐ R14-07: слив ноды ждёт и свод записей за
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
     const { counters } = await import('./metrics.js');
     const lost0 = counters.ledgerDrainLost, forgot0 = counters.farewellForgotten;
+    const v0 = db.chars.get('R14E')!.version;
     await rm.flushAll(400);
     expect(counters.ledgerDrainLost - lost0).toBe(1);
-    expect(counters.farewellForgotten - forgot0, 'сейвы легли').toBe(0);
+    expect(counters.farewellForgotten - forgot0, 'K2: сейв героя забега без свода не лёг — ИНЦИДЕНТ и на героя').toBe(1);
+    expect(db.chars.get('R14E')!.version, 'K2: строка героя не обогнала свод').toBe(v0);
     expect(errors.some((l) => l.includes('ИНЦИДЕНТ') && l.includes(room.code) && l.includes('свод')), errors.join(' | ')).toBe(true);
   });
 });

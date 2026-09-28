@@ -1,4 +1,4 @@
-import { EventBus, ConfigRegistry, debuffLabel, DEFAULT_HP_MANA_SCALING, PRICE_CHANGED, toggleBuffMods, reservedFrac, shopBuyPrice, type TownCommand, type Item, type QuestDef, type RunPlan, type CraftJournal, type ServerFrame } from '@dm/shared';
+import { EventBus, ConfigRegistry, CONFIG_REV_HEADER, debuffLabel, DEFAULT_HP_MANA_SCALING, PRICE_CHANGED, toggleBuffMods, reservedFrac, shopBuyPrice, withConfigRev, type TownCommand, type Item, type QuestDef, type RunPlan, type CraftJournal, type ServerFrame } from '@dm/shared';
 import type { GameState } from './gameState.js';
 import { passiveModifiers } from '../modules/skills-passive/passiveStats.js';
 import { activeModifiers } from '../modules/skills-active/activeStats.js';
@@ -93,9 +93,12 @@ export class App {
    * Отправляет команду города на авторитетный сервер (магазин/экип/распределение). Возвращает её
    * номер — по нему придёт `cmdResult`. ⚠ Мост редактора (`gameHarness`) подменяет этот метод и
    * исполняет команду на месте — поэтому `request` ходит через него, а не мимо.
+   * ⭐ V-B3-07: команды кузницы, лавки и разбора уходят с ревизией конфига, по которому их нарисовали окна (`withConfigRev`): у
+   * сервера другой — отказ «Цена изменилась», и конфиг перечитывается (обработчик `cmdResult` ниже). Одно место на все окна.
+   * ⭐ R16 C-07: ревизия — СЕРВЕРНАЯ для тела конфига, легшего во вкладку (`configRevision`), а не посчитанная схемой вкладки.
    */
   sendCmd(command: TownCommand, id = this.nextCmdId()): number {
-    this.net.send({ t: 'cmd', command, id });
+    this.net.send({ t: 'cmd', command: withConfigRev(this.configRevision(), command), id });
     return id;
   }
 
@@ -130,6 +133,17 @@ export class App {
     if (reason === this.refusal.text && now - this.refusal.at < REFUSAL_REPEAT_MS) return;
     this.refusal = { text: reason, at: now };
     this.bus.emit('log:message', { text: `Не вышло: ${reason}`, kind: 'system' });
+  }
+  /**
+   * ⭐ R16 C-07: «перезагрузите страницу» из-за конфига. На отказ (зажатый клик) — не чаще `REFUSAL_REPEAT_MS`; `fresh` — новый конфиг сервера
+   * (свой ETag, `syncConfig` зовёт раз на него) — всегда, и отказ сразу за ним второй строкой не твердит.
+   */
+  private staleToldAt = -Infinity;
+  private tellStale(fresh = false): void {
+    const now = Date.now();
+    if (!fresh && now - this.staleToldAt < REFUSAL_REPEAT_MS) return;
+    this.staleToldAt = now;
+    this.bus.emit('log:message', { text: PROTOCOL_STALE, kind: 'system' });
   }
 
   /** Слепок сундука из кадра `stash` — одно место и для 2D, и для веб-3D, чтобы журнал не терялся. */
@@ -195,8 +209,10 @@ export class App {
     // делал ничего. Ждущему окну отказ показывает само окно — в лог он не дублируется.
     // ⭐ R5-15: «Цена изменилась» — сервер не взял больше показанного: конфиг клиента устарел (правка без переподключения),
     // перечитываем его — карточки покажут цену, которую сервер возьмёт.
+    // ⭐ R16 C-07: а конфиг сервера вкладка не разбирает (R7-14: схема старше) — перечитывание его не догонит: отказ «Цена изменилась»
+    // будет на каждый клик, и без подсказки кнопки выглядели мёртвыми. Такой вкладке каждый такой отказ — снова «перезагрузите страницу».
     this.net.on('cmdResult', (f) => {
-      if (!f.ok && f.reason?.startsWith(PRICE_CHANGED)) void this.syncConfig();
+      if (!f.ok && f.reason?.startsWith(PRICE_CHANGED)) void this.syncConfig().then(() => { if (this.configStale !== null) this.tellStale(); });
       if (!this.replies.settle(f) && !f.ok && f.reason) this.logRefusal(f.reason);
     });
     // Структура активного забега (v2): граф узлов + текущий узел — для карты забега и маппинга выходов на рёбра.
@@ -244,6 +260,24 @@ export class App {
   private configStale: string | null = null;
   /** R5-15: номер запроса конфига — ответ, обогнанный следующим запросом, не применяется. */
   private configSeq = 0;
+  /**
+   * ⭐ R16 C-07: ревизия СЕРВЕРА для тела конфига, которое легло во вкладку (заголовок `CONFIG_REV_HEADER`); null — конфиг вкладки не тело
+   * сервера (встроенные дефолты до первого ответа, правка из канала редактора) или сервер ревизию не прислал (старше заголовка).
+   */
+  private configRev: string | null = null;
+  /** ⭐ R16 C-07: ETag тела, чья ревизия во вкладке не сошлась с серверной (схема вкладки старше), — игроку о нём уже сказано. */
+  private configDrift: string | null = null;
+
+  /**
+   * ⭐ R16 C-07: РЕВИЗИЯ ДЛЯ СОГЛАСИЯ (`cfgRev` команд кузницы, лавки и разбора, V-B3-07) — «с какого конфига СЕРВЕРА нарисованы окна»: та,
+   * что сервер прислал с телом, легшим во вкладку. Своя (`ConfigRegistry.revision`, по разобранному) — только если тела сервера во вкладке
+   * нет. Раньше — всегда своя: деплой, сменивший форму любой таблицы (новое поле, другой порядок, убранное поле с умолчанием), при старой
+   * вкладке (L2 / R3-25 — переподключается без перезагрузки, `PROTOCOL_VERSION` тот же) давал «удачный» разбор в ДРУГОЕ, её ревизия
+   * расходилась с серверной навсегда, и каждая продажа, ковка и разбор — «Цена изменилась», а перечитывание — 304 с тем же ETag.
+   */
+  configRevision(): string {
+    return this.configRev ?? this.config.revision();
+  }
 
   /**
    * Единая истина — серверный конфиг (дефолты + сохранённые правки редактора, персист в БД). Тянем его при старте и
@@ -281,12 +315,21 @@ export class App {
       if (etag !== this.configStale) {
         this.configStale = etag;
         console.warn('[config] конфиг сервера не разобран — вкладка старше сервера:', e instanceof Error ? e.message : e);
-        this.bus.emit('log:message', { text: PROTOCOL_STALE, kind: 'system' });
+        this.tellStale(true);
       }
       return;
     }
     this.configEtag = etag;
     this.configStale = null;
+    // ⭐ R16 C-07: согласие — по ревизии сервера для этого тела (`configRevision`). Своя по разобранному с ней не сошлась — схема вкладки
+    // старше (новое поле срезано, умолчание дописано, порядок полей свой): окна рисуют почти то же, но не то — игроку «перезагрузите», раз на ETag.
+    const rev = res.headers.get(CONFIG_REV_HEADER);
+    this.configRev = rev || null;
+    if (rev && rev !== this.config.revision() && etag !== this.configDrift) {
+      this.configDrift = etag;
+      console.warn('[config] конфиг сервера разобран не в то же — схема вкладки старше сервера');
+      this.tellStale(true);
+    }
     this.refreshLabelResolvers();
     this.bus.emit('state:changed', {});
   }
@@ -300,6 +343,11 @@ export class App {
       if (!key) return;
       try {
         this.config.reload({ [key]: value } as Record<string, unknown>);
+        // ⭐ V-B3-07: конфиг вкладки уже не тело с ETag `configEtag` (правку сервер мог и не принять — 409, схема): следующий
+        // `syncConfig` — безусловный, иначе 304 оставил бы таблицу, которой у сервера нет, и согласие на конфиг отказывало бы без конца.
+        // ⭐ R16 C-07: и ревизия сервера — уже не про этот конфиг: согласие — по своей, пока тело сервера не ляжет снова.
+        this.configEtag = '';
+        this.configRev = null;
         this.refreshLabelResolvers();
         this.bus.emit('state:changed', {});
       } catch {

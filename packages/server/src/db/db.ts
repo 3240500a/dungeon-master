@@ -467,6 +467,16 @@ export async function setConfigOverride(key: string, value: unknown): Promise<vo
 export async function deleteConfigOverride(key: string): Promise<void> {
   await q('DELETE FROM config_overrides WHERE key = $1', [key]);
 }
+/**
+ * ⭐ R16 C-02, C-08: РЕВИЗИЯ ОВЕРРАЙДОВ — сдвигается с любой их записью и удалением, и мимо сервера (`db:repair`, SQL без `updated_at`): ключ,
+ * время правки и транзакция, записавшая строку (`xmin`). Дёшево — сами таблицы (JSON) не читаются. По ней процессы кластера узнают, что конфиг
+ * правили в другом процессе (`configSync.ts`).
+ */
+export async function getConfigOverridesRev(): Promise<string> {
+  const r = await q1<{ rev: string }>(
+    `SELECT coalesce(string_agg(key || ':' || updated_at::text || ':' || xmin::text, ',' ORDER BY key), '') AS rev FROM config_overrides`);
+  return r?.rev ?? '';
+}
 
 // ── Общий сундук аккаунта (shared stash: одна истина на всех персонажей пользователя) ──
 /**

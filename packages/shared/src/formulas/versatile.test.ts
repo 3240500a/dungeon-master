@@ -9,6 +9,9 @@ import { equippedItems } from '../session/derive.js';
 import { weapon3dKeyFromEquipment } from '../session/weapon3d.js';
 import { equip } from '../economy/townActions.js';
 import { DEFAULT_GRIP, asHeld, gripAdjust, isVersatile, oneHandGrip } from './versatile.js';
+import { craftWeapon, defaultParts, keyVariantsByBase } from './craft.js';
+import { keySlotOf } from './craftType.js';
+import { createRng } from './rng.js';
 import type { Item } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
 
@@ -132,6 +135,40 @@ describe('⭐ полуторный хват: двуручное оружие о�
     expect(lines.some((t) => t.startsWith(`Урон: ${flat(two, 'minDamage')}–${flat(two, 'maxDamage')}`))).toBe(true);
     expect(lines.some((t) => t.startsWith(`Одной рукой (со щитом): ${flat(one, 'minDamage')}–${flat(one, 'maxDamage')}`))).toBe(true);
     expect(describeItem(make('claymore'), ITEM_LABELS).some((l) => l.text.startsWith('Одной рукой'))).toBe(false);
+  });
+
+  // ⚠ V-B3-01 (фаззер паритета «окно ≡ сервер», сид 11430): у ПРЕДПРОСМОТРА ковки строка «Одной рукой» стояла одним числом —
+  // серединой вилки предпросмотра (строка «Урон» над ней — вилкой), и скованная вещь (бросок в вилке) с ним почти не совпадала:
+  // окно «20–34», вещь «21–35». Теперь — вилкой по краям тем же правилом, что считает вещь, и каждая скованная в неё попадает.
+  it('V-B3-01: предпросмотр ковки полуторного — «Одной рукой» вилкой, и скованная вещь в ней', () => {
+    const R = { ...ITEM_LABELS, grip: K };
+    const key = keyVariantsByBase(reg, 'sword', 2).find((x) => x.baseId === 'greatsword')!.variants[0]!;
+    const oneLine = (it: Item): string => describeItem(it, R).map((l) => l.text).find((t) => t.startsWith('Одной рукой'))!;
+    let forged = 0;
+    for (const finish of [0, reg.get('balance').craft.finish.length - 1]) {
+      for (const step of [1, 3, 5]) {
+        const parts = defaultParts(reg, 'sword', 2, step)!;
+        parts[keySlotOf(reg, 'sword')] = { id: key.id, step };
+        const input = { weaponClass: 'sword', hands: 2, parts, finish };
+        const pv = craftWeapon(reg, input);
+        if (!pv.ok || !pv.item) continue;   // ступень вне окна базы — не наш случай
+        const shown = oneLine(pv.item);
+        // Край — «(a–b)» или одно число, если после округления концы совпали (`rangeLabel`).
+        const m = /^Одной рукой \(со щитом\): (\(\d+–\d+\)|\d+)–(\(\d+–\d+\)|\d+) · /.exec(shown);
+        expect(m, `предпросмотр: «${shown}»`).not.toBeNull();
+        const edge = (s: string): [number, number] => { const q = /^\((\d+)–(\d+)\)$/.exec(s); return q ? [Number(q[1]), Number(q[2])] : [Number(s), Number(s)]; };
+        const [[a0, a1], [b0, b1]] = [edge(m![1]!), edge(m![2]!)];
+        if (step === 5) expect(a1 > a0 || b1 > b0, `на высокой ступени — вилка, а не число: «${shown}»`).toBe(true);
+        for (let seed = 1; seed <= 40; seed++) {
+          const got = craftWeapon(reg, input, { rng: createRng(seed) });
+          const g = /^Одной рукой \(со щитом\): (\d+)–(\d+) · /.exec(oneLine(got.item!))!;
+          const [lo, hi] = [Number(g[1]), Number(g[2])];
+          expect(lo >= a0 && lo <= a1 && hi >= b0 && hi <= b1, `шаг ${step}, доводка ${finish}, сид ${seed}: вещь ${lo}–${hi}, окно «${shown}»`).toBe(true);
+          forged++;
+        }
+      }
+    }
+    expect(forged, 'полуторный меч куётся').toBeGreaterThan(0);
   });
 
   it('анимация берётся по ФАКТИЧЕСКОМУ хвату: со щитом полуторный держат одной рукой', () => {

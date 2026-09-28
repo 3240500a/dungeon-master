@@ -36,7 +36,7 @@ type Cost = { manaCost: number; resource: ResourcePool };
 type Extra = { pool: ResourcePool; amount: number };
 import { diagonalSealed, isBlockedCell, worldToCell, Cell } from '../world/grid.js';
 import type { Grid } from '../world/grid.js';
-import { hasLineOfSight } from '../world/lineOfSight.js';
+import { hasLineOfSight, sightBlockedByObstacles } from '../world/lineOfSight.js';
 import { addToInventory } from '../inventory/grid.js';
 import {
   newWorldState,
@@ -48,6 +48,7 @@ import {
   type ProjectileEntity,
   type Obstacle,
   type AttackSeries,
+  type DropEntity,
 } from '../world/state.js';
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
@@ -213,6 +214,11 @@ const MONSTER_PROJ_SPEED = 260;
 const ABILITY_PROJ_SPEED = 460;
 const PROJ_TTL = 2.5;
 const PROJ_HIT_RADIUS = 16;
+/**
+ * ⚠ C-11 (бафф-зелья): ключ временного баффа зелья в `skillBuffs` — `pot:<база>`, как печать вставки `ins:<вставка>`. Моды и
+ * длительность — из определения базы в конфиге (`potionBuff`), таймер — общий с баффами скилов (истекает в тике, снимается смертью).
+ */
+const POTION_BUFF = 'pot:';
 /** Запас к сумме радиусов, в пределах которого ближний удар монстра засчитывается по завершении
  *  замаха. Если игрок за время замаха отошёл дальше — удар вхолостую (замах даёт окно на уклонение). */
 const MONSTER_MELEE_WHIFF_SLACK = 8;
@@ -273,6 +279,13 @@ export class GameSession {
    * Окно — одна запись в базу; клиенты сюда не пишут, набор ведёт только сервер.
    */
   readonly saveHeld = new Set<string>();
+  /**
+   * ⭐ K3: ПОДЪЁМ ВЫБРОШЕННОГО ИГРОКОМ — ДЕЛО ХОЗЯИНА СЕССИИ. Вещь, выброшенную игроком (`owner`), сервер кладёт в сумку только ПОСЛЕ
+   * записи поднимающего (`Room.pickThrown`): её строка в базе уже отпустила вещь, и подъём одной памятью оставлял её ни в одной строке до
+   * записи — падение процесса в этом окне теряло уже записанную вещь. Тик ([E], автоподбор) такую вещь сам не берёт, а зовёт этот крючок;
+   * нет крючка (клиент, сим, оффлайн) — берёт сам, как прежде.
+   */
+  pickThrown?: (playerId: string, dropId: number) => void;
 
   /**
    * ⭐ R9-02: `rng` — источник бросков сессии; нет — сидовый mulberry32 (`seed`), как у сима, ботов, тестов и клиента. Сервер
@@ -609,7 +622,7 @@ export class GameSession {
   private useBeltSlot(p: PlayerEntity, slot: number): void {
     const item = p.save.belt[slot];
     if (!item?.use) return;
-    if (this.drink(p.id, item.use)) p.save.belt[slot] = null;
+    if (this.drink(p.id, item.use, item.baseId)) p.save.belt[slot] = null;
   }
 
   /**
@@ -617,13 +630,42 @@ export class GameSession {
    * ЭФФЕКТИВНОГО потолка (ауры резервируют долю пула), как реген тика: у потолка зелье маны без эффекта и не тратится, и выше
    * потолка не наливает (иначе каст того же тика платил бы налитым сверх резерва). Правила «кто может пить» (жив, не оглушён) —
    * у вызывающего: тик не зовёт пояс у мёртвого и оглушённого, команда отказывает своим словом. `true` — было действие.
+   * ⚠ C-11 (бафф-зелья): `baseId` — база выпитого; её бафф (`use.buffMods` на `buffDurationSec`) — тоже действие (`drinkBuff`).
+   * Бафф отдавался «на сторону вызывающего», а серверный вызывающий его не вешал: зелье-бафф не выпивалось никогда (пояс молчал,
+   * команда — «Нет эффекта»), «лечение + бафф» лечило и уходило без баффа, хотя подсказка обещает «Бафф на N сек».
    */
-  drink(playerId: string, use: ConsumableUse): boolean {
+  drink(playerId: string, use: ConsumableUse, baseId?: string): boolean {
     const p = this.world.players[playerId];
     const snap = this.snaps.get(playerId);
     if (!p || !snap) return false;
     const d = snap.derived;
-    return applyConsumable(p, use, d.maxHp, d.maxMana, effectivePool(d.maxMana, this.reservedFrac(p, 'mana')));
+    const did = applyConsumable(p, use, d.maxHp, d.maxMana, effectivePool(d.maxMana, this.reservedFrac(p, 'mana')));
+    const buffed = baseId !== undefined && this.drinkBuff(p, baseId);
+    return did || buffed;
+  }
+
+  /**
+   * ⚠ C-11 (бафф-зелья): бафф зелья — `skillBuffs['pot:<база>']` на полную длительность. Повтор ОСВЕЖАЕТ до полной (не прибавляет
+   * сверху: 29 + 30 с растягивали бы бафф без предела); бафф и так полный — действия нет, зелье не тратится (R4-35).
+   */
+  private drinkBuff(p: PlayerEntity, baseId: string): boolean {
+    const def = this.potionBuff(baseId);
+    if (!def) return false;
+    const key = POTION_BUFF + baseId;
+    if ((p.skillBuffs[key] ?? 0) >= def.durationSec - 1e-6) return false;
+    p.skillBuffs[key] = def.durationSec;
+    return true;
+  }
+
+  /**
+   * ⚠ C-11 (бафф-зелья): бафф зелья по определению базы в конфиге (`items.base`: `use.buffMods` + `use.buffDurationSec`) — живая
+   * правка редактора сразу в игре, как у баффов скилов и печатей вставок. Нет модов или длительности — баффа нет.
+   */
+  private potionBuff(baseId: string): { mods: StatModifier[]; durationSec: number } | undefined {
+    const b = this.cfg.get('items.base').find((x) => x.id === baseId);
+    const u = b?.kind === 'consumable' ? b.use : undefined;
+    const dur = u?.buffDurationSec ?? 0;
+    return u?.buffMods?.length && dur > 0 ? { mods: u.buffMods, durationSec: dur } : undefined;
   }
 
   /** Замах удара/скилла как доля цикла атаки (масштабируется скоростью) + явный windup скилла. */
@@ -960,14 +1002,32 @@ export class GameSession {
   }
 
   /**
+   * ⚠ V-RF-01: ПРИБАВКА К ПУЛУ — ДО ЭФФЕКТИВНОГО ПОТОЛКА (резерв аур/стоек), как у зелья (C-14) и регена. Вампиризм маны и
+   * «мана за убийство» клали до ПОЛНОГО пула: реген подрезал лишнее лишь на следующем тике, а каст первого шага того тика
+   * успевал заплатить маной, которую аура держит в резерве. Выносливость — тем же правилом (своих прибавок у неё пока нет).
+   */
+  private gainPool(p: PlayerEntity, pool: 'mana' | 'stamina', max: number, amount: number): void {
+    const cap = effectivePool(max, this.reservedFrac(p, pool));
+    const cur = pool === 'mana' ? p.mana : p.stamina;
+    if (!(amount > 0) || cur >= cap) return;
+    if (pool === 'mana') p.mana = Math.min(cap, cur + amount); else p.stamina = Math.min(cap, cur + amount);
+  }
+
+  /**
    * ⚠ R4-05: ТОГЛЫ И БАФФЫ ДЕРЖАТСЯ НА ВЫУЧЕННОМ. Сброс скилов (`respecSkills`) — команда города между тиками, сессию
    * она не зовёт: включённая до него аура жила бы в `toggles` дальше — с бонусами и резервом за возвращённые очки.
    * Баффы вставок (`ins:`) узла в дереве не имеют: они оплачены на касте и доживают свой срок.
+   * ⚠ V-RF-02: и ЗАМАХ скила (с ним — вся серия взмахов) держится на ранге, которым оплачен: сброс посреди замаха вернул очки, а
+   * замах доживал и бил узлом ранга 0 (подпись R6-02 — снаряжение и тоглы, скилы в неё не входят). Ранг упал ниже оплаченного —
+   * замах пропал, как сбитый станом: цена и откат списаны. Докупленный ранг замаху не мешает — он бьёт оплаченным.
    */
   private dropUnlearned(p: PlayerEntity): void {
     const learned = (id: string): boolean => (p.save.skills[id] ?? 0) > 0;
     if (!p.toggles.every(learned)) p.toggles = p.toggles.filter(learned);
-    for (const k of Object.keys(p.skillBuffs)) if (!k.startsWith('ins:') && !learned(k)) delete p.skillBuffs[k];
+    // Печать вставки (`ins:`) и бафф зелья (`pot:`, C-11) — не узлы древа: сброс скилов их не снимает.
+    for (const k of Object.keys(p.skillBuffs)) if (!k.startsWith('ins:') && !k.startsWith(POTION_BUFF) && !learned(k)) delete p.skillBuffs[k];
+    const wu = p.windup;
+    if (wu?.kind === 'skill' && (p.save.skills[wu.nodeId] ?? 0) < wu.rank) p.windup = null;
   }
 
   /** Рантайм-стат-моды поверх сейва: buffMods активных тоглов + временных баффов. */
@@ -981,6 +1041,8 @@ export class GameSession {
         if (ab?.category === 'buff') mods.push(...(ab.buffMods ?? []));
         continue;
       }
+      // ⚠ C-11 (бафф-зелья): бафф выпитого зелья — моды его базы.
+      if (id.startsWith(POTION_BUFF)) { mods.push(...(this.potionBuff(id.slice(POTION_BUFF.length))?.mods ?? [])); continue; }
       const a = this.activeById(p.save, id);
       if (a && (a.category === 'buff' || a.category === 'aura' || a.category === 'stance')) mods.push(...(a.buffMods ?? []));
     }
@@ -1436,16 +1498,17 @@ export class GameSession {
 
     m.hp = target.hp;
     for (const k of res.appliedDebuffs) this.noteDot(m, k, killer);   // R5-06: чей статус — тому и добивание
-    // Вампиризм: доля нанесённого урона → HP/мана атакующего (боевой сустейн, кламп по максимуму).
-    if (this.sustain && res.damage > 0) {
+    // Вампиризм: доля нанесённого урона → HP/мана атакующего (боевой сустейн, кламп по максимуму; мана — по резерву аур, V-RF-01).
+    // ⚠ V-RF-04: отдача удара — ТОЛЬКО ЖИВОМУ: стрела в полёте и статус бьют и после смерти стрелка, но труп не лечится и не кастует.
+    if (this.sustain && res.damage > 0 && killer.alive) {
       const d = this.snaps.get(killer.id)?.derived;
       if (d) {
         if (d.lifeLeechPct > 0) killer.hp = Math.min(d.maxHp, killer.hp + res.damage * d.lifeLeechPct);
-        if (d.manaLeechPct > 0) killer.mana = Math.min(d.maxMana, killer.mana + res.damage * d.manaLeechPct);
+        if (d.manaLeechPct > 0) this.gainPool(killer, 'mana', d.maxMana, res.damage * d.manaLeechPct);
       }
     }
     // Прок «шанс каста при ударе» (не от ударов самого прок-скилла — иначе рекурсия).
-    if (this.sustain && !this.procActive && res.damage > 0) this.rollHitProcs(killer, 'hit');
+    if (this.sustain && !this.procActive && res.damage > 0 && killer.alive) this.rollHitProcs(killer, 'hit');
     if (!res.died) {
       // Нокдаун (сбить с ног) приоритетнее стана/отброса — если сработал, монстр падает рагдоллом (взаимоискл.).
       const knocked = this.tryKnockdown(killer, m, opts, res.damage);
@@ -1495,8 +1558,13 @@ export class GameSession {
     const dmg = Math.round(res.total * pm.recvDamageMult * (1 - tk.reduction)); // увечье: +урон; мастерства: −урон
     this.events.push({ type: 'hit', target: 'player', id: p.id, by, x: p.pos.x, y: p.pos.y, hit: true, blocked: false, crit: res.crit, amount: dmg, byType: res.byType, mat: playerMat(p) });
     p.hp = Math.max(0, p.hp - dmg);
+    // ⚠ V-RF-04: смерть — ДО отражения. Отражённое добивало монстра, пока смертельно раненый ещё числился живым: лечение и мана
+    // за убийство, а на левелапе и полное здоровье, поднимали его с нуля — бесплатное воскрешение. Шипы бьют и павшего, но
+    // награды убийцы павшему нет (`killMonster`).
+    const died = p.hp <= 0;
+    if (died) { p.alive = false; this.events.push({ type: 'player-died', playerId: p.id }); }
     if (source && tk.reflectPct > 0) this.reflectToMonster(p, source, Math.round(dmg * tk.reflectPct), tk.reflectElement);
-    if (p.hp <= 0) { p.alive = false; this.events.push({ type: 'player-died', playerId: p.id }); return; }
+    if (died) return;
 
     // Прок «шанс каста при ПОЛУЧЕНИИ удара» (игрок выжил; не рекурсим от прок-ударов).
     if (this.sustain && !this.procActive && dmg > 0) this.rollHitProcs(p, 'struck');
@@ -1585,6 +1653,7 @@ export class GameSession {
       let gone = false;
       for (let sIdx = 0; sIdx < steps; sIdx++) {
         const from = worldToCell(proj.pos.x, proj.pos.y);
+        const fx = proj.pos.x, fy = proj.pos.y;
         proj.pos.x += proj.vel.x * sub;
         proj.pos.y += proj.vel.y * sub;
         // Бумеранг: у макс. дальности разворот к владельцу; гаснет, вернувшись к нему.
@@ -1604,10 +1673,15 @@ export class GameSession {
         const cell = worldToCell(proj.pos.x, proj.pos.y);
         // ⚠ R10-02: подшаг, перескочивший угол «диагонального шва» (обе боковые клетки — стены), — тоже удар о стену: иначе
         // стрела из угла шва била того, кто ни видеть стрелка (`hasLineOfSight`), ни дойти до него напрямую не может.
-        if (isBlockedCell(w.grid, cell.cx, cell.cy) || diagonalSealed(w.grid, from.cx, from.cy, cell.cx, cell.cy)) {
+        // ⚠ C-10: и подшаг сквозь преграду декора, закрывающую обзор (`blocksSight`, высокая колонна), — удар о неё. Смотрелась только
+        // сетка: стрела и жезл били сквозь колонну монстра, который героя не видит и ответить не может, хотя удар, нова, проклятие,
+        // прыжок и рывок её уважают (`hasLos`, R5-05), и снаряд монстра так же долетал до героя, зашедшего за неё. Низкий декор
+        // (`blocksSight: false`) обзор не трогает — над ним снаряд летит, как и прежде.
+        if (isBlockedCell(w.grid, cell.cx, cell.cy) || diagonalSealed(w.grid, from.cx, from.cy, cell.cx, cell.cy)
+          || sightBlockedByObstacles(w.obstacles, fx, fy, proj.pos.x, proj.pos.y)) {
           // Обычный снаряд гаснет о стену. ⚠ R5-05: бумеранг летал «поверх препятствий» — и бил на лету монстров за
           // стеной и закрытой дверью, туда и обратно, а те ответить не могли. Теперь туда он от стены РАЗВОРАЧИВАЕТСЯ
-          // к владельцу (шаг назад, в свою клетку, — как у дальности), обратно — гаснет о неё, как любой снаряд.
+          // к владельцу (шаг назад, в свою клетку, — как у дальности), обратно — гаснет о неё, как любой снаряд. Колонна (C-10) — так же.
           const owner = proj.boomerang && !proj.returning ? w.players[proj.ownerId as string] : undefined;
           if (!owner) { gone = true; break; }
           proj.pos.x -= proj.vel.x * sub;
@@ -1686,6 +1760,7 @@ export class GameSession {
    * статуса по старому id не находился: добитое уходило никому, а запись узла помечала монстра убитым навсегда. Сперва —
    * по id (при хозяине на месте ничего не меняется, и боты сима с общим charId «bot» не путаются), потом — по charId.
    * Ушедший насовсем в мире не значится ни под каким id — ему по-прежнему ничего.
+   * ⚠ V-RF-04: и павший — как ушедший (награды убийцы только живому, `killMonster`): добитое уходит следующему по вкладу, кто жив.
    */
   private dotOwner(m: MonsterEntity): PlayerEntity | undefined {
     const kinds = (Object.keys(m.debuffs) as DebuffKind[]).filter(isDotKind);
@@ -1694,10 +1769,10 @@ export class GameSession {
     for (const k of kinds) {
       const id = m.dotBy?.[k];
       const p = id !== undefined ? this.world.players[id] : undefined;
-      if (p) return p;
+      if (p) { if (p.alive) return p; continue; }
       const hero = m.dotHero?.[k];
       const back = hero !== undefined ? Object.values(this.world.players).find((x) => x.save.charId === hero) : undefined;
-      if (back) return back;
+      if (back?.alive) return back;
     }
     return undefined;
   }
@@ -1713,19 +1788,23 @@ export class GameSession {
     if (!m.alive) return;
     m.alive = false;
     m.deadAt = this.world.timeMs;   // отметка времени смерти → труп чистится из w.monsters через CORPSE_LINGER_MS (см. tick)
-    this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: killer?.id });
+    // ⚠ V-RF-04: МЁРТВЫЙ УБИЙЦА — КАК УШЕДШИЙ. Стрела в полёте, бумеранг и статус добивают и после смерти хозяина, но награды
+    // убийцы (опыт, «Уничтожить N», лечение и мана за убийство) — только живому: раньше их получал труп, а левелап трупа ставил
+    // ему полное здоровье при `alive = false` (R5-06 звал это «опытом мёртвому альту», но закрыл лишь для ушедших). Добыча
+    // падает, как и без убийцы (R9-06). Воскрешение и так наполняет пулы.
+    const reward = killer?.alive ? killer : undefined;
+    this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: reward?.id });
     this.overloadOnDeath(m); // сигнатура конструктов: взрыв при смерти
-    const reward = killer;
-    // Восстановление за убийство (лич-за-килл): плоско HP/мана убийце — боевой сустейн, ДО наград.
+    // Восстановление за убийство (лич-за-килл): плоско HP/мана убийце — боевой сустейн, ДО наград. Мана — по резерву аур (V-RF-01).
     if (this.sustain && reward) {
       const kd = this.snaps.get(reward.id)?.derived;
       if (kd) {
         if (kd.lifeOnKill > 0) reward.hp = Math.min(kd.maxHp, reward.hp + kd.lifeOnKill);
-        if (kd.manaOnKill > 0) reward.mana = Math.min(kd.maxMana, reward.mana + kd.manaOnKill);
+        if (kd.manaOnKill > 0) this.gainPool(reward, 'mana', kd.maxMana, kd.manaOnKill);
       }
     }
     if (!this.economy) return; // клиент: золото/XP/дроп делают обработчики шины; сим-микробой: не нужны (и левелап-хил испортил бы TTK)
-    const away = reward?.pos;   // R9-06: убийцы нет — добыча всё равно падает, разлёт в случайную сторону
+    const away = killer?.pos;   // R9-06: убийцы нет — добыча всё равно падает, разлёт в случайную сторону (от павшего — как и прежде)
 
     const diff = this.currentDifficulty();
     const level = m.def.level;
@@ -1891,6 +1970,7 @@ export class GameSession {
       if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) > f.radius) continue;
       const want = d.kind === 'gold' ? f.gold : d.kind === 'materials' ? f.materials : f.rarities.includes(d.item.rarity);
       if (!want || !this.hasLos(p.pos, d.pos)) continue;   // R6-26: не сквозь стену и закрытую дверь
+      if (this.thrownToHost(p, d)) continue;   // ⭐ K3: выброшенное игроком — подъёмом с записью
       const took = this.takeDrop(p, i);
       if (took?.item) this.events.push(pickedEvent(p.id, took));
     }
@@ -1978,6 +2058,7 @@ export class GameSession {
       const d = this.world.drops[i]!;
       if (foreignDrop(p, d)) continue;   // R2-02: выброшенное другим аккаунтом не берётся — и не заслоняет своё
       if (this.within(p, d.pos, 48)) {   // R6-26: за стеной — не «рядом», и не заслоняет доступное
+        if (this.thrownToHost(p, d)) return;   // ⭐ K3: выброшенное игроком — подъёмом с записью (хозяин сессии)
         const took = this.takeDrop(p, i);
         if (took?.item) this.events.push(pickedEvent(p.id, took));
         return; // полон — не поднимаем (took === null), но и других в этот тик не берём
@@ -1999,6 +2080,28 @@ export class GameSession {
     const d = this.world.drops[i]!;
     if (!this.within(p, d.pos, 48)) return null;
     return this.takeDrop(p, i);
+  }
+
+  /**
+   * ⭐ K3: МОЖНО ЛИ ПОДНЯТЬ дроп `dropId` — правила `pickupDropById` (жив и в силах, рядом и видно, не чужое), но без подъёма: выброшенное
+   * игроком сервер кладёт в сумку только после записи поднимающего (`Room.pickThrown`). Нельзя — `null`.
+   */
+  pickable(playerId: string, dropId: number): DropEntity | null {
+    const p = this.world.players[playerId];
+    if (!p || !this.canInteract(p)) return null;
+    const d = this.world.drops.find((x) => x.id === dropId);
+    if (!d || foreignDrop(p, d) || !this.within(p, d.pos, 48)) return null;
+    return d;
+  }
+
+  /**
+   * ⭐ K3: выброшенное игроком (`owner`) при хозяине с крючком (`pickThrown`) тик не берёт — отдаёт хозяину (чужое не отдаёт вовсе).
+   * `true` — дроп не для тика.
+   */
+  private thrownToHost(p: PlayerEntity, d: DropEntity): boolean {
+    if (d.kind !== 'item' || d.owner === undefined || !this.pickThrown) return false;
+    if (!foreignDrop(p, d)) this.pickThrown(p.id, d.id);
+    return true;
   }
 
   /**

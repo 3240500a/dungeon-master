@@ -1,3 +1,4 @@
+import { canBuy } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, button, mk, tabsBar } from '../../ui/kit.js';
@@ -155,7 +156,9 @@ export const forgePanel: PanelFactory = (app, ui) => {
           cols: 11, minRows: 4,
           // R4-37: цена — из кадра сервера (`app.shopPrice`), а не своя по конфигу.
           price: (it) => app.shopPrice(it),
-          affordable: (it) => state.save.gold >= app.shopPrice(it),
+          // ⭐ V-B3-02: «по карману» — золото И место в сумке, тем же правилом, что покупка на сервере (`canBuy`).
+          affordable: (it) => canBuy(app.config, state.save, it, app.shopPrice(it)).ok,
+          refusal: (it) => canBuy(app.config, state.save, it, app.shopPrice(it)).reason,
           onBuy: (it) => app.sendCmd({ cmd: 'buy', uid: it.uid, maxGold: app.shopPrice(it) }),   // R6-16: цена кадра — потолок
           tooltip: (it) => itemTooltipHtml(it, it.slot ? state.save.equipment[it.slot] ?? null : null),
         }));

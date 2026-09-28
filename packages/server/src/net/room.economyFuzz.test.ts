@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import type { GameConn } from './conn.js';
-import { addToInventory, createRng, type ServerFrame, type SaveState, type AccountStash, type Item } from '@dm/shared';
+import { addToInventory, createRng, itemFromBaseId, type ServerFrame, type SaveState, type AccountStash, type Item } from '@dm/shared';
 import { limits } from './rateLimit.js';
 import {
   OP_WEIGHTS, census, foundItem, genOps, newWorld, plan, stateInvariants, stepInvariants,
@@ -23,7 +23,10 @@ vi.setConfig({ testTimeout: Math.max(600_000, (Number(process.env.DM_FUZZ_ROOM_S
  *  • `stale` — срок стока вышел: покупка и доска сперва катают новый прилавок (R5-19, R7-18);
  *  • `race` — два героя шлют команды сундука РАЗОМ (одна из транзакций проигрывает версию);
  *  • `persist` — автосейв героя; `crash` — процесс умер: новая комната читает героев и сундук из базы; снятую сессию (4009) клиент
- *    сам входит заново из базы.
+ *    сам входит заново из базы;
+ *  • ⭐ R16 C-01 `carry` — подъём выброшенного, начатый ТИКОМ ([E], автоподбор: мимо очереди кадров соединения), и действие, кладущее в
+ *    сумку, пока его запись в пути (ворота базы): покупка, снятое, разбор, задание, сундук, ковка, добыча. Раньше вещь ложилась поверх
+ *    занятой клетки — сетка (наложение, сверх ёмкости) это и видит.
  * Сверх общих инвариантов — ЗАПИСАННОЕ (P1): в базе (сейвы обоих героев + сундук) ни одна вещь не лежит дважды — иначе падение
  * процесса в этот миг раздаёт копию.
  *
@@ -38,15 +41,20 @@ const db = vi.hoisted(() => ({
   failStash: false,
   /** База упала: следующая запись (любая) бросает, не записав ничего. */
   throwNext: false,
+  /** ⭐ R16 C-01: записи сейвов ждут ворот (снимок уже снят) — окно «запись подъёма в пути» для шага `carry`. */
+  gate: null as Promise<void> | null,
 }));
 vi.mock('../db/db.js', () => ({
   putCharacter: (charId: string, _u: string, data: SaveState, v: number) => {
     if (db.throwNext) { db.throwNext = false; return Promise.reject(new Error('база недоступна')); }
     const snap = structuredClone(data);
-    if (v !== (db.saves.get(charId) ?? 1)) return Promise.resolve(null);
-    db.saves.set(charId, v + 1);
-    db.data.set(charId, snap);
-    return Promise.resolve(v + 1);
+    const apply = (): number | null => {
+      if (v !== (db.saves.get(charId) ?? 1)) return null;
+      db.saves.set(charId, v + 1);
+      db.data.set(charId, snap);
+      return v + 1;
+    };
+    return db.gate ? db.gate.then(apply) : Promise.resolve(apply());
   },
   putCharacterWithStash: (charId: string, userId: string, data: SaveState, v: number, stash: AccountStash, sv: number) => {
     if (db.throwNext) { db.throwNext = false; return Promise.reject(new Error('база недоступна')); }
@@ -81,11 +89,14 @@ class FakeWs implements GameConn {
   onClose(): void {}
 }
 
-type Drop = { id: number; kind: string; item?: Item; owner?: string; pos: { x: number; y: number } };
+type Drop = { id: number; kind: string; item?: Item; owner?: string; heldBy?: string; pos: { x: number; y: number } };
 type P = { save: SaveState; hp: number; alive: boolean; pos: { x: number; y: number }; stunTimer: number };
 type RoomIn = {
   shop: Item[]; consumables: Item[]; questBoard: import('@dm/shared').QuestDef[]; stock: { at: number } | null;
-  session: { world: { players: Record<string, P>; drops: Drop[] } };
+  /** ⭐ K3: выброшенное, которое сейчас поднимают (запись поднимающего в пути). */
+  carrying: Set<unknown>;
+  /** ⭐ K3: крючок тика ([E], автоподбор) — подъём выброшенного с записью (`Room.pickFromTick`). */
+  session: { world: { players: Record<string, P>; drops: Drop[] }; pickThrown?: (pid: string, dropId: number) => void };
   addPlayer(ws: unknown, userId: string, save: SaveState, version: number): string;
   handleCmd(pid: string, command: unknown, id: unknown): Promise<void>;
   persist(pid: string): Promise<unknown>;
@@ -94,6 +105,19 @@ type RoomIn = {
 let RoomCtor: new (code: string, cfg: unknown, hooks: object) => RoomIn;
 beforeAll(async () => {
   ({ Room: RoomCtor } = (await import('./room.js')) as unknown as { Room: typeof RoomCtor });
+  // ⭐ САМОПРОВЕРКА `DM_FUZZ_SELFTEST=r16c01`: вернуть корень R16 C-01 — поднятое, которому клетки не осталось, ложится поверх занятой (как `?? pos`):
+  // шаг `carry` обязан его найти (сетка: наложение).
+  if (process.env.DM_FUZZ_SELFTEST === 'r16c01') {
+    const proto = RoomCtor.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+    vi.spyOn(proto, 'keepThrown').mockImplementation(function (this: RoomIn, ...a: unknown[]) {
+      const [, p, d] = a as [unknown, P, Drop];
+      const drops = this.session.world.drops;
+      const at = drops.indexOf(d);
+      if (at >= 0) drops.splice(at, 1);
+      d.item!.pos = { ...p.save.inventory.find((x) => x.pos)!.pos! };
+      p.save.inventory.push(d.item!);
+    });
+  }
 });
 const rooms: RoomIn[] = [];
 afterEach(() => { for (const r of rooms.splice(0)) r.stop(); });
@@ -108,7 +132,7 @@ const FROM = env('DM_FUZZ_ROOM_FROM', 1);
 const LEN = env('DM_FUZZ_ROOM_LEN', 60);
 
 /** Шаги комнаты сверх общих. */
-type RoomKind = 'drop' | 'pickup' | 'fault' | 'race' | 'persist' | 'crash' | 'stale';
+type RoomKind = 'drop' | 'pickup' | 'fault' | 'race' | 'persist' | 'crash' | 'stale' | 'carry';
 type RoomOp = { k: OpKind | RoomKind; h: 0 | 1; s: number };
 /** Общие шаги (без `restock`: сток катает сама комната по сроку; без `newHero`: герой комнаты — живая сессия) и свои — по весам. */
 function genRoomOps(seed: number, len: number): RoomOp[] {
@@ -117,7 +141,7 @@ function genRoomOps(seed: number, len: number): RoomOp[] {
   return base.map((op): RoomOp => {
     const x = r.next();
     const k: RoomKind | undefined = x < 0.05 ? 'drop' : x < 0.1 ? 'pickup' : x < 0.13 ? 'fault' : x < 0.19 ? 'race' : x < 0.23 ? 'persist'
-      : x < 0.245 ? 'crash' : x < 0.26 ? 'stale' : undefined;
+      : x < 0.245 ? 'crash' : x < 0.26 ? 'stale' : x < 0.31 ? 'carry' : undefined;
     return k ? { ...op, k } : op;
   });
 }
@@ -203,8 +227,12 @@ async function runRoom(seed: number, ops: RoomOp[]): Promise<{ hits: Hit[]; stat
     freshLimits();
     const id = ++cmdId;
     await room.handleCmd(pids[h]!, cmd, id);
+    const got = (): Extract<ServerFrame, { t: 'cmdResult' }> | undefined =>
+      ws[h]!.frames.filter((x): x is Extract<ServerFrame, { t: 'cmdResult' }> => x.t === 'cmdResult' && x.id === id).at(-1);
     await settle();
-    const f = ws[h]!.frames.filter((x): x is Extract<ServerFrame, { t: 'cmdResult' }> => x.t === 'cmdResult' && x.id === id).at(-1);
+    // ⭐ R16 C-04: ответ подъёма выброшенного — после его записи (мимо обработчика): ждём его, а не только обработчик.
+    for (let i = 0; i < 20 && !got(); i++) await settle(2);
+    const f = got();
     return f ? { ok: f.ok, reason: f.reason, uid: f.uid } : { ok: false, reason: 'нет ответа' };
   };
 
@@ -260,6 +288,47 @@ async function runRoom(seed: number, ops: RoomOp[]): Promise<{ hits: Hit[]; stat
         await room.persist(pids[h]!);
         await settle();
         p = { desc: 'автосейв', kind: 'meta', run: () => res, spec: () => ({}) };
+      } else if (op.k === 'carry') {
+        // ⭐ R16 C-01: подъём выброшенного тиком + действие, кладущее в сумку, пока запись подъёма ждёт ворот базы.
+        const mine = (): Drop | undefined => room.session.world.drops.find((x) => x.kind === 'item' && x.owner === userId && x.heldBy === undefined && !room.carrying.has(x));
+        if (r.chance(0.5)) {
+          // Сумка набита добычей до отказа (зелья 1×1): выброс освободит ровно одну клетку, и её займёт действие в окне записи подъёма.
+          const bag = live(h).save.inventory;
+          for (let n = 0; n < 200; n++) {
+            const it = itemFromBaseId(w.reg.get('items.base'), 'healing-potion', undefined, 'drop');
+            if (!it || !addToInventory(bag, it, w.reg.get('balance').inventory)) break;
+          }
+        }
+        if (!mine()) {
+          const inv = live(h).save.inventory.filter((it) => it.kind !== 'material');
+          if (inv.length) await send(h, { cmd: 'drop', uid: r.pick(inv).uid });
+        }
+        const d = mine();
+        if (d?.item) {
+          live(h).pos = { ...d.pos };   // подошёл к вещи
+          let open!: () => void;
+          db.gate = new Promise<void>((res) => { open = res; });
+          room.session.pickThrown?.(pids[h]!, d.id);   // [E] тика дотянулся
+          await settle();
+          refresh();
+          const kinds: OpKind[] = ['buy', 'unequip', 'equip', 'fieldSalvage', 'turnIn', 'stashMove', 'forgeSalvage', 'craft', 'loot', 'lootMats'];
+          const pc = plan(w, { k: r.pick(kinds), h, s: r.int(1, 2 ** 31 - 1) });
+          log.push(`#${i} carry/${h}: [E] по «${d.item.name}» [${d.item.uid.slice(-6)}], пока запись в пути — ${pc.desc}`);
+          freshLimits();
+          let pending: Promise<void> | null = null;
+          if (pc.cmd) pending = room.handleCmd(pids[pc.h ?? h]!, pc.cmd, ++cmdId);
+          else {
+            const stash0 = JSON.stringify(w.stash);
+            pc.run();   // добыча тиком (автоподбор, [E]) — прямо в живой сейв
+            if (JSON.stringify(w.stash) !== stash0) db.stashes.get(userId)!.data = structuredClone(w.stash);
+          }
+          await settle();
+          db.gate = null;
+          open();
+          await pending;
+          await settle(24);
+        } else log.push(`#${i} carry/${h}: бросить нечего`);
+        aggregateOnly = true;
       } else if (op.k === 'crash') {
         log.push(`#${i} crash: процесс умер, новая комната читает базу`);
         room.stop();

@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ConfigRegistry, PROTOCOL_VERSION, defaultConfigData, forgeGold, newBotSave, type SaveState } from '@dm/shared';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  CONFIG_REV_HEADER, ConfigRegistry, PRICE_CHANGED, PROTOCOL_VERSION, configChanged, configSchemas, createRng, defaultConfigData, forgeGold, newBotSave, parseTownCommand,
+  type SaveState, type TownCommand,
+} from '@dm/shared';
 import { App } from './app.js';
-import { EntryFlow, type EntryView } from '../net/entryFlow.js';
+import { EntryFlow, PROTOCOL_STALE, type EntryView } from '../net/entryFlow.js';
 
 /**
  * ⭐ R5-15: КОНФИГ КЛИЕНТА ДОГОНЯЕТ СЕРВЕРНЫЙ НА КАЖДОМ ВХОДЕ В МИР.
@@ -44,20 +47,76 @@ function serverReg(k: number): ConfigRegistry {
   return r;
 }
 
-/** Сервер `/api/config`: тело и ETag; 304 на совпавший `If-None-Match`; `down` — не отвечает. */
-const server = { reg: serverReg(1), etag: 'W/"a"', down: false, calls: [] as (string | null)[] };
+/**
+ * Сервер `/api/config`: тело и ETag; 304 на совпавший `If-None-Match`; `down` — не отвечает. ⭐ R16 C-07: и ревизия сервера для этого тела
+ * (`CONFIG_REV_HEADER`, как у `index.ts`); `noRev` — сервер старше заголовка.
+ */
+const server = { reg: serverReg(1), etag: 'W/"a"', down: false, noRev: false, calls: [] as (string | null)[] };
 async function fakeFetch(url: string, init?: { headers?: Record<string, string> }): Promise<unknown> {
   if (url !== '/api/config') throw new Error(`не ждали ${url}`);
   const inm = init?.headers?.['if-none-match'] ?? null;
   server.calls.push(inm);
   if (server.down) throw new Error('сервер перезапускается');
-  if (inm === server.etag) return { ok: false, status: 304, headers: { get: () => server.etag }, json: async () => { throw new Error('304 без тела'); } };
+  const headers = { get: (h: string): string | null => {
+    const k = h.toLowerCase();
+    return k === 'etag' ? server.etag : k === CONFIG_REV_HEADER && !server.noRev ? server.reg.revision() : null;
+  } };
+  if (inm === server.etag) return { ok: false, status: 304, headers, json: async () => { throw new Error('304 без тела'); } };
   const body = JSON.parse(JSON.stringify(server.reg.snapshot())) as unknown;
-  return { ok: true, status: 200, headers: { get: (h: string) => (h.toLowerCase() === 'etag' ? server.etag : null) }, json: async () => body };
+  return { ok: true, status: 200, headers, json: async () => body };
 }
 const flush = async (): Promise<void> => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)); };
 
-const view: EntryView = { showConnecting() { }, showLobby() { }, showResume() { }, hide() { }, setStatus() { } };
+/**
+ * ⭐ R16 C-07: реестр сервера НОВОГО выпуска — таблица `key` разобрана его схемой (`table` — её разобранное значение), которой у старой
+ * вкладки нет. Схему не подменить — кладём разобранное прямо в данные реестра: так он и выглядит у нового сервера.
+ */
+function drifted(key: string, table: unknown, base = serverReg(1)): ConfigRegistry {
+  const r = new ConfigRegistry();
+  const data = (x: ConfigRegistry): Record<string, unknown> => (x as unknown as { data: Record<string, unknown> }).data;
+  Object.assign(data(r), data(base), { [key]: table });   // прочие таблицы — те же объекты (их ревизии не пересчитываются)
+  return r;
+}
+type Obj = Record<string, unknown>;
+/** Первый объект таблицы (сама таблица-объект или первый объект массива) — где менять форму. */
+function firstObj(v: unknown): Obj | null {
+  if (Array.isArray(v)) return (v.find((x) => x !== null && typeof x === 'object' && !Array.isArray(x)) as Obj | undefined) ?? null;
+  return v !== null && typeof v === 'object' ? (v as Obj) : null;
+}
+/**
+ * ⭐ R16 C-07: как новый выпуск меняет ФОРМУ таблицы, не трогая значений (схема вкладки старше и разбирает тело сервера «удачно», но не в то же):
+ * новое поле (вкладка его срезает), другой порядок полей (вкладка кладёт в своём), поле убрано (вкладка допишет значение по умолчанию).
+ * Значение таблицы у сервера или `null` — к этой таблице вид неприменим.
+ */
+const DRIFTS: Record<string, (key: keyof typeof configSchemas, v: unknown) => unknown> = {
+  'новое поле': (_key, v) => {
+    const c = structuredClone(v);
+    const o = firstObj(c);
+    if (!o) return null;
+    o.knobOfNextRelease = 3;
+    return c;
+  },
+  'поля в другом порядке': (_key, v) => {
+    const c = structuredClone(v);
+    const o = firstObj(c);
+    if (!o || Object.keys(o).length < 2) return null;
+    const entries = Object.entries(o).reverse();
+    for (const k of Object.keys(o)) delete o[k];
+    for (const [k, x] of entries) o[k] = x;
+    return c;
+  },
+  'поле убрано (вкладка допишет умолчание)': (key, v) => {
+    for (const f of Object.keys(firstObj(v) ?? {})) {
+      const c = structuredClone(v);
+      delete firstObj(c)![f];
+      const seen = configSchemas[key].safeParse(structuredClone(c));
+      if (seen.success && JSON.stringify(seen.data) !== JSON.stringify(c)) return c;
+    }
+    return null;
+  },
+};
+
+const view: EntryView ={ showConnecting() { }, showLobby() { }, showResume() { }, hide() { }, setStatus() { } };
 
 describe('⭐ R5-15: конфиг клиента — на каждом входе в мир', () => {
   const G = globalThis as unknown as { WebSocket?: unknown; fetch?: unknown; location?: unknown };
@@ -67,7 +126,7 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     G.WebSocket = FakeWs; FakeWs.all = [];
     G.fetch = fakeFetch;
     G.location = { protocol: 'http:', host: 'game.test', hostname: 'game.test' };   // адрес сокета по умолчанию — от страницы
-    Object.assign(server, { reg: serverReg(1), etag: 'W/"a"', down: false, calls: [] });
+    Object.assign(server, { reg: serverReg(1), etag: 'W/"a"', down: false, noRev: false, calls: [] });
   });
   afterEach(() => { G.WebSocket = saved.ws; G.fetch = saved.fetch; G.location = saved.location; });
 
@@ -135,6 +194,161 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     await flush();
     expect(server.calls.length).toBe(n + 1);
     expect(prices(g.app.config)).toEqual(prices(server.reg));
+  });
+
+  // ⭐ V-B3-07 (фаззер паритета «окно ≡ сервер»): согласие держало только цену — правка живьём, не менявшая цены (вилка броска,
+  // скидка требований, «кузнец закрыт»), и окно по старому конфигу обещало одно, а сервер делал другое или отказывал не ценой, и
+  // конфиг так и не перечитывался. Теперь команды кузницы, скупки и разбора несут ревизию конфига клиента (`cfgRev`); у сервера
+  // другая — отказ «Цена изменилась» до исполнения (`configChanged`), по нему клиент перечитывает конфиг, и дальше — согласие.
+  it('⭐ V-B3-07: команды кузницы несут ревизию конфига; устаревшая — отказ до исполнения, конфиг перечитан, дальше — согласие', async () => {
+    const g = await game();
+    await g.enter();
+    const lastCmd = (): TownCommand & { cfgRev?: string } => {
+      const f = g.ws().sent.map((s) => JSON.parse(s) as { t: string; command?: TownCommand }).filter((x) => x.t === 'cmd').at(-1)!;
+      expect(parseTownCommand(f.command).ok, 'схема сервера принимает команду с ревизией').toBe(true);
+      return f.command!;
+    };
+    g.app.sendCmd({ cmd: 'forgeReroll', uid: 'x', maxGold: 10 });
+    expect(lastCmd().cfgRev, 'ревизия конфига клиента = серверной').toBe(server.reg.revision());
+    expect(configChanged(server.reg, lastCmd().cfgRev)).toBeNull();
+    g.app.sendCmd({ cmd: 'equip', uid: 'x' });
+    expect('cfgRev' in lastCmd(), 'надеть — без согласия на конфиг').toBe(false);
+    g.app.sendCmd({ cmd: 'buy', uid: 'x', maxGold: 5 });
+    expect('cfgRev' in lastCmd(), 'покупка — цену и вещь прислал сервер, конфиг клиента в ней не участвует').toBe(false);
+
+    server.reg = serverReg(1); server.etag = 'W/"d"';
+    const b = structuredClone(server.reg.get('balance'));
+    b.loot.baseRoll.weapon = 0.3;   // правка живьём, цены не тронуты
+    server.reg.reload({ balance: b });
+    g.app.sendCmd({ cmd: 'forgeUpgrade', uid: 'x', maxGold: 999 });
+    const refusal = configChanged(server.reg, lastCmd().cfgRev);
+    expect(refusal?.reason?.startsWith(PRICE_CHANGED), 'конфиг клиента устарел — отказ ценой').toBe(true);
+    g.ws().frame({ t: 'cmdResult', id: 99, cmd: 'forgeUpgrade', ok: false, reason: refusal!.reason });
+    await flush();
+    g.app.sendCmd({ cmd: 'forgeUpgrade', uid: 'x', maxGold: 999 });
+    expect(configChanged(server.reg, lastCmd().cfgRev), 'перечитал — согласие').toBeNull();
+    expect(g.app.config.get('balance').loot.baseRoll.weapon).toBe(0.3);
+  });
+
+  /** Ревизия конфига, с которой ушла последняя команда согласия (`cfgRev`), — её сервер и сверяет (`configChanged`). */
+  const stampOf = (g: Awaited<ReturnType<typeof game>>): string | undefined => {
+    g.app.sendCmd({ cmd: 'sell', uid: 'x', minGold: 1 });
+    const f = g.ws().sent.map((s) => JSON.parse(s) as { t: string; command?: TownCommand & { cfgRev?: string } }).filter((x) => x.t === 'cmd').at(-1)!;
+    return f.command!.cfgRev;
+  };
+  const staleHints = (g: Awaited<ReturnType<typeof game>>): number => g.logs.filter((t) => t === PROTOCOL_STALE).length;
+
+  // ⭐ R16 C-07: деплой (вкладка переподключается сама, L2 / R3-25, `PROTOCOL_VERSION` тот же) добавил поле в таблицу конфига. Старая схема
+  // вкладки его срезает — разбор «удался», а ревизия её конфига (`ConfigRegistry.revision`, по разобранному) уже не серверная, НАВСЕГДА: каждая
+  // продажа, ковка, разбор — «Цена изменилась», перечитывание — 304 с тем же ETag, отказы в логе прячутся повтором (R4-24), и ни слова о
+  // перезагрузке. Теперь согласие — «с какого конфига СЕРВЕРА нарисовано» (ревизия, которую сервер прислал с телом, `CONFIG_REV_HEADER`), а
+  // схема вкладки старше — игроку один раз на ETag «перезагрузите страницу».
+  it('⭐ R16 C-07: деплой добавил поле в конфиг — старая вкладка продаёт и кует (согласие по ревизии сервера), а «перезагрузите» — один раз', async () => {
+    const g = await game();
+    await g.enter();
+    const b = structuredClone(server.reg.get('balance')) as unknown as Obj;
+    b.newKnobFromNextRelease = 3;
+    server.reg = drifted('balance', b); server.etag = 'W/"new"';
+    g.ws().drop(4009);
+    await g.enter();
+    expect(g.app.config.revision(), 'схема вкладки срезала новое поле: её ревизия — не серверная').not.toBe(server.reg.revision());
+    for (let click = 0; click < 5; click++) {
+      expect(configChanged(server.reg, stampOf(g)), `клик ${click + 1}: было — «Цена изменилась» навсегда`).toBeNull();
+    }
+    expect(staleHints(g), 'схема вкладки старше сервера — игроку «перезагрузите», один раз').toBe(1);
+    g.ws().drop(1006);
+    await g.enter();
+    expect(server.calls.at(-1), 'тот же конфиг — 304').toBe('W/"new"');
+    expect(staleHints(g), 'тот же ETag — второй раз не твердим').toBe(1);
+
+    // Правка живьём после деплоя — согласие по-прежнему её ловит: отказ, перечитывание, дальше — согласие.
+    const b2 = structuredClone(b);
+    (b2.loot as { baseRoll: { weapon: number } }).baseRoll.weapon = 0.3;
+    server.reg = drifted('balance', b2); server.etag = 'W/"new2"';
+    const refusal = configChanged(server.reg, stampOf(g));
+    expect(refusal?.reason?.startsWith(PRICE_CHANGED), 'конфиг сервера сменился — отказ до исполнения').toBe(true);
+    g.ws().frame({ t: 'cmdResult', id: 901, cmd: 'sell', ok: false, reason: refusal!.reason });
+    await flush();
+    expect(configChanged(server.reg, stampOf(g)), 'перечитал — согласие').toBeNull();
+    expect(g.app.config.get('balance').loot.baseRoll.weapon).toBe(0.3);
+  });
+
+  // ⭐ R16 C-07 — весь класс: ЛЮБЫЕ таблицы и любые виды смены их формы новым выпуском (набор — из сидового потока: каждая таблица с долей
+  // вероятности меняется одним из видов, первый раунд — без смен). Инвариант после перечитывания: согласие на конфиг проходит (команды не
+  // отказываются без конца), а расхождение схем вкладки и сервера игроку не молчит — «перезагрузите» ровно тогда, когда оно есть (и не при
+  // конфиге, разобранном в то же). Раунд — полный путь `syncConfig` (тело ~0,6 МБ): раундов немного, таблиц в каждом — много.
+  it('⭐ R16 C-07: любые таблицы, любые виды смены формы — согласие проходит, «перезагрузите» ровно при расхождении схем', async () => {
+    const g = await game();
+    await g.enter();
+    const pristine = serverReg(1);
+    const rng = createRng(0xc07);
+    const keys = Object.keys(configSchemas) as (keyof typeof configSchemas)[];
+    const kinds = Object.entries(DRIFTS);
+    const shapedBy = new Map<string, number>();   // вид → сколько таблиц им менялось (покрытие)
+    let drifts = 0, calm = 0;
+    for (let round = 0; round < 14; round++) {
+      const server0 = drifted(keys[0]!, pristine.get(keys[0]!), pristine);
+      const changed: string[] = [];
+      for (const key of keys) {
+        if (round === 0 || !rng.chance(0.35)) continue;
+        const [kind, shape] = rng.pick(kinds);
+        const table = shape(key, pristine.get(key));
+        if (table === null) continue;
+        (server0 as unknown as { data: Record<string, unknown> }).data[key] = table;
+        changed.push(`${key} × ${kind}`);
+        shapedBy.set(kind, (shapedBy.get(kind) ?? 0) + 1);
+      }
+      server.reg = server0; server.etag = `W/"round-${round}"`;
+      const before = staleHints(g);
+      await g.app.syncConfig();
+      const drift = g.app.config.revision() !== server.reg.revision();
+      if (drift) drifts++; else calm++;
+      const what = `раунд ${round} (${changed.join(', ') || 'без смен'})`;
+      expect(configChanged(server.reg, stampOf(g)), `${what}: согласие`).toBeNull();
+      expect(staleHints(g) - before, `${what}: «перезагрузите» — ${drift ? 'схема вкладки старше' : 'разобрано в то же'}`).toBe(drift ? 1 : 0);
+    }
+    expect(drifts, 'фаззер холостой: ни одного расхождения схем').toBeGreaterThan(8);
+    expect(calm, 'и без расхождения — ни одной ложной подсказки (раунд без смен)').toBeGreaterThan(0);
+    for (const [kind] of kinds) expect(shapedBy.get(kind) ?? 0, `вид «${kind}» не выпал ни разу`).toBeGreaterThan(20);
+    // Сервер старше заголовка ревизии: согласие — по ревизии конфига вкладки, как было (а разобранный в то же конфиг — согласие).
+    server.noRev = true; server.reg = serverReg(2); server.etag = 'W/"old-server"';
+    await g.app.syncConfig();
+    expect(configChanged(server.reg, stampOf(g))).toBeNull();
+  });
+
+  // ⭐ R16 C-07 × R7-14: конфиг сервера вкладка не разбирает вовсе (новая таблица) — прежний конфиг цел, «перезагрузите» сказано один раз на
+  // ETag. А дальше каждая продажа и ковка — «Цена изменилась» (её конфиг — не серверный), перечитывание — 304 по негодному ETag, и кнопки
+  // выглядели мёртвыми. Теперь отказ «Цена изменилась» у такой вкладки — снова «перезагрузите» (не чаще раза в 2 с, как повтор отказа).
+  it('⭐ R16 C-07: вкладка, не разбирающая конфиг сервера, на каждый отказ «Цена изменилась» снова слышит «перезагрузите»', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const g = await game();
+      await g.enter();
+      const next = serverReg(1);
+      const b = structuredClone(next.get('balance'));
+      b.respecCost += 7;
+      next.reload({ balance: b });
+      (next as unknown as { data: Record<string, unknown> }).data['craft-new-table'] = [{ id: 'x' }];   // таблица, которой вкладка не знает
+      server.reg = next; server.etag = 'W/"v2"';
+      g.ws().drop(4009);
+      await g.enter();
+      expect(g.app.config.get('balance').respecCost, 'R7-14: прежний конфиг цел').not.toBe(b.respecCost);
+      expect(staleHints(g), 'R7-14: сказано один раз').toBe(1);
+      for (let click = 0; click < 3; click++) {
+        vi.setSystemTime(Date.now() + 5_000);
+        const refusal = configChanged(server.reg, stampOf(g));
+        expect(refusal?.reason?.startsWith(PRICE_CHANGED), 'конфиг вкладки — не серверный: отказ').toBe(true);
+        g.ws().frame({ t: 'cmdResult', id: 700 + click, cmd: 'sell', ok: false, reason: refusal!.reason });
+        await flush();
+        expect(staleHints(g), `клик ${click + 1}: было — только «Не вышло: Цена изменилась», без подсказки`).toBe(2 + click);
+      }
+      // Зажатый клик (отказы подряд быстрее 2 с) — одна строка, а не лента.
+      g.ws().frame({ t: 'cmdResult', id: 799, cmd: 'sell', ok: false, reason: configChanged(server.reg, stampOf(g))!.reason });
+      await flush();
+      expect(staleHints(g)).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('сервер другой версии протокола — игроку «перезагрузите страницу»', async () => {

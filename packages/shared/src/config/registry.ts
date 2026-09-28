@@ -1,5 +1,6 @@
 import { configSchemas, type ConfigKey, type ConfigShapes } from './schemas.js';
 import { defaultConfigData } from './defaults.js';
+import { configSetRev } from './configRev.js';
 import type { EventBus } from '../events/index.js';
 
 /**
@@ -62,4 +63,16 @@ export class ConfigRegistry {
   snapshot(): ConfigShapes {
     return structuredClone(this.data);
   }
+
+  /**
+   * ⭐ V-B3-07: ревизия всего конфига по содержимому (`configSetRev`) — согласие окна кузницы и лавки: `cfgRev` команды ≠ ревизии
+   * сервера — клиент рисовал со старого конфига, отказ «Цена изменилась» до исполнения, и клиент его перечитывает.
+   */
+  revision(): string {
+    const data = this.data as Record<string, unknown>;
+    return configSetRev(CONFIG_KEYS, (k) => data[k]);
+  }
 }
+
+/** Таблицы реестра в порядке схемы — порядок ревизии (`revision`) у сервера и клиента один. */
+const CONFIG_KEYS: readonly string[] = Object.keys(configSchemas);

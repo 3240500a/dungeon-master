@@ -1,19 +1,20 @@
 import express, { type Request, type Response, type RequestHandler } from 'express';
-import { configEtagOf } from './configEtag.js';
+import { configReplyOf } from './configEtag.js';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
-import { ConfigRegistry, configSchemas, configRevs, type ConfigKey } from '@dm/shared';
+import { CONFIG_REV_HEADER, ConfigRegistry, configSchemas, configRevs, type ConfigKey } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
+import { startConfigSync } from './configSync.js';
 import { configWriter } from './configWrites.js';
 import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
 import {
   listAllCharacters, getCharacter,
   getUserById,
-  getConfigOverrides, setConfigOverride, deleteConfigOverride,
+  getConfigOverrides, setConfigOverride, deleteConfigOverride, getConfigOverridesRev,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions, sweepRunLedger,
   getUserRole, serverKey,
 } from './db/db.js';
@@ -46,9 +47,8 @@ import { extractColliderFromGlb } from './glbMeshBbox.js';
 // эффективный конфиг через GET /api/config, правки редактора идут в POST /api/dev/config.
 const config = new ConfigRegistry();
 
-/** Накатывает сохранённые оверрайды поверх дефолтов (устойчиво к невалидным — пропускает). */
-async function applyConfigOverrides(): Promise<void> {
-  const all = await getConfigOverrides();
+/** Накатывает сохранённые оверрайды `all` поверх дефолтов (устойчиво к невалидным — пропускает). */
+function applyConfigOverrides(all: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(all)) {
     try {
       config.reload({ [key]: value });
@@ -61,12 +61,19 @@ async function applyConfigOverrides(): Promise<void> {
   const keys = Object.keys(all);
   if (keys.length) console.log(`[dm-server] поверх файлов лежат оверрайды редактора: ${keys.join(', ')}`);
 }
-/** Полная пересборка живого конфига: дефолты + персистентные оверрайды (комнаты держат ссылку). */
+/**
+ * Полная пересборка живого конфига: дефолты + персистентные оверрайды (комнаты держат ссылку).
+ * ⭐ R16 C-02: оверрайды — СПЕРВА из базы, сама сборка — без ожиданий. Раньше дефолты ставились до чтения базы: на время запроса (под нагрузкой —
+ * секунды) комнаты, тикавшие между, играли на встроенных таблицах без правок редактора. Теперь пересборка идёт и по сверке (`configSync.ts`).
+ */
 async function rebuildConfig(): Promise<void> {
+  const all = await getConfigOverrides();
   config.loadAll();
-  await applyConfigOverrides();
+  applyConfigOverrides(all);
   rebuildConfigCache(); // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
 }
+/** ⭐ R16 C-02: ревизия оверрайдов, снятая на старте ДО сборки конфига: правку, легшую после, соберёт первая сверка (`startConfigSync`). */
+let bootConfigRev: string | undefined;
 
 /**
  * Подготовка хранилища перед приёмом запросов (Ф2). Раньше всё это делалось прямо в модуле —
@@ -75,6 +82,7 @@ async function rebuildConfig(): Promise<void> {
  */
 async function boot(): Promise<void> {
   await initSchema();
+  bootConfigRev = await getConfigOverridesRev();   // ⭐ R16 C-02: до сборки — правка между ними не потеряется
   await rebuildConfig();   // дефолты + сохранённые правки редактора + готовое тело ответа
 
   // Рестарт сервера = чистый лист забегов: сбрасываем НЕЗАВЕРШЁННЫЕ забеги (save.run). Иначе спуск из города
@@ -202,15 +210,18 @@ installNodeFence(app, ROLE);
 // входов в секунду — 86 % ядра на один этот роут.
 let configBody = '';
 let configEtag = '';
+/** ⭐ R16 C-07: ревизия сервера для этого тела — вкладка кладёт её в согласие команд кузницы и лавки (`cfgRev`), а не свою по разобранному. */
+let configRevision = '';
 function rebuildConfigCache(): void {
-  configBody = JSON.stringify(config.snapshot());
-  configEtag = configEtagOf(configBody);   // по ВСЕМУ телу — см. `configEtag.ts`, там разобрано, чем стоила выборка
+  // ETag — по ВСЕМУ телу (см. `configEtag.ts`, там разобрано, чем стоила выборка); тело, ETag и ревизия — с одного снимка реестра.
+  ({ body: configBody, etag: configEtag, rev: configRevision } = configReplyOf(config));
 }
 
 
 app.get('/api/config', (req, res) => {
   if (process.env.NODE_ENV !== 'production') res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
   res.setHeader('ETag', configEtag);
+  res.setHeader(CONFIG_REV_HEADER, configRevision);
   if (req.headers['if-none-match'] === configEtag) return res.status(304).end();
   res.type('application/json').send(configBody);
 });
@@ -597,6 +608,9 @@ await boot();
 // ⭐ R5-01: с этого момента процесс держит игроков — необработанное исключение начинает обычный слив (запись сейвов, снятие
 // ноды), а не обрывает процесс со всеми комнатами. До загрузки падение остаётся падением: дописывать ещё нечего.
 installCrashDrain();
+// ⭐ R16 C-02, C-08: правка конфига в другом процессе (редактор — у гейтвея) или мимо сервера — и здесь: сверка ревизии оверрайдов в базе,
+// сдвинулась — пересборка. Иначе нода сверяла согласие команд кузницы и лавки (`cfgRev` — ревизия конфига гейтвея) со своим конфигом старта.
+startConfigSync({ readRev: getConfigOverridesRev, rebuild: rebuildConfig, initial: bootConfigRev, who: `dm-server ${ROLE}` });
 
 // Гейтвею игровой транспорт не нужен: он раздаёт адреса нод, а не возит кадры.
 const wantUws = ROLE !== 'gateway' && (process.env.DM_WS ?? 'uws') === 'uws';

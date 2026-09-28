@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { newBotSave, shopBuyPrice, itemFromBaseId, SHOP_CONSUMABLES, type Item } from '@dm/shared';
+import { addToInventory, materialItem, newBotSave, shopBuyPrice, itemFromBaseId, SHOP_CONSUMABLES, type Item, type SaveState } from '@dm/shared';
 import { App } from '../../core/app.js';
 import { GameState } from '../../core/gameState.js';
 import { shopCategory } from './shopCats.js';
@@ -15,7 +15,7 @@ import { forgePanel } from './forgePanel.js';
  *
  * Сетку прилавка подменяем: проверяем, какую цену и какую «доступность» окно ей отдаёт.
  */
-const grids = vi.hoisted(() => [] as { stock: Item[]; o: { price: (it: Item) => number; affordable: (it: Item) => boolean } }[]);
+const grids = vi.hoisted(() => [] as { stock: Item[]; o: { price: (it: Item) => number; affordable: (it: Item) => boolean; refusal?: (it: Item) => string | undefined } }[]);
 vi.mock('./shopGrid.js', () => ({
   renderShopGrid: (stock: Item[], o: (typeof grids)[number]['o']) => { grids.push({ stock, o }); return document.createElement('div'); },
 }));
@@ -94,6 +94,37 @@ describe('⭐ R4-37: цена прилавка — из кадра сервер�
     expect(g.o.price(it)).toBe(s.prices[it.uid]);
     s.save.gold = s.prices[it.uid]! - 1;
     expect(g.o.affordable(it)).toBe(false);
+  });
+
+  /** Забить сумку героя до последней клетки (1×1, без стопок) — вещь прилавка не ляжет никуда. */
+  function fillBag(app: App, save: SaveState): void {
+    const dims = app.config.get('balance').inventory;
+    const def = app.config.get('craft-materials')[0]!;
+    for (let k = 0; k < dims.cols * dims.rows; k++) if (!addToInventory(save.inventory, materialItem(def, 1, `junk-${k}`), dims)) break;
+  }
+
+  it('⭐ V-B3-02: сумка полна — ценник серый и говорит «Нет места» (сервер ответил бы тем же: `canBuy`), и в кузнице, и в лавке', () => {
+    for (const where of ['forge', 'potions'] as const) {
+      const s = shop(where === 'forge' ? ['long-sword'] : SHOP_CONSUMABLES);
+      const body = new El('div');
+      if (where === 'forge') {
+        forgePanel(s.app, { openPanel: () => { } } as never).render(body as unknown as HTMLElement);
+        body.all().find((e) => e.tag === 'button' && e.textContent.includes('Купить'))!.click();
+        body.all().find((e) => e.tag === 'button' && e.textContent.includes('Ближний'))!.click();
+      } else {
+        shopPanel(s.app, {} as never).render(body as unknown as HTMLElement);
+      }
+      const g = grids.at(-1)!;
+      const it = g.stock[0]!;
+      s.save.gold = s.prices[it.uid]! + 1_000;
+      expect(g.o.affordable(it), where).toBe(true);
+      expect(g.o.refusal?.(it), where).toBeUndefined();
+      fillBag(s.app, s.save);
+      expect(g.o.affordable(it), `${where}: было — «по карману» по одному золоту, а сервер отказывал «Нет места»`).toBe(false);
+      expect(g.o.refusal?.(it), where).toBe('Нет места');
+      s.save.gold = 0;
+      expect(g.o.refusal?.(it), `${where}: золото — первым, как у сервера`).toBe('Недостаточно золота');
+    }
   });
 
   it('цены в кадре нет (сервер старше R2-36) — по своему конфигу, как раньше', () => {

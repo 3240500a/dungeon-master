@@ -1,15 +1,15 @@
 import type { Item } from './items.js';
 
+/** Цель задания — только то, что игра считает (⚠ C-13: «talk-npc» без трекера вставала навсегда; см. `objectiveTypeEnum`). */
 export type ObjectiveType =
   | 'kill'
   | 'reach-floor'
-  | 'collect-item'
-  | 'talk-npc';
+  | 'collect-item';
 
 export interface QuestObjective {
   id: string;
   type: ObjectiveType;
-  /** Целевой id: id монстра / id базы предмета / id npc. Пусто для reach-floor. */
+  /** Целевой id: id монстра / id базы предмета. Пусто для reach-floor. */
   target?: string;
   /** Требуемое количество / номер этажа. */
   amount: number;

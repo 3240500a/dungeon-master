@@ -1,6 +1,7 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { counters, readGauges } from '../net/metrics.js';
 import { heartbeat, releaseNode, touchClaims, touchRuns, initClusterSchema } from './registry.js';
+import { leaseBeat, leaseLeft, leaseLost, LEASE_MS } from './lease.js';
 
 /**
  * Игровая нода (Ф4.3): процесс, который занимается ТОЛЬКО комнатами.
@@ -26,6 +27,10 @@ let stopped = false;
 const sending = new Set<Promise<void>>();
 /** Слив ноды установлен (R3-12): выход процесса — только через него. */
 let nodeShutdown = false;
+/** ⭐ R16 C-05: аренда на исходе (сказано в лог) — дошедший удар её продлит, и нода играет дальше (`checkLease`). */
+let leaseLow = false;
+/** ⭐ ENV1: как часто нода сверяет свою аренду (`lease.ts`), мс. */
+const LEASE_CHECK_MS = 1_000;
 
 /** Идёт ли слив: гейтвей это видит и перестаёт присылать новых игроков. */
 export function isDraining(): boolean { return draining; }
@@ -40,6 +45,9 @@ export function nodeShutdownInstalled(): boolean { return nodeShutdown; }
  * закрепление продлевается, чтобы игрок при обрыве вернулся именно сюда, к своей комнате.
  * `onLost` (R2-05) — те из них, чьё закрепление уже у ЧУЖОЙ ноды: их копии здесь проиграли.
  * ⭐ V2: `heldRuns` — забеги, которые держат комнаты ноды (ключ, код комнаты): их держание за нодой (`run_locks`) продлевает тот же удар.
+ * ⭐ ENV1: `opts.runsLost` — те из них, что реестр числит за другой нодой: комнаты ноды их отпускают (`RoomManager.fenceRuns`), а не только
+ * строка в лог. `opts.lease` — нода держит аренду (`lease.ts`): дошедший удар её продлевает, а на исходе нода себя отгораживает сама
+ * (`checkLease`). Роль `single` аренды не держит: отдать её героев некому.
  */
 export async function joinCluster(
   nodeId: string, url: string, charIds: () => string[],
@@ -47,6 +55,7 @@ export async function joinCluster(
   onLost?: (charIds: string[]) => void,
   onGone?: (charIds: string[]) => void,
   heldRuns?: () => { key: string; room: string }[],
+  opts: { runsLost?: (runs: { key: string; room: string }[]) => void; lease?: boolean } = {},
 ): Promise<void> {
   await initClusterSchema();
 
@@ -56,6 +65,7 @@ export async function joinCluster(
 
   const beatOnce = async (): Promise<void> => {
     if (stopped) return;   // R4-28: нода уже снимается из реестра — её строку и закрепления не возвращаем
+    const sentAt = Date.now();   // ⭐ ENV1: аренда — от отправки удара (строка ноды в реестре помечена не раньше)
     const g = readGauges();
     const cpu = process.cpuUsage();
     const now = Date.now();
@@ -81,6 +91,8 @@ export async function joinCluster(
       const lostRuns = runs.filter((r) => !keptRuns.has(r.key));
       if (lostRuns.length) {
         console.error(`[${nodeId}] ИНЦИДЕНТ: забеги комнат ${lostRuns.map((r) => r.room).join(', ')} кластер числит за другой нодой — один забег идёт в двух местах`);
+        // ⭐ ENV1: и комнаты их отпускают — сессии снимаются без записи, как проигравшие копии: правда забега там, где его держат.
+        opts.runsLost?.(lostRuns);
       }
     }
     await heartbeat(nodeId, url, {
@@ -91,6 +103,9 @@ export async function joinCluster(
       tickHz: hz,
       draining,
     });
+    // ⭐ ENV1: удар дошёл — аренда продлена. ⭐ R16 C-05: только дошедший ДО её конца: после него реестр уже мог счесть ноду мёртвой (запас
+    // аренды — на скачок часов), и её героев — отдать; такая нода не оживает, а уходит (`checkLease`).
+    if (opts.lease && !leaseLost()) leaseBeat(sentAt);
     loop.reset();
     // ⭐ R2-05: закрепление героя у другой ноды, а сессия здесь — проигравшая копия (нода подвисла, и её
     // закрепление забрали). Снимаем её, а не играем дальше: иначе две живые копии одного героя.
@@ -114,6 +129,37 @@ export async function joinCluster(
   beatNow = send;
   beat = setInterval(() => { void send().catch(() => undefined); }, BEAT_MS);
   beat.unref();
+  if (opts.lease) setInterval(() => checkLease(nodeId), LEASE_CHECK_MS).unref();
+}
+
+/**
+ * ⭐ ENV1: НОДА, НЕ ПОДТВЕРДИВШАЯ СЕБЯ РЕЕСТРУ, ОТГОРАЖИВАЕТ СЕБЯ САМА. Аренда (`lease.ts`) кончилась — удар сердца не доходил до реестра
+ * `LEASE_MS` (раздел с базой, пауза процесса): ни тика, ни команды, ни записи (`leaseLost`), и выход без записи — до срока, после которого
+ * реестр отдаёт её героев и забеги другой (супервизор поднимет её заново): писать поверх того, что уже могла записать другая нода, нельзя.
+ * Раньше она играла дальше: герой, вошедший на соседней ноде, жил на двух, забег шёл в двух комнатах, и узнавала она об этом, только когда
+ * удар снова доходил.
+ * ⭐ R16 C-05: ДО КОНЦА АРЕНДЫ — ИГРА, А НЕ НЕОТМЕНЯЕМЫЙ СЛИВ. За 8 с до конца аренда начинала слив (`installNodeShutdown`: заморозка комнат,
+ * снятие из реестра, выход), и удар, дошедший после (база вернулась на 105-й секунде простоя), аренду продлевал, но слива не отменял: все
+ * ноды разом уходили и на старте снимали забеги своих героев (`clearAllRuns`) — хотя до `NODE_DEAD_SEC` забрать их не мог никто. А писать
+ * тем сливом было нечем: удары не доходят, потому что база молчит, — те же записи падали бы. Теперь на исходе аренды — только строка в лог;
+ * автосейв и дописка копий идут, как шли; дошедший удар аренду продлевает, и нода играет дальше; не дошёл до конца аренды — выход без записи.
+ */
+function checkLease(nodeId: string): void {
+  if (stopped) return;
+  const left = leaseLeft();
+  if (left > DRAIN_GUARD_MS) {
+    if (leaseLow) { leaseLow = false; console.log(`[${nodeId}] аренда ноды продлена — удар сердца снова доходит до реестра, нода играет дальше`); }
+    return;
+  }
+  if (left <= 0) {
+    console.error(`[${nodeId}] ИНЦИДЕНТ: аренда ноды кончилась (удар сердца не доходил до реестра ${Math.round((LEASE_MS - left) / 1000)} с) — выход без записи: героев и забеги ноды реестр вправе отдать другой`);
+    process.exit(1);
+    return;
+  }
+  if (!leaseLow) {
+    leaseLow = true;
+    console.error(`[${nodeId}] аренда ноды кончается через ${Math.round(left / 1000)} с — удар сердца не доходит до реестра; дошедший удар её продлит, иначе выход без записи`);
+  }
 }
 
 /** Предохранитель слива ноды: дольше процесс не живёт, даже если база молчит (`TimeoutStopSec` юнита — больше, DEPLOY.md §3b). */
@@ -123,6 +169,20 @@ const DRAIN_GUARD_MS = 8_000;
  * реестра и выход.
  */
 const DRAIN_FLUSH_MS = DRAIN_GUARD_MS - 500;
+/** ⭐ ENV2: сколько слив оставляет на снятие ноды из реестра и выход после дописки. */
+const DRAIN_EXIT_MS = DRAIN_GUARD_MS - DRAIN_FLUSH_MS;
+
+/**
+ * ⭐ ENV2: БЮДЖЕТ ДОПИСКИ СЛИВА — ДО КОНЦА АРЕНДЫ. Слив, начатый, пока база лежит (раздел, переключение), выходил через 8 с, даже если база
+ * возвращалась на девятой: копии и свод забега уходили с процессом (ИНЦИДЕНТ R12-04). А писать можно, пока аренда ноды идёт (`lease.ts`: её
+ * героев никто не заберёт) — круги дописки идут столько, но не дольше (после неё строку уже вправе писать другая нода). База жива — слив,
+ * как и был, — миллисекунды: круги кончаются, как только всё легло. Нода аренды не держит (роль `single`) — прежние 7,5 с.
+ * `TimeoutStopSec` юнита и срок супервизора — не меньше аренды (DEPLOY.md §3b, `supervisor.ts`).
+ */
+function drainBudget(): number {
+  const left = leaseLeft();
+  return Number.isFinite(left) ? Math.max(0, left - DRAIN_EXIT_MS) : DRAIN_FLUSH_MS;
+}
 
 /**
  * Слив ноды (Ф4.5): перестать принимать новых, дать сохраниться, уйти.
@@ -131,26 +191,29 @@ const DRAIN_FLUSH_MS = DRAIN_GUARD_MS - 500;
  * R3-12: это ЕДИНСТВЕННЫЙ выход процесса ноды — общий обработчик транспорта ему уступает (`nodeShutdownInstalled`).
  * Порядок: слив объявлен сразу (удар сердца вне расписания — гейтвей перестаёт слать новых, не дожидаясь очередного
  * через две секунды; входы сюда отвечают «перезапускаемся»), сейвы дописаны, нода и её закрепления сняты из
- * реестра, выход. Всё — под одним предохранителем.
+ * реестра, выход. Всё — под одним предохранителем. ⭐ ENV2: дописка — до конца аренды ноды (`drainBudget`), а не 7,5 с. ⭐ R16 C-05: аренда
+ * на исходе слива не начинает (`checkLease`): её конец — выход без записи, а дошедший до него удар — игра дальше.
  */
 export function installNodeShutdown(nodeId: string, flush: (budgetMs: number) => Promise<unknown>): void {
   nodeShutdown = true;
   let leaving = false;
-  const shutdown = (): void => {
+  const shutdown = (why: unknown = 'сигнал'): void => {
     // ⭐ R5-08: повторный сигнал (systemd шлёт SIGTERM всей группе, супервизор — свой, npm и tsx пересылают свой) — только в
     // лог: слив уже идёт и выйдет сам.
     if (leaving) { console.log(`[${nodeId}] повторный сигнал остановки — слив уже идёт`); return; }
     leaving = true;
     draining = true;
-    console.log(`[${nodeId}] слив: новых игроков не принимаю, дописываю сейвы…`);
+    // ⭐ ENV2: дописка — до конца аренды (база лежит — круги ждут её), а не 7,5 с; предохранитель — за ней.
+    const budget = drainBudget();
+    console.log(`[${nodeId}] слив (${String(why)}): новых игроков не принимаю, дописываю сейвы (не дольше ${Math.round(budget / 1000)} с)…`);
     // Предохранитель: если база молчит, всё равно выходим — иначе рестарт подвиснет.
     const done = (): never => process.exit(0);
-    const guard = setTimeout(done, DRAIN_GUARD_MS);
+    const guard = setTimeout(done, budget + DRAIN_EXIT_MS);
     void (async () => {
       try {
         // Объявление слива — рядом с записью, а не перед ней: молчащая база не должна съедать время сейвов.
         const announce = (beatNow?.() ?? Promise.resolve()).catch((e: unknown) => console.warn(`[${nodeId}] объявить слив не удалось:`, e));
-        await flush(DRAIN_FLUSH_MS);   // ⭐ R12-04: база моргнула — сейвы дописываются кругами, пока не кончится бюджет
+        await flush(budget);   // ⭐ R12-04: база моргнула — сейвы дописываются кругами, пока не кончится бюджет
         await announce;
         // ⭐ R4-28: удары сердца — ДО снятия ноды: новых нет, идущие дописаны. Раньше удар по расписанию, ушедший в базу до
         // снятия, ложился после него — строка ноды и закрепления всех её игроков возвращались, и гейтвей ещё десять секунд

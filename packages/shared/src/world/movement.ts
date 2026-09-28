@@ -25,9 +25,14 @@ export interface Vec2 {
  *
  * `obstacles` (опц.) — суб-тайловые препятствия напольного декора (круг/бокс): ПОСЛЕ
  * тайл-резолва актёр-круг выталкивается наружу по нормали проникновения (тангенц.
- * движение сохраняется → скольжение вдоль декора накапливается по тикам). Препятствия
- * ставятся ВНУТРИ комнат (footprint-резерв держит их от стен), поэтому выталкивание не
- * загоняет в стену; краевой случай доразрешает движение следующего тика.
+ * движение сохраняется → скольжение вдоль декора накапливается по тикам).
+ *
+ * ⚠ V-RF-05: ВЫТАЛКИВАНИЕ — ТЕМ ЖЕ РАЗРЕШЕНИЕМ ПО ТАЙЛАМ, ЧТО И ХОД (`tileSweep`). Раньше оно ставило круг по нормали мимо
+ * сетки («препятствия внутри комнат, краевой случай доразрешит следующий тик»): у преграды вплотную к стене (настенный
+ * реквизит, `placeWallProps`) круг уходил в стену, и следующий шаг, задев строку стены охватом оси, «прилипал» к дальней
+ * грани — рывок до клетки ПРОТИВ ввода, дрожь туда-обратно; монстр, заселённый на преграду, выдавливался в стену, закрытую
+ * дверь и через диагональный шов. Теперь толчок в стену гасится гранью, как шаг: круг, зажатый между стеной и преградой,
+ * остаётся чуть внутри преграды (её догоняет следующий толчок), но в стену не входит никогда.
  */
 export function moveWithCollision(pos: Vec2, vel: Vec2, radius: number, grid: Grid, dt: number, obstacles?: readonly Obstacle[]): Vec2 {
   const dx = vel.x * dt;
@@ -46,8 +51,36 @@ function sweepStep(radius: number): number {
 /** Потолок подшагов: ~14 тыс. px при подшаге 14 — больше любой карты; бред в конфиге не повесит тик. */
 const MAX_SUBSTEPS = 1024;
 
-/** Один подшаг (смещение не длиннее `sweepStep`): тайлы по осям, затем выталкивание из декора. */
+/** Один подшаг (смещение не длиннее `sweepStep`): тайлы по осям, затем выталкивание из декора — тоже по тайлам (V-RF-05). */
 function stepOnce(x: number, y: number, dx: number, dy: number, radius: number, grid: Grid, obstacles?: readonly Obstacle[]): Vec2 {
+  let p = tileStep(x, y, dx, dy, radius, grid);
+  // Суб-тайловые препятствия: вытолкнуть круг наружу (2 релаксации — на случай
+  // пары близких препятствий; выход, когда за проход ничего не сдвинулось).
+  if (obstacles && obstacles.length) {
+    for (let it = 0; it < 2; it++) {
+      let moved = false;
+      for (const o of obstacles) {
+        const out = pushOutObstacle(p.x, p.y, radius, o);
+        if (!out) continue;
+        const q = tileSweep(p.x, p.y, out.x - p.x, out.y - p.y, radius, grid);
+        if (q.x !== p.x || q.y !== p.y) { p = q; moved = true; }
+      }
+      if (!moved) break;
+    }
+  }
+  return p;
+}
+
+/** Смещение только по тайлам (без декора) — подшагами ≤ `sweepStep`, как ход: толчок из преграды не перепрыгнет клетку. */
+function tileSweep(x: number, y: number, dx: number, dy: number, radius: number, grid: Grid): Vec2 {
+  const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(vecLen(dx, dy) / sweepStep(radius))));
+  let p: Vec2 = { x, y };
+  for (let i = 0; i < n; i++) p = tileStep(p.x, p.y, dx / n, dy / n, radius, grid);
+  return p;
+}
+
+/** Подшаг по тайлам: оси независимо (X, затем Y по новому x) — скольжение вдоль стен, в непроходимую клетку круг не входит. */
+function tileStep(x: number, y: number, dx: number, dy: number, radius: number, grid: Grid): Vec2 {
   // Ось X (Y фиксирован): вертикальный охват круга по текущему y.
   // Дальняя грань — полуоткрытый интервал (ceil-1): касание точно по линии сетки
   // (y+r ровно на границе тайла) не считается перекрытием соседней клетки.
@@ -75,19 +108,6 @@ function stepOnce(x: number, y: number, dx: number, dy: number, radius: number, 
     } else {
       const row = Math.floor((ny - radius) / TILE);
       y = spanBlockedRow(grid, row, left, right) ? (row + 1) * TILE + radius : ny;
-    }
-  }
-
-  // Суб-тайловые препятствия: вытолкнуть круг наружу (2 релаксации — на случай
-  // пары близких препятствий; выход, когда за проход ничего не сдвинулось).
-  if (obstacles && obstacles.length) {
-    for (let it = 0; it < 2; it++) {
-      let moved = false;
-      for (const o of obstacles) {
-        const p = pushOutObstacle(x, y, radius, o);
-        if (p) { x = p.x; y = p.y; moved = true; }
-      }
-      if (!moved) break;
     }
   }
 

@@ -1,5 +1,5 @@
 import { ConfigRegistry } from '../../config/registry.js';
-import type { ConfigShapes } from '../../config/schemas.js';
+import { questsRandomSchema, type ConfigShapes } from '../../config/schemas.js';
 import type { SaveState } from '../../types/save.js';
 import type { CraftParts, EquipSlot, Item, ItemOrigin } from '../../types/items.js';
 import type { AccountStash } from '../../types/stash.js';
@@ -993,7 +993,10 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
           const inBelt = s.belt.findIndex((i) => i?.uid === uid);
           const item = inBelt >= 0 ? s.belt[inBelt] : s.inventory.find((i) => i.uid === uid);
           if (!item?.use) return { ok: false, reason: 'не расходник' };
-          if (!applyConsumable({ hp, mana: 0, debuffs: {} }, item.use, 100, 100)) return { ok: false, reason: 'Нет эффекта' };
+          // ⚠ C-11 (бафф-зелья): бафф базы (`use.buffMods` на `buffDurationSec`) — тоже эффект; в модели бафф не висит — действует всегда.
+          const base = reg.get('items.base').find((b) => b.id === item.baseId);
+          const buff = base?.kind === 'consumable' && !!base.use.buffMods?.length && (base.use.buffDurationSec ?? 0) > 0;
+          if (!applyConsumable({ hp, mana: 0, debuffs: {} }, item.use, 100, 100) && !buff) return { ok: false, reason: 'Нет эффекта' };
           if (inBelt >= 0) s.belt[inBelt] = null;
           else s.inventory.splice(s.inventory.findIndex((i) => i.uid === uid), 1);
           return { ok: true };
@@ -1280,6 +1283,8 @@ function landOnCap(reg: ConfigRegistry, r: Rng): { desc: string; at?: { baseId: 
  * награда квеста цепочки (золото, опыт, очки скилов) — годное целое, ноль, минус, дробь, перевёрнутая вилка. Негодное обязана
  * отвергнуть схема (`reload` бросает — конфиг прежний, как и в игре: редактор получает отказ). Пропущенное схемой дошло бы до доски,
  * приёма и сдачи — его ловят числа заданий (`questNumbers`) и числа героя (I2: золото в минус, дробные очки).
+ * ⚠ C-13 (цели заданий): и ТИП ЦЕЛИ — любой, что предлагает схема (редактор строит выпадашку по ней), «talk-npc» (её редактор
+ * предлагал, а игра не считала) и мусор. Пропущенный схемой тип без трекера ловит `questNumbers` (`quest-untracked`).
  */
 function editQuests(reg: ConfigRegistry, r: Rng): string {
   /** Число правки: чаще годное целое из [lo, hi], иногда ноль, минус или дробь. */
@@ -1289,7 +1294,23 @@ function editQuests(reg: ConfigRegistry, r: Rng): string {
   };
   let what = '';
   try {
-    if (r.chance(0.6)) {
+    if (r.chance(0.2)) {
+      const type = r.pick([...questsRandomSchema.element.shape.objectiveType.options, 'talk-npc', 'open-chest']);
+      if (r.chance(0.5)) {
+        reloadTable(reg, 'quests.random', (t) => {
+          const tpl = r.pick(t);
+          tpl.objectiveType = type as typeof tpl.objectiveType;
+          what = `${tpl.id}.objectiveType → ${type}`;
+        });
+      } else {
+        reloadTable(reg, 'quests.main', (t) => {
+          const q = r.pick(t);
+          const o = r.pick(q.objectives);
+          if (o) o.type = type as typeof o.type;
+          what = `${q.id}.${o?.id ?? '—'}.type → ${type}`;
+        });
+      }
+    } else if (r.chance(0.6)) {
       reloadTable(reg, 'quests.random', (t) => {
         const tpl = r.pick(t);
         const key = r.pick(['amountRange', 'rewardGoldRange', 'rewardXpRange'] as const);
@@ -1411,11 +1432,19 @@ function itemNumbers(it: Item, where: string, out: Violation[]): void {
 }
 
 /**
+ * ⚠ C-13 (цели заданий): какие цели игра СЧИТАЕТ — модель фаззера, та же, что двигает шаг `questProgress`: убийство и подбор
+ * (`trackObjective`), вход на этаж (`trackFloor`). Цель другого типа на доске или в журнале не закрыть никогда (цепочка встаёт).
+ */
+const QUEST_TRACKED: ReadonlySet<string> = new Set(['kill', 'collect-item', 'reach-floor']);
+
+/**
  * I2: числа задания (C-02) — на доске и в журнале героя. Цель выполнима (целое ≥ 1: «0 из 0» не сдвигается, и задание не
- * закрыть никогда), награда — целые не меньше нуля (иначе сдача уводит золото в минус, а очки скилов в дробь).
+ * закрыть никогда; тип — из тех, что игра считает, C-13), награда — целые не меньше нуля (иначе сдача уводит золото в минус, а
+ * очки скилов в дробь).
  */
 function questNumbers(d: QuestDef, where: string, out: Violation[]): void {
   for (const o of d.objectives) if (!(isInt(o.amount) && o.amount >= 1)) out.push({ inv: 'I2', code: 'quest-amount', msg: `${where} «${d.id}»: цель ${o.id} — ${o.amount}` });
+  for (const o of d.objectives) if (!QUEST_TRACKED.has(o.type)) out.push({ inv: 'I2', code: 'quest-untracked', msg: `${where} «${d.id}»: цель ${o.id} типа «${o.type}» игра не считает — задание не закрыть` });
   for (const k of ['gold', 'xp', 'skillPoints'] as const) {
     const v = d.reward[k];
     if (v !== undefined && !(isInt(v) && v >= 0)) out.push({ inv: 'I2', code: 'quest-reward', msg: `${where} «${d.id}»: награда ${k}=${v}` });

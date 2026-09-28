@@ -66,7 +66,11 @@ export interface EntryView {
   showConnecting(): void;
   /** Лобби. `roomCode` — вписать в поле кода (C-05: пати забега, куда «Продолжить» не пустило). */
   showLobby(go: (o: JoinOpts) => void, roomCode?: string): void;
-  showResume(roomCode: string, depth: number, act: { resume: () => void; abandon: () => void }): void;
+  /**
+   * «Незавершённое прохождение». ⭐ R16 C-09: `dead` — герой в этом забеге погиб, штраф взят (`runStatus.dead`): «Забросить» — без штрафа,
+   * «Продолжить» — мёртвым ждать пати.
+   */
+  showResume(roomCode: string, depth: number, act: { resume: () => void; abandon: () => void }, dead?: boolean): void;
   /** Снять экран входа (вход состоялся, выход из игры). */
   hide(): void;
   /** Строка состояния на показанном экране; экрана нет — ничего. */
@@ -182,7 +186,7 @@ export class EntryFlow {
       if (!this.live || this.phase === 'game') return;
       this.stopTimer();
       this.statusTries = 0;
-      if (f.hasRun) this.toResume(f.roomCode ?? '', f.depth ?? 0); else this.toLobby();
+      if (f.hasRun) this.toResume(f.roomCode ?? '', f.depth ?? 0, f.dead === true); else this.toLobby();
     });
     net.on('abandoned', () => { if (this.live && this.phase !== 'game') this.toLobby(); });
     net.on('error', (f) => {
@@ -261,7 +265,7 @@ export class EntryFlow {
     this.sendJoin(o);
   }
 
-  /** «Забросить прохождение»: герой гибнет со штрафом, дальше — лобби (кадр `abandoned`). */
+  /** «Забросить прохождение»: герой гибнет со штрафом (погибший в этом забеге — без второго, R16 C-09), дальше — лобби (кадр `abandoned`). */
   abandon(): void {
     if (!this.live) return;
     this.rerouted = false;
@@ -441,9 +445,9 @@ export class EntryFlow {
     if (this.note) this.deps.view.setStatus(this.note);   // почему игрок снова здесь
   }
 
-  private toResume(roomCode: string, depth: number): void {
+  private toResume(roomCode: string, depth: number, dead: boolean): void {
     this.phase = 'resume';
-    this.deps.view.showResume(roomCode, depth, { resume: () => this.join({ resume: true }), abandon: () => this.abandon() });
+    this.deps.view.showResume(roomCode, depth, { resume: () => this.join({ resume: true }), abandon: () => this.abandon() }, dead);
     if (this.note) this.deps.view.setStatus(this.note);
   }
 }

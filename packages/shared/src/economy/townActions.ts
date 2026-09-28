@@ -16,9 +16,10 @@ import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../i
 import type { DebuffState } from '../world/debuffs.js';
 import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
 import { canSalvage, salvageFromItem, salvageRuleFor, tierOfRarity, type SalvageRng } from '../formulas/salvage.js';
-import { addToWallet, availableMaterials, bagCopy, canAffordBoth, giveMaterialsTo, missingForBoth, spendBoth, depositCarried,
+import { addToWallet, availableMaterials, bagCopy, canAffordBoth, carriedMaterials, giveMaterialsTo, missingForBoth, spendBoth, depositCarried,
   type MaterialCost, type MaterialWallet } from './materials.js';
 import type { AccountStash } from '../types/stash.js';
+import type { TownCommand } from '../session/netTypes.js';
 import { uuidv7 } from '../formulas/uuid.js';
 
 /**
@@ -46,6 +47,36 @@ export const PRICE_CHANGED = 'Цена изменилась';
 export function priceRaised(gold: number, maxGold: number | undefined): ActionResult | null {
   if (maxGold === undefined) return null;
   return Number.isFinite(maxGold) && gold <= maxGold ? null : { ok: false, reason: `${PRICE_CHANGED}: ${gold} золота` };
+}
+
+/**
+ * ⭐ V-B3-07: КОМАНДЫ, ЧЕЙ ИСХОД ОКНО РИСУЕТ ПО СВОЕМУ КОНФИГУ — кузница, лавка, разбор: вещь ковки (урон «от–до», требования,
+ * ступень), предпросмотр подъёма, выход разбора, «горит / погашено». Согласие на цену (`maxGold`, `maxMaterials`, `minYield`)
+ * держит только цену: правка живьём, не менявшая цены (вилка броска базы, скидка требований), — и игрок платил показанное за
+ * ДРУГУЮ вещь; отказ не ценой («Кузнец ещё не куёт», «Материал ещё не в игре») конфиг клиента не перечитывал вовсе.
+ * Покупки здесь нет: вещь и цену прилавка присылает сервер (кадр `shop`, R4-37), конфиг клиента в ней не участвует, а цену держит `maxGold`.
+ */
+export const CONFIG_CONSENT_CMDS: ReadonlySet<TownCommand['cmd']> = new Set<TownCommand['cmd']>([
+  'sell', 'forgeUpgrade', 'forgeReroll', 'forgeRepair', 'forgeSalvage', 'craft', 'forgeEnchant', 'forgeSketch', 'salvage',
+]);
+
+/**
+ * ⭐ V-B3-07: СОГЛАСИЕ НА КОНФИГ. `cfgRev` — ревизия конфига, с которого клиент нарисовал окно (`ConfigRegistry.revision`); у сервера
+ * другая — отказ ДО исполнения, и причина начинается с «Цена изменилась»: клиент по ней перечитывает конфиг (`App.syncConfig`), и
+ * окно показывает то, что сервер сделает. Нет поля — прежнее поведение (Unity и старые вкладки его не шлют).
+ */
+export function configChanged(reg: ConfigRegistry, cfgRev: string | undefined): ActionResult | null {
+  if (cfgRev === undefined || cfgRev === reg.revision()) return null;
+  return { ok: false, reason: `${PRICE_CHANGED}: условия кузницы и лавки обновлены` };
+}
+
+/**
+ * V-B3-07: команда с ревизией СВОЕГО конфига — для команд `CONFIG_CONSENT_CMDS` (прочие — как есть). Клиент зовёт на отправке.
+ * ⭐ R16 C-07: `rev` строкой — ревизия, которую сервер прислал с телом конфига, легшим у клиента (`CONFIG_REV_HEADER`, `App.configRevision`).
+ */
+export function withConfigRev(rev: ConfigRegistry | string, command: TownCommand): TownCommand {
+  if (!CONFIG_CONSENT_CMDS.has(command.cmd)) return command;
+  return { ...command, cfgRev: typeof rev === 'string' ? rev : rev.revision() } as TownCommand;
 }
 
 /**
@@ -112,22 +143,28 @@ export function yieldDropped(
 /** Живые витальные поля цели зелья (общий тип для клиента-GameState и серверного PlayerEntity). */
 export interface Vitals { hp: number; mana: number; debuffs: DebuffState; }
 
+/** Пул «полон» с точностью до шума плавающей точки (сотни единиц — шум ~10⁻¹³; доля единицы зелью не повод уходить). */
+const FULL_EPS = 1e-6;
+
 /**
  * Применяет мгновенный эффект расходника (лечение/мана/снятие статусов) к витальным
  * полям — ЕДИНАЯ истина для клиента и сервера. Возвращает false, если ничего не
  * изменилось (полное HP у чистого лечения). Бафф-моды (buffMods) обрабатываются
- * отдельно на стороне вызывающего (у клиента и сервера — разные каналы).
+ * отдельно на стороне вызывающего (у клиента и сервера — разные каналы): у сервера — `GameSession.drink` →
+ * `drinkBuff` (⚠ C-11, бафф-зелья: до него сервер бафф не вешал вовсе, и зелье-бафф не выпивалось никогда).
  *
  * ⚠ C-14: `manaCap` — ЭФФЕКТИВНЫЙ потолок маны (ауры резервируют долю пула: `effectivePool`). Сила зелья — от полного пула, а
  * налить можно только до потолка: у потолка зелье «без эффекта» и не тратится. Раньше сравнение шло с полным `maxMana` — зелье у
  * зарезервированного потолка уходило, реген тика срезал ману обратно, а каст того же тика тратил налитое сверх резерва.
+ * ⚠ «Не полон» — с допуском на шум плавающей точки (`FULL_EPS`): потолок пересчитывается каждый тик (снимок статов, резерв), и мана,
+ * подрезанная регеном к потолку прошлого тика, лежала ниже нынешнего на 4·10⁻¹³ — колба уходила за «+0» (фаззер правил, сид 590).
  */
 export function applyConsumable(t: Vitals, use: ConsumableUse, maxHp: number, maxMana: number, manaCap: number = maxMana): boolean {
   let did = false;
   const heal = (use.heal ?? 0) + (use.healPct ?? 0) * maxHp;
-  if (heal > 0 && t.hp < maxHp) { t.hp = Math.min(maxHp, t.hp + heal); did = true; }
+  if (heal > 0 && t.hp < maxHp - FULL_EPS) { t.hp = Math.min(maxHp, t.hp + heal); did = true; }
   const mana = (use.mana ?? 0) + (use.manaPct ?? 0) * maxMana;
-  if (mana > 0 && t.mana < manaCap) { t.mana = Math.min(manaCap, t.mana + mana); did = true; }
+  if (mana > 0 && t.mana < manaCap - FULL_EPS) { t.mana = Math.min(manaCap, t.mana + mana); did = true; }
   if (use.cure) {
     const keys = Object.keys(t.debuffs);
     if (keys.length) { for (const k of keys) delete (t.debuffs as Record<string, unknown>)[k]; did = true; }
@@ -282,14 +319,25 @@ function wornBroken(save: SaveState, attrs: Attributes, worn: Item[]): Item | un
 const wornReason = (it: Item): string => `Не хватит атрибутов на «${it.name}» — сперва сними её`;
 
 // ── Магазин ──────────────────────────────────────────────────────────────────
+/**
+ * ⭐ V-B3-02: КУПИТ ЛИ ПРИЛАВОК — хватит ли золота и ляжет ли вещь в сумку. ОДИН ответ для покупки (`buyItem`) и для ценника
+ * окна («по карману» у лавки зелий и «🛒 Купить» кузницы): ценник смотрел только на золото, и вещь «по карману» в полную сумку
+ * отказывала «Нет места». `price` — цена, которую спишут: у сервера своя (`shopBuyPrice`), у окна — цена кадра (`app.shopPrice`, R4-37).
+ */
+export function canBuy(reg: ConfigRegistry, save: SaveState, item: Item, price: number): ActionResult {
+  if (save.gold < price) return { ok: false, reason: 'Недостаточно золота' };
+  if (!hasSpace(save.inventory, item.gridW, item.gridH, dimsOf(reg))) return { ok: false, reason: 'Нет места' };
+  return { ok: true };
+}
+
 // ⭐ R6-16: покупка несёт `maxGold` (цена кадра лавки), продажа — `minGold` (подпись «+N»): цена на сервере могла уйти от
 // показанной (правка из редактора живьём, деплой при переподключении без перезагрузки), и молча он брать не должен.
 export function buyItem(reg: ConfigRegistry, save: SaveState, item: Item, maxGold?: number): ActionResult {
   const price = shopBuyPrice(reg, item);
   const raised = priceRaised(price, maxGold);
   if (raised) return raised;
-  if (save.gold < price) return { ok: false, reason: 'Недостаточно золота' };
-  if (!hasSpace(save.inventory, item.gridW, item.gridH, dimsOf(reg))) return { ok: false, reason: 'Нет места' };
+  const can = canBuy(reg, save, item, price);
+  if (!can.ok) return can;
   save.gold -= price;
   addToInventory(save.inventory, item, dimsOf(reg));
   return { ok: true };
@@ -721,7 +769,7 @@ function unlockLabels(reg: ConfigRegistry, u: SalvageUnlock, item: Item): string
  * Ни верстака, ни возврата в город — выделил трофей и переработал. Мира и позиции не требует,
  * поэтому живёт здесь, рядом с кузнечным близнецом, а не в сессии.
  * ⚠ Сундука в поле нет: не влезшее в сумку сырьё пропало бы вместе с вещью. Поэтому сперва примерка на
- * копии сумки — не влезает целиком, значит отказ, и вещь цела.
+ * копии сумки (`fieldSalvageFits`, по ЛУЧШЕМУ броску) — не влезает целиком, значит отказ, и вещь цела.
  */
 export function fieldSalvage(
   reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng, minYield?: Record<string, number>, avgYield?: Record<string, number>,
@@ -732,17 +780,32 @@ export function fieldSalvage(
   if (!out.ok) return { ok: false, reason: out.reason };
   const dropped = yieldDropped(reg, save.inventory[idx]!, true, minYield, avgYield);   // R8-14, R9-04
   if (dropped) return dropped;
-  const defs = reg.get('craft-materials');
-  const probe = bagCopy(save.inventory);
-  probe.splice(idx, 1);
-  if (Object.keys(giveMaterialsTo(probe, out.gains, defs, dimsOf(reg), stackOf(reg), () => 'probe')).length) {
-    return { ok: false, reason: 'Сумка полна: сырьё с разбора не поместится' };
-  }
+  if (!fieldSalvageFits(reg, save.inventory, save.inventory[idx]!)) return { ok: false, reason: FIELD_SALVAGE_FULL };
   save.inventory.splice(idx, 1);
-  const left = giveMaterialsTo(save.inventory, out.gains, defs, dimsOf(reg), stackOf(reg), uuidv7);
-  // Не бывает: та же сумка и тот же путь, что у примерки. Бросок — чтобы сервер откатил сейв, а не молча потерял сырьё.
+  const left = giveMaterialsTo(save.inventory, out.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), uuidv7);
+  // Не бывает: выпавший бросок не больше лучшего (поштучно, те же материалы), а лучший влез в ту же сумку. Бросок — чтобы
+  // сервер откатил сейв, а не молча потерял сырьё.
   if (Object.keys(left).length) throw new Error('fieldSalvage: примерка разошлась с записью');
   return { ok: true };
+}
+
+/** Отказ разбора в поле «сырьё не влезет» — одна строка для сервера и окна. */
+export const FIELD_SALVAGE_FULL = 'Сумка полна: сырьё с разбора не поместится';
+
+/**
+ * ⭐ V-B3-04: ВЛЕЗЕТ ЛИ СЫРЬЁ РАЗБОРА В ПОЛЕ — примерка на копии сумки без самой вещи, ПО ЛУЧШЕМУ БРОСКУ (как отказ «ничего не дал
+ * бы», R9-03). ОДИН ответ для `fieldSalvage` и меню инвентаря: раньше примерялся ВЫПАВШИЙ бросок, и та же вещь в той же сумке то
+ * разбиралась, то нет, а меню («Разобрать здесь») броска не знает — оно предлагало разбор, и после двух вопросов о скованной вещи
+ * сервер отказывал «Сумка полна». Лучший бросок поштучно не меньше любого выпавшего и из тех же материалов, поэтому влез он —
+ * влезет и выпавший. Вещь не разбирается вовсе — `true`: отказ скажет `salvageYield` (`canSalvageItem`), место тут ни при чём.
+ */
+export function fieldSalvageFits(reg: ConfigRegistry, inventory: readonly Item[], item: Item): boolean {
+  const best = salvageYield(reg, item, ROLL_HI, true);
+  if (!best.ok) return true;
+  const probe = bagCopy(inventory);
+  const idx = probe.findIndex((i) => i.uid === item.uid);
+  if (idx >= 0) probe.splice(idx, 1);
+  return !Object.keys(giveMaterialsTo(probe, best.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), () => 'probe')).length;
 }
 
 /** Откуда берётся выход разбора: переплавка скованного, детали найденного оружия, правило по редкости. */
@@ -926,6 +989,21 @@ export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, w
 
 // ── Ковка из деталей (docs/CRAFT_WEAPONS.md) ─────────────────────────────────
 /**
+ * ⭐ V-B3-03: ЛЯЖЕТ ЛИ СКОВАННАЯ ВЕЩЬ В СУМКУ — место ПОСЛЕ списания сырья (оно может освободить клетку), примеркой на копии.
+ * ОДИН ответ для `craftAction` и кнопки «Ковать»: окно смотрело только на цену, и при полной сумке кнопка горела, а сервер
+ * отказывал «Нет места в сумке». Сумка отдаёт сырьё первой, остаток — сундук (`spendBoth`); сколько в сундуке, сумке всё равно,
+ * поэтому примерке он не нужен — только то, что сумка отдаст сама. Хватает ли сырья вообще, решает `craftMissing`, не здесь.
+ */
+export function craftFits(reg: ConfigRegistry, inventory: readonly Item[], materials: MaterialCost, item: Pick<Item, 'gridW' | 'gridH'>): boolean {
+  const probe = bagCopy(inventory);
+  const carried = carriedMaterials(probe);
+  const fromBag: MaterialCost = {};
+  for (const [id, n] of Object.entries(materials)) { const k = Math.min(n, carried[id] ?? 0); if (k > 0) fromBag[id] = k; }
+  spendBoth(probe, {}, fromBag);
+  return hasSpace(probe, item.gridW, item.gridH, dimsOf(reg));
+}
+
+/**
  * ⭐ СКОВАТЬ — авторитетно. Одно ядро на сервер, мост калькулятора и песочницу редактора: паритет по
  * построению, а не сверкой.
  *
@@ -971,11 +1049,9 @@ export function craftAction(
     return { ok: false, reason: `Не хватает: ${parts.join(' · ')}` };
   }
   // Место — ПОСЛЕ списания: сырьё из сумки может освободить клетку, и игрок с полной сумкой сырья не
-  // должен упираться в «нет места» ровно перед тем, ради чего его нёс. Меряем на копии.
+  // должен упираться в «нет места» ровно перед тем, ради чего его нёс. Меряем на копии (`craftFits` — ей же гасит «Ковать» окно).
   const dims = dimsOf(reg);
-  const probe = bagCopy(save.inventory);
-  if (!spendBoth(probe, { ...wallet }, cost.materials)) return { ok: false, reason: 'Не хватает материалов' };
-  if (!hasSpace(probe, item.gridW, item.gridH, dims)) return { ok: false, reason: 'Нет места в сумке' };
+  if (!craftFits(reg, save.inventory, cost.materials, item)) return { ok: false, reason: 'Нет места в сумке' };
 
   // ── Проверки позади: дальше только запись, отказать она уже не может ──
   const w = stash.materials ?? (stash.materials = {});
@@ -1237,6 +1313,8 @@ export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string
 /**
  * ПРОВЕРКА ОДНА НА ОБЕ КОМАНДЫ: что узел вообще можно оснащать и что гнездо существует.
  * Вынесена отдельно, чтобы «вынуть» не оказалось слабее «вставить»: дыры любят именно асимметрию.
+ * ⚠ V-RF-03: гнёзда — КОПИЕЙ, выровненной под число открытых; в сейв их кладёт только успех (`socketsCommit`). Раньше выравнивание
+ * писало в сейв здесь, до проверок вставки, и любой отказ («Вставка не открыта в дереве», «Гнездо и так пусто»…) менял сейв.
  */
 function socketTarget(reg: ConfigRegistry, save: SaveState, nodeId: string, slot: number):
   { ok: true; slots: (string | null)[] } | { ok: false; reason: string } {
@@ -1249,10 +1327,13 @@ function socketTarget(reg: ConfigRegistry, save: SaveState, nodeId: string, slot
   const open = socketsOpen(reg, save.skills[nodeId] ?? 0);
   if (open === 0) return { ok: false, reason: 'Скил не выучен' };
   if (slot < 0 || slot >= open) return { ok: false, reason: `Гнездо ещё не открыто (есть ${open})` };
-  save.sockets ??= {};
-  const slots = (save.sockets[nodeId] ??= []);
+  const slots = [...(save.sockets?.[nodeId] ?? [])];
   while (slots.length < open) slots.push(null);   // выравниваем под число открытых гнёзд
   return { ok: true, slots };
+}
+/** Успех «вставить/вынуть» — гнёзда узла в сейв (V-RF-03: только здесь, после всех проверок). */
+function socketsCommit(save: SaveState, nodeId: string, slots: (string | null)[]): void {
+  (save.sockets ??= {})[nodeId] = slots;
 }
 
 /**
@@ -1280,6 +1361,7 @@ export function socketInsert(reg: ConfigRegistry, save: SaveState, nodeId: strin
     }
   }
   t.slots[slot] = insertId;
+  socketsCommit(save, nodeId, t.slots);
   return { ok: true };
 }
 
@@ -1289,6 +1371,7 @@ export function socketClear(reg: ConfigRegistry, save: SaveState, nodeId: string
   if (!t.ok) return { ok: false, reason: t.reason };
   if (!t.slots[slot]) return { ok: false, reason: 'Гнездо и так пусто' };
   t.slots[slot] = null;
+  socketsCommit(save, nodeId, t.slots);
   return { ok: true };
 }
 

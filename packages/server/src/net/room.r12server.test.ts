@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import {
-  ConfigRegistry, newCharacterSave, generateRunPlan, materialItem, packInventory, type Item, type ServerFrame, type SaveState,
+  ConfigRegistry, newCharacterSave, generateRunPlan, materialItem, packInventory, playerSnapshot, type Item, type ServerFrame, type SaveState,
 } from '@dm/shared';
 import { CommitUnknown } from '../db/errors.js';
 
@@ -9,7 +9,7 @@ import { CommitUnknown } from '../db/errors.js';
  * ⭐ РАУНД 12 (сервер), комната. Комната настоящая; база — маленькая честная (версии сейва), без часов.
  *  • R12-02: вход по коду в комнату, откуда герой ушёл РАНЬШЕ, больше не лечит: запись ухода (R4-06) старше сейва, который с тех пор
  *    писала другая комната, — пулы из сейва («больница»: друг или вторая вкладка держит комнату, герой бьётся где-то ещё и
- *    возвращается к нему полным).
+ *    возвращается к нему полным). ⭐ A1: и на идущую арену — реген к пулам сейва только с момента возврата.
  */
 type PutArgs = { charId: string; data: SaveState; version: number; reason?: string; reasons?: ReadonlyMap<string, string> };
 const db = vi.hoisted(() => ({
@@ -243,6 +243,38 @@ describe('⭐ R12-02: «больница» — вход по коду в ком�
     ready(t); t.returnTown(pf); t.castVote(back, true);
     expect(t.area).toBe('town');
     expect(P(t, back).hp).toBeLessThanOrEqual(low + REGEN_SLACK);
+  });
+
+  // ⭐ A1 (фаззер коопа): то же, но арена шла ДОЛГО до его ухода. Тело города освежалось пулами сейва (где реген уже учтён, а урон — взят
+  // позже), а метка времени тела (`arenaHome.at`) оставалась моментом первого входа: конец арены начислял реген за всю её длину поверх
+  // этих пулов — 5% → полное здоровье, мана и выносливость даром. Пулы сейва — на сейчас: реген — только за время на арене после входа.
+  it('A1: арена шла 100 с → ушёл, ранен в другой комнате → вернулся на неё же → бой кончился: реген — не за время до возврата', async () => {
+    const t = newRoom();
+    const pf = t.addPlayer(new FakeWs(), 'user-friend', hero(), 1);
+    const h = hero();
+    const pid = t.addPlayer(new FakeWs(), `user-${h.charId}`, h, 1);
+    await settle();
+    ready(t); t.enterArena(pid); t.castVote(pf, true);
+    expect(t.area).toBe('arena');
+    for (let i = 0; i < 3000; i++) t.step();   // 100 с мира (длиннее бой — больше даром, до полного)
+    const regen = playerSnapshot(h, cfg).derived;
+    expect(regen.hpRegen * 100, 'стенд: реген за бой — много больше допуска').toBeGreaterThan(10 * REGEN_SLACK);
+    await t.removePlayer(pid);
+    await settle();
+    const low = await hurtElsewhere(h);
+    const [save, v] = fromDb(h.charId);
+    const back = t.addPlayer(new FakeWs(), `user-${h.charId}`, save, v);
+    expect(t.area).toBe('arena');
+    const at = t.session.world.timeMs;
+    for (let i = 0; i < 30; i++) t.step();   // секунда на арене после возврата — её реген честный
+    const dt = (t.session.world.timeMs - at) / 1000;
+    ready(t); t.returnTown(pf); t.castVote(back, true);
+    expect(t.area).toBe('town');
+    const p = P(t, back);
+    expect(p.hp, `в сейве ${low}, реген ${regen.hpRegen}/с × ${dt} с`).toBeLessThanOrEqual(low + regen.hpRegen * dt + REGEN_SLACK);
+    expect(p.hp, 'реген за время после возврата — есть').toBeGreaterThan(low);
+    expect(p.mana).toBeLessThanOrEqual(regen.manaRegen * dt + REGEN_SLACK);
+    expect(p.stamina).toBeLessThanOrEqual(regen.staminaRegen * dt + REGEN_SLACK);
   });
 });
 

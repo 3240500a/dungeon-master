@@ -177,11 +177,17 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   // ⭐ ПОЛУТОРНОЕ: обе строки сразу, иначе игрок не узнает, что меч можно взять и одной рукой.
   // Режим в подсказке не показываем — он зависит от того, занята ли вторая рука прямо сейчас.
   if (hasDmg && isVersatile(item)) {
-    const one = gripAdjust(item, R.grip ?? DEFAULT_GRIP);
+    const grip = R.grip ?? DEFAULT_GRIP;
+    const one = gripAdjust(item, grip);
     const o1 = one.baseStats.find((m) => m.stat === 'minDamage' && m.kind === 'flat')!.value;
     const o2 = one.baseStats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat')!.value;
     const ow = weaponSpeedOf(one);
-    base(`Одной рукой (со щитом): ${Math.round(o1 * hm)}–${Math.round(o2 * hm)} · ×${ow.toFixed(2)} · ${Math.round(ow * BASE_ATTACKS_PER_MIN)} уд/мин`);
+    // ⚠ V-B3-01: у предпросмотра ковки и одноручный урон — ВИЛКОЙ, тем же правилом, что считает вещь (`gripAdjust`: округление
+    // после хвата, затем множитель удара) по каждому краю вилки. Раньше здесь стояло одно число — середина вилки предпросмотра,
+    // и скованная вещь (бросок в вилке) почти никогда с ним не совпадала.
+    const oneRange = (r: [number, number] | undefined, v: number): string =>
+      rangeLabel(r ? [Math.round(r[0] * grip.damage), Math.round(r[1] * grip.damage)] : [v, v], hm);
+    base(`Одной рукой (со щитом): ${oneRange(rp?.minDamage, o1)}–${oneRange(rp?.maxDamage, o2)} · ×${ow.toFixed(2)} · ${Math.round(ow * BASE_ATTACKS_PER_MIN)} уд/мин`);
   }
   const sig = signatureLine(item, R);
   if (sig) base(`✦ ${sig}`);

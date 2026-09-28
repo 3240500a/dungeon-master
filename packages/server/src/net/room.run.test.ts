@@ -1533,6 +1533,7 @@ describe('Room — раунд 2: чужие вещи, лавка, неизвес
 
     w.players[alt.pid]!.pos = { ...drop.pos };
     await a.room.handleCmd(alt.pid, { cmd: 'pickup', dropId: drop.id }, 1);
+    await settle();   // ⭐ R16 C-04: ответ подъёма выброшенного — когда его запись ляжет, а не внутри обработчика
     expect(alt.ws.last('cmdResult'), 'герой того же аккаунта поднимает').toMatchObject({ id: 1, ok: true });
     expect(alt.save.inventory.some((i) => i.uid === sword.uid)).toBe(true);
   });
@@ -2919,6 +2920,7 @@ describe('Room — раунд 4: ввод, зелья, квесты (R4-19, R4-2
       room.step(false);
       room.setInput(pid, idle);
       room.step(false);
+      await settle();   // ⭐ K3: выброшенное [E] кладёт в сумку после записи поднявшего с ним
       expect(save.inventory.some((x) => x.uid === it.uid), `круг ${i}: поднял снова`).toBe(true);
     }
     const prog = save.quests.find((q) => q.questId === 'q-r426')!;

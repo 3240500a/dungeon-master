@@ -1,4 +1,4 @@
-import { shopSellPrice, type Item } from '@dm/shared';
+import { canBuy, shopSellPrice, type Item } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, itemSlot, attachTooltip } from '../../ui/kit.js';
@@ -41,7 +41,9 @@ export const shopPanel: PanelFactory = (app) => ({
       cols: 6, minRows: 3,
       // R4-37: цена — из кадра сервера (`app.shopPrice`): её и спишет `buy`; своя по конфигу могла разойтись с ней.
       price: (it) => app.shopPrice(it),
-      affordable: (it) => state.save.gold >= app.shopPrice(it),
+      // ⭐ V-B3-02: «по карману» — золото И место в сумке, тем же правилом, что покупка на сервере (`canBuy`).
+      affordable: (it) => canBuy(app.config, state.save, it, app.shopPrice(it)).ok,
+      refusal: (it) => canBuy(app.config, state.save, it, app.shopPrice(it)).reason,
       // R6-16: с ценой кадра — дороже сервер не возьмёт (отказ «Цена изменилась» и свежий кадр лавки).
       onBuy: (it) => app.sendCmd({ cmd: 'buy', uid: it.uid, maxGold: app.shopPrice(it) }),
       tooltip: (it) => itemTooltipHtml(it),

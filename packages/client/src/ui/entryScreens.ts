@@ -100,16 +100,22 @@ export function entryScreens(root: () => HTMLElement, onShow?: () => void): Entr
         if (statusEl) statusEl.textContent = `Код комнаты — ${ROOM_CODE_LEN} знаков, как на плашке у хозяина комнаты`;
       });
     },
-    showResume(roomCode: string, depth: number, act: { resume: () => void; abandon: () => void }) {
+    showResume(roomCode: string, depth: number, act: { resume: () => void; abandon: () => void }, dead = false) {
       const where = depth > 0 ? `этаж ${depth}` : 'подземелье';
       // Кода комнаты нет, когда забег поднят из сейва (грейс-комнаты уже нет) — тогда и «комната» не пишем.
       const room = roomCode ? `, комната ${roomCode}` : '';
+      // ⭐ R16 C-09: погибший в этом забеге (штраф взят, `runStatus.dead`) — «Забросить» ему ничего не стоит (V1), а «Продолжить» вернёт его
+      // мёртвым ждать пати (K1). Раньше и ему — «штраф золота и части предметов»: бесплатный выход выглядел платным.
+      const ask = dead ? 'Герой в этом забеге погиб — штраф за смерть уже взят.' : 'Продолжить забег или забросить?';
+      const note = dead
+        ? '«Продолжить» — вернуться к пати мёртвым и ждать её (пати уже нет — в город, забег окончен). «Забросить» — без штрафа: он уже взят за гибель в этом забеге.'
+        : '«Забросить» — персонаж считается погибшим (штраф золота и части предметов).';
       const b = open('resume', `<div style="${CARD};padding:24px;min-width:300px">
         <div style="font-size:18px;margin-bottom:8px">Незавершённое прохождение</div>
-        <div style="font-size:13px;color:#a8a090;margin-bottom:16px">Забег не завершён (${where}${room}). Продолжить забег или забросить?</div>
+        <div style="font-size:13px;color:#a8a090;margin-bottom:16px">Забег не завершён (${where}${room}). ${ask}</div>
         <button data-a="resume" style="display:block;width:100%;margin:6px 0;padding:9px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Продолжить</button>
         <button data-a="abandon" style="display:block;width:100%;margin:6px 0;padding:9px;background:#3a1c1c;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Забросить прохождение</button>
-        <div style="font-size:11px;color:#8f7a72;margin-top:6px">«Забросить» — персонаж считается погибшим (штраф золота и части предметов).</div>
+        <div style="font-size:11px;color:#8f7a72;margin-top:6px">${note}</div>
         ${STATUS}</div>`);
       on(b, '[data-a="resume"]', act.resume);
       on(b, '[data-a="abandon"]', act.abandon);

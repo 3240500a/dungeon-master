@@ -8,7 +8,7 @@ import { rarityHex } from '../loot/rarity.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { GLYPH, getHeld, beginHold, clearHeld, dropCell, resolveHeldOnClose, setLastPointer } from './heldItem.js';
 import { renderGrid, showContextMenu } from './gridView.js';
-import { canSalvageItem } from '@dm/shared';
+import { canSalvageItem, fieldSalvageFits } from '@dm/shared';
 import { salvageInField } from './disposeConfirm.js';
 
 /**
@@ -146,7 +146,14 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
     // Перед разбором — вопросы (`disposeConfirm`): скованное спрашивает дважды, найденное с деталью,
     // которой нет в журнале кузнеца, — предупреждает, что поле её не откроет (§12.2). ⚠ Вопрос — В ИГРЕ, а не
     // `window.confirm`: рядом монстры, и замороженная страница оставила бы героя под ударами (R1-14).
-    if (can.ok) actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); } });
+    // ⭐ V-B3-04: и место — сырьё лучшего броска ляжет в сумку (`fieldSalvageFits`, то же правило у сервера). Иначе пункт
+    // предлагал разбор, игрок отвечал на оба вопроса о скованной вещи — и сервер отказывал «Сумка полна».
+    if (can.ok && fieldSalvageFits(app.config, app.state!.save.inventory, item)) {
+      actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); } });
+    } else if (can.ok) {
+      // Разбирается, но некуда — сказать, а не молча убрать пункт (как «Сломано — к кузнецу»).
+      actions.push({ label: 'Разобрать нельзя: сумка полна', run: () => {} });
+    }
   }
   showContextMenu(x, y, actions);
 }

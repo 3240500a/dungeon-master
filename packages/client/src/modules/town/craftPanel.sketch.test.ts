@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  ConfigRegistry, fullJournal, keySlotOf, keyVariantsByBase, newBotSave, variantsFor, CRAFT_SLOT_LIST,
-  type CraftJournal, type WeaponPart,
+  ConfigRegistry, baseOfKeyPart, emptyStash, fullJournal, keySlotOf, keyVariantsByBase, newBotSave, sketchAction, sketchable, variantsFor,
+  CRAFT_SLOT_LIST, type CraftJournal, type WeaponPart,
 } from '@dm/shared';
 import { craftWindow, initialCraftState, type CraftHost, type CraftReply } from './craftPanel.js';
 
@@ -63,7 +63,7 @@ function setup(sketches: number, opts: { withSketch?: boolean; closedBase?: stri
   const st = initialCraftState(reg, 'sword', 1);
   const app = { config: reg } as never;
   const root = craftWindow(app, host, st) as unknown as El;
-  return { root, st, host, calls };
+  return { root, st, host, calls, journal: () => journal };
 }
 
 describe('⚠ R3-11: окно ковки тратит эскиз', () => {
@@ -110,16 +110,79 @@ describe('⚠ R3-11: окно ковки тратит эскиз', () => {
 
   it('⭐ ключевая форма НЕОТКРЫТОГО типа эскизом не открывается — строка заперта и при эскизах', () => {
     const closed = groups.find((g) => g.variants.length > 0 && g.baseId !== groups[0]!.baseId)!;
-    const { root } = setup(3, { closedBase: closed.baseId });
+    const { root, journal } = setup(3, { closedBase: closed.baseId });
     let seen = 0;
     for (const p of closed.variants) {
       const row = root.row(p.name);
       if (!row) continue;   // одно имя может встречаться в нескольких типах — проверяем то, что видно
+      // V-B3-05: правило — серверное (`sketchable`): форма, которая ключ ОТКРЫТОГО типа другого семейства, открывается эскизом.
+      if (sketchable(reg, journal(), p.id)) { expect(row.innerHTML, p.id).toContain(`✦ ${p.name}`); continue; }
       expect(row.innerHTML, p.id).toContain(`🔒 ${p.name}`);
       expect(row.disabled, p.id).toBe(true);
       seen++;
     }
-    expect(seen, 'сторож видит формы закрытого типа').toBeGreaterThan(0);
+    expect(seen, 'сторож видит запертые формы закрытого типа').toBeGreaterThan(0);
     expect(root.text(), 'эскизы при этом есть').toContain('Эскизов: 3');
+  });
+
+  /**
+   * ⭐ V-B3-05 (фаззер паритета, сид 10015): у копий форма бывает ключом двух типов — короткого копья (одноручное) и пики
+   * (двуручное). Пика открыта, короткое копьё — нет: в окне одноручного копья форма стояла под 🔒, а сервер (`sketchAction` →
+   * `sketchable`: тип открыт в ЛЮБОМ семействе) её эскизом открывал. Теперь окно — тем же правилом: ✦ и подсказка, где ковать.
+   */
+  describe('V-B3-05: форма — ключ закрытого здесь и открытого в другом семействе типа', () => {
+    // Форма — ключ одноручного типа и двуручного: ищем её в конфиге, а не зашиваем.
+    const shared = variantsFor(reg, 'spear', keySlotOf(reg, 'spear'))
+      .map((p) => ({ p, one: baseOfKeyPart(reg, 'spear', 1, p), two: baseOfKeyPart(reg, 'spear', 2, p) }))
+      .find((x) => x.one && x.two)!;
+    const baseName = (id: string): string => reg.get('items.base').find((b) => b.id === id)!.name;
+    function spear(closedBases: string[]) {
+      const full = fullJournal(reg);
+      let journal: CraftJournal = {
+        ...full, sketches: 2, variants: full.variants.filter((v) => v !== shared.p.id), bases: full.bases.filter((b) => !closedBases.includes(b)),
+      };
+      const calls: string[] = [];
+      const save = newBotSave(reg, 'warrior');
+      const host: CraftHost = {
+        wallet: () => ({}), gold: () => 0, journal: () => journal, save: () => save,
+        craft: () => ({ ok: false, reason: 'не в этом тесте' }), enchant: () => ({ ok: false, reason: 'не в этом тесте' }),
+        sketch: (id: string): CraftReply => {
+          calls.push(id);
+          const r = sketchAction(reg, { ...emptyStash(reg), forgeJournal: journal }, id);   // сервер — тем же ядром
+          if (r.ok) journal = { ...journal, variants: [...journal.variants, id], sketches: journal.sketches - 1 };
+          return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+        },
+      };
+      const st = initialCraftState(reg, 'spear', 1);
+      const root = craftWindow({ config: reg } as never, host, st) as unknown as El;
+      return { root, st, calls, journal: () => journal };
+    }
+    /** Строка формы под заголовком закрытого одноручного типа (у ключа строки идут по базам). */
+    const rowOf = (root: El): El => root.all().filter((e) => e.tag === 'button' && e.innerHTML.includes(`${shared.p.name}</span>`))[0]!;
+
+    it('⭐ одноручный тип закрыт, двуручный открыт: ✦, подсказка «где ковать», эскиз проходит — как на сервере', () => {
+      expect(shared, 'в конфиге есть форма — ключ обоих семейств копья').toBeDefined();
+      const { root, st, calls, journal } = spear([shared.one!]);
+      expect(sketchable(reg, journal(), shared.p.id), 'сервер её эскизом открывает').toBe(true);
+      const row = rowOf(root);
+      expect(row.innerHTML, 'было: 🔒 — окно смотрело на тип ТЕКУЩЕГО семейства').toContain(`✦ ${shared.p.name}`);
+      expect(row.disabled).toBe(false);
+      expect(row.title).toContain(`«${baseName(shared.two!)}»`);
+      row.click();
+      expect(st.sketchPick).toBe(shared.p.id);
+      expect(root.text()).toContain(`«${baseName(shared.two!)}»`);
+      root.button('Открыть эскизом')!.click();
+      expect(calls).toEqual([shared.p.id]);
+      expect(st.message).toBe(`Открыто эскизом: ${shared.p.name}`);
+      expect(journal().variants).toContain(shared.p.id);
+    });
+
+    it('оба типа закрыты — 🔒, и сервер отказывает', () => {
+      const { root, journal } = spear([shared.one!, shared.two!]);
+      const row = rowOf(root);
+      expect(row.innerHTML).toContain(`🔒 ${shared.p.name}`);
+      expect(row.disabled).toBe(true);
+      expect(sketchAction(reg, { ...emptyStash(reg), forgeJournal: journal() }, shared.p.id).ok).toBe(false);
+    });
   });
 });

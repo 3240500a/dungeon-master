@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { LEASE_MS } from './lease.js';
 
 /**
  * Супервизор кластера (Ф4.3): поднимает гейтвей и игровые ноды, следит, чтобы они жили.
@@ -63,8 +64,10 @@ export function childGone(p: ChildLike | undefined): boolean {
 /**
  * Остановить детей: SIGTERM каждому и ждать, пока ВЫЙДУТ все (событие `exit`), — не дольше `deadlineMs`; дольше — SIGKILL
  * оставшимся. `done` зовётся ровно один раз.
+ * ⭐ ENV2: срок по умолчанию — аренда ноды с запасом: слив, пока база лежит, дописывает сейвы до конца аренды (`node.ts`, `drainBudget`), и
+ * SIGKILL через прежние 12 с обрывал бы его посреди записи. База жива — ноды выходят за миллисекунды, срок не ждётся.
  */
-export function stopChildren(procs: readonly (ChildLike | undefined)[], done: () => void, deadlineMs = 12_000): void {
+export function stopChildren(procs: readonly (ChildLike | undefined)[], done: () => void, deadlineMs = LEASE_MS + 5_000): void {
   let finished = false;
   const finish = (): void => {
     if (finished) return;

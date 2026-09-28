@@ -253,7 +253,8 @@ describe('⭐ C-04: «Продолжить» — в свой забег', () => 
     wsD0.close();
     await until('D вышел', () => idle(rm, 'F2C4D') && !rm.rooms.has(q.code));
     expect(row('F2C4D').run?.config.id, 'забег X припаркован').toBe(x);
-    // C в своём забеге Y; D входит к нему по коду гостем (со своим X), выходит спокойно; пати C — в город.
+    // C в своём забеге Y; D по коду к нему в подземелье (со своим X). ⭐ R16 C-03: отказ `run` — в подземелье только участники его забега (гостем
+    // с чужим забегом D был вне правил бегства из боя). Раньше D садился туда гостем и ждал реконнекта в комнате чужого забега.
     const wsC = await join(rm, 'F2C4C');
     const room = rm.rooms.get(wsC.last('joined')!.roomCode)!;
     const pidC = wsC.last('joined')!.playerId;
@@ -261,13 +262,10 @@ describe('⭐ C-04: «Продолжить» — в свой забег', () => 
     expect(room.area).toBe('dungeon');
     room.stop();
     const wsD = await join(rm, 'F2C4D', { roomCode: room.code });
-    const pidD = wsD.last('joined')!.playerId;
-    expect(wsD.last('joined')!.save.run?.config.id, 'гость — со своим забегом').toBe(x);
-    const w = room.session.world;
-    for (const m of w.monsters) m.alive = false;
-    w.players[pidC]!.pos = { ...w.spawn }; w.players[pidD]!.pos = { ...w.spawn };
-    wsD.close();
-    await until('D ждёт реконнекта', () => room.disconnected.has('F2C4D') && idle(rm, 'F2C4D'));
+    expect(wsD.last('joined'), 'гостем с чужим забегом в подземелье не входят').toBeUndefined();
+    expect(wsD.last('error')).toMatchObject({ code: 'run' });
+    await until('D свободен', () => idle(rm, 'F2C4D'));
+    expect(room.disconnected.has('F2C4D'), 'и не ждёт в комнате C').toBe(false);
     room.movedAt = 0; room.returnTown(pidC);
     expect(room.area).toBe('town');
     const st = await lobby(rm, { t: 'runStatus', charId: 'F2C4D' }, (v) => !!v.last('runStatus') || !!v.last('error'));

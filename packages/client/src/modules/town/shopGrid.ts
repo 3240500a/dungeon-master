@@ -1,6 +1,7 @@
 import type { Item } from '@dm/shared';
 import type { Dims } from '../inventory/grid.js';
 import { renderGrid } from '../inventory/gridView.js';
+import { COLORS } from '../../ui/kit.js';
 
 /**
  * Сетка магазина — ОДИН В ОДИН инвентарь: рендерит той же `renderGrid` (клетки/рамки-редкости/глифы/тултипы —
@@ -9,7 +10,10 @@ import { renderGrid } from '../inventory/gridView.js';
  */
 export interface ShopGridOpts {
   price: (it: Item) => number;
+  /** Купит ли прилавок: золото И место в сумке (`canBuy`, V-B3-02) — нет, и ценник тусклый/красный. */
   affordable: (it: Item) => boolean;
+  /** Почему не купить (тот же отказ, что ответил бы сервер) — строкой над тултипом; нет — тултип как есть. */
+  refusal?: (it: Item) => string | undefined;
   onBuy: (it: Item) => void;
   tooltip: (it: Item) => string;
   cols?: number;      // ширина в клетках (по умолч. 11)
@@ -56,7 +60,10 @@ export function renderShopGrid(items: Item[], o: ShopGridOpts): HTMLElement {
   return renderGrid(display, dims, {
     onPick: (col, row) => { const it = at.get(`${col},${row}`); if (it) o.onBuy(it); },
     onPlace: () => { /* магазин: класть некуда */ },
-    tooltip: (it) => o.tooltip(it),
+    tooltip: (it) => {
+      const why = o.refusal?.(it);
+      return (why ? `<div style="color:${COLORS.bad};margin-bottom:4px">${why}</div>` : '') + o.tooltip(it);
+    },
     badge: (it) => ({ text: `${o.price(it)}`, affordable: o.affordable(it) }),
   });
 }

@@ -57,16 +57,23 @@ export function hasLineOfSight(
   }
 
   // Суб-тайловые препятствия, перекрывающие обзор (после чистого грида).
-  if (obstacles) {
-    for (const o of obstacles) {
-      if (o.blocksSight && segHitsObstacle(o, x1, y1, x2, y2)) return false;
-    }
+  return !sightBlockedByObstacles(obstacles, x1, y1, x2, y2);
+}
+
+/**
+ * Перекрыт ли отрезок (x1,y1)-(x2,y2) преградой декора, закрывающей обзор (`blocksSight`), — та же проверка, что у
+ * `hasLineOfSight` после сетки. ⚠ C-10: ею же гасится снаряд (подшаг `stepProjectiles`): сетку он смотрел, а колонну — нет.
+ */
+export function sightBlockedByObstacles(obstacles: readonly Obstacle[] | undefined, x1: number, y1: number, x2: number, y2: number): boolean {
+  if (!obstacles) return false;
+  for (const o of obstacles) {
+    if (o.blocksSight && segHitsObstacle(o, x1, y1, x2, y2)) return true;
   }
-  return true;
+  return false;
 }
 
 /** Пересекает ли отрезок (x1,y1)-(x2,y2) форму препятствия (круг/ориент.-бокс). */
-function segHitsObstacle(o: Obstacle, x1: number, y1: number, x2: number, y2: number): boolean {
+export function segHitsObstacle(o: Obstacle, x1: number, y1: number, x2: number, y2: number): boolean {
   if (o.shape === 'circle') {
     const r = o.r ?? 0;
     return pointSegDist2(o.x, o.y, x1, y1, x2, y2) <= r * r;

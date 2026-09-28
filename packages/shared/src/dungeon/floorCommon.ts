@@ -615,7 +615,7 @@ export function placeChests(
 }
 
 /** Ближайшая к `c` свободная клетка комнаты (не у стены), по кольцам; порядок обхода фиксирован — этаж тот же на том же сиде. */
-function nearestFree(r: Room, c: { cx: number; cy: number }, free: (cx: number, cy: number) => boolean): { cx: number; cy: number } | null {
+export function nearestFree(r: Room, c: { cx: number; cy: number }, free: (cx: number, cy: number) => boolean): { cx: number; cy: number } | null {
   const reach = Math.max(r.w, r.h);
   for (let d = 1; d <= reach; d++) {
     for (let dy = -d; dy <= d; dy++) for (let dx = -d; dx <= d; dx++) {

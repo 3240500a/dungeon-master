@@ -982,7 +982,10 @@ class Run {
           const e = got.find((g) => g.t === 'error')?.f;
           // Правила игры, а не лимиты: пати полна, комната исчезла, забега уже нет.
           if (e && ['full', 'no-room', 'no-run'].includes(String(e.code))) return null;
-          return 'joined';
+          // ⭐ R16 C-03: и к другу по коду со своим припаркованным забегом, а комната друга — в подземелье другого: отказ `run` (клиент — в
+          // лобби, «Соло» без штрафа). E2E 28.09, большой прогон (сиды 71192, 71979): модель честного этого правила не знала — ложное I3.
+          if (e && String(e.code) === 'run' && code && hasRun) return null;
+          return e ? `joined; отказ ${String(e.code)}` : 'joined';
         });
         return;
       }
@@ -1924,6 +1927,25 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
       ], 50734);
       expect(run.violations.map((v) => `${mode} #${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
     }
+  });
+  // ⭐ E2E 28.09, четвёртый прогон (большой прогон, сиды 71192, 71979): честный h2 спустился сам, вернулся порталом (забег припаркован) и
+  // идёт к h1 по коду, а h1 в подземелье своего забега. Сервер отказывает `run` (R16 C-03: в подземелье — только участники его забега), модель
+  // честного ждала `joined` — ложное I3 «нет ответа». Отказ — правило игры, как «пати полна»; сторож: отказ пришёл и нарушений нет.
+  it('E2E 28.09: вход к другу по коду со своим забегом в подземелье чужого — отказ `run`, а не «нет ответа»', async () => {
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 472 } },
+      { k: 'open', s: 1, mode: 'uws', ip: 1 },
+      { k: 'honest', s: 1, act: { a: 'enter', p: 982 } },
+      { k: 'open', s: 3, mode: 'ws', ip: 1 },
+      { k: 'honest', s: 0, act: { a: 'descend', alt: false } },
+      { k: 'honest', s: 1, act: { a: 'descend', alt: true } },
+      { k: 'junk', s: 3, junk: { j: 'valid', base: 'resume', seed: 2886368774 } },
+      { k: 'honest', s: 1, act: { a: 'return' }, race: true },
+      { k: 'honest', s: 1, act: { a: 'joinFriend' } },
+    ], 71979);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    expect(run.slots[1]?.frames.some((f) => f.t === 'error' && f.f?.code === 'run'), 'отказ `run` пришёл').toBe(true);
   });
   it('контроль: те же последовательности на uWS — закрытие окончательно, нарушений нет', async () => {
     const uws = (ops: Op[]): Op[] => ops.map((o) => (o.k === 'open' ? { ...o, mode: 'uws' } : o));

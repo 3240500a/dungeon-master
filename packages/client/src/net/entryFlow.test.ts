@@ -149,6 +149,31 @@ describe('⭐ EntryFlow — вход в мир и потеря связи (об�
     expect(c.text()).not.toMatch(/комната\s*\)/);
   });
 
+  // ⭐ R16 C-09: герой погиб в этом забеге (штраф взят) и отключился — экран «Продолжить / Забросить» твердил «Забросить — штраф золота и
+  // части предметов», хотя сервер за такой забег второго штрафа не берёт (V1), а «Продолжить» вернёт его мёртвым ждать пати (K1): бесплатный
+  // выход выглядел платным и толкал к «Продолжить». Статус забега теперь говорит, что смерть оплачена (`dead`), и экран — как есть.
+  it('⭐ R16 C-09: погибший в забеге — «Забросить» без штрафа (он уже взят), «Продолжить» — мёртвым ждать пати', () => {
+    const c = client();
+    c.start(); c.net.open();
+    c.net.fire('runStatus', { hasRun: true, roomCode: 'QWER', depth: 3, dead: true });
+    expect(c.text()).toContain('Незавершённое прохождение');
+    expect(c.text(), 'было: «штраф золота и части предметов» и у погибшего').not.toMatch(/штраф золота/);
+    expect(c.text()).toMatch(/Забросить[^|]*без штрафа/);
+    expect(c.text()).toMatch(/Продолжить[^|]*мёртвым/);
+    c.click('[data-a="abandon"]');
+    expect(c.net.sent.at(-1), 'кнопки — те же кадры').toEqual({ t: 'abandon', token: TOKEN, charId: 'hero-1' });
+
+    const d = client('hero-2');
+    d.start(); d.net.open();
+    d.net.fire('runStatus', { hasRun: true, roomCode: 'QWER', depth: 3, dead: false });
+    expect(d.text(), 'живой — штраф, как было').toMatch(/штраф золота и части предметов/);
+    expect(d.text()).not.toMatch(/без штрафа/);
+    const e = client('hero-3');
+    e.start(); e.net.open();
+    e.net.fire('runStatus', { hasRun: true, depth: 1 });
+    expect(e.text(), 'сервер старше поля — как было').toMatch(/штраф золота и части предметов/);
+  });
+
   it('⭐ сервер закрыл живую сессию (4009) — мир снесён, ждущие отпущены, плашка с причиной, переподключение, лобби с причиной', () => {
     const c = client();
     enterWorld(c);

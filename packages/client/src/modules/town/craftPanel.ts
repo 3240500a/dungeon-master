@@ -1,6 +1,6 @@
 import {
-  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseTierRange, bladeCaption, bladeStats, clampStep,
-  craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
+  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, bladeStats, clampStep,
+  craftFits, craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
   partById, rangeLabel, sketchable, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
@@ -40,6 +40,11 @@ export interface CraftHost {
   journal(): CraftJournal;
   /** Сохранённый сейв героя: по нему считается «в руках → скую». */
   save(): SaveState;
+  /**
+   * ⭐ V-B3-03: сумка, куда ляжет скованная вещь — в игре сумка героя: «Ковать» гаснет «Нет места в сумке» тем же правилом, что
+   * сервер (`craftFits`: место ПОСЛЕ списания сырья). Нет — место не проверяется (песочница: вещь живёт в окне, а не в сумке).
+   */
+  bag?(): readonly Item[];
   /**
    * Песочница отвечает сразу, игра — промисом ответа сервера. ⭐ R5-15: `maxGold` — цена в золоте, которую показало окно:
    * игра шлёт её в команде, и дороже сервер не возьмёт (его конфиг мог уйти вперёд клиентского). ⭐ R8-14: `maxMaterials` —
@@ -93,25 +98,55 @@ const pct = (x: number, d = 0): string => `${(x * 100).toFixed(d)} %`;
 const fx = (x: number, d = 1): string => x.toFixed(d);
 const signed = (x: number, unit = '', d = 0): string => `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(d)}${unit}`;
 
-/** Начальное состояние: первое семейство класса, эталонные детали из кричного железа (ступень 2). */
+/**
+ * ⭐ V-B3-06: СЕМЕЙСТВА КЛАССА, КОТОРЫЕ КУЗНЕЦ СЕЙЧАС КУЁТ — в каждом гнезде есть включённая деталь (`defaultParts` не `null`).
+ * Хозяин может снять с игры целое гнездо класса (все его варианты выключены — схема это разрешает): окно падало на `null`
+ * TypeError'ом на каждой перерисовке, и вкладка «Ковка» была мертва до конца сессии. Теперь такое семейство окно называет
+ * («Кузнец сейчас не куёт…») и гасит «Ковать».
+ */
+export function forgeableFamilies(reg: ConfigRegistry, weaponClass: string): number[] {
+  return familiesOf(reg, weaponClass).filter((h) => defaultParts(reg, weaponClass, h, 2) !== null);
+}
+const IDLE_CLASS = 'Кузнец сейчас не куёт этот класс';
+const IDLE_FAMILY = 'Кузнец сейчас не куёт это семейство';
+/** Почему семейство окна не куётся (V-B3-06); пусто — куётся. */
+function idleReason(reg: ConfigRegistry, weaponClass: string, hands: number): string {
+  if (defaultParts(reg, weaponClass, hands, 2)) return '';
+  return forgeableFamilies(reg, weaponClass).length ? IDLE_FAMILY : IDLE_CLASS;
+}
+/**
+ * Гнёзда без детали — у семейства, которое сейчас не куётся (V-B3-06): `id: ''` значит «детали нет». Такую сборку окно не шлёт:
+ * предпросмотр её не собирает (`craftWeapon` → «Нет такой детали»), и «Ковать» погашена.
+ */
+function blankParts(): CraftParts {
+  const out = {} as CraftParts;
+  for (const s of CRAFT_SLOT_LIST) out[s] = { id: '', step: 2 };
+  return out;
+}
+
+/**
+ * Начальное состояние: эталонные детали из кричного железа (ступень 2). Семейство не задано — первое, которое кузнец
+ * куёт (V-B3-06); не куётся ни одно — гнёзда пустые, окно скажет почему.
+ */
 export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', hands?: number): CraftWindowState {
-  const h = hands ?? familiesOf(reg, weaponClass)[0] ?? 1;
-  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, 2)!, crafted: null, message: '' };
+  const h = hands ?? forgeableFamilies(reg, weaponClass)[0] ?? familiesOf(reg, weaponClass)[0] ?? 1;
+  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, 2) ?? blankParts(), crafted: null, message: '' };
 }
 
 /**
  * Приводит выбор к допустимому: семейство есть у класса, ключевая деталь — открытой базы, детали
  * своего семейства и открытые, ступени — внутри окна материалов каждой формы. Правит на месте.
+ * ⚠ V-B3-06: гнездо без единой включённой детали остаётся пустым (`id: ''`) — не `null` и не брошенное окно.
  */
 export function normalizeCraftState(reg: ConfigRegistry, st: CraftWindowState, j: CraftJournal): void {
   // Индекс доводки — к существующей строке: список правится в редакторе, а чип, цена и ковка обязаны
   // видеть ОДНУ строку (иначе платишь за доводку, а выбранной не подсвечено ничего).
   st.finish = finishOf(reg, st.finish).index;
   const fams = familiesOf(reg, st.weaponClass);
-  if (!fams.includes(st.hands)) st.hands = fams[0] ?? 1;
+  if (!fams.includes(st.hands)) st.hands = forgeableFamilies(reg, st.weaponClass)[0] ?? fams[0] ?? 1;
   const keySlot = keySlotOf(reg, st.weaponClass);
   const def = defaultParts(reg, st.weaponClass, st.hands, 2);
-  if (!st.parts) st.parts = def!;
+  if (!st.parts) st.parts = def ?? blankParts();
   // Эталон — ось ближе всего к нулю; у клинков с геометрией ось выведенная (§26), ручное число у них — только вид.
   const closest = (pool: WeaponPart[]): WeaponPart | undefined => [...pool].sort((a, b) => Math.abs(axisOf(reg, a)) - Math.abs(axisOf(reg, b)))[0];
   for (const slot of CRAFT_SLOT_LIST) {
@@ -125,7 +160,9 @@ export function normalizeCraftState(reg: ConfigRegistry, st: CraftWindowState, j
         // (потолок t3), и дорогие материалы упирались бы в потолок без объяснения.
         const rank = (id: string): number => { const b = reg.get('items.base').find((x) => x.id === id); return b ? baseTierRange(reg, b).hi : -1; };
         const g = [...groups].sort((a, b) => rank(b.baseId) - rank(a.baseId)).find((x) => x.variants.some((p) => j.variants.includes(p.id)));
-        const p = g ? closest(g.variants.filter((v) => j.variants.includes(v.id))) : closest(keyVariantsByBase(reg, st.weaponClass, st.hands)[0]?.variants ?? []);
+        // Открытой нет — форма первой базы, у которой формы вообще есть (у первой их могли выключить все).
+        const p = g ? closest(g.variants.filter((v) => j.variants.includes(v.id)))
+          : closest(keyVariantsByBase(reg, st.weaponClass, st.hands).find((x) => x.variants.length)?.variants ?? []);
         st.parts[slot] = { id: p?.id ?? '', step: st.parts[slot]?.step ?? 2 };
       }
     } else {
@@ -229,6 +266,27 @@ function partEffect(reg: ConfigRegistry, slot: CraftSlot, part: WeaponPart, st: 
   return `${lead}${brace} · ${name} ${bal < 0 ? 'чаще' : bal > 0 ? 'реже' : 'как есть'}`;
 }
 
+/**
+ * ⭐ V-B3-05: ГДЕ ФОРМА, ОТКРЫТАЯ ЭСКИЗОМ, ПОЙДЁТ В КОВКУ, если не в этом семействе. Можно ли её открыть — решает `sketchable`, как
+ * и сервер (`sketchAction`): ключевую форму эскиз открывает, если открыт тип, чей это ключ, в ЛЮБОМ семействе (у копий одна
+ * форма — ключ и короткого копья, и пики). Окно запирало её (🔒) по типу ТЕКУЩЕГО семейства, а сервер открывал. Теперь строка
+ * предлагает эскиз тем же правилом и говорит, где форма пригодится. Пусто — пригодится и здесь.
+ */
+function sketchElsewhere(reg: ConfigRegistry, j: CraftJournal, p: WeaponPart, weaponClass: string, hands: number): string {
+  if (p.slot !== keySlotOf(reg, weaponClass)) return '';
+  const here = baseOfKeyPart(reg, weaponClass, hands, p);
+  if (here && j.bases.includes(here)) return '';
+  const where = new Set<string>();
+  for (const cls of p.classes as string[]) {
+    if (p.slot !== keySlotOf(reg, cls)) { where.add(reg.get('weapon-anatomy').find((a) => a.id === cls)?.name ?? cls); continue; }
+    for (const h of [1, 2]) {
+      const b = baseOfKeyPart(reg, cls, h, p);
+      if (b && j.bases.includes(b)) where.add(`«${reg.get('items.base').find((x) => x.id === b)?.name ?? b}»`);
+    }
+  }
+  return [...where].join(', ');
+}
+
 /** Строка механики базы: урон, хват, грань, вес — чтобы тип читался как числа, а не только как имя. */
 function baseLine(reg: ConfigRegistry, baseId: string | undefined): string {
   const base = reg.get('items.base').find((b) => b.id === baseId);
@@ -301,7 +359,10 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     const clsRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px');
     for (const a of [...reg.get('weapon-anatomy')].sort((x, y) => ORDER.indexOf(x.id) - ORDER.indexOf(y.id))) {
       const on = a.id === st.weaponClass;
-      const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:${busy ? 'default' : 'pointer'};font-size:12px;border:1px solid ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : busy ? '#4a4a4a' : COLORS.text}`, a.name);
+      // V-B3-06: класс, которого кузнец сейчас не куёт, — пунктиром и с причиной; открыть его можно (окно скажет то же).
+      const idle = !forgeableFamilies(reg, a.id).length;
+      const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:${busy ? 'default' : 'pointer'};font-size:12px;border:1px ${idle ? 'dashed' : 'solid'} ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : busy || idle ? '#4a4a4a' : COLORS.text}`, a.name);
+      if (idle) b.title = IDLE_CLASS;
       b.disabled = busy;
       b.addEventListener('click', () => { if (on || st.busy) return; Object.assign(st, initialCraftState(reg, a.id)); draw(); });
       clsRow.append(b);
@@ -313,6 +374,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       famRow.append(mk('span', `color:${COLORS.dim};font-size:12px;margin-right:4px`, 'Семейство'));
       for (const h of fams) {
         const b = mk('button', chip(h === st.hands, busy), h === 2 ? 'Двуручное' : 'Одноручное');
+        if (!defaultParts(reg, st.weaponClass, h, 2)) { b.style.borderStyle = 'dashed'; b.title = IDLE_FAMILY; }   // V-B3-06
         b.disabled = busy;
         b.addEventListener('click', () => { if (h === st.hands || st.busy) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw(); });
         famRow.append(b);
@@ -325,6 +387,9 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     // ── Предпросмотр: тип, имя, ступень ──
     const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 };
     const pv = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials });
+    // V-B3-06: семейство не куётся (гнездо снято с игры) — причина вместо «Нет такой детали» пустого гнезда.
+    const idle = idleReason(reg, st.weaponClass, st.hands);
+    const why = idle || pv.reason;
     const type = pv.type;
     const head = mk('div', `border:1px solid ${COLORS.borderHi};border-radius:6px;padding:10px 12px;margin-bottom:10px;background:${COLORS.panel2}`);
     const top = mk('div', 'display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap');
@@ -348,7 +413,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       // ⚠ `source` игроку НЕ печатаем: там реальная типология («Окшотт XV»), а мир фэнтезийный.
       // Справка нужна нам и моделлеру — её видно в редакторе (каталог ковки).
     }
-    if (!pv.ok && pv.reason) head.append(mk('div', `font-size:12px;color:${COLORS.bad};margin-top:6px`, `⚠ ${pv.reason}`));
+    if (!pv.ok && why) head.append(mk('div', `font-size:12px;color:${COLORS.bad};margin-top:6px`, `⚠ ${why}`));
     root.append(head);
 
     // ── Эскизы (R3-11): сколько есть и подтверждение выбранной детали — эскиз не вернуть ──
@@ -358,7 +423,10 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       if (!pick) {
         box.append(mk('div', '', `✦ Эскизов: ${sketches} — открой закрытую деталь на выбор: нажми на неё в списке (✦). Ключевую форму неоткрытого типа эскиз не открывает — тип открывает разбор.`));
       } else {
-        box.append(mk('div', 'margin-bottom:6px', `✦ Открыть «${pick.name}» эскизом? Эскизов останется ${sketches - 1} — вернуть эскиз нельзя.`));
+        // V-B3-05: форма, чей тип здесь закрыт, — сказать, где она пойдёт в ковку (эскиз не откроет сам тип).
+        const where = sketchElsewhere(reg, j, pick, st.weaponClass, st.hands);
+        box.append(mk('div', 'margin-bottom:6px', `✦ Открыть «${pick.name}» эскизом? Эскизов останется ${sketches - 1} — вернуть эскиз нельзя.`
+          + (where ? ` Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: ${where}.` : '')));
         const confirm = mk('div', 'display:flex;gap:6px');
         confirm.append(button(st.busy === 'sketch' ? '⏳ открываю…' : '✦ Открыть эскизом', () => act('sketch', () => host.sketch!(pick.id), (r) => {
           st.sketchPick = undefined;
@@ -402,9 +470,13 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
 
       const list = mk('div', 'display:flex;flex-direction:column;gap:2px;max-height:250px;overflow:auto;margin-bottom:6px');
       const row = (p: WeaponPart, baseOpen = true): HTMLElement => {
-        const open = j.variants.includes(p.id) && baseOpen;
+        const known = j.variants.includes(p.id);
+        const open = known && baseOpen;
         // R3-11: закрытую деталь ОТКРЫТОГО типа можно открыть эскизом — строка кликабельна и выбирает её к эскизу.
-        const bySketch = !open && baseOpen && sketches > 0 && sketchable(reg, j, p.id);
+        // ⭐ V-B3-05: правило — ровно серверное (`sketchable`): ключевая форма типа, закрытого в ЭТОМ семействе, открывается,
+        // если открыт тип другого семейства, чей это тоже ключ; подсказка говорит где (`sketchElsewhere`).
+        const bySketch = !known && sketches > 0 && sketchable(reg, j, p.id);
+        const elsewhere = bySketch && !baseOpen ? sketchElsewhere(reg, j, p, st.weaponClass, st.hands) : '';
         const on = p.id === st.parts[slot].id || (bySketch && st.sketchPick === p.id);
         const b = mk('button', `display:flex;align-items:center;gap:6px;text-align:left;padding:3px 6px;border-radius:4px;font-size:12px;cursor:${open || bySketch ? 'pointer' : 'default'};` +
           `border:1px solid ${on ? COLORS.accent : 'transparent'};background:${on ? '#26221a' : 'transparent'};color:${!open ? (bySketch ? COLORS.gold : '#4d4d4d') : on ? COLORS.accent : COLORS.text}`);
@@ -414,7 +486,8 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
           `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace">ст.${p.stepMin}–${p.stepMax}</span>` +
           `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace;width:34px;text-align:right">${axisLabel(axisOf(reg, p))}</span>`;
         b.title = [partCaption(reg, p), p.lore, bladeMeasureLine(reg, p), `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`,
-          bySketch ? `✦ Открыть эскизом (эскизов: ${sketches})` : ''].filter(Boolean).join('\n');
+          bySketch ? `✦ Открыть эскизом (эскизов: ${sketches})` : '',
+          elsewhere ? `Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: ${elsewhere}` : ''].filter(Boolean).join('\n');
         b.disabled = (!open && !bySketch) || busy;
         b.addEventListener('click', () => {
           if (st.busy) return;
@@ -478,7 +551,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       left.append(tip);
       if (shown.affixCap) left.append(mk('div', `margin-top:6px;font-size:12px;color:${COLORS.info}`, `Ёмкость: ${shown.affixCap.prefix} преф. + ${shown.affixCap.suffix} суф. — примет при зачаровании`));
     } else {
-      left.append(mk('div', `color:${COLORS.bad}`, pv.reason ?? 'Не собирается'));
+      left.append(mk('div', `color:${COLORS.bad}`, why || 'Не собирается'));
     }
     for (const n of pv.bake?.notes ?? []) left.append(mk('div', `margin-top:6px;font-size:11.5px;color:${COLORS.gold}`, `⚠ ${n}`));
 
@@ -532,9 +605,13 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     // Не хватает — кнопка гаснет и говорит чего (§17): сервер отказал бы тем же расчётом (`craftMissing`).
     const lack = pv.cost ? craftMissing(host.wallet(), host.gold(), pv.cost) : null;
     const short = lack ? [...(Object.keys(lack.materials).length ? [describeCost(reg, lack.materials)] : []), ...(lack.gold > 0 ? [`${lack.gold} золота`] : [])] : [];
-    const craftBtn = button(st.busy === 'craft' ? '⏳ куём…' : '🔨 Ковать', doCraft, 'primary', !pv.ok || busy || short.length > 0);
-    if (!pv.ok && pv.reason) craftBtn.title = pv.reason;
+    // ⭐ V-B3-03: и место — вещь ляжет в сумку ПОСЛЕ списания сырья; правило то же, что у сервера (`craftFits`), сумка — хозяина.
+    const bag = host.bag?.();
+    const noRoom = pv.ok && !short.length && !!pv.item && !!pv.cost && !!bag && !craftFits(reg, bag, pv.cost.materials, pv.item);
+    const craftBtn = button(st.busy === 'craft' ? '⏳ куём…' : '🔨 Ковать', doCraft, 'primary', !pv.ok || busy || short.length > 0 || noRoom);
+    if (!pv.ok && why) craftBtn.title = why;
     else if (short.length) craftBtn.title = `Не хватает: ${short.join(' · ')}`;
+    else if (noRoom) craftBtn.title = 'Нет места в сумке';
     btns.append(craftBtn);
     if (st.crafted) {
       const item = st.crafted;

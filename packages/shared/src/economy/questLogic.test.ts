@@ -6,6 +6,7 @@ import type { QuestDef } from '../types/quest.js';
 import { acceptQuest, trackObjective, trackFloor, turnInQuest, ensureMainQuest, generateBoard, boardTemplateOf, questFromTemplate, pruneBoardQuests, questRival } from './questLogic.js';
 import type { SaveState } from '../types/save.js';
 import type { RandomQuestTemplate } from '../types/quest.js';
+import { questsMainSchema, questsRandomSchema } from '../config/schemas.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -353,5 +354,63 @@ describe('⚠ C-02: награда сдачи — целое не меньше �
     expect(turnInQuest(r, save, def.id).ok).toBe(true);
     expect(save.gold).toBe(250);
     expect(save.unspentSkillPoints).toBe(sp + 1);
+  });
+});
+
+/**
+ * ⚠ C-13 (цели заданий): ЦЕЛЬ, КОТОРУЮ ПРИНИМАЕТ СХЕМА, ИГРА ОБЯЗАНА СЧИТАТЬ. Схема пускала цель «talk-npc», редактор (формы — по
+ * той же схеме) её предлагал, а считать её нечем: счётчики двигают только убийство и подбор (`trackObjective`) и вход на этаж
+ * (`trackFloor`). Задание цепочки с такой целью принималось само по сдаче предыдущего и не закрывалось никогда («Ещё не выполнен»),
+ * а цепочка вставала навсегда: `ensureMainQuest` не выдаёт ничего, раз в сейве уже есть задание «main-». Разговора с NPC в игре
+ * нет — и цели такой в схеме нет. Сторож — по классу: каждый тип цели схемы (цепочки и доски) закрывается трекером игры, и цепочка
+ * поставки проходится до конца.
+ */
+describe('⚠ C-13: каждую цель, которую принимает схема заданий, игра закрывает', () => {
+  const mainTypes: readonly string[] = questsMainSchema.element.shape.objectives.element.shape.type.options;
+  const boardTypes: readonly string[] = questsRandomSchema.element.shape.objectiveType.options;
+  /** Провести цель трекерами игры (как `Room`: убийство, подбор, вход на этаж); нет трекера — не закрыть. → выполнено ли задание. */
+  function drive(save: SaveState, o: QuestDef['objectives'][number]): void {
+    switch (o.type) {
+      case 'kill': case 'collect-item': for (let i = 0; i < o.amount; i++) trackObjective(save, o.type, o.target ?? ''); break;
+      case 'reach-floor': trackFloor(save, o.amount); break;
+      default: break;   // трекера нет
+    }
+  }
+
+  it('⭐ «talk-npc» (разговора с NPC в игре нет) схема не принимает — ни в цепочке, ни на доске', () => {
+    const r = reg();
+    const main = structuredClone(r.get('quests.main')) as unknown as { objectives: { type: string }[] }[];
+    main[0]!.objectives[0]!.type = 'talk-npc';
+    expect(() => r.reload({ 'quests.main': main }), 'цепочка').toThrow();
+    const board = structuredClone(r.get('quests.random')) as unknown as { objectiveType: string }[];
+    board[0]!.objectiveType = 'talk-npc';
+    expect(() => r.reload({ 'quests.random': board }), 'доска').toThrow();
+    expect(r.get('quests.main')[0]!.objectives[0]!.type, 'конфиг прежний').not.toBe('talk-npc');
+  });
+
+  it('⭐ класс: каждый тип цели из схемы (цепочка и доска) закрывается трекером игры', () => {
+    const r = reg();
+    for (const type of new Set([...mainTypes, ...boardTypes])) {
+      const save = newBotSave(r, 'warrior');
+      const def: QuestDef = { id: `q-c13-${type}`, name: type, description: '', objectives: [{ id: 'o1', type: type as never, target: 'zombie', amount: 3 }], reward: { gold: 1 } };
+      expect(acceptQuest(save, def).ok).toBe(true);
+      drive(save, def.objectives[0]!);
+      expect(save.quests.find((q) => q.questId === def.id)?.status, `цель «${type}»: схема её принимает, а игра не закрывает`).toBe('completed');
+    }
+  });
+
+  it('⭐ цепочка поставки проходится до конца: каждое задание закрывается трекерами и сдаётся, следующее выдаётся', () => {
+    const r = reg();
+    const save = newBotSave(r, 'warrior');
+    let def = ensureMainQuest(r, save);
+    const seen: string[] = [];
+    while (def && seen.length < 50) {
+      seen.push(def.id);
+      for (const o of def.objectives) drive(save, o);
+      const res = turnInQuest(r, save, def.id);
+      expect(res.ok, `«${def.id}»: ${res.reason ?? ''}`).toBe(true);
+      def = res.nextAccepted ?? null;
+    }
+    expect(seen.length, 'пройдено заданий цепочки').toBe(r.get('quests.main').filter((q) => q.enabled !== false).length);
   });
 });

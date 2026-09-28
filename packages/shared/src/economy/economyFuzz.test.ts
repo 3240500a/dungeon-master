@@ -109,6 +109,11 @@ const BUGS: { name: string; want: string; bug: (w: World, op: Op, res: Res) => v
     name: 'принятое задание: цель «0 из 0»', want: 'I2:quest-amount:acceptQuest',
     bug: (w, op, res) => { if (op.k === 'acceptQuest' && res.ok) { const o = w.heroes[op.h].activeQuestDefs.at(-1)?.objectives[0]; if (o) o.amount = 0; } },
   },
+  // C-13: цель, которую игра не считает («talk-npc» — схема её пускала), — задание не закрыть никогда.
+  {
+    name: 'доска: цель, которую игра не считает', want: 'I2:quest-untracked:restock',
+    bug: (w, op, res) => { const o = op.k === 'restock' && res.ok ? w.board[0]?.objectives[0] : undefined; if (o) o.type = 'talk-npc' as typeof o.type; },
+  },
 ];
 
 /** Воспроизведение известного нарушения: `it.fails`, пока не поправлено; `DM_FUZZ_SHOW_KNOWN=1` — обычный `it` (показать, как падает). */
@@ -193,7 +198,9 @@ describe('⭐ B2: фаззер экономики — инварианты це�
  * ⚠ C-02: ПРАВКА ЗАДАНИЙ ЖИВЬЁМ — свой профиль весов: конфиг, доска, приём, прогресс и сдача чаще прочего. Хозяин правит вилки
  * доски и награды цепочки, в том числе с опечатками (минус, дробь, ноль целей, перевёрнутая вилка): негодное обязана отвергнуть
  * схема, пропущенное ловят числа заданий и героя (I2). В общем профиле правка заданий — одна из сотен шагов, и до правки схемы
- * «цель 0 из 0» и «награду −450» он находил раз на полсотни цепочек; этот — в первых же.
+ * «цель 0 из 0» и «награду −450» он находил раз на полсотни цепочек; этот — в первых же. ⚠ C-13: и тип цели — из схемы, «talk-npc»
+ * и мусор: цель, которую игра не считает, схема обязана отвергнуть (со схемой, пускавшей «talk-npc», — 3 цепочки из 24, и одна из
+ * них — вставшая цепочка основных заданий).
  */
 describe('⚠ C-02: фаззер — правка заданий живьём', () => {
   type OpKind = import('./fuzz/economyFuzz.js').OpKind;
@@ -202,15 +209,16 @@ describe('⚠ C-02: фаззер — правка заданий живьём', 
   };
   it('24 цепочки по 60 шагов: ни одного нарушения; правки заданий и проходили, и отвергались схемой', () => {
     const hits: string[] = [];
-    let accepted = 0, refused = 0, turnedIn = 0;
+    let accepted = 0, refused = 0, turnedIn = 0, typeRefused = 0;
     for (let seed = 1; seed <= 24; seed++) {
       const out = runOps(seed, genOps(seed, 60, QUESTS), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
       if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
-      for (const l of out.log) if (l.includes('конфиг: задания:')) { if (l.includes('отказ схемы')) refused++; else accepted++; }
+      for (const l of out.log) if (l.includes('конфиг: задания:')) { if (l.includes('отказ схемы')) refused++; else accepted++; if (/type → (talk-npc|open-chest) — отказ схемы/i.test(l)) typeRefused++; }
       turnedIn += out.stats.turnIn?.ok ?? 0;
     }
     expect(hits, hits.join('\n\n')).toEqual([]);
     expect(refused, 'опечатки доходят до схемы').toBeGreaterThan(0);
+    expect(typeRefused, 'C-13: цель, которую игра не считает («talk-npc»), схема отвергает').toBeGreaterThan(0);
     expect(accepted, 'годные правки проходят').toBeGreaterThan(0);
     expect(turnedIn, 'задания сдаются').toBeGreaterThan(0);
   });
