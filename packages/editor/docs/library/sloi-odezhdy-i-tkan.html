@@ -1,0 +1,461 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Слои одежды и ткань</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eceef2; --sunk:#e7e9ee;
+    --ink:#191c22; --ink-2:#414957; --muted:#818a99;
+    --line:#dde0e6; --line-strong:#c9cdd6;
+    --accent:#c4611c; --accent-soft:#f6e6d7; --accent-ink:#8f4413;
+    --good:#3c8a58; --good-soft:#dcefe1;
+    --warm:#b3452f; --warm-soft:#f7e0da;
+    --steel:#3f6ea8; --steel-soft:#dfe8f4;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#13151a; --surface:#1b1e25; --surface-2:#22262e; --sunk:#171a20;
+      --ink:#e9ebf0; --ink-2:#b8c0cd; --muted:#7c8494;
+      --line:#2a2f39; --line-strong:#39404c;
+      --accent:#e28a4a; --accent-soft:#3a2a1c; --accent-ink:#e9a877;
+      --good:#5cb881; --good-soft:#1f2f26;
+      --warm:#e0705a; --warm-soft:#33211d;
+      --steel:#7aa5da; --steel-soft:#1d2733;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#13151a; --surface:#1b1e25; --surface-2:#22262e; --sunk:#171a20;
+    --ink:#e9ebf0; --ink-2:#b8c0cd; --muted:#7c8494;
+    --line:#2a2f39; --line-strong:#39404c;
+    --accent:#e28a4a; --accent-soft:#3a2a1c; --accent-ink:#e9a877;
+    --good:#5cb881; --good-soft:#1f2f26;
+    --warm:#e0705a; --warm-soft:#33211d;
+    --steel:#7aa5da; --steel-soft:#1d2733;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    line-height:1.62; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1000px; margin:0 auto; padding-block:clamp(28px,5vw,64px) 88px; padding-inline:clamp(16px,4vw,40px); display:flex; flex-direction:column; gap:clamp(34px,5vw,54px)}
+  .col{display:flex; flex-direction:column; gap:12px}
+  section{display:flex; flex-direction:column; gap:18px}
+
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; font-weight:600;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--accent-ink);
+    display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow::before{content:""; width:24px; height:2px; background:var(--accent); display:inline-block; flex:none}
+
+  h1{font-size:clamp(32px,6vw,52px); line-height:1.05; font-weight:700; letter-spacing:-.02em; text-wrap:balance; margin:6px 0 0}
+  h2{font-size:clamp(22px,3.4vw,30px); line-height:1.15; font-weight:650; letter-spacing:-.015em; text-wrap:balance; margin:0}
+  h3{font-size:17px; font-weight:650; margin:0; letter-spacing:-.005em}
+  p{margin:0; color:var(--ink-2); max-width:72ch}
+  .lede{font-size:clamp(16.5px,2.2vw,20px); color:var(--ink-2); max-width:64ch}
+  .meta{font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--muted); letter-spacing:.04em}
+  strong{color:var(--ink); font-weight:600}
+  code{font-family:"IBM Plex Mono",monospace; font-size:.9em; background:var(--sunk); padding:1px 5px; border-radius:3px; color:var(--ink)}
+  q{font-style:italic; color:var(--ink-2)}
+  q::before{content:"«"} q::after{content:"»"}
+
+  .thesis{border-left:3px solid var(--accent); background:var(--accent-soft); padding:20px 22px}
+  .thesis p{color:var(--ink)}
+
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:10px}
+  .tile{border:1px solid var(--line); background:var(--surface); padding:16px 18px; display:flex; flex-direction:column; gap:4px}
+  .tile .n{font-size:28px; line-height:1; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; color:var(--accent)}
+  .tile .l{font-size:14px; color:var(--ink-2)}
+  .tile .s{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+
+  .tablewrap{overflow-x:auto; border:1px solid var(--line); background:var(--surface)}
+  table{border-collapse:collapse; width:100%; min-width:620px; font-size:14.5px}
+  th,td{text-align:left; padding:11px 15px; border-bottom:1px solid var(--line); vertical-align:top; color:var(--ink-2)}
+  thead th{font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--line-strong)}
+  tbody tr:last-child td{border-bottom:none}
+  td.name{font-weight:600; color:var(--ink)}
+  td.num{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .win{color:var(--good); font-weight:600}
+  .lose{color:var(--warm); font-weight:600}
+  .tie{color:var(--muted)}
+
+  .note{padding:15px 19px; border:1px solid var(--line); background:var(--surface); display:flex; flex-direction:column; gap:7px; font-size:15.5px}
+  .note.key{background:var(--accent-soft); border-color:transparent}
+  .note.warn{background:var(--warm-soft); border-color:transparent}
+  .note.good{background:var(--good-soft); border-color:transparent}
+  .note.cool{background:var(--steel-soft); border-color:transparent}
+  .note .tag{font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase}
+  .note.key .tag{color:var(--accent-ink)}
+  .note.warn .tag{color:var(--warm)}
+  .note.good .tag{color:var(--good)}
+  .note.cool .tag{color:var(--steel)}
+
+  ul.plain{margin:0; padding-left:20px; display:flex; flex-direction:column; gap:8px; color:var(--ink-2); max-width:74ch}
+  ul.plain li::marker{color:var(--line-strong)}
+  ol.steps{margin:0; padding:0; list-style:none; counter-reset:s; display:flex; flex-direction:column; gap:12px; max-width:74ch}
+  ol.steps li{counter-increment:s; display:grid; grid-template-columns:auto 1fr; gap:14px; align-items:baseline; color:var(--ink-2)}
+  ol.steps li::before{content:counter(s); font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600; color:var(--accent); border:1px solid var(--line-strong); width:22px; height:22px; display:grid; place-items:center; align-self:start; margin-top:2px}
+
+  .chain{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px}
+  .step{border:1px solid var(--line); background:var(--surface); padding:13px 15px; display:flex; flex-direction:column; gap:5px}
+  .step .k{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+  .step .v{font-size:14px; color:var(--ink-2)}
+  .step.have{border-color:var(--good); background:var(--good-soft)}
+  .step.todo{border-color:var(--warm); background:var(--warm-soft)}
+
+  .src{display:flex; flex-direction:column; gap:7px; font-size:13.5px; color:var(--muted)}
+  .src a{color:var(--steel); text-decoration:none; border-bottom:1px solid var(--line-strong); word-break:break-word}
+  .src a:hover{color:var(--accent)}
+  a:focus-visible,summary:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
+  details{border:1px solid var(--line); background:var(--surface); padding:13px 17px}
+  summary{cursor:pointer; font-weight:600; color:var(--ink); font-size:15px}
+  details[open] summary{margin-bottom:9px}
+  footer{border-top:1px solid var(--line); padding-top:20px; color:var(--muted); font-size:13.5px; display:flex; flex-direction:column; gap:8px}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <div class="eyebrow">Модульный персонаж</div>
+  <h1>Слои одежды и ткань</h1>
+  <p class="lede">Разбор того, как в паках The Tales Factory и в шипнутых играх собирают одежду слоями, чтобы броня не торчала сквозь плащ, — и чем в Unity делать саму ткань. Что из этого у нас уже есть, а что придётся заводить.</p>
+  <div class="meta">Ashes of the past · 29 сентября 2026</div>
+</header>
+
+<div class="thesis col">
+  <div class="eyebrow">Главное</div>
+  <p><strong>У The Tales Factory это действительно бленд-шейп</strong> — один на вещь, с именем <code>Armor</code>, крутится от 0 до 100. Видно в инспекторе: <code>Hood02_LOD0</code>, Skinned Mesh Renderer, раздел BlendShapes. На нуле броня торчит сквозь пелерину, на сотне пелерина сидит поверх брони.</p>
+  <p><strong>И на том же объекте висит <code>Cloth</code></strong> — то есть шейп подгонки и симуляция ткани у них уживаются на одном рендерере. Плюс третий механизм: перекрытое прячется вручную — вариантами меша, разрезанным телом, альфа-вырезом.</p>
+  <p><strong>Ту же задачу индустрия решает и обратным ходом:</strong> в Cyberpunk&nbsp;2077 шейп называется <code>GarmentSupport</code> и сжимает НИЖНЮЮ вещь, а не раздувает верхнюю. Общее у обоих подходов главное: шейпов нужно <strong>по числу вещей, а не по числу их сочетаний</strong>.</p>
+</div>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Проверка посылки</div>
+    <h2>Что на самом деле лежит в их паках</h2>
+    <p>Прочитаны все шесть паков: описания, вкладка Package Content (полное дерево файлов — она и решила вопрос), около семидесяти отзывов, зеркало на Fab, описания роликов и ArtStation автора.</p>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><span class="n">6</span><span class="l">FBX во всём паке</span><span class="s">весь персонаж — один файл</span></div>
+    <div class="tile"><span class="n">0</span><span class="l">скриптов .cs</span><span class="s">Modular Knights</span></div>
+    <div class="tile"><span class="n">1</span><span class="l">шейп <code>Armor</code> на вещь</span><span class="s">0 → 100 при надетой броне</span></div>
+    <div class="tile"><span class="n">18</span><span class="l">готовых рыцарей</span><span class="s">Prefab Variants</span></div>
+  </div>
+
+  <div class="col">
+    <h3>Бленд-шейп подгонки: один на вещь, имя <code>Armor</code></h3>
+    <p>Снято с кадра видео автора. Объект <code>Hood02_LOD0</code>, Skinned Mesh Renderer, Root Bone <code>pelvis</code>, материал <code>Hood02_Yellow</code>. В разделе BlendShapes ровно одна строка — <strong><code>Armor</code></strong>. На <code>0</code> наплечники брони протыкают пелерину капюшона; на <code>100</code> пелерина расширяется и ложится поверх них. Никакого скрипта для этого не нужно: значение выставляется в инспекторе, а в игре — обычным <code>SetBlendShapeWeight</code> при смене экипа.</p>
+    <div class="note warn">
+      <span class="tag">Почему это чуть не проехали мимо</span>
+      <p>На витрине заявлены только лицевые шейпы: <q>Heads have the 52 AR Toolkit blendshapes</q> плюс механический <q>1 crossbow (using blendshape animate the loading)</q>. Шейп <code>Armor</code> в описании не упомянут вовсе, а вкладка Package Content показывает дерево файлов — <strong>имена шейпов лежат ВНУТРИ FBX и снаружи не видны</strong>. Вывод «шейпов для одежды нет», сделанный по витрине и списку файлов, оказался неверным: проверять такое можно только открыв ассет.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>Плащи — это Unity Cloth</h3>
+    <p>Knights: <q>Prefabs are already set with unity cloth</q> и там же прямая оговорка — <q>the cape and the coats of arms 02 and 03 with the cape variations will stay rigid without cloth physics</q>. Samurai честнее всех: <q>Only LOD0 use the cloth physics</q>, <q>! Warning ! The haori coat have to use cloth component</q>.</p>
+    <div class="note key">
+      <span class="tag">Что, скорее всего, было на видео</span>
+      <p>Плащ протыкает броню, автор включает симуляцию с коллайдерами — и за секунду ткань оседает поверх. Со стороны это выглядит ровно как «выбрал плащ, нажал кнопку, он принял форму». Это коллизия ткани, а не шейп.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>Скрытие того, что под слоем — три приёма, и ни один не требует кода</h3>
+    <ul class="plain">
+      <li><strong>Отдельные авторские варианты меша.</strong> В дереве видно <code>CoatOfArms02</code> и <code>CoatOfArms02_Cape</code> как разные наборы; там же «2 плаща — с капюшоном на голове и без», «3 причёски, одна — специально под шлем».</li>
+      <li><strong>Разрезанное тело.</strong> <code>Body/{Arms, Body, Eyes, Head01…04, Mouth, Pilosity}</code> — надел наручи, выключил предплечья. В отзыве на женский пак это прямо хвалят, автор отвечает, что переделает так же и мужское тело.</li>
+      <li><strong>Альфа-вырез дублирующими материалами</strong> (старый <em>Knighthood</em>): папки <code>AlphaVersion</code>, автор в переписке — <q>simply use the alpha of the albedos to cut out the hidden polygons</q>. В новых <em>Modular Knights</em> этих папок уже нет: автор обещал переделать риг так, чтобы трюк не был нужен.</li>
+    </ul>
+    <p>Отзыв покупателя об их модели кастомизации целиком: <q>I love how it's so straightforward and doesn't rely on a ton of scripts. Just activate/deactivate what you need</q>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Настоящая техника</div>
+    <h2>Conforming clothing: как это сделано в Cyberpunk 2077</h2>
+    <p>То, что паки не делают, индустрия делает — и документировано пошагово. Шейп называется <code>GarmentSupport</code>, он нужен на каждом сабмеше и требует наличия <code>Basis</code>.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Направление обратное</span>
+    <p>Не плащ раздувается поверх брони — <strong>нижняя вещь сжимается</strong> к тому, что под ней. Следствие практическое: три слоя (рубаха → броня → плащ) — это <strong>три шейпа, а не восемь</strong>. Комбинаторики нет.</p>
+  </div>
+
+  <div class="col">
+    <h3>Авторинг в Blender — семь шагов</h3>
+    <ol class="steps">
+      <li>Склеить в <strong>один меш</strong> всё, что может оказаться под вещью: тело, голову, кисти (<code>Ctrl+J</code>). Без головы воротник пальто будет клипать в шею.</li>
+      <li>На подгоняемой вещи создать шейп-кей <code>Basis</code> — это «как вещь выглядит несжатой».</li>
+      <li>Добавить модификатор <strong>Shrinkwrap</strong>, Target — склеенная подложка.</li>
+      <li>Wrap Method: <code>Nearest Surface Point</code> ради скорости или <code>Target Normal Project</code> ради гладкости — мануал Blender прямо обещает <q>much smoother projection in return for being significantly slower</q>. Это штатное лекарство от рваных швов.</li>
+      <li>Offset <strong>0.001</strong>; если всё равно клипает — <strong>0.002</strong>. Snap Mode <code>Above Surface</code> кладёт отступ по сглаженной нормали цели.</li>
+      <li>Маска: поле Vertex Group у самого модификатора (вершина вне группы не двигается) и/или Vertex Group у шейп-кея в панели Shape Keys.</li>
+      <li>В выпадающем меню модификатора — <strong>Apply as Shape Key</strong>, затем переименовать появившийся <code>Shrinkwrap</code> в имя, которое ждёт рантайм.</li>
+    </ol>
+    <div class="note cool">
+      <span class="tag">Граница приёма</span>
+      <p>«Apply as Shape Key» доступен только для модификаторов, не меняющих топологию. Shrinkwrap и Smooth проходят, Subdivision и Mirror — нет.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>Порядок слоёв решает рантайм, а не художник</h3>
+    <p>В CP2077 считается <code>garmentScore</code>: префикс компонента (<code>s0</code>&nbsp;=&nbsp;0, <code>l0</code>&nbsp;=&nbsp;10, <code>a0</code>&nbsp;=&nbsp;20, <code>t0</code>&nbsp;=&nbsp;30, … <code>t2</code>&nbsp;=&nbsp;120) плюс теги (<code>PlayerBodyPart</code>&nbsp;=&nbsp;−2000, <code>Tight</code>&nbsp;=&nbsp;−1000, <code>Normal</code>&nbsp;=&nbsp;0, <code>Large</code>&nbsp;=&nbsp;+1000, <code>XLarge</code>&nbsp;=&nbsp;+2000). У кого счёт выше — тот давит. Сила сжатия у каждой вершины берётся из вершинных цветов: <code>_GARMENTSUPPORTWEIGHT</code> (чёрный — жмут сильно, красный — слабо) и <code>_GARMENTSUPPORTCAP</code> (чёрный — «я давлю то, что подо мной», красный — «не давлю», порог 0.5).</p>
+    <p>Character Creator&nbsp;4 делает то же самое без шейпов вовсе: у слоёв просто номера, «вещь с большим номером кроет меньшую», порядок правится драг-н-дропом и кнопкой Collision Order. The Sims идёт третьим путём — морфы по <em>осям фигуры</em> (полный / обычный / худой / беременность), а не по сочетаниям надетого.</p>
+  </div>
+
+  <div class="col">
+    <h3>Сколько это стоит в Unity</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Что меряли</th><th>Число</th><th>Примечание</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Память на шейп</td><td class="num">40 Б / вершину</td><td>Unity всегда хранит дельты нормалей и тангентов, даже нулевые</td></tr>
+          <tr><td class="name">24 шейпа</td><td class="num">8.05 МиБ</td><td>меш 155K треугольников</td></tr>
+          <tr><td class="name">61 шейп</td><td class="num">20.15 МиБ</td><td>тот же меш</td></tr>
+          <tr><td class="name">1 активный шейп</td><td class="num">0.03 мс</td><td>Unity 2021.3 (в 2019.4 было 0.75 мс — починено)</td></tr>
+          <tr><td class="name">10 активных шейпов</td><td class="num">0.105 мс</td><td>складываются одновременно, это штатный режим</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Шейп не обязательно печь в Blender: <code>Mesh.AddBlendShapeFrame(name, weight, deltaVertices, deltaNormals, deltaTangents)</code> собирает его прямо в Unity, дельты нормалей и тангентов можно передать <code>null</code>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Ограничение, которое ломает наивный план</div>
+    <h2>Шейп и ткань несовместимы</h2>
+    <p>Это не настройка и не баг — это архитектура. Симуляция переписывает позиции вершин из своего решателя и вклад шейпа просто не видит.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Решение</th><th>Что сказано дословно</th></tr></thead>
+      <tbody>
+        <tr><td class="name">MagicaCloth 2</td><td><q>Cannot use MeshCloth for vertices that are deformed with BlendShape</q> — официальная страница возможностей</td></tr>
+        <tr><td class="name">Obi Cloth</td><td>автор: <q>Any deformable simulation does not support blendshapes, and that includes Obi cloth indeed</q></td></tr>
+        <tr><td class="name">Unity Cloth</td><td>с форума: <q>when I modify the blend shape from script the cloth breaks, the mesh completely disappears leaving my character naked</q></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note cool">
+    <span class="tag">Но наблюдение с кадра говорит тоньше</span>
+    <p>У Tales Factory <strong>шейп <code>Armor</code> и компонент <code>Cloth</code> висят на ОДНОМ объекте</strong> — и работает. Значит «несовместимы» — формулировка слишком грубая. Точнее так: ломается <strong>изменение шейпа, пока симуляция идёт</strong>; шейп, выставленный до того, как ткань начала считать, ей не мешает.</p>
+    <p>⚠ Для нас это ровно опасный случай: броню надевают <em>в рантайме</em>, то есть шейп меняется под работающей тканью. Проверять живым замером, и если рвётся — переинициализировать ткань на смену экипа (у встроенного Cloth перекраска констрейнтов при этом теряется, у MagicaCloth есть <code>BuildAndRun()</code> в фоновом потоке с задержкой в несколько кадров).</p>
+  </div>
+  <div class="note good">
+    <span class="tag">Развязка, если рвётся</span>
+    <p><strong>Шейп — на нижней вещи, ткань — на верхней.</strong> Разные рендереры, друг друга не трогают: броня и тело сжимаются шейпом, плащ просто симулируется и садится на капсулы, выставленные по броне. Это схема CP2077 и Tales Factory, сложенные вместе.</p>
+    <p>Запасной путь: выразить «плащ чуть шире» сдвигом костей и коллайдеров вместо шейпа — тогда конфликта нет вовсе.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Самый дешёвый инструмент</div>
+    <h2>Скрыть то, что под слоем</h2>
+    <p>Половина задачи решается не деформацией, а тем, что перекрытая геометрия вообще не рисуется. В индустрии это два разных класса приёмов, и их не смешивают: геометрический — треугольники не попадают в буфер; пиксельный — попадают, но выбрасываются по маске.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Приём</th><th>Как устроен</th><th>Кто так делает</th><th>Цена</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="name">Зоны-сабмеши</td>
+          <td>тело порезано на зоны, у предмета в данных номер группы; рантайм включает и выключает целые меши</td>
+          <td>WoW (geosets), UMA, Tales Factory</td>
+          <td class="win">ноль</td>
+        </tr>
+        <tr>
+          <td class="name">Группы одного меша</td>
+          <td>индексы отсортированы по зонам, зона = сабмеш со своим материалом; гасится материал, буфер не трогается</td>
+          <td>Unreal (<code>show_material_section</code>)</td>
+          <td class="win">ноль</td>
+        </tr>
+        <tr>
+          <td class="name">Маска-текстура</td>
+          <td>у каждого предмета своя маска в UV тела, альфы перемножаются в шейдере</td>
+          <td>Character Creator (Body Opacity), инди на Unity</td>
+          <td class="tie">сэмпл на маску</td>
+        </tr>
+        <tr>
+          <td class="name">Удаление на сборке</td>
+          <td>бит на треугольник, маски надетого объединяются, комбайнер не копирует скрытые индексы</td>
+          <td>UMA (<code>MeshHideAsset</code>), Avatar Optimizer</td>
+          <td class="win">минус вершины</td>
+        </tr>
+        <tr>
+          <td class="name">Схлопнуть вершину</td>
+          <td>вершина уезжает в невалидную позицию (NaN) по UV-тайлу</td>
+          <td>Poiyomi UV Tile Discard</td>
+          <td class="lose">кромка рваная</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note key">
+    <span class="tag">Порядок операций</span>
+    <p><strong>Шейп идёт первым — он же задаёт множество скрытия.</strong> В инструментах VRChat это уже автоматизировано: автор лепит один shrink-морф, а инструмент выводит из него набор вершин по порогу и либо ставит морф, либо удаляет эти полигоны. Отдельную маску под ту же вещь рисовать не нужно — источник истины один.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Второй вопрос</div>
+    <h2>Ткань в Unity без костей</h2>
+    <p>«Без костей» означает вершинную симуляцию: решатель двигает сами вершины меша, а не цепочку трансформов. Живых вариантов три.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Решение</th><th>Цена</th><th>Коллайдеры</th><th>Чем берёт</th><th>Чем плох</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="name">Unity Cloth<br><span style="font-weight:400;color:var(--muted);font-size:13px">встроенный</span></td>
+          <td class="num">бесплатно</td>
+          <td>сфера, капсула, конус из пары сфер. <strong>32 + 32</strong>, боксов нет</td>
+          <td>ноль зависимостей, покраска Max Distance кистью прямо в сцене</td>
+          <td class="lose">связь односторонняя; коллайдеры перечислять руками; дрожь; ⚠ Unity сама обсуждала депрекейт</td>
+        </tr>
+        <tr>
+          <td class="name">MagicaCloth 2<br><span style="font-weight:400;color:var(--muted);font-size:13px">MeshCloth</span></td>
+          <td class="num">$35</td>
+          <td>свои сфера, капсула, плоскость. Бокса нет</td>
+          <td>DOTS и Burst, self-collision, culling по камере и дистанции, живой автор</td>
+          <td>прокси-меш и обязательная покраска вершин; не работает на WebGL</td>
+        </tr>
+        <tr>
+          <td class="name">Obi Cloth</td>
+          <td class="num">$47</td>
+          <td><strong>любые</strong> стандартные, через обёртку</td>
+          <td>двусторонняя физика с Rigidbody, Skin Constraints, бэкенд на GPU</td>
+          <td>возни больше всех; меш обязан быть 2-манифолдом; ткань разных солверов друг друга не видит</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>Цена кадра — по официальной шкале MagicaCloth</h3>
+    <div class="tiles">
+      <div class="tile"><span class="n">×1</span><span class="l">BoneCloth</span><span class="s">цепочка костей</span></div>
+      <div class="tile"><span class="n">×4</span><span class="l">MeshCloth</span><span class="s">вершинная, «без костей»</span></div>
+      <div class="tile"><span class="n">×8</span><span class="l">взаимная коллизия</span><span class="s">между кусками ткани</span></div>
+      <div class="tile"><span class="n">×10</span><span class="l">self-collision</span><span class="s">бета, только для ПК</span></div>
+    </div>
+    <p>Разработчик сам пишет про BoneCloth: <q>Best for scenarios requiring multiple instances due to its low processing overhead</q>. У нас на экране много персонажей, и это решающее число.</p>
+  </div>
+
+  <div class="note good">
+    <span class="tag">Вывод под наш случай</span>
+    <p><strong>MagicaCloth 2, и по умолчанию BoneCloth, а не MeshCloth.</strong> Плащ — это по сути три-шесть вертикальных прядей: цепочка костей даёт тот же силуэт вчетверо дешевле и настраивается быстрее. MeshCloth держать для крупного плана и для широких накидок со складками, которые прядями не изобразить.</p>
+    <p>Встроенный Cloth годится только чтобы попробовать бесплатно: над ним висит депрекейт, а 32 коллайдера и отсутствие боксов упираются в те же ограничения, только без culling и без Burst.</p>
+  </div>
+
+  <div class="col">
+    <h3>Их настройки Cloth — как отправная точка</h3>
+    <p>Сняты с того же кадра, объект <code>Hood02_LOD0</code>. Это не эталон, но разумный старт, за который уже кто-то платил временем.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Параметр</th><th>Значение</th><th>Параметр</th><th>Значение</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Stretching Stiffness</td><td class="num">1</td><td class="name">Damping</td><td class="num">0.2</td></tr>
+          <tr><td class="name">Bending Stiffness</td><td class="num">0.2</td><td class="name">World Velocity Scale</td><td class="num">0.1</td></tr>
+          <tr><td class="name">Use Tethers</td><td class="num">вкл</td><td class="name">World Acceleration Scale</td><td class="num">0.1</td></tr>
+          <tr><td class="name">Use Gravity</td><td class="num">вкл</td><td class="name">Friction</td><td class="num">0.5</td></tr>
+          <tr><td class="name">External Acceleration</td><td class="num">0, 0, 0</td><td class="name">Random Acceleration</td><td class="num">0, 0, 0</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Цена производства контента</span>
+    <p>Требование было — «не сложно и долго в производстве». По этому критерию порядок тот же: цепочка костей — нарисовал кости и веса, дальше ползунки; MeshCloth — прокси-меш, редукция двумя ползунками и <strong>обязательная</strong> покраска вершин Move / Fixed / Invalid, без неё не шевелится ничего; Obi — блюпринты, 2-манифолд, substeps и iterations на каждый тип констрейнта.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Наш код</div>
+    <h2>Что уже есть, а чего нет</h2>
+    <p>Аудит по репозиторию плюс один живой замер.</p>
+  </div>
+  <div class="chain">
+    <div class="step have"><span class="k">Есть</span><span class="v"><strong>Слои одежды.</strong> Пять слотов, тумблер сабмешей одного GLB-атласа, слот по префиксу имени детали.</span></div>
+    <div class="step have"><span class="k">Есть</span><span class="v"><strong>Скрытие по зонам.</strong> Регионы кости → меш; работает на старом послотном пути, на атласном не задействовано.</span></div>
+    <div class="step have"><span class="k">Есть</span><span class="v"><strong>Труба несёт шейпы.</strong> Замерено: экспорт, пересборка бинаря и загрузка сохраняют шейпы с именами и смещениями.</span></div>
+    <div class="step todo"><span class="k">Нет</span><span class="v"><strong>Рантайма шейпов.</strong> Ни одна строка не ставит <code>morphTargetInfluences</code>. <code>BodyMorph.shapes</code> — намерение с готовой чистой математикой и тестами.</span></div>
+    <div class="step todo"><span class="k">Нет</span><span class="v"><strong>Ткани.</strong> Есть только подготовка: читаут «шары и капсулы, бюджет 32», сейчас занято 13.</span></div>
+    <div class="step have"><span class="k">Есть, но не тронуто</span><span class="v"><strong>Jolt SoftBody</strong> с <code>SkinWeight</code> и <code>InvBind</code> — это готовая skinned cloth, новых зависимостей не нужно. В коде не упоминается ни разу.</span></div>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Два блокера под любую ткань</span>
+    <p><strong>Таз и вся спина у нас до сих пор боксы</strong>, а ткань во всех движках видит только шары и капсулы — плащ провалился бы сквозь торс. Бюджет 32, занято 13, место есть.</p>
+    <p><strong>Активный набор физ-тел — модульный синглтон.</strong> Две куклы на сцене не могут иметь разные коллайдеры, и пер-персонажный плащ упрётся в это первым.</p>
+  </div>
+
+  <div class="col">
+    <h3>Имена</h3>
+    <p>Свободны и логичны: префикс деталей <code>cloak_</code>, слот <code>cloak</code>. Слово <code>cape</code> уже занято формой острия в ковке, <code>cloth</code> — семьёй материалов. Слот <code>belt</code> существует в броне, но своего 3D-слота не имеет — готовая дырка под «косметику поверх», если не хочется заводить новый слот экипа.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">План</div>
+    <h2>Что делать по порядку выгоды</h2>
+    <p>Разнообразие даёт не шейп, а слои × варианты × материалы: восемнадцать готовых рыцарей у них собраны ровно этим, из одного FBX.</p>
+  </div>
+  <ol class="steps">
+    <li><strong>Слот «плащ».</strong> Проводка примерно в десяти точках, шейпов не требует, прибавку к разнообразию даёт сразу. Нужен и в Unity, и на стенде.</li>
+    <li><strong>Скрытие под надетым на атласном пути.</strong> Самый дешёвый анти-клиппинг и то, чем на самом деле пользуются паки. Механизм у нас есть, он просто не подключён к атласу.</li>
+    <li><strong>Шейп-подгонка</strong> — один шейп на вещь, как <code>Armor</code> у них: авторинг Shrinkwrap, включение по факту надетой брони. Приём доказан на практике в паке, который у нас перед глазами, поэтому он не «когда-нибудь потом», а следующий после скрытия.</li>
+    <li><strong>Ткань — в Unity, MagicaCloth 2, BoneCloth.</strong> Перед этим перевести таз и спину из боксов в капсулы. MeshCloth — точечно, на крупный план.</li>
+  </ol>
+  <div class="note key">
+    <span class="tag">Где что живёт</span>
+    <p>Unity — основной клиент, вся красота там: ткань, VFX, пост-эффекты. Веб — стенд: посмотреть, как играется и как выглядят анимации, и править баланс. <strong>Если приём не живёт в вебе легко — на веб-версию силы не тратим.</strong> В частности, плащ на стенде может остаться жёстким, и это не долг.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="eyebrow">Честные пробелы</div>
+    <h2>Что проверить не удалось</h2>
+    <ul class="plain">
+      <li>Unreal Mutable («Remove Mesh Blocks» — официальный модульный пайплайн Epic): страницы отдают только оглавление, зеркала закрыты. Формулировки видели лишь в сниппетах поисковика и за факт не считаем.</li>
+      <li>Зоны Creation Engine (Skyrim, Fallout): вики отдали 403. Опираемся на WoW, UMA и инструменты VRChat.</li>
+      <li>Замеров в миллисекундах для MagicaCloth против Obi в открытых источниках нет — сравнение идёт по официальной шкале нагрузки самого MagicaCloth и по консенсусу форума.</li>
+      <li>⚠ Сколько вещей в паке несут шейп <code>Armor</code> и одинаково ли он назван у плащей и сюрко — по кадру видно только <code>Hood02</code>. Проверяется за минуту в самом Unity: пройтись по вещам и посмотреть раздел BlendShapes.</li>
+      <li>Уживаются ли шейп и ткань при смене экипа В РАНТАЙМЕ — на кадре видно лишь статично выставленное значение. Нужен живой замер.</li>
+      <li>Судьба встроенного Unity Cloth не решена: тема о депрекейте открыта Unity в сентябре 2024, замена не названа, но и в списке ломающих изменений 6.5 ткани нет, а страница мануала живая.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="src">
+    <span>Источники, открытые при разборе:</span>
+    <a href="https://assetstore.unity.com/publishers/39058">assetstore.unity.com/publishers/39058</a> — шесть паков The Tales Factory, вкладка Package Content, отзывы
+    <a href="https://docs.unity3d.com/Manual/class-Cloth.html">docs.unity3d.com — компонент Cloth</a>, ограничения коллайдеров и лимиты 32 + 32
+    <a href="https://magicasoft.jp/en/magica-cloth-2-2/">magicasoft.jp — MagicaCloth 2</a>, типы ткани, шкала нагрузки, несовместимость с BlendShape
+    <a href="https://obi.virtualmethodstudio.com/manual/7.0/">obi.virtualmethodstudio.com — Obi Cloth 7</a>, блюпринты, Skin Constraints, бэкенды
+    <a href="https://docs.blender.org/manual/en/latest/modeling/modifiers/deform/shrinkwrap.html">docs.blender.org — Shrinkwrap</a>, Wrap Method и Snap Mode
+    <a href="https://wowdev.wiki/Character_Customization">wowdev.wiki — Character Customization</a>, нумерация geoset-зон
+  </div>
+  <div>Разбор собран пятью параллельными агентами, выводы сверены с нашим кодом и одним живым замером трубы GLB.</div>
+</footer>
+
+</div>
+
+</body></html>

@@ -224,6 +224,13 @@
         "date": "2026-09-05",
         "source": "https://claude.ai/artifact/15RGf2A8qGNgykvamWXq8u",
         "about": "Веб на Three.js или Unity для поз-редактора. Вывод: инструмент остаётся в вебе, Unity-порт анимации заморожен, Unity — клиент, который только проигрывает клипы."
+      },
+      {
+        "file": "library/sloi-odezhdy-i-tkan.html",
+        "title": "Слои одежды и ткань",
+        "date": "2026-09-29",
+        "source": "https://claude.ai/artifact/BifZQwfhpBmE3oTMo118dV",
+        "about": "Как собирают одежду слоями, чтобы броня не торчала сквозь плащ: разбор паков The Tales Factory (у вещи один бленд-шейп «Armor», 0→100, плюс Unity Cloth на том же объекте), приём GarmentSupport из Cyberpunk 2077 с пошаговым авторингом в Blender, таблица способов скрыть перекрытое, сравнение трёх решений ткани в Unity с ценой кадра, и что из этого уже есть в нашем коде."
       }
     ]
   },
