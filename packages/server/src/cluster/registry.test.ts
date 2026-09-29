@@ -165,3 +165,91 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('⭐ R6-08: живое закре
     expect(await reg.liveClaim(char()), 'закрепления нет').toBeNull();
   });
 });
+
+describe.runIf(process.env.DM_SKIP_PG !== '1')('⭐ R16-02: нода, которую реестр уже счёл мёртвой, отданного не оживляет', () => {
+  const runOwner = async (key: string): Promise<string | null> =>
+    (await pool.q1<{ node_id: string }>('SELECT node_id FROM run_locks WHERE run_key = $1', [key]))?.node_id ?? null;
+
+  it('A молчала 200 с (простой машины), её героя и забег взяла B и отпустила — продление A с арендой их не вставляет; возраст удара A — по часам базы', async () => {
+    if (!alive) return;
+    const a = `${tag}-pa`, b = `${tag}-pb`;
+    await reg.heartbeat(a, 'ws://pa', beat);
+    await reg.heartbeat(b, 'ws://pb', beat);
+    const h = char(), r = `id:${tag}-run1`;
+    expect(await reg.claimForJoin(h, a)).toBe(a);
+    expect(await reg.claimRun(r, a, 'AAAA1')).toBeNull();
+    expect(await reg.nodeBeatAge(a), 'только что била').toBeLessThan(5);
+    // A на паузе 200 с: реестр её не видит.
+    await pool.q(`UPDATE cluster_nodes SET beat_at = now() - interval '200 seconds' WHERE id = $1`, [a]);
+    expect(await reg.nodeBeatAge(a), 'реестр не видел её 200 с').toBeGreaterThanOrEqual(199);
+    // Герой переподключился через гейтвей на B, доиграл и ушёл из города (забег припаркован в строке): B отпустила и героя, и забег.
+    expect(await reg.claimForJoin(h, b), 'A мертва — герой переходит').toBe(b);
+    expect(await reg.claimRun(r, b, 'BBBB1'), 'и забег').toBeNull();
+    await reg.releaseChar(h, b);
+    await reg.releaseRun(r, b, 'BBBB1');
+    // A проснулась: продление своих (нода с арендой) — ни вставки, ни продления.
+    expect([...await reg.touchClaims([h], a, true)], 'героя A больше не держит').toEqual([]);
+    expect([...await reg.touchRuns([{ key: r, room: 'AAAA1' }], a, true)], 'и забега').toEqual([]);
+    expect(await reg.claimOwner(h), 'закрепление не вставлено').toBeNull();
+    expect(await runOwner(r), 'держание забега не вставлено').toBeNull();
+    // Уборка реестра сняла строку A — то же, и возраста у неё нет.
+    await pool.q('DELETE FROM cluster_nodes WHERE id = $1', [a]);
+    expect(await reg.nodeBeatAge(a), 'строки нет').toBeNull();
+    expect([...await reg.touchClaims([h], a, true)]).toEqual([]);
+    expect([...await reg.touchRuns([{ key: r, room: 'AAAA1' }], a, true)]).toEqual([]);
+    expect(await reg.claimOwner(h)).toBeNull();
+    expect(await runOwner(r)).toBeNull();
+    // Живая нода с арендой — как прежде: своё продлевает, снятое восстанавливает (R1-08, V2).
+    const g = char(), rg = `id:${tag}-run2`;
+    expect([...await reg.touchClaims([g], b, true)], 'живая B восстанавливает своё').toEqual([g]);
+    expect([...await reg.touchRuns([{ key: rg, room: 'BBBB2' }], b, true)]).toEqual([rg]);
+    expect(await reg.claimOwner(g)).toBe(b);
+    expect(await runOwner(rg)).toBe(b);
+  });
+
+  it('⭐ R17-01: удар сердца ноды с арендой — только пока реестр её видел меньше аренды назад: мёртвую строку не освежает и снятую не вставляет', async () => {
+    if (!alive) return;
+    const a = `${tag}-qa`, b = `${tag}-qb`;
+    const ageOf = async (id: string): Promise<number | null> => reg.nodeBeatAge(id);
+    expect(await reg.heartbeat(a, 'ws://qa', beat), 'первый удар — вставка (аренды ещё нет)').toBe(true);
+    await reg.heartbeat(b, 'ws://qb', beat);
+    expect(await reg.heartbeat(a, 'ws://qa', beat, true), 'живая нода с арендой — удар дошёл').toBe(true);
+    expect(await ageOf(a)).toBeLessThan(5);
+    const h = char(), r = `id:${tag}-run3`;
+    expect(await reg.claimForJoin(h, a)).toBe(a);
+    expect(await reg.claimRun(r, a, 'AAAA3')).toBeNull();
+    // Машина A на паузе 200 с; сверка возраста удара (`nodeBeatAge`) ответила ДО паузы — «2 с», и нода действует по этому ответу.
+    await pool.q(`UPDATE cluster_nodes SET beat_at = now() - interval '200 seconds' WHERE id = $1`, [a]);
+    // B взяла героя и забег и отпустила (доиграл, ушёл из города).
+    expect(await reg.claimForJoin(h, b)).toBe(b);
+    expect(await reg.claimRun(r, b, 'BBBB3')).toBeNull();
+    await reg.releaseChar(h, b);
+    await reg.releaseRun(r, b, 'BBBB3');
+    // Проснувшаяся A: продление своих отказано (R16-02), и удар сердца — тоже: строка не освежается.
+    expect([...await reg.touchClaims([h], a, true)]).toEqual([]);
+    expect(await reg.heartbeat(a, 'ws://qa', beat, true), 'реестр не видел её дольше аренды — удара нет').toBe(false);
+    expect(await ageOf(a), 'строка не освежена').toBeGreaterThanOrEqual(199);
+    // Следующий удар по расписанию (сверка теперь видит 200 с — но и без неё): продление по-прежнему ничего не вставляет.
+    expect([...await reg.touchClaims([h], a, true)]).toEqual([]);
+    expect([...await reg.touchRuns([{ key: r, room: 'AAAA3' }], a, true)]).toEqual([]);
+    expect(await reg.claimOwner(h), 'отпущенный B герой не вернулся за A').toBeNull();
+    expect(await pool.q1('SELECT 1 FROM run_locks WHERE run_key = $1', [r]), 'и забег').toBeNull();
+    // Строку A сняла уборка — удар с арендой её не вставляет.
+    await pool.q('DELETE FROM cluster_nodes WHERE id = $1', [a]);
+    expect(await reg.heartbeat(a, 'ws://qa', beat, true), 'строки нет — удара нет').toBe(false);
+    expect(await ageOf(a), 'строка не вставлена').toBeNull();
+    // Контроль: без аренды (первый удар нового процесса, одиночная роль) — вставка, как прежде.
+    expect(await reg.heartbeat(a, 'ws://qa', beat), 'первый удар нового процесса').toBe(true);
+    expect(await ageOf(a)).toBeLessThan(5);
+  });
+
+  it('контроль: одиночный процесс (аренды нет, отдать его героев некому) продлевает и восстанавливает своих и после долгой тишины, как прежде', async () => {
+    if (!alive) return;
+    const s = `${tag}-ps`;
+    await reg.heartbeat(s, 'ws://ps', beat);
+    await pool.q(`UPDATE cluster_nodes SET beat_at = now() - interval '200 seconds' WHERE id = $1`, [s]);
+    const h = char();
+    expect([...await reg.touchClaims([h], s)], 'база лежала дольше срока — свои у одиночного процесса остаются').toEqual([h]);
+    expect(await reg.claimOwner(h)).toBe(s);
+  });
+});

@@ -531,15 +531,20 @@ async function main(): Promise<void> {
     await b.open(token, second.charId);
     // На кластере гейтвей мог положить обоих на одну ноду (показатели нод отстают на сердцебиение) — тогда B переходит на
     // ДРУГУЮ ноду прямым подключением: делить кошелёк через две ноды и одну базу — главный случай кластера.
-    const others = (await clusterNodes()).filter((u) => u !== a.url);
-    if (b.url === a.url && others.length) {
+    // ⭐ E2E 29.09: ноду сравниваем БЕЗ строки запроса — с R13-08 маршрут отдаёт адрес с пропуском (`?lp=…`), и `a.url !== b.url` на одной
+    // ноде: стенд считал их разными, и гонка шага 6 в кластере шла на ОДНОЙ ноде, а отчёт писал «на разных».
+    const bare = (u: string): string => u.split('?')[0]!;
+    const others = (await clusterNodes()).filter((u) => bare(u) !== bare(a.url));
+    if (bare(b.url) === bare(a.url) && others.length) {
       await b.leave();
       closes.push(b.closeCode ?? -1);
       await sleep(500);
       b = new Conn();
       await b.open(token, second.charId, others[0]);
     }
-    console.log(`    A на ${a.url}, B на ${b.url}${a.url === b.url ? ' (одна нода — одиночный сервер)' : ''}`);
+    const sameNode = bare(a.url) === bare(b.url);
+    console.log(`    A на ${bare(a.url)}, B на ${bare(b.url)}${sameNode ? ' (одна нода — одиночный сервер)' : ''}`);
+    if (others.length) check(!sameNode, 'кластер: герои на РАЗНЫХ нодах');
     const bagA = availableMaterials(a.save!.inventory, {}), bagB = availableMaterials(b.save!.inventory, {});
     check(Object.keys(cost.materials).every((id) => !bagA[id] && !bagB[id]), 'в сумках героев нужного сырья нет — делят только кошелёк');
     const goldA = a.save!.gold, goldB = b.save!.gold;

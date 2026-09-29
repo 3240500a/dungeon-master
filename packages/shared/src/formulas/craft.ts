@@ -1,5 +1,5 @@
 import type { ConfigRegistry } from '../config/registry.js';
-import type { ConfigShapes } from '../config/schemas.js';
+import { AFFIX_SIDE_MAX, type ConfigShapes } from '../config/schemas.js';
 import type { BaseRoll, CraftPartPick, CraftParts, Item, ItemOrigin, Rarity, RolledStat } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { MaterialCost } from '../economy/materials.js';
@@ -304,21 +304,32 @@ export function capacityOf(reg: ConfigRegistry, t: number): number {
 
 /**
  * ФОРМА ЁМКОСТИ из оси обвязки: +1 — всё в префиксы, −1 — в суффиксы, 0 — поровну.
- * ⚠ Зажата лимитами редкого (не больше 3 на сторону): формы 3+3 дроп не даёт вовсе, значит и
+ * ⚠ Зажата лимитами редкого (не больше 3 на сторону, `AFFIX_SIDE_MAX`): формы 3+3 дроп не даёт вовсе, значит и
  * ковка её не даёт (§6.1). Поэтому на Σ=5 существуют только 3+2 и 2+3.
  */
 export function formOf(sigma: number, axis: number): AffixForm {
   const s = Math.max(0, Math.round(sigma));
-  const p = clamp(Math.round((s * (1 + clamp(axis, -1, 1))) / 2), Math.max(0, s - 3), Math.min(3, s));
+  const p = clamp(Math.round((s * (1 + clamp(axis, -1, 1))) / 2), Math.max(0, s - AFFIX_SIDE_MAX), Math.min(AFFIX_SIDE_MAX, s));
   return { prefix: p, suffix: s - p };
 }
 
 export const formKey = (f: AffixForm): string => `${f.prefix}+${f.suffix}`;
 
-/** Множитель цены формы M = 1 / частота такой-или-лучшей формы у найденных редких (§6.1). */
-export function formMult(reg: ConfigRegistry, f: AffixForm): number {
+/** Отказ ковки, зачарования и перекатки формы, у которой нет цены в `balance.craft.formMult` (R17-03). */
+export const FORM_UNPRICED = 'Форма без цены — кузнец её сейчас не куёт';
+
+/**
+ * Множитель цены формы M = 1 / частота такой-или-лучшей формы у найденных редких (§6.1).
+ * ⚠ R17-03: формы нет в таблице — `undefined`, а не ×1. ×1 — цена самой бедной формы: 3+2 ковалась, зачаровывалась и перекатывалась
+ * вшестеро дешевле, молча. Зовущие отказывают ДО платы (`FORM_UNPRICED`, правило R10-14: пустая цена — отказ, а не бесплатно).
+ * Схема строку у каждой формы, которую даёт ёмкость, требует (`affixFormKeys`); без цены остаётся вещь, скованная до того, как
+ * хозяин опустил ёмкость и убрал строки её формы.
+ */
+export function formMult(reg: ConfigRegistry, f: AffixForm): number | undefined {
   if (f.prefix + f.suffix === 0) return 1;
-  return reg.get('balance').craft.formMult[formKey(f)] ?? 1;
+  const table = reg.get('balance').craft.formMult;
+  const key = formKey(f);
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
 }
 
 // ── Грань и статус ──────────────────────────────────────────────────────────────────────────────
@@ -495,6 +506,8 @@ export function craftCost(reg: ConfigRegistry, weaponClass: string, parts: Resol
   const anat = anatomyRow(reg, weaponClass);
   const tier = craftTiers(reg)[t];
   const M = formMult(reg, form);
+  // R17-03: формы без цены сюда не доходят — `craftWeapon` отказывает раньше. Прямой вызов с такой формой — ошибка зовущего, не «×1».
+  if (M === undefined) throw new Error(`craftCost: у формы ${formKey(form)} нет цены (balance.craft.formMult)`);
   const materials: MaterialCost = {};
   const lines: CraftCostLine[] = [];
   if (anat) {
@@ -661,6 +674,8 @@ export function craftWeapon(
   }
   const tier = tiers[t]!;
   const bake = bakeParts(reg, base, t, res.parts);
+  // ⚠ R17-03: у формы нет цены — отказ, а не сырьё ×1 (цена самой бедной формы). Схема такую таблицу не пропускает; это страховка.
+  if (formMult(reg, bake.affixCap) === undefined) return { ok: false, reason: FORM_UNPRICED, bake, ...view };
   const cost = craftCost(reg, input.weaponClass, res.parts, input.parts, t, bake.affixCap, input.finish);
   if (opts.materialsOn) {
     const off = Object.keys(cost.materials).find((id) => !reg.get('craft-materials').some((m) => m.id === id && m.enabled !== false));
@@ -795,19 +810,23 @@ export function enchantSlots(reg: ConfigRegistry, item: Item, rarity: Rarity):
  * за пять слотов, которых не получит. Один шов на зачарование и перекатку (R2-10): обе катают ровно эту
  * форму и обе за неё платят. Потолок редкости ниже P+S делает сплит неопределённым — тогда берём верх
  * (P, S): переплатить безопаснее, чем недоплатить. Нет ёмкости (найденная вещь) — 1.
+ * ⚠ R17-03: у катаемой формы нет цены — `undefined`: зачарование и перекатка отказывают (`canEnchantItem`, `canRerollItem`).
  */
-export function rolledFormMult(reg: ConfigRegistry, item: Item, rarity: Rarity): number {
+export function rolledFormMult(reg: ConfigRegistry, item: Item, rarity: Rarity): number | undefined {
   if (!item.affixCap) return 1;
   const s = affixSlotsFor(reg.get('rarities').find((r) => r.id === rarity), item.affixCap);
   return formMult(reg, { prefix: s.maxPrefix, suffix: s.maxSuffix });
 }
 
-/** Цена зачарования: золото × множитель ступени × цена редкости × M формы, которую она катает (§13). */
+/**
+ * Цена зачарования: золото × множитель ступени × цена редкости × M формы, которую она катает (§13).
+ * У катаемой формы нет цены (R17-03) — NaN: не число, а не скидка; `canEnchantItem` откажет раньше («Форма без цены»).
+ */
 export function enchantCost(reg: ConfigRegistry, item: Item, rarity: Rarity): number {
   const k = reg.get('balance').craft;
   const tier = craftTiers(reg)[tierIndexOfItem(reg, item)];
   const rDef = reg.get('rarities').find((r) => r.id === rarity);
-  return Math.round(k.cost.enchantGold * (tier?.reqMult ?? 1) * (rDef?.priceMult ?? 1) * rolledFormMult(reg, item, rarity));
+  return Math.round(k.cost.enchantGold * (tier?.reqMult ?? 1) * (rDef?.priceMult ?? 1) * (rolledFormMult(reg, item, rarity) ?? Number.NaN));
 }
 
 /**
@@ -1235,7 +1254,8 @@ export function meltReturn(reg: ConfigRegistry, item: Item): MaterialCost {
   // Те же строки, что у `craftCost` (единицы гнезда × M формы, доводка — нет), но БЕЗ проверок
   // `resolveParts`: деталь, выключенную или убранную ПОСЛЕ ковки, переплавить всё равно обязаны —
   // иначе вещь застряла бы у игрока навсегда. Нет записи детали — материал семьи гнезда.
-  const M = formMult(reg, item.affixCap ?? { prefix: 0, suffix: 0 });
+  // R17-03: у формы нет цены — ×1: цена формы не ниже 1 (схема), и возврат по ×1 не больше, чем по любой цене; застрять вещь не должна.
+  const M = formMult(reg, item.affixCap ?? { prefix: 0, suffix: 0 }) ?? 1;
   const out: MaterialCost = {};
   for (const slot of CRAFT_SLOT_LIST) {
     const pick = item.parts[slot];

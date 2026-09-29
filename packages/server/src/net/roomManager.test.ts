@@ -1568,7 +1568,8 @@ describe('RoomManager — раунд 3: финал без партнёра, не
     expect(ws.frames, 'и ответа на него нет').toEqual([]);
     const flood = new FakeConn();
     rm.handleConnection(flood);
-    for (let i = 0; i < 2_000 && flood.open; i++) flood.push({ t: 'input', seq: i, input: {} });
+    // ⭐ R15-04: 2000 кадров разом — это уже хвост честного обрыва связи (до 32 с на 60 Гц), он отбрасывается, а не рвёт; поток — нет.
+    for (let i = 0; i < 10_000 && flood.open; i++) flood.push({ t: 'input', seq: i, input: {} });
     expect(flood.closedWith, 'флуд вводом без паузы — всё ещё 4008').toBe(4008);
   });
 

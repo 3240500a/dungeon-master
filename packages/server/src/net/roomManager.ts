@@ -9,6 +9,7 @@ import {
 import { getSession, getCharacter, putCharacter, getRunLedger } from '../db/db.js';
 import { Room, townRng, runLedgerKey, runLedgerSettled, runElsewhereMsg, type Farewell } from './room.js';
 import { limits, known, ipBucket, RecentKeys } from './rateLimit.js';
+import { logThrottle } from './logThrottle.js';
 import { sessionKey, routePassOk, ROUTE_PASS_TTL_MS } from './authSession.js';
 import { counters, setGaugeProvider } from './metrics.js';
 import { tickScheduler } from './scheduler.js';
@@ -60,7 +61,8 @@ function untilMs(p: Promise<unknown>, ms: number): Promise<void> {
  *  • `runStatus` — есть ли незавершённый забег (грейс-комната из подземелья); комнату не создаёт;
  *  • `join { resume }` — вернуться в грейс-комнату (та же точка); без грейса → error 'no-run';
  *  • `join { roomCode }` — к другу по коду; `join { fresh }`/без кода — новая комната (соло/хост).
- * Осознанный вход в НОВУЮ комнату при висящем забеге = бросок забега (штраф смерти) как страховка.
+ * Осознанный вход в НОВУЮ комнату при висящем забеге — страховка без штрафа (забег припаркован, чужой комнате или смерть оплачена);
+ * ⭐ R16-01: бросок, который стоил бы штрафа смерти, — отказ `run`: штраф за брошенный забег берёт только «Завершить».
  * Реконнект-грейс возникает ТОЛЬКО при выходе из подземелья (в городе выход = чистый разрыв).
  * Роутит кадры клиента в его комнату; ws → {playerId, room}; пустая комната самоуничтожается.
  */
@@ -151,6 +153,11 @@ const JOIN_RATE = { t: 'error', code: 'rate', msg: 'Слишком часто �
 const ROOM_FULL = { t: 'error', code: 'full', msg: 'В комнате нет мест' } as const;
 /** ⭐ R16 C-03: по коду — в подземелье чужого забега, а у героя припаркован свой (`Room.runClashOn`; тот же отказ, что голосу за спуск, R4-25). */
 const RUN_CLASH_JOIN = { t: 'error', code: 'run', msg: 'У вас незавершённый забег — продолжите или завершите его, прежде чем идти в чужой' } as const;
+/**
+ * ⭐ R16-01: вход без «Продолжить» (новая комната, по коду), а грейс героя держит его забег, и бросок стоил бы штрафа смерти
+ * (`Room.insuranceCharges`): бросить забег за штраф — только «Завершить» (`abandon`). Тот же текст, что у отказа голосу за спуск (R4-25).
+ */
+const RUN_PARKED_JOIN = { t: 'error', code: 'run', msg: 'У вас незавершённый забег — продолжите или завершите его' } as const;
 /**
  * R3-12: нода сливается (SIGTERM, `/internal/drain`) — новых сессий и штрафов не заводим: запись сейвов слива уже идёт,
  * а начатое после неё процесс оборвал бы выходом. Клиент повторит вход — гейтвей уведёт его на живую ноду.
@@ -276,6 +283,11 @@ export const clusterHooks = {
   heldRuns(): { key: string; room: string }[] { return current ? current.heldRuns() : []; },
   /** ⭐ ENV1: эти забеги комнат ноды реестр числит за другой нодой — комнаты их отпускают (см. `RoomManager.fenceRuns`). */
   fenceRuns(runs: readonly { key: string; room: string }[]): void { current?.fenceRuns(runs); },
+  /**
+   * ⭐ R15-08: сердцебиение продлило забеги (ключ и комнату снимка), которые эти комнаты уже не держат, — отпустить снова или, если забег взяла
+   * другая комната ноды, переписать строку на неё (перепрогон R15; см. `RoomManager.releaseRuns`).
+   */
+  releaseRuns(runs: readonly { key: string; room: string }[]): void { current?.releaseRuns(runs); },
 };
 
 export class RoomManager {
@@ -309,7 +321,7 @@ export class RoomManager {
   /**
    * ⭐ R10-05: ПОРЯДКОВЫЙ НОМЕР ПОСЛЕДНЕЙ ПРОЩАЛЬНОЙ ЗАПИСИ героя (`track`): вход сверяет его до и после чтения сейва
    * (`farewellMoved`). Номер общий на процесс и только растёт: снятая запись (`releaseIfIdle`) и новая — всегда «сдвинулось».
-   * ⭐ R11-12: `at` — когда записан (часы `Date.now`): номер героя, которого нода больше ничем не держит, подметает фон
+   * ⭐ R11-12: `at` — когда записан (⭐ R16-06: часы процесса, `performance.now`): номер героя, которого нода больше ничем не держит, подметает фон
    * (`sweepFarewellSeq`). Раньше снимал только `releaseIfIdle`, а после прощания, начатого комнатой (истёк грейс, финал, вайп), и
    * после входа, упавшего посреди, его не звал никто — карта росла на каждого такого героя.
    */
@@ -320,7 +332,7 @@ export class RoomManager {
    * ждут один запрос, а не множат его.
    */
   private sessionLookups = new Map<string, Promise<string | null>>();
-  /** R3-19: фоновая дописка `unsaved` — когда пробовать героя снова и сколько раз подряд не вышло; кого дописывают сейчас. */
+  /** R3-19: фоновая дописка `unsaved` — когда пробовать героя снова (⭐ R16-06: по часам процесса) и сколько раз подряд не вышло; кого дописывают сейчас. */
   private unsavedBackoff = new Map<string, { at: number; fails: number }>();
   private unsavedRetrying = new Set<string>();
   /** Потолок ожидания прощальной записи (R1-15). Поле, а не константа, — тест ставит короткий. */
@@ -352,6 +364,12 @@ export class RoomManager {
    * спуск получает отказ с её кодом.
    */
   private runRooms = new Map<string, Room>();
+  /**
+   * ⭐ ПЕРЕПРОГОН R15: ОТПУСК ЗАБЕГА, НЕ ДОШЕДШИЙ ДО РЕЕСТРА (раздел ноды с базой, обрыв, ответ потерян), — ключ → код комнаты, чью строку снять.
+   * Раньше сбой глушился: строка, которую позднее взятие или продление вставило после отпуска комнатой (R15-08), жила без комнаты до
+   * `CLAIM_IDLE_SEC`, и «Продолжить» на соседней ноде слало к исчезнувшей комнате. Повторяет каждый удар сердца (`heldRuns`), пока не ляжет.
+   */
+  private runsDue = new Map<string, string>();
 
   /** Имена персонажей с живой сессией — для продления закрепления в реестре (Ф4). */
   liveChars(): IterableIterator<string> { return this.live.keys(); }
@@ -392,16 +410,19 @@ export class RoomManager {
     // ушедших (их закрепление не читалось — копия даже не пробовалась) и без последних секунд присутствующих; копия, отданная соседу
     // по аккаунту, оставалась у двоих — ровно то, от чего R2-08, R3-19 и R11-03. И молча. Теперь круг за кругом с паузой, а что так и
     // не легло к концу бюджета, — ИНЦИДЕНТ, как у забытой копии (`forgetUnsaved`).
-    const deadline = Date.now() + budgetMs;
+    // ⭐ R16-06: бюджет — по часам процесса (`performance.now`), как аренда ноды и предохранитель слива (`node.ts`, R15-06). По настенным шаг
+    // часов назад (chrony makestep) растягивал круги за предохранитель — `exit(0)` раньше, чем слив доходил до снятия ноды из реестра (её
+    // закрепления и забеги держались ещё `NODE_DEAD_SEC`) и до ИНЦИДЕНТА о недописанных; шаг вперёд бросал дописку сразу, хотя аренда шла.
+    const deadline = performance.now() + budgetMs;
     for (let pause = DRAIN_RETRY_MS; ; pause = Math.min(pause * 2, DRAIN_RETRY_MAX_MS)) {
       // ⭐ R13-06: круг — ломтём (`DRAIN_ROUND_MS`), а не всем остатком бюджета: одна зависшая запись держала круг до конца бюджета, и
       // героя, чья запись упала сразу, а база через миг вернулась, слив больше не пробовал (ИНЦИДЕНТ вместо записи).
-      await untilMs(this.drainRound(), Math.min(DRAIN_ROUND_MS, deadline - Date.now()));
+      await untilMs(this.drainRound(), Math.min(DRAIN_ROUND_MS, deadline - performance.now()));
       const lost = this.unwritten();
       // ⭐ R14-07: и свод записей забега — упавшая запись свода ждала таймера процесса, который уже выходит.
       const ledgers = [...this.drainRooms()].filter((room) => room.ledgerPending());
       if (!lost.length && !ledgers.length) return;
-      if (deadline - Date.now() <= pause) {
+      if (deadline - performance.now() <= pause) {
         for (const id of lost) {
           counters.farewellForgotten++;
           console.error(`[room] ИНЦИДЕНТ: слив не дописал героя ${id} за ${budgetMs} мс (база не приняла) — его копия уходит с процессом; отданное ею могло остаться у двоих`);
@@ -530,20 +551,18 @@ export class RoomManager {
     if (!k) return;
     limits.wsFrames.reset(k);
     limits.wsInput.reset(k);
+    limits.wsInputOver.reset(k);
     limits.lobbyConn.reset(k);
     limits.roomCodeMiss.reset(`conn:${k}`);
     // Адреса нет — «сеть адреса» соединения и есть его ключ (`netOf`): такие бакеты тоже одноразовые.
     if (!ws.ip) { limits.lobbyIp.reset(`ip:${k}`); limits.roomCodeMissIp.reset(`ip:${k}`); }
   }
 
-  /** Лог кадров, погашенных исключением, — не чаще раза в 10 с (R2-01): поток таких кадров не топит лог. */
-  private frameWarnAt = 0;
-  private frameWarnMuted = 0;
+  /** Лог кадров, погашенных исключением, — не чаще раза в 10 с (R2-01): поток таких кадров не топит лог. ⭐ R17-06: срок — по часам процесса. */
+  private frameLog = logThrottle();
   private warnFrame(e: unknown): void {
-    const now = Date.now();
-    if (now - this.frameWarnAt < 10_000) { this.frameWarnMuted++; return; }
-    const muted = this.frameWarnMuted ? ` (и ещё ${this.frameWarnMuted} с прошлого сообщения)` : '';
-    this.frameWarnAt = now; this.frameWarnMuted = 0;
+    const muted = this.frameLog.pass();
+    if (muted === null) return;
     console.error(`[room] кадр погашен исключением${muted}:`, e);
   }
 
@@ -600,7 +619,11 @@ export class RoomManager {
     // мягкого лимита ввода вообще доходило дело.
     counters.framesIn++;
     const asInput = raw.startsWith(INPUT_PREFIX);
-    if (!(asInput ? limits.wsInput : limits.wsFrames).take(this.connKey(ws))) {
+    const key = this.connKey(ws);
+    if (!(asInput ? limits.wsInput : limits.wsFrames).take(key)) {
+      // ⭐ R15-04: ввод сверх потолка — хвост обрыва связи (TCP отдал накопленное разом): отбрасываем, не разбирая; рвём — только поток
+      // (`limits.wsInputOver` кончился: отброшенного больше, чем даёт честный обрыв).
+      if (asInput && limits.wsInputOver.take(key)) { counters.inputThrottled++; return undefined; }
       counters.rateLimited++;
       ws.close(4008, 'rate limit');
       this.onClose(ws);
@@ -823,9 +846,17 @@ export class RoomManager {
         // ⭐ V2: ЗАБЕГ УЖЕ ИДЁТ В ДРУГОЙ КОМНАТЕ — «Продолжить» ведёт туда, к пати, а не собирает его во второй комнате рядом с ней. Раньше
         // забег собирался заново всегда: тот же узел шёл в двух комнатах, и его сундуки, босс и опыт брались в каждой (V2).
         const key = runLedgerKey(save.run.config);
+        // ⭐ R17-02: ДЕРЖАТЕЛЬ В ГОРОДЕ (НА АРЕНЕ) ЗАБЕГ ЖИВОМУ УЧАСТНИКУ ОТДАЁТ (`Room.yieldRun`) — «Продолжить» ведёт в новую комнату, прямо на
+        // узел забега. Раньше — в город держателя: спуск ждал голоса каждого подключённого (у голосования нет срока), «Соло» и спуск — отказ, и
+        // напарник, стоящий в городе (отошёл, забыл вкладку, не хочет), держал чужой забег заложником до «Забросить» (штраф смерти). Держатель в
+        // подземелье — как прежде, к пати (V2); погибший в забеге (K1) — тоже к пати в город: там её спуск оживит его.
+        const alive = save.run.deadAt === undefined;
+        const run = save.run.config;
+        const yields = (h: Room | undefined): boolean => !!h && alive && !h.inDungeonOf(run);
         let code: string | undefined;
         let elsewhere: string | null = null;
-        if (!this.runHolder(key) && runLockStore) {
+        const held = this.runHolder(key);
+        if ((!held || yields(held)) && runLockStore) {
           code = newCode();
           try {
             elsewhere = await runLockStore.claim(key, code);
@@ -838,7 +869,14 @@ export class RoomManager {
           if (this.frozen) { ws.send(JSON.stringify(DRAINING_ERROR)); this.runFreedKey(key, code); return; }
           if (!ws.open) { this.runFreedKey(key, code); return; }
         }
-        const holder = this.runHolder(key);
+        let holder = this.runHolder(key);
+        // ⭐ R17-02: держатель — всё ещё в городе (не спустился, пока взятие шло в базу), а забег за этой нодой: он его отпускает, строка — за
+        // новой комнатой (взятие легло с её кодом). Его участники остаются с припаркованными копиями; их спуск — отказ с кодом новой комнаты.
+        if (holder && !elsewhere && yields(holder) && holder.yieldRun(key)) holder = undefined;
+        // ⭐ Перепрогон R15: пока взятие шло в базу, забег взяла комната этой ноды (второй «Продолжить» того же забега) — взятое за кодом `code`
+        // не понадобится, а строка, если оно легло позже её взятия, называет комнату, которой не будет: до удара сердца «Продолжить» на соседней
+        // ноде слало туда. Строку — на держателя.
+        if (holder && code) this.runFreedKey(key, code);
         // ⭐ C-05, C-08: ОТКАЗ — С КОДОМ ДЕРЖАТЕЛЯ ПОЛЕМ КАДРА (`roomCode`). Раньше код жил только в тексте, а на экране «Незавершённое
         // прохождение» поля кода нет: «Продолжить» отказывало снова и снова, и выходом оставалось «Забросить» (штраф смерти). Теперь клиент
         // идёт по коду к ноде держателя или показывает лобби с ним (там «Соло» — город без штрафа, забег цел: грейса у героя нет).
@@ -863,11 +901,17 @@ export class RoomManager {
       return;
     }
 
-    // Осознанный вход в НОВУЮ комнату (соло/хост/по коду): висел незавершённый забег — считаем
-    // его брошенным (штраф) ДО чтения сейва, чтобы новый вход взял уже урезанный сейв из БД.
+    // Осознанный вход в НОВУЮ комнату (соло/хост/по коду), а герой ждёт реконнекта в грейсе: страховка его отпускает ДО чтения сейва,
+    // чтобы новый вход взял уже записанный сейв из БД.
     const graceRoom = this.graceByChar.get(frame.charId);
     if (graceRoom) {
-      // R7-03: страховка — забег, который пати уже увела в город, она отпускает без штрафа (`abandonAsDead`, `insurance`).
+      // ⭐ R16-01: ВХОД ЗАБЕГ ЗА ШТРАФ НЕ БРОСАЕТ. Раньше страховка бросала любой забег грейса (штраф смерти и снятие забега) — вход, который об
+      // этом не говорит: Unity шлёт `join{fresh}` сразу за статусом забега, не читая ответа, и любой обрыв посреди подземелья (вылет, Wi-Fi,
+      // Alt+F4) молча стоил смерти. Бросок, который стоил бы штрафа, — отказ `run` (как C-03: сперва продолжи или заверши свой забег), грейс
+      // цел; штраф за брошенный забег берёт только «Завершить».
+      if (graceRoom.insuranceCharges(frame.charId)) { ws.send(JSON.stringify(RUN_PARKED_JOIN)); return; }
+      // R7-03: страховка — забег, который пати уже увела в город, она отпускает без штрафа (`abandonAsDead`, `insurance`); C-04 — и чужой
+      // комнате; погибший (смерть оплачена) — забег снят без второго штрафа (K1).
       await this.track(frame.charId, graceRoom.abandonAsDead(frame.charId, true));
       // R2-08: штраф не лёг — вход по сейву из базы начал бы новую комнату с тем же забегом и без штрафа.
       if (!(await this.settleFarewell(frame.charId))) { ws.send(JSON.stringify(SAVING_ERROR)); return; }
@@ -1072,7 +1116,7 @@ export class RoomManager {
    * R2-08: итог записи запоминается — не легла, копия остаётся в `unsaved` до следующей попытки (`settleFarewell`).
    */
   private track(charId: string, write: Promise<Farewell | void>): Promise<void> {
-    this.farewellSeq.set(charId, { seq: ++this.farewellCount, at: Date.now() });   // R10-05: вход, читающий сейв сейчас, это увидит
+    this.farewellSeq.set(charId, { seq: ++this.farewellCount, at: performance.now() });   // R10-05: вход, читающий сейв сейчас, это увидит; R16-06: часы процесса
     const raw: Promise<void> = write.then(
       (f) => {
         if (f && !f.saved && f.retry) this.unsaved.set(charId, f.retry);
@@ -1159,7 +1203,7 @@ export class RoomManager {
    * неудача — пауза вдвое дольше (до минуты), счётчик и строка в логе; удача — закрепление снимается, если героя
    * здесь больше ничто не держит.
    */
-  retryUnsaved(now = Date.now()): Promise<void> {
+  retryUnsaved(now = performance.now()): Promise<void> {
     if (this.frozen) return Promise.resolve();   // R12-04: слив дописывает копии сам, кругами (`flushAll`)
     this.sweepFarewellSeq(now);   // R11-12: тем же фоном
     for (const id of this.unsavedBackoff.keys()) if (!this.unsaved.has(id)) this.unsavedBackoff.delete(id);
@@ -1181,7 +1225,7 @@ export class RoomManager {
           return;
         }
         const fails = (this.unsavedBackoff.get(charId)?.fails ?? 0) + 1;
-        this.unsavedBackoff.set(charId, { at: Date.now() + Math.min(UNSAVED_RETRY_MAX_MS, UNSAVED_RETRY_MS * 2 ** fails), fails });
+        this.unsavedBackoff.set(charId, { at: performance.now() + Math.min(UNSAVED_RETRY_MAX_MS, UNSAVED_RETRY_MS * 2 ** fails), fails });
         counters.farewellRetryFailed++;
         console.warn(`[room] копия ${charId} всё ещё не записана (попытка ${fails}) — повторю позже`);
       }).catch((e: unknown) => console.error(`[room] фоновая дописка копии ${charId}:`, e))
@@ -1338,9 +1382,13 @@ export class RoomManager {
       runClaim: (key, r) => (runLockStore ? runLockStore.claim(key, r.code) : Promise.resolve(null)),
       runTaken: (key, r) => {
         this.runRooms.set(key, r);
+        this.runsDue.delete(key);
         void runLockStore?.claim(key, r.code).then((other) => {
           if (other) console.error(`[room] ИНЦИДЕНТ: забег ${key} комнаты ${r.code} кластер числит за комнатой ${other} другой ноды`);
-        }, () => undefined);   // сердцебиение продлит и так (`touchRuns`)
+          // ⭐ R15-08: пока взятие шло в базу, комната забег уже отпустила (её `DELETE` мог лечь раньше этой вставки) — отпустить снова.
+          // ⭐ Перепрогон R15: или его уже держит другая комната ноды — строку на неё (`settleRun`).
+          else this.settleRun(key, r.code);
+        }, () => this.settleRun(key, r.code));   // ⭐ перепрогон R15: ответ потерян — взятие могло лечь; держит комната — продлит удар
       },
       runDropped: (key, r) => this.runFreed(key, r),
     });
@@ -1355,17 +1403,44 @@ export class RoomManager {
     return undefined;
   }
 
-  /** ⭐ V2: комната `r` забег `key` больше не берёт — если его не держит никто здесь, он свободен и в кластере. */
+  /**
+   * ⭐ V2: комната `r` забег `key` больше не берёт — если его не держит никто здесь, он свободен и в кластере. ⭐ Перепрогон R15: держит ДРУГАЯ
+   * комната ноды — строку на неё (`settleRun`): взятие этой могло лечь поверх её строки позже (продолжение из города ждало его, R9-01, а
+   * героя тем временем взял «Продолжить» в новую комнату), и до удара сердца «Продолжить» на соседней ноде слало в ушедшую.
+   */
   private runFreed(key: string, r: Room): void {
-    if (this.runHolder(key)) return;
-    if (this.runRooms.get(key) === r) this.runRooms.delete(key);
-    void runLockStore?.release(key, r.code).catch(() => undefined);
+    if (!this.runHolder(key) && this.runRooms.get(key) === r) this.runRooms.delete(key);
+    this.settleRun(key, r.code);
   }
 
-  /** ⭐ V2: взятое за нодой для «Продолжить» (комната `code` так и не завелась) — назад, если забег не держит никто здесь. */
+  /** ⭐ V2: взятое за нодой для «Продолжить» (комната `code` так и не завелась) — назад, если забег не держит никто здесь (иначе — на держателя). */
   private runFreedKey(key: string, code: string): void {
-    if (this.runHolder(key)) return;
-    void runLockStore?.release(key, code).catch(() => undefined);
+    this.settleRun(key, code);
+  }
+
+  /** Снять строку забега `key` за комнатой `code` этой ноды; не дошло до реестра — повторит удар сердца (`runsDue`, перепрогон R15). */
+  private releaseRun(key: string, code: string): void {
+    if (!runLockStore) return;
+    this.runsDue.delete(key);
+    void runLockStore.release(key, code).catch(() => { if (!this.runHolder(key)) this.runsDue.set(key, code); });
+  }
+
+  /**
+   * ⭐ ПЕРЕПРОГОН R15: строка забега `key`, записанная за комнатой `code` этой ноды (взятие или продление легло поздно), — сверить с тем, кто
+   * держит забег здесь сейчас. Никто — отпустить (R15-08). ДРУГАЯ комната ноды («Продолжить» того же героя взял его заново) — строку на неё:
+   * позднее продление снимка удара переписывало комнату строки на прежнюю, и до следующего удара «Продолжить» на соседней ноде слало в
+   * комнату, которая забег не держит. Снимать такую строку нельзя — между снятием и продлением забег взяла бы другая нода.
+   */
+  private settleRun(key: string, code: string): void {
+    const h = this.runHolder(key);
+    if (!h) { this.releaseRun(key, code); return; }
+    if (h.code === code) return;
+    void runLockStore?.claim(key, h.code).then((other) => {
+      if (other) console.error(`[room] ИНЦИДЕНТ: забег ${key} комнаты ${h.code} кластер числит за комнатой ${other} другой ноды`);
+      // ⭐ Раунд 16 (фаззер кластера, сид 170085): пока эта вставка шла в базу, держатель забег уже отпустил (комната ушла — её `DELETE` лёг
+      // раньше): сверить снова, как после взятия (`runTaken`, R15-08). Раньше строка за исчезнувшей комнатой жила до `CLAIM_IDLE_SEC`.
+      else this.settleRun(key, h.code);
+    }, () => undefined);   // не дошло — строку за держателем перепишет удар (`touchRuns`)
   }
 
   /** ⭐ V2: комната ушла — её забеги свободны. */
@@ -1373,8 +1448,20 @@ export class RoomManager {
     for (const [key, r] of [...this.runRooms]) if (r === room) this.runFreed(key, room);
   }
 
+  /**
+   * ⭐ R15-08: СЕРДЦЕБИЕНИЕ ПРОДЛИЛО ЗАБЕГ, КОТОРЫЙ КОМНАТА УЖЕ ОТПУСТИЛА (близнец R4-28): продление берёт снимок забегов, а пишет в базу
+   * позже, и отпуск, легший между ними, продление отменяло вставкой — строка жила без комнаты, и «Продолжить» на соседней ноде вело к
+   * исчезнувшей. Отпускаем снова — если забег не взяла комната этой ноды; ⭐ перепрогон R15: взяла ДРУГАЯ (снимок удара назвал прежнюю, а
+   * продление переписало ею строку) — строку на держателя (`settleRun`).
+   */
+  releaseRuns(runs: readonly { key: string; room: string }[]): void {
+    for (const { key, room } of runs) this.settleRun(key, room);
+  }
+
   /** ⭐ V2: забеги, которые держат комнаты этой ноды, — для сердцебиения (`clusterHooks.heldRuns`). */
   heldRuns(): { key: string; room: string }[] {
+    // ⭐ Перепрогон R15: отпуски, не дошедшие до реестра, — ещё раз (забег снова взят здесь — строка его держателя, отпускать нечего).
+    for (const [key, code] of [...this.runsDue]) { this.runsDue.delete(key); if (!this.runHolder(key)) this.releaseRun(key, code); }
     const out: { key: string; room: string }[] = [];
     for (const [key, r] of [...this.runRooms]) {
       if (this.runHolder(key) === r) out.push({ key, room: r.code });

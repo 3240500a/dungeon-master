@@ -16,6 +16,7 @@ class FakeWs {
   static all: FakeWs[] = [];
   readyState = FakeWs.CONNECTING;
   binaryType = '';
+  bufferedAmount = 0;
   sent: string[] = [];
   closedByClient = false;
   onopen: ((ev?: unknown) => void) | null = null;
@@ -41,6 +42,21 @@ describe('⭐ L2: NetClient — живой только последний со�
   let saved: unknown;
   beforeEach(() => { saved = G.WebSocket; G.WebSocket = FakeWs; FakeWs.all = []; });
   afterEach(() => { G.WebSocket = saved; });
+
+  it('⭐ R15-04: связь встала (буфер сокета полон) — ввод не копится; прочие кадры идут, а ввод — снова, как буфер ушёл', () => {
+    const net = new NetClient();
+    net.connect('ws://x/ws');
+    const ws = FakeWs.all[0]!;
+    ws.open();
+    const input = { t: 'input' as const, seq: 1, input: { move: { x: 1, y: 0 }, facing: 0, attack: false, cast: null, interact: false } };
+    ws.bufferedAmount = 64_000;
+    for (let i = 0; i < 300; i++) net.send({ ...input, seq: i });
+    net.send({ t: 'cmd', id: 7, command: { cmd: 'drop', uid: 'x' } } as never);
+    expect(ws.sent.map((f) => (JSON.parse(f) as { t: string }).t), 'ввод не копится, команда — в сокет').toEqual(['cmd']);
+    ws.bufferedAmount = 0;
+    net.send({ ...input, seq: 301 });
+    expect(JSON.parse(ws.sent.at(-1)!), 'буфер ушёл — ввод снова идёт').toMatchObject({ t: 'input', seq: 301 });
+  });
 
   it('код закрытия доходит до обработчиков (4009 / 4001 / 4008 — причина для игрока)', () => {
     const net = new NetClient();

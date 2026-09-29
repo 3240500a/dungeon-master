@@ -1890,7 +1890,7 @@ describe('Room — раунд 3: эскизы кузнеца (R3-11)', () => {
     expect(j1.sketches, 'эскиз потрачен в базе').toBe(0);
     expect(ws.last('stash')!.forgeJournal.variants, 'и в кадре сундука').toContain(id);
     expect(ws.last('stash')!.forgeJournal.sketches).toBe(0);
-    expect(db.writes.slice(w0), 'одна транзакция сундука').toEqual([{ kind: 'stash', charId: save.charId, reason: 'craft' }]);
+    expect(db.writes.slice(w0), 'одна транзакция сундука (E2E 29.09: причина своя — эскиз не ковка)').toEqual([{ kind: 'stash', charId: save.charId, reason: 'sketch' }]);
     // Второй раз — эскизов нет: отказ, ничего не записано.
     limits.forgeCmd.reset(userOf(pid));
     await room.handleCmd(pid, { cmd: 'forgeSketch', variantId: sketchableId(j1) }, 201);
@@ -1931,6 +1931,29 @@ describe('Room — раунд 3: эскизы кузнеца (R3-11)', () => {
       await room.handleCmd(pid, bad, 400 + i);
       expect(ws.last('cmdResult'), JSON.stringify(bad)).toMatchObject({ id: 400 + i, ok: false, reason: 'Неверная команда' });
     }
+  });
+
+  it('⭐ E2E 29.09: эскиз — не ковка: телеметрия сессии и /metrics его не считают, запись — со своей причиной', async () => {
+    // Живой зонд: сессия с четырьмя ковками и одним эскизом писала в `play_sessions` «сковано 5», а `/metrics` — пять ковок.
+    // Эскиз шёл транзакцией с причиной `craft`, а телеметрия кузницы считает действие по причине записи (`forgeOpOf`).
+    const user = 'user-e2e-sketch-tm';
+    const { room, ws, pid, save } = makeRoom(user);
+    await settle();
+    const j: CraftJournal = { ...emptyJournal(), sketches: 2 };
+    seedStash(user, j, {});
+    const tm = (room as unknown as { clients: Map<string, { tm: import('./telemetry.js').SessionTelemetry }> }).clients.get(pid)!.tm;
+    const g0 = { crafted: counters.forgeCrafted, melted: counters.forgeMelted, salvaged: counters.forgeSalvaged, enchanted: counters.forgeEnchanted };
+    const w0 = db.writes.length;
+    limits.forgeCmd.reset(userOf(pid));
+    await room.handleCmd(pid, { cmd: 'forgeSketch', variantId: sketchableId(j) }, 1);
+    expect(ws.last('cmdResult'), JSON.stringify(ws.last('cmdResult'))).toMatchObject({ id: 1, cmd: 'forgeSketch', ok: true });
+    expect(db.stashes.get(user)!.data.forgeJournal!.sketches, 'эскиз потрачен').toBe(1);
+    expect({ c: tm.crafted, m: tm.melted, s: tm.salvaged, e: tm.enchanted }, 'сессия: эскиз — не ковка').toEqual({ c: 0, m: 0, s: 0, e: 0 });
+    expect({
+      crafted: counters.forgeCrafted - g0.crafted, melted: counters.forgeMelted - g0.melted,
+      salvaged: counters.forgeSalvaged - g0.salvaged, enchanted: counters.forgeEnchanted - g0.enchanted,
+    }, '/metrics: эскиз — не ковка').toEqual({ crafted: 0, melted: 0, salvaged: 0, enchanted: 0 });
+    expect(db.writes.slice(w0), 'одна транзакция сундука со своей причиной').toEqual([{ kind: 'stash', charId: save.charId, reason: 'sketch' }]);
   });
 
   it('Ф3.1 / D12: эскиз — у кузнеца в городе и под лимитом кузницы', async () => {

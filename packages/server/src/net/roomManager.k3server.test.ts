@@ -231,6 +231,8 @@ describe('⭐ K3 (проход 2): выброшенное — в сумку то
     expect(db.writes.length, 'в паузу — ни одной записи').toBe(writes);
     inBagOnlyIfInRow(room, pidB, 'K3BB', uid);
     vi.setSystemTime(Date.now() + 6_000);
+    const mono = performance.now() + 6_000;   // ⭐ R15-06: пауза C-07 — по часам процесса
+    vi.spyOn(performance, 'now').mockReturnValue(mono);
     wsB.push({ t: 'cmd', id: 4, command: { cmd: 'pickup', dropId: drop.id } });
     await until('подъём после паузы', () => !!wsB.result(4));
     expect(wsB.result(4)).toMatchObject({ ok: true });

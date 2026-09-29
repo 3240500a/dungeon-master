@@ -1,7 +1,7 @@
 import {
   CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, bladeStats, clampStep,
   craftFits, craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
-  partById, rangeLabel, sketchable, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
+  FORM_UNPRICED, partById, rangeLabel, rolledFormMult, sketchable, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
 } from '@dm/shared';
@@ -625,8 +625,9 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
           : !fit ? 'Кузнец не знает такой вещи'
           : Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? 'Этой вещи некуда принять свойства'
           : !fit.fillable ? 'Кузнецу не хватит свойств на форму этой вещи'
+          : rolledFormMult(reg, item, r) === undefined ? FORM_UNPRICED   // R17-03: у катаемой формы нет цены — сервер откажет
           : host.gold() < cost ? `Недостаточно золота: нужно ${cost}` : '';
-        const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'} · ${cost} з.`;
+        const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`;
         const b = button(label, () => act('enchant', () => host.enchant(item, r, cost), (res) => {
           if (res.ok && res.item) st.crafted = res.item;
           st.message = res.ok ? `Зачарована: ${res.item?.name ?? item.name}` : res.unknown ? res.reason ?? 'Нет ответа от кузнеца' : `Не вышло: ${res.reason}`;

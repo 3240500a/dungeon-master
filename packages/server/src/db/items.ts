@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { tx } from './pool.js';
+import { q, tx } from './pool.js';
 import type { SaveState, AccountStash, Item } from '@dm/shared';
 import { isUuid } from '@dm/shared';
 import { LedgerViolation } from './errors.js';
@@ -270,5 +270,30 @@ export async function revokeItem(id: string, reason: string): Promise<{ user: st
        VALUES ($1, 'revoked', $2, $3, $4, $5)`,
       [id, row.user_id, row.loc, LOC_REVOKED, reason]);
     return { user: row.user_id, from: row.loc, touched };
+  });
+}
+
+/**
+ * ⭐ R15-03: ВЕЩИ ГЕРОЕВ, УДАЛЁННЫХ ДО ПРАВКИ `deleteCharacter`, — навсегда у «char:<удалённого>»: героя нет, а ночной аудит каждую ночь
+ * числит их «потерянными» (инциденты, вытесняющие настоящие). Показать (`fix` — нет) или увести их в `world` событием `gone`
+ * (`charDeleted`) — так теперь уводит сама транзакция удаления. Строки вещей — под блокировкой и в одном порядке (по id), место —
+ * перепроверяется: вещь, которую тем временем увела запись игры, не трогается.
+ */
+export async function releaseOrphans(fix: boolean): Promise<{ items: number; chars: string[] }> {
+  const orphans = `SELECT i.id, i.loc, i.user_id FROM items i
+     WHERE i.loc LIKE 'char:%' AND NOT EXISTS (SELECT 1 FROM characters c WHERE c.char_id = substring(i.loc from 6))`;
+  const sum = (rows: readonly Row[]): { items: number; chars: string[] } =>
+    ({ items: rows.length, chars: [...new Set(rows.map((r) => r.loc.slice('char:'.length)))].sort() });
+  if (!fix) return sum(await q<Row>(orphans));
+  return tx(async (c) => {
+    const rows = (await c.query<Row>(`${orphans} ORDER BY i.id FOR UPDATE OF i`)).rows;
+    const moved: Row[] = [];
+    for (const r of rows) {
+      const u = await c.query('UPDATE items SET loc = $2, moved_at = now() WHERE id = $1 AND loc = $3', [r.id, LOC_WORLD, r.loc]);
+      if (!u.rowCount) continue;
+      await event(c, r.id, 'gone', r.user_id, r.loc, LOC_WORLD, 'charDeleted', null);
+      moved.push(r);
+    }
+    return sum(moved);
   });
 }

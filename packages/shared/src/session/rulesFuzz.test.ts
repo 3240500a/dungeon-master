@@ -11,7 +11,9 @@ import { Cell, TILE, makeGrid, cellToWorld, type Grid } from '../world/grid.js';
 import { moveWithCollision } from '../world/movement.js';
 import { spawnPacksEl } from '../dungeon/floor.js';
 import type { SaveState } from '../types/save.js';
+import type { PlayerEntity } from '../world/state.js';
 import { GameSession, type PlayerInput, type SessionEvent } from './session.js';
+import { playerSnapshot, type PlayerSnapshot } from './derive.js';
 import { effectivePool, reservedFrac } from './toggles.js';
 
 /**
@@ -48,7 +50,8 @@ const LEN = env('DM_FUZZ_LEN', 80);
 /**
  * Профили (`DM_FUZZ_PROFILE`): `combat` — тики чаще (бой, [E], пояс, рывки), `world` — команды мира и смены посреди замаха,
  * `pvp` — арены с PvP и пати от двух героев, `floor` — этажи генератора забега почти без арен, `pillars` — арены с колоннами
- * в линии огня (C-10: снаряды и преграды декора, закрывающие обзор).
+ * в линии огня (C-10: снаряды и преграды декора, закрывающие обзор), `levelup` — арены, все герои на пороге уровня (R15-10:
+ * левелап поверх аур, стоек и баффов).
  */
 const PROFILES: Record<string, { weights?: Partial<Record<OpKind, number>>; world?: import('./fuzz/rulesFuzz.js').FuzzHooks['world'] }> = {
   combat: { weights: { ...OP_WEIGHTS, tick: 80 } },
@@ -56,6 +59,7 @@ const PROFILES: Record<string, { weights?: Partial<Record<OpKind, number>>; worl
   pvp: { weights: { ...OP_WEIGHTS, tick: 60, revive: 4 }, world: { arena: 0.95, pvp: 0.8, minHeroes: 2 } },
   floor: { world: { arena: 0.1 } },
   pillars: { weights: { ...OP_WEIGHTS, tick: 60 }, world: { arena: 1, pillars: 1 } },
+  levelup: { weights: { ...OP_WEIGHTS, tick: 60 }, world: { arena: 1, levelup: true } },
 };
 const PROFILE = PROFILES[process.env.DM_FUZZ_PROFILE ?? ''] ?? {};
 const WEIGHTS = PROFILE.weights ?? OP_WEIGHTS;
@@ -152,6 +156,24 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
     hooks: { afterTick: (w) => { for (const p of Object.values(w.s.world.players)) if (p.alive) p.skillBuffs['pot:fuzz-haste-potion'] = 6; } },
   },
   { name: 'мана из ниоткуда', want: /^I6:mana-(max|reserve):/, hooks: { afterTick: (w) => { for (const p of Object.values(w.s.world.players)) if (p.alive) p.mana += 500; } } },
+  {
+    // R15-10: левелап лечит голым сейвом и кладёт его в снимок тика (как было: без аур, стоек и баффов).
+    name: 'левелап без аур и стоек', want: /^I6:levelup-(heal|snap):/,
+    hooks: {
+      world: { levelup: true, arena: 1 },
+      install: (w) => patch(w, 'awardXp', (o) => (...a) => {
+        const p = a[0] as PlayerEntity;
+        const lv = p.save.level;
+        const out = o(...a);
+        if (p.alive && p.save.level > lv) {
+          const snap = playerSnapshot(p.save, w.reg);
+          p.hp = snap.derived.maxHp;
+          (w.s as unknown as { snaps: Map<string, PlayerSnapshot> }).snaps.set(p.id, snap);
+        }
+        return out;
+      }),
+    },
+  },
   { name: 'опыт без убийства', want: /^I6:(xp|level|points)/, hooks: { afterTick: (w) => { for (const p of Object.values(w.s.world.players)) p.save.xp += 1; } } },
   { name: 'подбор издалека', want: /^I5:pickup-(range|los):/, hooks: { install: (w) => patch(w, 'within', () => () => true) } },
   { name: 'дверь открылась сама', want: /^I5:door-open:/, hooks: { afterTick: (w) => { const d = w.s.world.doors[0]; const c = d?.cells[0]; if (c) w.s.world.grid[c.cy]![c.cx] = 0; } } },
@@ -245,6 +267,37 @@ describe('⚠ C-10: фаззер правил — колонны в линии �
     expect(cover['proj-pillar'] ?? 0, 'снаряды у колонн').toBeGreaterThan(0);
     expect(cover['hit-proj'] ?? 0, 'снаряды попадали').toBeGreaterThan(0);
   }, 120_000);
+});
+
+/**
+ * ⚠ R15-10: ЛЕВЕЛАП В БОЮ — свой профиль мира: только арены, все герои на пороге уровня. В общем профиле убийств мало, и левелап
+ * с включённой аурой/стойкой/баффом случался раз на сотни цепочек: полное лечение голым сейвом (герой в стойке +15 % к жизни вставал
+ * на ~87 %, снимок тика терял ауры и стойки) сторож не видел. Этот — в первых же (зубы — «левелап без аур и стоек» выше).
+ */
+describe('⚠ R15-10: фаззер правил — левелап в бою', () => {
+  it('16 цепочек по 80 шагов: ни одного нарушения; левелап поверх аур/стоек/баффов случался', () => {
+    const hits: string[] = [];
+    const cover: Record<string, number> = {};
+    for (let seed = 1; seed <= 16; seed++) {
+      const out = runOps(seed, genOps(seed, 80, PROFILES.levelup!.weights), { ...hooks, world: PROFILES.levelup!.world }, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      for (const [k, n] of Object.entries(out.cover)) cover[k] = (cover[k] ?? 0) + n;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(cover['levelup-mods'] ?? 0, 'левелап с аурой/стойкой/баффом').toBeGreaterThan(0);
+  }, 120_000);
+
+  // ⭐ Перепрогон R15 (профиль levelup, сид 7650274; сжато фаззером). МОДЕЛЬ ФАЗЗЕРА: левелап в том тике, где истекает бафф зелья жизни
+  // (осталось 4e-15 с), лечит до максимума С баффом — он ещё на герое (R15-10), — а к концу тика бафф истёк: здоровье и мана на тик выше и
+  // начального, и конечного максимума, следующий тик их подрезает (как любой истёкший бафф). Максимум тика — и тот, что был в миг левелапа.
+  it('перепрогон R15: левелап в тик, где истекает бафф зелья, — не «выше максимума»', () => {
+    const ops = [
+      { k: 'unequip', h: 2, s: 1704321804 }, { k: 'tick', h: 2, s: 1556017917 }, { k: 'tick', h: 0, s: 1038034840 },
+      { k: 'tick', h: 0, s: 1311675429 }, { k: 'tick', h: 1, s: 337817274 }, { k: 'tick', h: 0, s: 1166014481 },
+    ] as Op[];
+    const out = runOps(7650274, ops, { resetUids: hooks.resetUids, world: PROFILES.levelup!.world });
+    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+  });
 });
 
 /**

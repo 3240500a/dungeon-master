@@ -293,11 +293,12 @@ describe('⭐ R13-04: «Завершить» — смерть и для запи
   });
 });
 
-/** Срок возврата застрявших — через `ms` по часам сервера (`Date.now`, как у вайпа): шаг комнаты «тогда». */
+/** Срок возврата застрявших — через `ms` по часам сервера (⭐ R15-06: часы процесса, как у вайпа; и настенные): шаг комнаты «тогда». */
 function stepAt(room: RoomIn, ms: number): void {
-  const now = Date.now() + ms;
+  const now = Date.now() + ms, mono = performance.now() + ms;
   const spy = vi.spyOn(Date, 'now').mockReturnValue(now);
-  try { room.step(); } finally { spy.mockRestore(); }
+  const perf = vi.spyOn(performance, 'now').mockReturnValue(mono);
+  try { room.step(); } finally { spy.mockRestore(); perf.mockRestore(); }
 }
 
 describe('⭐ R13-01: ушедший посреди боя ждёт весь грейс, даже если мёртвый напарник держит вкладку', () => {
@@ -308,7 +309,7 @@ describe('⭐ R13-01: ушедший посреди боя ждёт весь г�
     await room.removePlayer(pb);
     await settle();
     expect(room.disconnected.get(b.charId)?.fled, 'ушёл посреди боя').toBe(true);
-    expect(room.strandAt - Date.now(), 'возврат застрявших — не через 15 с').toBeGreaterThan(60_000);
+    expect(room.strandAt - performance.now(), 'возврат застрявших — не через 15 с').toBeGreaterThan(60_000);
     stepAt(room, 16_000);
     await settle();
     expect(room.area, 'пати на узле').toBe('dungeon');
@@ -332,7 +333,7 @@ describe('⭐ R13-01: ушедший посреди боя ждёт весь г�
     const [save, v] = fromDb(a.charId);
     room.reconnect(new FakeWs(), `user-${a.charId}`, save, v);
     room.stop();
-    expect(room.strandAt - Date.now()).toBeGreaterThan(60_000);
+    expect(room.strandAt - performance.now()).toBeGreaterThan(60_000);
     stepAt(room, 16_000);
     await settle();
     expect(room.area).toBe('dungeon');
@@ -391,7 +392,7 @@ describe('⭐ R13-02: «все мертвы или сбежали из боя» 
     killA(room, pa);
     await room.removePlayer(pb);
     await settle();
-    expect(room.strandAt - Date.now(), 'спокойный уход — возврат через 15 с').toBeLessThanOrEqual(15_000);
+    expect(room.strandAt - performance.now(), 'спокойный уход — возврат через 15 с').toBeLessThanOrEqual(15_000);
     stepAt(room, 16_000);
     expect(room.area).toBe('town');
     expect(a.run?.currentNodeId, 'забег припаркован').toBe(node);

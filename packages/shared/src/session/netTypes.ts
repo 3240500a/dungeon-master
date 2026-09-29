@@ -276,9 +276,13 @@ export type ServerFrame =
   | { t: 'runStatus'; hasRun: boolean; roomCode?: string; depth?: number; dead?: boolean }
   // Подтверждение abandon: забег заброшен (персонаж погиб со штрафом) — клиент открывает лобби.
   | { t: 'abandoned' }
+  // ⚠ R16-05: ТЕКСТОМ сервер этот кадр шлёт только под отладочным `DM_WIRE_VERIFY=1`. С Ф1.4 мир уходит ДВОИЧНЫМ кадром
+  // (`wire.ts`: полный, дальше дельты), и веб-клиент (`NetClient`) отдаёт сцене собранный мир в этом же виде. Чужой клиент,
+  // читающий мир только отсюда, мира не видит (Unity — docs/CRAFT_WEAPONS.md §21.1, К8; эталон `client/net/__golden__/unity_wire.json`).
   | { t: 'snapshot'; snap: WorldSnapshot }
   // Ф1.3: дельта к прошлому кадру. Первый кадр клиента ВСЕГДА полный, дальше идут дельты;
   // WebSocket поверх TCP гарантирует порядок и доставку, поэтому подтверждений не нужно.
+  // С Ф1.4 текстом не ходит вовсе: дельта едет в двоичном кадре (`WIRE_DELTA`).
   | { t: 'snapDelta'; delta: WorldDelta; sum: number }
   | { t: 'events'; events: SessionEvent[] }
   | { t: 'saveUpdate'; save: SaveState }
@@ -324,9 +328,13 @@ export type ServerFrame =
    * забега, а `resume` — продолжение припаркованного забега героя `host` с глубины `depth` (тир и прочее тогда — его забега).
    * Раньше окно знало только «спуск»: принявший входил в тир, которого не открывал и не выбирал. Начнётся ровно показанное:
    * сменилось, пока голосовали (вошёл хозяин другого забега), — голосование отменяется (`error` с кодом `vote`).
+   * ⭐ R16-04: В ПОДЗЕМЕЛЬЕ — КУДА ВЕДЁТ: спуск по ребру несёт узел цели (`targetNodeId`) и его тип (`targetNodeType` — ветку
+   * развилки, которую выбрал зовущий), а голосование финала (узел без рёбер) — `finish`: принятое ЗАВЕРШАЕТ забег (в город).
+   * Раньше окно напарника и там спрашивало «Спуск на след. этаж?».
    */
   | {
     t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string;
+    finish?: true;
     difficultyId?: string; templateId?: string; biomeId?: string; modifiers?: string[]; resume?: { host: string; depth: number };
   }
   | { t: 'voteUpdate'; yes: number; total: number }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { ConfigRegistry } from '@dm/shared';
 import { voteQuestion, type VoteStartFrame } from './voteText.js';
+import { runNodeLabel } from '../modules/run/runLabels.js';
 
 /**
  * ⭐ R9-08: окно голосования за спуск из города говорит, что начнётся: тир (и закрыт ли он своему герою), шаблон, биом,
@@ -32,9 +33,35 @@ describe('⭐ R9-08: вопрос окна голосования', () => {
     expect(text).toContain(nameOf('difficulties', 'easy'));
   });
 
-  it('контроль: в подземелье и прочие голосования — как прежде', () => {
+  it('контроль: спуск без цели (кадр старого сервера) и прочие голосования — как прежде', () => {
     expect(voteQuestion(base, cfg)).toBe('Спуск на след. этаж?');
     expect(voteQuestion({ ...base, kind: 'town' }, cfg)).toBe('Вернуться в город?');
     expect(voteQuestion({ ...base, kind: 'arena' }, cfg)).toBe('Войти в PvP-арену?');
+  });
+});
+
+/**
+ * ⭐ R16-04: ГОЛОСОВАНИЕ В ПОДЗЕМЕЛЬЕ ТОЖЕ ГОВОРИТ, КУДА ВЕДЁТ. Окно напарника на развилке читало «Спуск на след. этаж?», хотя зовущий
+ * звал «Спуск: Босс» (подпись выхода, C-10), а на финале тем же текстом звали ЗАВЕРШИТЬ забег — принявший уходил в город, и всё, что
+ * лежало на полу финала, пропадало со сменой области. Кадр несёт тип узла цели (`targetNodeType`) и `finish` финала.
+ */
+describe('⭐ R16-04: вопрос окна голосования в подземелье', () => {
+  it('развилка: в тексте — тип узла, куда ведёт выход зовущего (та же подпись, что у выхода и на карте забега)', () => {
+    for (const t of ['boss', 'rest', 'shop', 'treasure'] as const) {
+      const text = voteQuestion({ ...base, targetNodeId: 'n7', targetNodeType: t }, cfg);
+      expect(text, `было: «Спуск на след. этаж?» — ${t}`).toContain(runNodeLabel(t));
+      expect(text).not.toBe('Спуск на след. этаж?');
+    }
+  });
+
+  it('финал: окно спрашивает о завершении забега и возврате в город, а не о спуске', () => {
+    const text = voteQuestion({ ...base, finish: true }, cfg);
+    expect(text, 'было: «Спуск на след. этаж?»').toContain('Завершить');
+    expect(text).toContain('город');
+    expect(text).not.toContain('Спуск');
+  });
+
+  it('неизвестный тип узла (конфиг новее клиента) — сам id, экранированный', () => {
+    expect(voteQuestion({ ...base, targetNodeId: 'n7', targetNodeType: '<i>x</i>' }, cfg)).toContain('&lt;i&gt;x&lt;/i&gt;');
   });
 });

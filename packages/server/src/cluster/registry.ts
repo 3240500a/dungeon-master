@@ -1,5 +1,6 @@
 import { q, q1, applySchema, withSchemaLock } from '../db/pool.js';
 import { NODE_DEAD_SEC, CLAIM_IDLE_SEC, claimHeldSql, claimHeldParams } from './claimRule.js';
+import { LEASE_MS } from './lease.js';
 
 /**
  * Реестр кластера (Ф4.2): кто из процессов жив, сколько на нём народу и за какой нодой
@@ -111,11 +112,32 @@ const SCHEMA_CLUSTER = `
     CREATE INDEX IF NOT EXISTS run_locks_node ON run_locks (node_id);
   `;
 
-/** Нода объявляет себя живой и сообщает свои показатели. Зовётся раз в пару секунд. */
+/**
+ * Нода объявляет себя живой и сообщает свои показатели. Зовётся раз в пару секунд. `true` — удар лёг.
+ *
+ * ⭐ R17-01: `leased` — нода держит аренду (`lease.ts`, после своего первого удара): удар ложится ОДНИМ запросом с проверкой, что реестр видел
+ * её меньше аренды назад (`beat_at` моложе `LEASE_MS` по часам базы), — без вставки; не лёг (реестр уже вправе был счесть её мёртвой, или
+ * уборка сняла строку) — `false`, и нода уходит без записи (`node.ts`). Раньше удар всегда был вставкой: сверка возраста удара в начале
+ * (`nodeBeatAge`, R16-02) — отдельный запрос, и её ответ, ждавший в буфере сокета всю паузу машины ноды (часы процесса стояли — аренда по
+ * ним почти полная), пропускал удар, который оживлял мёртвую строку; аренда продлевалась, а следующий удар вставлял закрепления героев и
+ * держание забегов, которые другая нода уже взяла и отпустила. Первый удар процесса (аренды ещё нет) и одиночная роль — вставка, как прежде.
+ */
 export async function heartbeat(
   id: string, url: string,
   s: { players: number; rooms: number; cpuSeconds: number; rssBytes: number; loopP99: number; tickHz: number; draining: boolean },
-): Promise<void> {
+  leased = false,
+): Promise<boolean> {
+  const params = [id, url, s.players, s.rooms, s.draining, s.cpuSeconds, s.rssBytes, s.loopP99, s.tickHz];
+  if (leased) {
+    const r = await q1<{ id: string }>(
+      `UPDATE cluster_nodes SET
+         url = $2, players = $3, rooms = $4, draining = $5, cpu_seconds = $6,
+         rss_bytes = $7, loop_p99_ms = $8, tick_hz = $9, beat_at = now()
+       WHERE id = $1 AND beat_at > now() - ($10 || ' milliseconds')::interval
+       RETURNING id`,
+      [...params, String(LEASE_MS)]);
+    return !!r;
+  }
   await q(
     `INSERT INTO cluster_nodes (id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz, beat_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
@@ -124,7 +146,18 @@ export async function heartbeat(
        draining = excluded.draining, cpu_seconds = excluded.cpu_seconds,
        rss_bytes = excluded.rss_bytes, loop_p99_ms = excluded.loop_p99_ms,
        tick_hz = excluded.tick_hz, beat_at = now()`,
-    [id, url, s.players, s.rooms, s.draining, s.cpuSeconds, s.rssBytes, s.loopP99, s.tickHz]);
+    params);
+  return true;
+}
+
+/**
+ * ⭐ R16-02: сколько секунд назад по часам БАЗЫ реестр видел последний удар ноды `id`; строки нет (снята уборкой или штатно) — `null`. Нода
+ * с арендой спрашивает это перед каждым ударом (`node.ts`): по этим часам реестр решает, мертва ли она, — часы процесса простоя машины
+ * (ВМ на паузе) не видят.
+ */
+export async function nodeBeatAge(id: string): Promise<number | null> {
+  const r = await q1<{ age: number }>('SELECT extract(epoch FROM now() - beat_at)::float8 AS age FROM cluster_nodes WHERE id = $1', [id]);
+  return r ? Number(r.age) : null;
 }
 
 /** Живые узлы (те, что подавали признаки жизни недавно). */
@@ -237,15 +270,22 @@ export async function liveClaim(charId: string): Promise<string | null> {
  *
  * ⭐ R2-05: возвращает, КОГО продлили. Кого нет в ответе — того закрепление у чужой ноды: там уже живой герой, а
  * здесь — проигравшая копия. Нода снимает такую сессию (`clusterHooks.fenceLost`), а не играет ею дальше.
+ *
+ * ⭐ R16-02: `leased` — нода держит аренду (`lease.ts`): продлевает и восстанавливает она, только пока реестр сам числит её живой (удар не
+ * старше `NODE_DEAD_SEC`). Мёртвую по реестру героев её уже вправе был забрать и ОТПУСТИТЬ другой: восстановление вставляло их закрепления
+ * заново, и гейтвей вёл героя к её устаревшей копии. Главная защита — выход без записи до удара (`node.ts`); это — второй рубеж на случай,
+ * когда между сверкой и продлением прошёл срок. ⭐ R17-01: а третий — сам удар (`heartbeat(…, leased)`): отказ здесь не оживляет строку ноды,
+ * и следующий удар отданного не вставит. Одиночный процесс (аренды нет) — как прежде: отдать его героев некому.
  */
-export async function touchClaims(charIds: readonly string[], nodeId: string): Promise<Set<string>> {
+export async function touchClaims(charIds: readonly string[], nodeId: string, leased = false): Promise<Set<string>> {
   if (!charIds.length) return new Set();
   const rows = await q<{ char_id: string }>(
     `INSERT INTO char_claims (char_id, node_id, touched_at, live_at)
      SELECT c, $2, now(), now() FROM unnest($1::text[]) AS c
+      WHERE NOT $3 OR EXISTS (SELECT 1 FROM cluster_nodes n WHERE n.id = $2 AND n.beat_at > now() - ($4 || ' seconds')::interval)
      ON CONFLICT (char_id) DO UPDATE SET touched_at = now(), live_at = now() WHERE char_claims.node_id = excluded.node_id
      RETURNING char_id`,
-    [charIds, nodeId]);
+    [charIds, nodeId, leased, String(NODE_DEAD_SEC)]);
   return new Set(rows.map((r) => r.char_id));
 }
 
@@ -296,16 +336,17 @@ export async function claimRun(runKey: string, nodeId: string, room: string): Pr
 /**
  * ⭐ V2: продлить забеги, которые держат комнаты ноды (сердцебиение, `node.ts`), — и восстановить строку, если её нет (снятие опоздало к
  * новому держателю). Чужую строку не перехватываем. Возвращает, КОГО продлили: кого нет — того забег у другой ноды (инцидент: её правило
- * держания решило, что мы мертвы).
+ * держания решило, что мы мертвы). ⭐ R16-02: `leased` — как у `touchClaims`: нода с арендой, мёртвая по реестру, отпущенного другой не вставляет.
  */
-export async function touchRuns(runs: readonly { key: string; room: string }[], nodeId: string): Promise<Set<string>> {
+export async function touchRuns(runs: readonly { key: string; room: string }[], nodeId: string, leased = false): Promise<Set<string>> {
   if (!runs.length) return new Set();
   const rows = await q<{ run_key: string }>(
     `INSERT INTO run_locks (run_key, node_id, room, live_at)
      SELECT k, $3, r, now() FROM unnest($1::text[], $2::text[]) AS t(k, r)
+      WHERE NOT $4 OR EXISTS (SELECT 1 FROM cluster_nodes n WHERE n.id = $3 AND n.beat_at > now() - ($5 || ' seconds')::interval)
      ON CONFLICT (run_key) DO UPDATE SET room = excluded.room, live_at = now() WHERE run_locks.node_id = excluded.node_id
      RETURNING run_key`,
-    [runs.map((r) => r.key), runs.map((r) => r.room), nodeId]);
+    [runs.map((r) => r.key), runs.map((r) => r.room), nodeId, leased, String(NODE_DEAD_SEC)]);
   return new Set(rows.map((r) => r.run_key));
 }
 

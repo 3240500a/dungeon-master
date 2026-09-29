@@ -5,6 +5,7 @@ import { RoomManager } from './roomManager.js';
 import { clientIp } from './rateLimit.js';
 import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, routePassOf, type GameConn } from './conn.js';
 import { counters } from './metrics.js';
+import { logThrottle } from './logThrottle.js';
 import { nodeShutdownInstalled } from '../cluster/node.js';
 
 /**
@@ -79,16 +80,13 @@ export class WsConn implements GameConn {
 
 /**
  * Кадр погашен исключением на уровне транспорта (R2-01) — счётчик и лог не чаще раза в 10 с: поток кривых
- * кадров не должен топить лог. Общий для обоих транспортов.
+ * кадров не должен топить лог. Общий для обоих транспортов. ⭐ R17-06: срок — по часам процесса (`logThrottle`).
  */
-let frameFailLogAt = 0;
-let frameFailMuted = 0;
+const frameFailLog = logThrottle();
 export function frameFailed(e: unknown): void {
   counters.frameErrors++;
-  const now = Date.now();
-  if (now - frameFailLogAt < 10_000) { frameFailMuted++; return; }
-  const muted = frameFailMuted ? ` (и ещё ${frameFailMuted} с прошлого сообщения)` : '';
-  frameFailLogAt = now; frameFailMuted = 0;
+  const muted = frameFailLog.pass();
+  if (muted === null) return;
   console.error(`[ws] кадр погашен исключением${muted}:`, e);
 }
 

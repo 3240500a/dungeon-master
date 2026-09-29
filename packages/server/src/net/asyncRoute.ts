@@ -1,4 +1,5 @@
 import type { Request, Response, RequestHandler, ErrorRequestHandler } from 'express';
+import { logThrottle } from './logThrottle.js';
 
 /**
  * Express 4 не ловит отказ промиса из обработчика: необработанный `reject` уронил бы процесс.
@@ -29,15 +30,12 @@ export function queryText(v: unknown): string | undefined {
 
 /**
  * Лог ошибок HTTP (дошедших до `httpErrors`, отказов `ah` и `devGate` — R11-11) — не чаще раза в 10 с (как `warnFrame` у кадров):
- * поток таких не топит лог. `what` — что за ошибка (в строку лога).
+ * поток таких не топит лог. `what` — что за ошибка (в строку лога). ⭐ R17-06: срок — по часам процесса (`logThrottle`).
  */
-let httpWarnAt = 0;
-let httpWarnMuted = 0;
+const httpLog = logThrottle();
 export function warnHttp(e: unknown, what = 'ошибка запроса'): void {
-  const now = Date.now();
-  if (now - httpWarnAt < 10_000) { httpWarnMuted++; return; }
-  const muted = httpWarnMuted ? ` (и ещё ${httpWarnMuted} с прошлого сообщения)` : '';
-  httpWarnAt = now; httpWarnMuted = 0;
+  const muted = httpLog.pass();
+  if (muted === null) return;
   console.error(`[dm-server] ${what}${muted}:`, e);
 }
 

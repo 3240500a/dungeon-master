@@ -34,6 +34,7 @@ import { StatusFx } from './statusFx.js';
 import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, propTune, loadEnvKitFromObjects, type Torch, type EnvKit, type EnvSpec, type PropSpec } from './env3d.js';
 import { getMaterial } from './assetCache.js';
 import { removeProp } from './propDispose.js';
+import { clearGroup, rebuildEnvLayer } from './envLayer.js';
 import { projMesh, dropMesh } from './projDropMeshes.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
@@ -167,6 +168,9 @@ export async function startOnline3d(): Promise<void> {
   const scene = new THREE.Scene(); setFog(scene); makeSceneLighting(scene);
   const torchPool = createTorchPool(scene);   // фикс. пул света факелов (перф) — назначается ближайшим к игроку, создаётся раз
   const camera = new THREE.PerspectiveCamera(52, 1, 1, 2600);   // far ужат под туман (FogExp2 глушит уже к ~2000u): точнее z-буфер, уже фрустум теней
+  // ⭐ R15-01: окружение (env3d) и предметы области — РАЗНЫЕ группы. Окружение пересобирается, когда догрузился тайлсет
+  // биома (`loadEnvForBiome`); выходы, порталы, двери, рычаги, сундуки и NPC города сносит только смена области (`buildArea`).
+  const envGroup = new THREE.Group(); scene.add(envGroup);
   const floorGroup = new THREE.Group(); scene.add(floorGroup);
   const actorsGroup = new THREE.Group(); scene.add(actorsGroup);
   const corpsesGroup = new THREE.Group(); scene.add(corpsesGroup);   // запечённые трупы: 1 статич. меш на труп (вместо 22 + кукла), чистятся при смене этажа
@@ -503,7 +507,8 @@ export async function startOnline3d(): Promise<void> {
       envLoading.delete(biomeId);
       if (!k.floors.length && !k.walls.length) return;
       envKits.set(biomeId, k);
-      if (lastEnvBiome === biomeId && lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, k); }   // пересобрать текущее моделями
+      const layout = lastEnvLayout;
+      if (lastEnvBiome === biomeId && layout) torches = rebuildEnvLayer(envGroup, (g) => buildEnvironment(g, layout, k));   // пересобрать текущее моделями — ТОЛЬКО окружение (R15-01)
     }).catch(() => { envLoading.delete(biomeId); });
   }
   applySavedSettings();   // применить сохранённые галки ⚙ ПОСЛЕ инициализации self/playerLight (иначе TDZ)
@@ -530,7 +535,6 @@ export async function startOnline3d(): Promise<void> {
     selfKey = '';
   }
   const markDead = (a: Actor): void => { if (corpseStart(a) && a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти (setDead будит уснувшего — `corpseStart` снимает и `dormant`)
-  const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
   // Внешность куклы (пропорции атласа + базовый вид пустых слотов) — ОБЩИМ швом с вкладкой «Тест»
   // поз-редактора. Источник у нас свой (живой реестр `app.config`), разбор — один: `resolvePlayerLook`.
@@ -587,7 +591,7 @@ export async function startOnline3d(): Promise<void> {
     const layout = { grid: floor.grid, doors: [], decor: floor.decor, stairsDown: floor.stairs } as unknown as Parameters<typeof buildEnvironment>[1];
     applyEnvFade(floor.biomeId);                    // параметры фейда стен из конфига биома
     lastEnvLayout = layout; lastEnvBiome = floor.biomeId;   // запомним для пересборки, когда догрузится тайлсет
-    torches = buildEnvironment(floorGroup, layout, floor.biomeId ? envKits.get(floor.biomeId) : undefined);
+    torches = rebuildEnvLayer(envGroup, (g) => buildEnvironment(g, layout, floor.biomeId ? envKits.get(floor.biomeId) : undefined));
     if (floor.biomeId) loadEnvForBiome(floor.biomeId);   // лениво подгрузить кит из объектов биома → пересоберём по готовности
     pw.buildStatic(layout);
 
@@ -1302,7 +1306,7 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // rebuildEnv: пересобрать окружение с текущими wallFade (faceYaw/knee/fade) — для живого тюна GLB-стены без релога.
-  const rebuildEnv = (): void => { if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, lastEnvBiome ? envKits.get(lastEnvBiome) : undefined); } };
+  const rebuildEnv = (): void => { const layout = lastEnvLayout; if (layout) torches = rebuildEnvLayer(envGroup, (g) => buildEnvironment(g, layout, lastEnvBiome ? envKits.get(lastEnvBiome) : undefined)); };   // R15-01: предметы области не трогает
   if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents, wallFade, propTune, rebuildEnv };
 
   let last = performance.now();

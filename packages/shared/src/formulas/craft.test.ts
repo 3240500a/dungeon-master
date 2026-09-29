@@ -3,7 +3,7 @@ import { ConfigRegistry } from '../config/registry.js';
 import { defaultConfigData } from '../config/defaults.js';
 import {
   anatomyOf, bakeParts, baseTierRange, capacityOf, clampStep, craftCost, craftSalvageYield, craftTiers, craftWeapon,
-  emptyJournal, enchantItem, finishOf, formOf, fullJournal, journalTierCap, keyVariantsByBase, meltReturn, partById,
+  emptyJournal, enchantCost, enchantItem, finishOf, formOf, fullJournal, journalTierCap, keyVariantsByBase, meltReturn, partById,
   partsOf, resolveParts, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndexOfItem, tierOfSteps, typeOfItem, useSketch,
   variantsFor, type CraftInput,
 } from './craft.js';
@@ -22,9 +22,9 @@ import { makePlayerModel, newBotSave } from '../sim/playerBot.js';
 
 const ITEM_LABELS = { armorClass: (id: string) => id, weight: (id: string) => id, physSub: (id: string) => id, skill: (id: string) => id, dmgShort: (dt: string) => dt };
 import { createRng } from './rng.js';
-import { forgeReroll, forgeUpgrade, upgradedItem } from '../economy/townActions.js';
+import { canEnchantItem, canRerollItem, enchantAction, forgeGold, forgeReroll, forgeUpgrade, upgradedItem } from '../economy/townActions.js';
 import type { SaveState } from '../types/save.js';
-import type { CraftParts } from '../types/items.js';
+import type { CraftParts, Item } from '../types/items.js';
 
 const reg = new ConfigRegistry();
 reg.loadAll();
@@ -972,5 +972,85 @@ describe('⚠ R2-30: ступени деталей найденного — ро
       expect(m.units5, craftTiers(reg)[t]!.id).toBeLessThanOrEqual(cap[t]!);
     }
     expect(measure(craftTiers(reg).length - 1, 300).units5, 'мифик сделан из булата').toBeGreaterThan(6);
+  });
+});
+
+/**
+ * ⚠ R17-03: ФОРМА ЁМКОСТИ БЕЗ ЦЕНЫ — ОТКАЗ ДО ПЛАТЫ, А НЕ ×1. `formMult` отдавал на форму, которой нет в `balance.craft.formMult`, ×1 —
+ * цену самой бедной формы: 3+2 ковалась, зачаровывалась и перекатывалась вшестеро дешевле, молча. Схема теперь такую таблицу не
+ * пропускает (сторож — `config/registry.test.ts`), но вещь без цены формы остаётся законно: хозяин опустил ёмкость до 4 и убрал
+ * строки Σ5 — а мечи 3+2 уже в сумках. Правило R10-14: пустая цена — отказ, а не бесплатно.
+ */
+describe('⚠ R17-03: форма ёмкости без цены — отказ до платы, а не ×1', () => {
+  const input = buildFor('long-sword', uniform(5));   // t6, форма 3+2 (M 5.97)
+  /** Реестр, где у форм `keys` нет цены, — МИМО схемы: так выглядел конфиг до R17-03 (✕ в редакторе, старый оверрайд). */
+  const unpriced = (...keys: string[]): ConfigRegistry => {
+    const x = new ConfigRegistry();
+    x.loadAll();
+    const bal = structuredClone(x.get('balance'));
+    for (const k of keys) delete bal.craft.formMult[k];
+    (x as unknown as { data: Record<string, unknown> }).data.balance = bal;
+    return x;
+  };
+  /** Законный путь к вещи без цены формы (схема его пускает): ёмкость опущена до 4, строки 3+2 и 2+3 убраны. */
+  const lowered = (): ConfigRegistry => {
+    const x = new ConfigRegistry();
+    x.loadAll();
+    const bal = structuredClone(x.get('balance'));
+    bal.craft.capacityByTier = bal.craft.capacityByTier.map((n) => Math.min(n, 4));
+    delete bal.craft.formMult['3+2'];
+    delete bal.craft.formMult['2+3'];
+    x.reload({ balance: bal });
+    return x;
+  };
+  const bag = (it: Item): SaveState => ({ gold: 1e9, inventory: [it] }) as unknown as SaveState;
+
+  it('ковка формы без цены — отказ, а не сырьё ×1; прочие формы — прежней ценой', () => {
+    const live = craftWeapon(reg, input);
+    expect(live.item?.affixCap, 'предусловие: t6 3+2').toEqual({ prefix: 3, suffix: 2 });
+    const cut = unpriced('3+2');
+    const r = craftWeapon(cut, input);
+    expect(r.ok, `сырьё ${JSON.stringify(r.cost?.materials)} при ${JSON.stringify(live.cost?.materials)}`).toBe(false);
+    expect(r.reason).toMatch(/без цены/);
+    expect(r.item).toBeUndefined();
+    const t3 = buildFor('long-sword', uniform(3));   // 2+2 — строка на месте
+    expect(craftWeapon(cut, t3).cost).toEqual(craftWeapon(reg, t3).cost);
+  });
+
+  it('зачарование до редкого и перекатка редкой 3+2 — отказ до платы; магическая катает 1+1 и платит, как прежде', () => {
+    const forged = craftWeapon(reg, input, { rng: createRng(5) }).item!;
+    const rare = enchantItem(reg, forged, 'rare', createRng(3))!;
+    for (const [how, x] of [['ёмкость до 4, строки Σ5 убраны', lowered()], ['строки 3+2 нет (мимо схемы)', unpriced('3+2')]] as const) {
+      const can = canEnchantItem(x, forged, 'rare');
+      expect(can.ok, `${how}: зачарование до редкого`).toBe(false);
+      expect(can.reason).toMatch(/без цены/);
+      const s1 = bag(structuredClone(forged));
+      const was1 = JSON.stringify(s1);
+      expect(enchantAction(x, s1, forged.uid, 'rare', createRng(1)).ok).toBe(false);
+      expect(JSON.stringify(s1), `${how}: отказ зачарования не тронул ни золото, ни вещь`).toBe(was1);
+
+      const rr = canRerollItem(x, rare);
+      expect(rr.ok, `${how}: перекатка редкой 3+2`).toBe(false);
+      expect(rr.reason).toMatch(/без цены/);
+      const s2 = bag(structuredClone(rare));
+      const was2 = JSON.stringify(s2);
+      expect(forgeReroll(x, s2, rare.uid, createRng(9)).ok).toBe(false);
+      expect(JSON.stringify(s2), `${how}: отказ перекатки не тронул ни золото, ни вещь`).toBe(was2);
+
+      // Магическая у 3+2 катает 1+1 (R2-23) — у неё цена есть: зачарование и перекатка идут прежней ценой.
+      expect(canEnchantItem(x, forged, 'magic').ok, `${how}: до магической`).toBe(true);
+      expect(enchantCost(x, forged, 'magic')).toBe(enchantCost(reg, forged, 'magic'));
+      const magic = enchantItem(reg, forged, 'magic', createRng(4))!;
+      expect(canRerollItem(x, magic).ok, `${how}: перекатка магической`).toBe(true);
+      expect(forgeGold(x, magic, 'reroll')).toBe(forgeGold(reg, magic, 'reroll'));
+    }
+  });
+
+  it('переплавка старой вещи без записи оплаты формы без цены — не больше, чем по живой цене (застрять вещь не должна)', () => {
+    const old = { ...craftWeapon(reg, input, { rng: createRng(6) }).item! };
+    delete old.craftPaid;   // вещь старше записи оплаты — переплавка по нынешней цене
+    const live = meltReturn(reg, old), cut = meltReturn(unpriced('3+2'), old);
+    expect(Object.keys(cut).length, 'переплавка вернула сырьё').toBeGreaterThan(0);
+    for (const [id, n] of Object.entries(cut)) expect(n, id).toBeLessThanOrEqual(live[id] ?? 0);
   });
 });

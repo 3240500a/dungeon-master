@@ -137,8 +137,13 @@ type Phase = 'connecting' | 'lobby' | 'resume' | 'game';
 
 export class EntryFlow {
   private phase: Phase = 'connecting';
-  /** Почему прошлая сессия оборвалась — строкой на экранах входа, пока герой не вошёл снова. */
+  /** Почему прошлая сессия оборвалась — строкой на экранах входа, пока герой не вошёл снова (или не бросил забег). */
   private note = '';
+  /**
+   * ⭐ R16-01, R17-05: почему вход кликом отказан `run` (висит свой забег) — строкой ближайшего экрана «Продолжить / Забросить», РАЗОВО. Не `note`:
+   * та живёт до входа, и лобби после «Забросить» твердило «у вас незавершённый забег», будто бросок не удался. Любой другой переход её снимает.
+   */
+  private hint = '';
   /** Поток жив (между `start` и `detach`): закрытие сокета после выхода из игры его не трогает. */
   private live = false;
   /** Когда поток последний раз переподключался САМ (не кнопкой). */
@@ -188,7 +193,8 @@ export class EntryFlow {
       this.statusTries = 0;
       if (f.hasRun) this.toResume(f.roomCode ?? '', f.depth ?? 0, f.dead === true); else this.toLobby();
     });
-    net.on('abandoned', () => { if (this.live && this.phase !== 'game') this.toLobby(); });
+    // ⭐ R17-05: забег брошен — причина прошлой потери связи устарела: лобби — после броска, а не «после обрыва».
+    net.on('abandoned', () => { if (this.live && this.phase !== 'game') { this.note = ''; this.toLobby(); } });
     net.on('error', (f) => {
       if (!this.live) return;
       // В игре ошибка писалась в строку статуса снятого экрана — её не видел никто («подождите», «подойдите к
@@ -197,6 +203,17 @@ export class EntryFlow {
       if (f.code === 'no-run') { this.toLobby(); return; }   // забег истёк за время раздумий
       // ⭐ C-05, C-08: «Продолжить» отказан — забег ведёт другая комната (V2): она на другой ноде (`run`) или в её пати нет мест (`full`).
       if ((f.code === 'run' || f.code === 'full') && this.asked === 'join' && this.lastJoin?.resume) { this.runHeld(f.code, f.msg, f.roomCode); return; }
+      // ⭐ R16-01: «Соло»/«Создать» отказан `run` — у героя висит забег, чей бросок стоил бы штрафа (вход его больше не бросает молча), а лобби
+      // этого не знало (забег появился, пока оно висело: вторая вкладка ушла в подземелье). Статус забега заново — экран «Продолжить / Забросить»
+      // с причиной, а не строка «продолжите или завершите» в лобби без таких кнопок.
+      // ⭐ R17-05: и ВХОД ПО КОДУ — тот же отказ без кода комнаты в кадре (грейс держит забег за штраф — `RUN_PARKED_JOIN`; комната кода в
+      // подземелье чужого забега, а у героя свой — `RUN_CLASH_JOIN`). Условие — по кадру (`f.roomCode`), а не по входу: отказ «Продолжить» с кодом
+      // держателя — ветка C-05/C-08 выше. Причина — разовой строкой экрана «Продолжить» (`hint`), а не `note`, что лобби повторяло до входа.
+      if (f.code === 'run' && this.asked === 'join' && this.lastJoin && !this.lastJoin.resume && !f.roomCode) {
+        this.hint = f.msg;
+        this.askStatus();
+        return;
+      }
       // R4-22: вход аккаунта или героя недействителен — кнопки лобби получили бы тот же отказ.
       if (f.code === 'auth' || f.code === 'forbidden') { this.rejected(f.code, f.msg); return; }
       // R4-13: герой закреплён за другой нодой — маршрут заново (гейтвей ведёт к ней). Один раз на действие игрока.
@@ -214,6 +231,7 @@ export class EntryFlow {
       this.phase = 'game';
       this.deps.inWorld?.(true);
       this.note = '';
+      this.hint = '';
       this.lastAuto = -Infinity;   // вошёл кликом игрока — следующая потеря связи снова переподключается сама
       this.stopTimer();
       this.asked = null;
@@ -231,6 +249,7 @@ export class EntryFlow {
     this.rerouted = false;
     this.followed = false;
     this.statusTries = 0;
+    this.hint = '';
     this.toConnecting();
     if (this.deps.net.connected) this.askStatus();
     else this.dial();
@@ -400,6 +419,7 @@ export class EntryFlow {
     if (!this.live) return;
     this.stopTimer();
     this.asked = null;
+    this.hint = '';   // R17-05: отказ, к которому она, — ответ мёртвого сокета; экран «Продолжить» после — со своей причиной
     if (this.phase === 'connecting') {
       this.dialSeq++;   // R4-13: маршрут, ещё не ответивший, сокет уже не откроет — игрок на лобби с кнопкой
       this.openJoin = null;
@@ -441,13 +461,16 @@ export class EntryFlow {
 
   private toLobby(roomCode?: string): void {
     this.phase = 'lobby';
+    this.hint = '';   // R17-05: «продолжите или завершите» — строка экрана с такими кнопками, не лобби
     this.deps.view.showLobby((o) => this.join(o), roomCode);
     if (this.note) this.deps.view.setStatus(this.note);   // почему игрок снова здесь
   }
 
   private toResume(roomCode: string, depth: number, dead: boolean): void {
     this.phase = 'resume';
+    const why = this.hint || this.note;   // R17-05: причина отказа входа — разово, свежее причины потери связи
+    this.hint = '';
     this.deps.view.showResume(roomCode, depth, { resume: () => this.join({ resume: true }), abandon: () => this.abandon() }, dead);
-    if (this.note) this.deps.view.setStatus(this.note);
+    if (why) this.deps.view.setStatus(why);
   }
 }

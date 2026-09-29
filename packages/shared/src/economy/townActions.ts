@@ -7,7 +7,7 @@ import { unmetWorn } from '../formulas/stats.js';
 import { isVersatile } from '../formulas/versatile.js';
 import { rollAffixes, nextTier, inferTierId, retierItem, tierMatters } from '../formulas/itemgen.js';
 import {
-  CRAFT_NONCES_KEEP, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost, enchantItem,
+  CRAFT_NONCES_KEEP, FORM_UNPRICED, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost, enchantItem,
   enchantSlots, fullJournal, isCraftNonce, meltReturn, normalizeCraftNonces, normalizeJournal, parseCraftInput, partById,
   rolledFormMult, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndex, typeOfItem, upgradeFoundParts, useSketch, type SalvageUnlock,
 } from '../formulas/craft.js';
@@ -508,7 +508,8 @@ export function forgeGold(reg: ConfigRegistry, item: Item, op: ForgeOp): number 
   const tierId = op === 'upgrade' && b ? nextTier(tiers, b, curId)?.id ?? curId : curId;
   const tier = tiers.find((t) => t.id === tierId);
   const rarity = reg.get('rarities').find((r) => r.id === item.rarity);
-  const form = op === 'reroll' ? rolledFormMult(reg, item, item.rarity) : 1;
+  // R17-03: у катаемой формы нет цены — NaN (не число, а не скидка до ×1); `canRerollItem` откажет раньше, «Форма без цены».
+  const form = op === 'reroll' ? rolledFormMult(reg, item, item.rarity) ?? Number.NaN : 1;
   return Math.max(1, Math.round(base * (tier?.reqMult ?? 1) * (rarity?.priceMult ?? 1) * form));
 }
 
@@ -688,6 +689,8 @@ export function canRerollItem(reg: ConfigRegistry, item: Item): ActionResult {
   if (item.affixCap && !enchantSlots(reg, item, item.rarity)?.fillable) {
     return { ok: false, reason: 'Кузнецу не хватит свойств на форму этой вещи' };
   }
+  // ⚠ R17-03: у катаемой формы нет цены (хозяин опустил ёмкость и убрал её строку) — отказ до платы, а не перекатка по ×1.
+  if (rolledFormMult(reg, item, item.rarity) === undefined) return { ok: false, reason: FORM_UNPRICED };
   return { ok: true };
 }
 
@@ -1081,6 +1084,8 @@ export function canEnchantItem(reg: ConfigRegistry, item: Item, rarity: string):
   if (!fit) return { ok: false, reason: 'Кузнец не знает такой вещи' };
   if (Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0) return { ok: false, reason: 'Этой вещи некуда принять свойства' };
   if (!fit.fillable) return { ok: false, reason: 'Кузнецу не хватит свойств на форму этой вещи' };
+  // ⚠ R17-03: у катаемой формы нет цены — отказ до платы, а не зачарование по ×1 (цене самой бедной формы).
+  if (rolledFormMult(reg, item, rarity) === undefined) return { ok: false, reason: FORM_UNPRICED };
   const cost = enchantCost(reg, item, rarity);
   if (!Number.isFinite(cost) || cost < 0) return { ok: false, reason: 'Кузнец не может назвать цену' };
   return { ok: true };
@@ -1150,22 +1155,24 @@ export function offhandRefusal(item: Item, main: Item | undefined): string | nul
   return null;
 }
 
+/** Что сделает `equip`, если все проверки пройдены: вещь, слот, что снимется (прежняя вещь, вторая рука, лишние колбы). */
+interface EquipPlan { item: Item; slot: EquipSlot; idx: number; displaced: Item | undefined; need: Item[]; newBeltCap: number }
+
 /**
- * Надеть вещь из сумки. Без `target` — в её родной слот (меню «Надеть», кузница, Unity). ⭐ R11-02: `target: 'offhand'` —
- * во вторую руку (пупсик: вещь брошена на ячейку «Левая рука»); так одноручное оружие встаёт вторым (дуал-вилд). Раньше
- * цели не было: кинжал, брошенный в левую ячейку, менял меч в основной руке, а ветка «Парное оружие» не открывалась никогда.
+ * Проверки `equip` — без записи: причина отказа строкой или план. ⭐ R16-08: их же спрашивает пупсик (`equipRefusal`) — раньше он
+ * мерил требования, сняв с героя только вещь целевой ячейки, и пускал двуручник, которому хватало Силы лишь со щитом (щит снимается).
  */
-export function equip(reg: ConfigRegistry, save: SaveState, uid: string, target?: 'offhand'): ActionResult {
+function equipPlan(reg: ConfigRegistry, save: SaveState, uid: string, target?: 'offhand'): EquipPlan | string {
   const dims = dimsOf(reg);
   const item = save.inventory.find((i) => i.uid === uid);
-  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
-  if (!item.slot) return { ok: false, reason: 'Нельзя надеть' };
+  if (!item) return 'Предмет не в инвентаре';
+  if (!item.slot) return 'Нельзя надеть';
   // ⚠ Сломанный трофей носить нельзя — сперва к кузнецу (или на разбор). Проверка ЗДЕСЬ, в одной
   // авторитетной точке экипировки: клиент её только дублирует подсказкой.
-  if (item.broken) return { ok: false, reason: 'Сломано — почини у кузнеца' };
-  if (target !== undefined && target !== 'offhand') return { ok: false, reason: 'Нельзя надеть' };
+  if (item.broken) return 'Сломано — почини у кузнеца';
+  if (target !== undefined && target !== 'offhand') return 'Нельзя надеть';
   const slot: EquipSlot = target ?? item.slot;
-  if (slot === 'offhand') { const no = offhandRefusal(item, save.equipment.weapon); if (no) return { ok: false, reason: no }; }
+  if (slot === 'offhand') { const no = offhandRefusal(item, save.equipment.weapon); if (no) return no; }
 
   // ⭐ Полуторное оружие вторую руку НЕ запирает: со щитом оно просто переходит в одноручный хват
   // и теряет часть урона и темпа (`versatile.ts`). Настоящий двуручник — запирает, как и раньше.
@@ -1177,7 +1184,7 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string, target?
   // ⚠ R4-08: требования — по тому, что будет надето ПОСЛЕ смены: уходящая вещь (и снятое со второй руки) своей
   // прибавкой больше не подпирает ни новую вещь, ни оставшиеся.
   const broken = wornBroken(save, save.attributes, equippedItems(save).filter((i) => i !== prev && i !== displaced).concat(item));
-  if (broken) return { ok: false, reason: broken === item ? 'Недостаточно атрибутов' : wornReason(broken) };
+  if (broken) return broken === item ? 'Недостаточно атрибутов' : wornReason(broken);
 
   const need: Item[] = [];
   if (prev) need.push(prev);
@@ -1193,7 +1200,32 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string, target?
   // колбы пояса влезали «поодиночке», а второй `addToInventory` молча не находил места — вещь пропадала.
   const probe = bagCopy(save.inventory);
   probe.splice(idx, 1);
-  for (const it of need) if (!addToInventory(probe, { ...it }, dims)) return { ok: false, reason: 'Нет места для снятого' };
+  for (const it of need) if (!addToInventory(probe, { ...it }, dims)) return 'Нет места для снятого';
+  return { item, slot, idx, displaced, need, newBeltCap };
+}
+
+/**
+ * ⭐ R16-08: НАДЕНЕТ ЛИ СЕРВЕР — причина отказа `equip` строкой или `null`, без записи. Одно решение для ядра и пупсика (веб, эталон
+ * Unity): пред-проверка пупсика снимала с героя только вещь целевой ячейки — а `equip` снимает и вторую руку под двуручником и держит
+ * требования всего надетого (R4-08), и место под снятое. Двуручник, которому хватало Силы лишь со щитом, слетал с курсора, а сервер
+ * отказывал молча для окна (строка — только в логе игры).
+ */
+export function equipRefusal(reg: ConfigRegistry, save: SaveState, uid: string, target?: 'offhand'): string | null {
+  const plan = equipPlan(reg, save, uid, target);
+  return typeof plan === 'string' ? plan : null;
+}
+
+/**
+ * Надеть вещь из сумки. Без `target` — в её родной слот (меню «Надеть», кузница, Unity). ⭐ R11-02: `target: 'offhand'` —
+ * во вторую руку (пупсик: вещь брошена на ячейку «Левая рука»); так одноручное оружие встаёт вторым (дуал-вилд). Раньше
+ * цели не было: кинжал, брошенный в левую ячейку, менял меч в основной руке, а ветка «Парное оружие» не открывалась никогда.
+ * Проверки — `equipPlan` (их же спрашивает пупсик, `equipRefusal`).
+ */
+export function equip(reg: ConfigRegistry, save: SaveState, uid: string, target?: 'offhand'): ActionResult {
+  const plan = equipPlan(reg, save, uid, target);
+  if (typeof plan === 'string') return { ok: false, reason: plan };
+  const dims = dimsOf(reg);
+  const { item, slot, idx, displaced, need, newBeltCap } = plan;
 
   // ── Проверки позади: дальше только запись ──
   save.inventory.splice(idx, 1);

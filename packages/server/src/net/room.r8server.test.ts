@@ -66,6 +66,12 @@ beforeAll(async () => {
   cfg.loadAll();
 });
 const rooms: Room[] = [];
+/** Шаг комнаты «через `ms`»: и настенные часы, и часы процесса (⭐ R15-06: сроки комнаты — по ним). */
+function later(ms: number): void {
+  const wall = Date.now() + ms, mono = performance.now() + ms;
+  vi.spyOn(Date, 'now').mockReturnValue(wall);
+  vi.spyOn(performance, 'now').mockReturnValue(mono);
+}
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -134,6 +140,10 @@ function hero(level: number, gold = 10_000, userId?: string): { save: SaveState;
 function newRoom(code = 'R8S'): Room {
   const room = new RoomCtor(code, cfg, { onEmpty() {}, onGrace() {}, onUngrace() {}, onFarewell() {} });
   rooms.push(room);
+  // ⭐ R17-07: тик — только шагами теста. Конструктор ставит комнату на НАСТОЯЩИЙ планировщик, и под нагрузкой полного прогона обороты
+  // `settle` (setTimeout(0)) длились столько, что комната успевала тикнуть: монстр добивал тело в бою (1 HP, R13-03) — «загнан у выхода»
+  // платил штраф, и сторож R8-07 падал через раз (один файл — всегда зелёный).
+  room.stop();
   return room;
 }
 function join(room: Room, h: { save: SaveState; userId: string }, save = h.save): { ws: FakeWs; pid: string } {
@@ -385,7 +395,7 @@ describe('⭐ R8-03: голосование не переживает вайп �
     const progress = structuredClone(G.difficultyProgress);
     expect(inner(room).vote, 'вайп закрыл голосование').toBeNull();
     expect(g.ws.last('voteEnd'), 'и сказал об этом').toEqual({ t: 'voteEnd', passed: false });
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000);
+    later(10_000);
     room.step(false);
     vi.restoreAllMocks();
     expect(inner(room).area).toBe('town');
@@ -410,7 +420,7 @@ describe('⭐ R8-03: голосование не переживает вайп �
   it('контроль: голосование, открытое в городе после вайпа, работает как прежде', () => {
     const { room, h, g } = pendingDescend('R8S8');
     wipe(room, h.pid, g.pid);
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000);
+    later(10_000);
     room.step(false);
     vi.restoreAllMocks();
     expect(inner(room).area).toBe('town');
@@ -482,7 +492,7 @@ describe('⭐ R8-04: мощь узла помнит снаряжение, над
     expect(inner(room).nodeState!.el).toBe(geared);
     poisonToDeath(room, m.pid);
     for (let i = 0; i < 3; i++) room.step(false);
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000);
+    later(10_000);
     room.step(false);
     vi.restoreAllMocks();
     expect(inner(room).area).toBe('town');
@@ -514,6 +524,12 @@ describe('⭐ R8-07: отключившийся посреди боя при с�
     mon.pos = { ...at }; mon.aiState = 'chase';                              // вплотную: дойдёт наверняка
     return { room, a, b, A: ha.save };
   }
+  /** ⭐ R17-07: тело ушедшего посреди боя (R13-03) — ещё в бою и живо: комнату не тикнул никто, кроме теста. */
+  function bodyAlive(room: Room, charId: string): void {
+    const l = (room as unknown as { lingering: Map<string, { p: { alive: boolean } }> }).lingering.get(charId);
+    expect(l, 'тело — в бою').toBeDefined();
+    expect(l!.p.alive, 'и живо: планировщик комнату не тикал').toBe(true);
+  }
   async function partnerDescends(room: Room, b: string): Promise<void> {
     const to = nodeNow(room).edges[0]!.to;
     toExit(room, b, to);
@@ -527,6 +543,7 @@ describe('⭐ R8-07: отключившийся посреди боя при с�
     const { room, a, b, A } = cornered('R8SB', 'exit');
     await room.removePlayer(a);
     await settle();
+    bodyAlive(room, A.charId);
     await partnerDescends(room, b);
     expect(inner(room).disconnected.has(A.charId), 'ждёт').toBe(true);
     expect(db.data.get(A.charId)!.gold, 'штрафа нет').toBe(10_000);
@@ -537,6 +554,7 @@ describe('⭐ R8-07: отключившийся посреди боя при с�
     const { room, a, b, A } = cornered('R8SC', 'spawn');
     await room.removePlayer(a);
     await settle();
+    bodyAlive(room, A.charId);
     await partnerDescends(room, b);
     expect(inner(room).disconnected.has(A.charId)).toBe(false);
     expect(db.data.get(A.charId)!.gold).toBeLessThan(10_000);
@@ -547,6 +565,7 @@ describe('⭐ R8-07: отключившийся посреди боя при с�
     const { room, a, b, A } = cornered('R8SD', 'exit');
     await room.removePlayer(a);
     await settle();
+    bodyAlive(room, A.charId);
     toSpawn(room, b);
     ready(room);
     room.returnTown(b);
@@ -560,6 +579,7 @@ describe('⭐ R8-07: отключившийся посреди боя при с�
     const { room, a, b, A } = cornered('R8SE', 'spawn');
     await room.removePlayer(a);
     await settle();
+    bodyAlive(room, A.charId);
     toSpawn(room, b);
     ready(room);
     room.returnTown(b);

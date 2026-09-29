@@ -574,3 +574,118 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 4: одновреме
     expect(await db.countCharacters(userId)).toBe(5);
   }, 30_000);
 });
+
+describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 15: удаление героя и леджер', () => {
+  /** Находки аудита «леджер держит вещь, которой нет в сейве» про героя `charId`. */
+  const lostOf = async (charId: string): Promise<string[]> => {
+    const { runAudit } = await import('./audit.js');
+    const r = await runAudit();
+    return (r.findings.find((f) => f.kind === 'lost')?.examples ?? []).filter((e) => e.includes(`char:${charId}`));
+  };
+  const rows = async (ids: string[]): Promise<{ id: string; loc: string }[]> =>
+    pool.q('SELECT id::text AS id, loc FROM items WHERE id = ANY($1::uuid[]) ORDER BY id', [ids]);
+
+  it('⭐ R15-03: удалённый герой не оставляет вещей у себя в леджере — они в world с событием «gone» (charDeleted), аудит их не числит потерянными', async () => {
+    if (!alive) return;
+    const { userId, charId, save } = await freshChar();
+    const ids = Object.values(save.equipment).filter((i) => !!i).map((i) => i!.uid);
+    expect(ids.length, 'у нового героя есть стартовый комплект').toBeGreaterThan(0);
+    await db.deleteCharacter(charId, userId);
+    expect(await db.getCharacter(charId), 'герой удалён').toBeNull();
+    expect((await rows(ids)).map((r) => r.loc), 'вещи удалённого — от аккаунта ушли').toEqual(ids.map(() => 'world'));
+    for (const id of ids) {
+      const last = (await pool.q<{ kind: string; reason: string | null; to_loc: string | null }>(
+        'SELECT kind, reason, to_loc FROM item_events WHERE item_id = $1 ORDER BY seq DESC LIMIT 1', [id]))[0];
+      expect(last, `журнал вещи ${id}`).toEqual({ kind: 'gone', reason: 'charDeleted', to_loc: 'world' });
+    }
+    expect(await lostOf(charId), 'ночной аудит не числит их потерянными').toEqual([]);
+  });
+
+  it('⭐ R15-03: чужого героя удаление не трогает — ни строки, ни вещей', async () => {
+    if (!alive) return;
+    const a = await freshChar();
+    const b = await freshChar();
+    const ids = Object.values(b.save.equipment).filter((i) => !!i).map((i) => i!.uid);
+    await db.deleteCharacter(b.charId, a.userId);
+    expect(await db.getCharacter(b.charId), 'герой чужого аккаунта на месте').not.toBeNull();
+    expect((await rows(ids)).map((r) => r.loc), 'его вещи — у него').toEqual(ids.map(() => `char:${b.charId}`));
+  });
+
+  it('⭐ R15-03: починка — вещи героев, удалённых по-старому (голой строкой), уходят в world; повтор ничего не делает', async () => {
+    if (!alive) return;
+    const { releaseOrphans } = await import('./items.js');
+    await releaseOrphans(true);   // сироты соседних тестов этого файла (их уборка — голой строкой) — не в счёт: аудит пишет до 50 примеров
+    const { charId, save } = await freshChar();
+    const ids = Object.values(save.equipment).filter((i) => !!i).map((i) => i!.uid);
+    await pool.q('DELETE FROM characters WHERE char_id = $1', [charId]);   // так удаляли до правки
+    expect((await lostOf(charId)).length, 'до починки аудит числит их потерянными').toBeGreaterThan(0);
+    const shown = await releaseOrphans(false);
+    expect(shown.chars, 'показ видит удалённого').toContain(charId);
+    expect((await rows(ids)).map((r) => r.loc), 'показ ничего не меняет').toEqual(ids.map(() => `char:${charId}`));
+    const fixed = await releaseOrphans(true);
+    expect(fixed.chars).toContain(charId);
+    expect((await rows(ids)).map((r) => r.loc), 'после починки — в world').toEqual(ids.map(() => 'world'));
+    expect(await lostOf(charId), 'аудит их больше не числит').toEqual([]);
+    expect((await releaseOrphans(true)).chars, 'повтор — пусто').not.toContain(charId);
+  });
+
+  it('⭐ R16-03: откат аккаунта к моменту до удаления героя — вещь, законно ушедшая в сундук, не пропадает, а леджер не возвращается к удалённому', async () => {
+    if (!alive) return;
+    const { planRollback, applyRollback } = await import('./rollback.js');
+    const { releaseOrphans } = await import('./items.js');
+    const x = await freshChar();
+    const yId = uuidv7();
+    await db.createCharacter(yId, x.userId, newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Игрек', yId));
+    // Момент отсечки: у X — весь стартовый комплект.
+    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = new Date();
+    await new Promise((r) => setTimeout(r, 50));
+    // После неё: вещь S из комплекта X — в сундук аккаунта (законно), затем X удалён (его прочие вещи — в world, R15-03).
+    const s = takeEquipped(x.save);
+    const stash: AccountStash = emptyStash(cfg);
+    stash.tabs[0]!.push({ ...s, pos: { x: 0, y: 0 } });
+    expect(await db.putCharacterWithStash(x.charId, x.userId, x.save, 1, stash, 0)).toMatchObject({ ok: true });
+    const rest = Object.values(x.save.equipment).filter((i) => !!i).map((i) => i!.uid);
+    await db.deleteCharacter(x.charId, x.userId);
+
+    const plan = await planRollback(x.userId, cutoff);
+    expect(plan.restore.filter((r) => r.to === `char:${x.charId}`), 'к удалённому герою откат ничего не возвращает').toEqual([]);
+    expect(plan.deletedHero.map((d) => d.id).sort(), 'вещи удалённого на отсечке — оператору списком').toEqual([s.uid, ...rest].sort());
+    expect(plan.deletedHero.every((d) => d.char === x.charId)).toBe(true);
+    await applyRollback(plan, 'тест R16-03');
+
+    const st = await db.getAccountStash(x.userId);
+    expect(itemsOfStash(st!.data).map((i) => i.uid), 'S — в сундуке, где лежала законно').toContain(s.uid);
+    expect((await rows([s.uid])).map((r) => r.loc), 'и в леджере — там же').toEqual(['stash']);
+    const atX = await pool.q<{ id: string }>('SELECT id::text AS id FROM items WHERE loc = $1', [`char:${x.charId}`]);
+    expect(atX, 'леджер не держит вещей у удалённого героя').toEqual([]);
+    expect(await lostOf(x.charId), 'ночной аудит не числит их потерянными').toEqual([]);
+    expect((await releaseOrphans(false)).chars, 'и починке сирот нечего делать').not.toContain(x.charId);
+  });
+
+  it('⭐ R16-03: сторож применения — возврат к удалённому герою из готового плана пропускается целиком: вещь не вынимается, леджер не переписывается', async () => {
+    if (!alive) return;
+    const { planRollback, applyRollback } = await import('./rollback.js');
+    const x = await freshChar();
+    const yId = uuidv7();
+    await db.createCharacter(yId, x.userId, newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Игрек', yId));
+    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = new Date();
+    await new Promise((r) => setTimeout(r, 50));
+    const s = takeEquipped(x.save);
+    const stash: AccountStash = emptyStash(cfg);
+    stash.tabs[0]!.push({ ...s, pos: { x: 0, y: 0 } });
+    expect(await db.putCharacterWithStash(x.charId, x.userId, x.save, 1, stash, 0)).toMatchObject({ ok: true });
+    // План построен, пока X ещё был (S — вернуть X), а применяют его уже после удаления X.
+    const plan = await planRollback(x.userId, cutoff);
+    expect(plan.restore.map((r) => r.id)).toContain(s.uid);
+    await db.deleteCharacter(x.charId, x.userId);
+    const done = await applyRollback(plan, 'тест R16-03 сторож');
+    expect(done.restored, 'возврат к удалённому не считается сделанным').toBe(0);
+    const st = await db.getAccountStash(x.userId);
+    expect(itemsOfStash(st!.data).map((i) => i.uid), 'S осталась в сундуке').toContain(s.uid);
+    expect((await rows([s.uid])).map((r) => r.loc)).toEqual(['stash']);
+    const ev = await pool.q<{ kind: string }>(`SELECT kind FROM item_events WHERE item_id = $1 AND kind = 'rollback'`, [s.uid]);
+    expect(ev, 'события отката по ней нет').toEqual([]);
+  });
+});

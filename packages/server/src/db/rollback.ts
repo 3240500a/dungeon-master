@@ -23,7 +23,11 @@ import { LOC_STASH, LOC_WORLD, LOC_REVOKED, locOfChar, itemsOfSave, itemsOfStash
  *  • ЭКИПИРОВКА не восстанавливается по слотам: журнал пишет место («у персонажа»), но не
  *    слот. Всё возвращённое кладётся в инвентарь, игрок надевает сам;
  *  • отозванные вещи (`revoked`) откат НЕ воскрешает: отзыв — это решение человека,
- *    и оно сильнее восстановления по времени.
+ *    и оно сильнее восстановления по времени;
+ *  • ⭐ R16-03: вещи, лежавшие на отсечке у героя, которого с тех пор УДАЛИЛИ, откат не трогает — возвращать их некуда (строки героя
+ *    нет), а где они сейчас (сундук, другой герой, `world` — удаление уводит туда его вещи, R15-03), там и остаются. Раньше их вынимали
+ *    отовсюду и не клали никуда: вещь, законно ушедшая в сундук, пропадала, а леджер снова числил всё за удалённым (вечные «lost»
+ *    ночного аудита до `items:orphans --fix`). План перечисляет их (`deletedHero`) — к ручной сверке.
  *
  * Работает ОДНОЙ транзакцией и по умолчанию только показывает, что сделает.
  */
@@ -46,6 +50,11 @@ export interface RollbackPlan {
   forge: { id: string; reason: string; at: Date }[];
   /** Счётчик мификов журнала кузнеца сейчас (ворота t6) — откат его не трогает. */
   journalMythic: number;
+  /**
+   * ⭐ R16-03: вещи, лежавшие на отсечке у героя, которого с тех пор удалили (`char` — его id): вернуть их некуда, откат их не трогает. К
+   * ручной сверке.
+   */
+  deletedHero: { id: string; char: string }[];
 }
 
 interface EventRow { item_id: string; kind: string; to_loc: string | null; data: Item | null }
@@ -77,16 +86,21 @@ export async function planRollback(userId: string, at: Date): Promise<RollbackPl
 
     const now = new Map<string, string>();
     for (const ch of chars.rows) for (const it of itemsOfSave(ch.data)) now.set(it.uid, locOfChar(ch.char_id));
+    /** ⭐ R16-03: места, куда вернуть можно: герои аккаунта, что есть сейчас, и сундук. */
+    const heroes = new Set(chars.rows.map((ch) => locOfChar(ch.char_id)));
     if (stash.rows[0]) for (const it of itemsOfStash(stash.rows[0].data)) now.set(it.uid, LOC_STASH);
 
     const restore: RollbackPlan['restore'] = [];
     const remove: RollbackPlan['remove'] = [];
+    const deletedHero: RollbackPlan['deletedHero'] = [];
     let untouched = 0;
     const touched = new Set<string>();
 
     // Вещь была где-то на момент отсечки, но лежит не там (или пропала) — вернуть.
     for (const [id, was] of locAt) {
       if (was === LOC_WORLD || was === LOC_REVOKED) continue;      // тогда её у аккаунта и не было
+      // ⭐ R16-03: лежала у героя, которого удалили, — вернуть некуда: не вынимаем оттуда, где она сейчас, и леджер не переписываем.
+      if (was !== LOC_STASH && !heroes.has(was)) { deletedHero.push({ id, char: was.slice(locOfChar('').length) }); continue; }
       const isNow = now.get(id);
       if (isNow === was) { untouched++; continue; }
       const item = dataAt.get(id);
@@ -111,7 +125,7 @@ export async function planRollback(userId: string, at: Date): Promise<RollbackPl
 
     return {
       userId, at, restore, remove, untouched, touched: [...touched],
-      forge: forge.rows.map((r) => ({ id: r.item_id, reason: r.reason, at: r.at })), journalMythic,
+      forge: forge.rows.map((r) => ({ id: r.item_id, reason: r.reason, at: r.at })), journalMythic, deletedHero,
     };
   });
 }
@@ -145,15 +159,17 @@ export async function applyRollback(plan: RollbackPlan, reason: string): Promise
 
     for (const r of plan.remove) pull(r.id);
 
-    for (const r of plan.restore) {
+    // ⭐ R16-03: СТОРОЖ — возврат туда, чего под блокировкой нет (герой удалён после плана, сундука нет), пропускается ЦЕЛИКОМ: ни выемки
+    // оттуда, где вещь сейчас, ни записи леджера и журнала. Раньше вещь вынималась и не клалась никуда, а леджер числил её за местом, которого нет.
+    const restore = plan.restore.filter((r) => (r.to === LOC_STASH ? !!stash?.tabs[0] : saves.has(r.to)));
+    for (const r of restore) {
       pull(r.id);
       if (r.to === LOC_STASH) {
         // Возврат в сундук: позиция из снимка. Наложения лечит `sanitizeStash` при выдаче.
-        if (stash) stash.tabs[0]?.push(r.item);
+        stash!.tabs[0]!.push(r.item);
       } else {
-        const target = saves.get(r.to);
         // ВСЁ кладём в инвентарь, а не в слоты: журнал знает место, но не слот экипировки.
-        if (target) target.data.inventory.push({ ...r.item, pos: r.item.pos ?? null });
+        saves.get(r.to)!.data.inventory.push({ ...r.item, pos: r.item.pos ?? null });
       }
     }
 
@@ -168,7 +184,7 @@ export async function applyRollback(plan: RollbackPlan, reason: string): Promise
     }
 
     // Леджер и журнал приводим в то же состояние: иначе ближайший аудит объявит откат нарушением.
-    for (const r of plan.restore) {
+    for (const r of restore) {
       await c.query('UPDATE items SET loc = $2, data = $3, moved_at = now() WHERE id = $1',
         [r.id, r.to, JSON.stringify(r.item)]);
       await c.query(
@@ -184,6 +200,6 @@ export async function applyRollback(plan: RollbackPlan, reason: string): Promise
         [r.id, plan.userId, r.from, LOC_WORLD, reason]);
     }
 
-    return { restored: plan.restore.length, removed: plan.remove.length };
+    return { restored: restore.length, removed: plan.remove.length };
   });
 }

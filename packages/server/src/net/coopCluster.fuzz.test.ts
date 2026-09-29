@@ -29,7 +29,9 @@ import { LEASE_MS } from '../cluster/lease.js';
  * то есть посреди входа, записи, «Завершить», продолжения забега), слив (`drain`, и фоном — `bg`: слив идёт вперемешку с операциями),
  * перезапуск (`restart` — новый процесс с тем же именем), пауза сердцебиения (`stall` — нода жива, но реестр её не видит), раздел ноды с
  * базой (`partition` — все запросы ноды падают), сбои запросов реестра (`regFault`: закрепление, забег, продление, удар, маршрут — до
- * фиксации или «легло, ответ потерян»). События кластера — из своего потока чисел (`W.env`): операции героев идут как шли.
+ * фиксации или «легло, ответ потерян»), ⭐ R16-02 пауза машины ноды дольше срока смерти (`suspend` — процесс стоит целиком, его часы не идут,
+ * настенные потом догоняет chrony или стоят и они; реестр тем временем отдаёт её героев и забеги другой; из своего потока `W.pause`). События
+ * кластера — из своего потока чисел (`W.env`): операции героев идут как шли.
  *
  * Процесс, чей это код, несут цепочки промисов и таймеры (`AsyncLocalStorage`, `inProc`): у мёртвого процесса таймеры не срабатывают, его
  * запросы не уходят и не отвечают (`gate`), а его лог и штрафы наблюдатели не видят. Операция, не закончившаяся за 30 с настоящего времени, —
@@ -38,9 +40,14 @@ import { LEASE_MS } from '../cluster/lease.js';
  * Инварианты — все из `coopLifecycle.fuzz.test.ts` (1–8, см. там; ⭐ R16 C-09: и `5-status-promise` — статус забега через гейтвей обещает цену
  * «Завершить» этой ноды, в том числе «мёртв, оплачено» строки после падения и слива) и кластерные:
  *  a — герой держится (сессия, грейс, тело) не больше чем одной живой нодой (`a-live-two-nodes`); живая сессия проигравшей копии снимается
- *      сердцебиением (`fenceLost`);
+ *      сердцебиением (`fenceLost`); ⭐ R16-02: нода, которую реестр не видел дольше аренды (пауза машины: часы процесса стояли), не оживает — её
+ *      удар не доходит, а процесс уходит без записи (`a-dead-node-revived`; раньше продление вставляло отданное и отпущенное заново); ⭐ R17-01:
+ *      и когда пауза легла ПОСЛЕ ответа сверки (`suspend.mid`: между сверкой и продлением своих или между продлением и ударом) — удар ложится
+ *      только с проверкой в нём самом (`heartbeat(…, leased)`), и устаревший ответ сверки ноду не оживляет;
  *  b — забег идёт в подземелье не больше чем одной комнаты во всём кластере (`b-run-two-rooms`); нода не теряет держание забега, который её
- *      комната ведёт (`b-run-lock-lost` — ИНЦИДЕНТ сердцебиения);
+ *      комната ведёт (`b-run-lock-lost` — ИНЦИДЕНТ сердцебиения); ⭐ R15-08: и не держит забег, который её комната отпустила (`b-run-lock-orphan`:
+ *      продление или взятие, легшее в базу ПОСЛЕ отпуска, вставляло строку заново, и «Продолжить» на соседней ноде вело к исчезнувшей комнате;
+ *      поздний ответ реестра — сбой `late` из своего потока `lateReg`);
  *  c — после падения ноды вещь не удвоена и не пропала между выжившей нодой и базой: правда героев упавшей ноды — строка базы (откат к ней
  *      законен: взятое после последней записи уходит с процессом), а взятое стоком возвращается только в строку своего героя;
  *  d — никто не заперт навсегда: после смерти ноды её закрепления и забеги освобождаются правилом держания (`NODE_DEAD_SEC`), отказ
@@ -51,7 +58,9 @@ import { LEASE_MS } from '../cluster/lease.js';
  * молчащей ноды другой (R7-09 — «ИНЦИДЕНТ»). По умолчанию паузы и разделы (вместе) короче; `DM_FUZZ_OUTAGE_LONG=1` добавляет длинные. ⭐ ENV1
  * (проход правок 1): молчащая нода теперь отгораживает себя сама раньше срока (аренда): нарушение после длинного простоя — снова нарушение
  * (корень `ENV-outage-over-dead-sec` больше не прощается). Остаётся по дизайну только слив, чья дописка не легла до конца аренды (раздел с
- * базой дольше неё) — `ENV-drain-db-outage`: копии уходят с процессом (ИНЦИДЕНТ, R12-04), прогон на нём не падает. Найденные и ещё не
+ * базой дольше неё) — `ENV-drain-db-outage`: копии уходят с процессом (ИНЦИДЕНТ, R12-04), прогон на нём не падает. ⭐ Перепрогон R16: и (только
+ * с `DM_FUZZ_OUTAGE_LONG`) двойной сбой — пауза машины дольше срока смерти, а реестр ноде недоступен и после неё, — `ENV-thaw-registry-silent`:
+ * сверка R16-02 не доходит, и до конца аренды нода держит отданное (см. `KNOWN`). Найденные и ещё не
  * исправленные корни — `KNOWN` и тесты `it.fails` в конце; исправленные (K1, K2, K3, ENV1, ENV2 — проход правок 1; K3a–K3d — проход 2) —
  * те же сжатые последовательности тестами `it`: повтор держит правку. ⭐ K3 (передача вещи через землю записана наполовину: выброс лёг,
  * подъём — нет) закрыт целиком: окно было не «одна запись в пути», а всё время, пока поднятое жило в сумке без строки (пауза C-07 после сбоя,
@@ -62,10 +71,10 @@ import { LEASE_MS } from '../cluster/lease.js';
  *
  * Умолчание — фиксированные сиды (полный прогон — десятки секунд). `DM_FUZZ_SEEDS=N` — N сидов подряд с `DM_FUZZ_SEED0` (по умолчанию 1),
  * `DM_FUZZ_OPS` — длина последовательности, `DM_FUZZ_FAULTS=0` — без сбоев базы и реестра, `DM_FUZZ_SHRINK=0` — без сжатия,
- * `DM_FUZZ_SHRINK_KNOWN=1` — сжимать и известные корни, `DM_FUZZ_TRACE=1` — операции и состояние после каждой, `DM_FUZZ_LOG=<файл>` —
- * нарушения сразу в файл, `DM_FUZZ_SELFTEST=claim|runlock|fence|leak|held|lease|k1|k3|c09` — самопроверка (сломать правило реестра, снятие проигравших,
+ * `DM_FUZZ_SHRINK_KNOWN=1` — сжимать и известные корни, `DM_FUZZ_TRACE=1` — операции и состояние после каждой (и взятия, отпуски, продления забегов в реестре), `DM_FUZZ_LOG=<файл>` —
+ * нарушения сразу в файл, `DM_FUZZ_SELFTEST=claim|runlock|fence|leak|held|lease|k1|k3|c09|r1508|r15settle|r1602|r1701` — самопроверка (сломать правило реестра, снятие проигравших,
  * отпускание закреплений, удержание выброшенного, аренду ноды, метку «мёртв, оплачено» в строке, подъём выброшенного только после записи,
- * «смерть оплачена» в статусе забега —
+ * «смерть оплачена» в статусе забега, сверку возраста удара с реестром после паузы машины, проверку живости в самом ударе сердца —
  * фаззер обязан найти), `DM_FUZZ_REPLAY='{"seed":…,"ops":[…]}'` — повтор. Нарушение
  * печатается с сидом и СЖАТОЙ последовательностью (сжатие держит метку и корень). Большой прогон — параллельно, диапазонами сидов:
  *   DM_FUZZ_SEEDS=250 DM_FUZZ_SEED0=10000 npx vitest run packages/server/src/net/coopCluster.fuzz.test.ts
@@ -81,6 +90,11 @@ const FUZZ_LOG = process.env.DM_FUZZ_LOG;
 const FUZZ_SELFTEST = process.env.DM_FUZZ_SELFTEST ?? '';
 /** Паузы и разделы дольше `NODE_DEAD_SEC` (за окном дизайна) — только по просьбе. */
 const OUTAGE_LONG = process.env.DM_FUZZ_OUTAGE_LONG === '1';
+/**
+ * ⭐ R16-02: самопроверка `r1602` — и из теста (зубы сценария паузы машины идут в прогоне по умолчанию). ⭐ R17-01: `r1701` — удар сердца без
+ * проверки живости в нём самом (безусловная вставка, как до правки), сверка и продление — как есть.
+ */
+const teeth = { r1602: FUZZ_SELFTEST === 'r1602', r1701: FUZZ_SELFTEST === 'r1701' };
 function logLine(s: string): void { if (FUZZ_LOG) appendFileSync(FUZZ_LOG, `${s}\n`); }
 vi.setConfig({ testTimeout: FUZZ_SEEDS ? 24 * 3600_000 : 180_000 });
 /** Прогон по умолчанию (полный прогон тестов): сиды и длина — десятки секунд на машине разработчика. */
@@ -346,6 +360,8 @@ type InfoIn = { save: SaveState; userId: string; saveVersion: number; paid: bool
 type RoomIn = {
   step(emit?: boolean): void;
   code: string; area: 'town' | 'dungeon' | 'arena'; depth: number; difficultyId: string;
+  /** Продолжение забега из города ждёт базу (свод, взятие — R9-01): комната уже на переходе в подземелье. */
+  resuming: boolean;
   clients: Map<string, ClientIn>; disconnected: Map<string, InfoIn>; lingering: Map<string, { pid: string; p: PlayerIn; info: InfoIn }>;
   staleFarewells: Map<string, { charId: string; farewell: { saved: boolean } }>;
   /** ⭐ K3: выброшенное, которое сейчас поднимают (`Room.pickThrown`: запись поднимающего в пути) — до её конца вещь не в сумке. */
@@ -374,14 +390,18 @@ type RmIn = {
 };
 type ClusterHooksIn = {
   liveCharIds(): string[]; fenceLost(ids: readonly string[]): void; releaseIdle(ids: readonly string[]): void; heldRuns(): { key: string; room: string }[];
-  fenceRuns(runs: readonly { key: string; room: string }[]): void;
+  fenceRuns(runs: readonly { key: string; room: string }[]): void; releaseRuns(runs: readonly { key: string; room: string }[]): void;
 };
 /** Реестр кластера, как его видит процесс ноды (`cluster/registry.ts`) — ворота процесса поверх модели (`registryFor`). */
 type RegIn = {
   releaseChar(c: string, n: string): Promise<void>; claimForJoin(c: string, n: string): Promise<string>; claimOwner(c: string): Promise<string | null>;
   claimRun(k: string, n: string, r: string): Promise<string | null>; releaseRun(k: string, n: string, r: string): Promise<void>;
-  touchClaims(ids: readonly string[], n: string): Promise<Set<string>>; touchRuns(rs: readonly { key: string; room: string }[], n: string): Promise<Set<string>>;
-  heartbeat(n: string, s: { players: number; rooms: number; draining: boolean }): Promise<void>;
+  touchClaims(ids: readonly string[], n: string, leased?: boolean): Promise<Set<string>>;
+  touchRuns(rs: readonly { key: string; room: string }[], n: string, leased?: boolean): Promise<Set<string>>;
+  /** ⭐ R17-01: `leased` — удар ноды с арендой: ложится, только пока реестр видел её меньше аренды назад; `false` — не лёг. */
+  heartbeat(n: string, s: { players: number; rooms: number; draining: boolean }, leased?: boolean): Promise<boolean>;
+  /** ⭐ R16-02: давно ли реестр видел удар ноды (часы базы), с; строки нет — `null`. */
+  nodeBeatAge(n: string): Promise<number | null>;
   releaseNode(n: string): Promise<void>; releaseNodeRuns(n: string): Promise<number>; clearAllRuns(self: string): Promise<number>;
 };
 
@@ -403,6 +423,29 @@ interface Inc {
   crashAt: number;
   /** Самопроверка `leak`: все, кого процесс держал. */
   ever: Set<string>;
+  /**
+   * ⭐ R16-02: машина ноды на паузе (`suspend`) с этого часа (0 — не на паузе) до `frozenUntil`: процесс стоит целиком. `frozenLeft` — остаток
+   * аренды по часам процесса на начало паузы, `frozenWall` — настенные часы после паузы догнал chrony (иначе стояли и они); `held` — таймеры,
+   * пришедшие в паузу (сработают через свой остаток на её начало); `sentAt` — настенный час отправки удара, последним продлившего аренду.
+   */
+  frozenAt: number; frozenUntil: number; frozenLeft: number; frozenWall: boolean;
+  held: Map<unknown, { at: number; run: () => void }>;
+  sentAt: number;
+  /** ⭐ R16-02: процесс вернулся с паузы машины: его тишина в реестре — пауза, а не простой базы (окно дизайна `envelope` — не про неё). */
+  thawed: boolean;
+  /**
+   * ⭐ R16-02: мир списал процесс на паузе (`forget`) и с тех пор он ничего не делал: его смерть сразу после возвращения — без второго отката
+   * (герои, что он держал, давно живут строкой базы или на другой ноде, и их правда — там).
+   */
+  writtenOff: boolean;
+  /**
+   * ⭐ R17-01: пауза машины ляжет посреди удара сердца (`suspend.mid`): `claims` — сразу после ответа сверки возраста удара (ответ «жива» ждёт
+   * в буфере сокета всю паузу), `beat` — между продлением своих и ударом. `resumeBeat` — продолжить удар, вставший на паузе (`thaw`),
+   * `pausedBeat` — сам этот удар.
+   */
+  midPause?: { at: 'claims' | 'beat'; ms: number; wall: boolean };
+  resumeBeat?: () => void;
+  pausedBeat?: Promise<void>;
   rm: RmIn; hooks: ClusterHooksIn; reg: RegIn;
   /** ⭐ ENV1: аренда процесса (`lease.ts` его графа модулей: её же читают его комнаты и менеджер). */
   lease: typeof import('../cluster/lease.js');
@@ -460,7 +503,15 @@ type Op =
   /** `long` — за окном дизайна (дольше `NODE_DEAD_SEC`, `DM_FUZZ_OUTAGE_LONG`): сжатая последовательность повторяется и без переменной. */
   | { k: 'stall'; n: number; ms: number; long?: true }
   | { k: 'partition'; n: number; ms: number; long?: true }
-  | { k: 'regFault'; op: RegOp; kind: 'fail' | 'landed'; n: number | null };
+  /**
+   * ⭐ R16-02: машина ноды на паузе `ms` — дольше `NODE_DEAD_SEC` (ВМ на паузе, сон хоста): процесс стоит целиком (таймеры, комнаты, сокеты),
+   * его часы (`performance.now`) не идут, а настенные после возобновления догоняет chrony (`wall`; нет — стояли и они). Реестр тем временем
+   * числит ноду мёртвой (операция сразу доводит время до её срока смерти): её героев и забеги берут и отпускают на другой ноде. Возобновление —
+   * на границе операции, когда время дошло до конца паузы (и в эпилоге). Из своего потока (`W.pause`).
+   */
+  | { k: 'suspend'; n: number; ms: number; wall: boolean; mid?: 'claims' | 'beat' }
+  /** ⭐ R15-08: `late` — запрос реестра ляжет с опозданием (`LATE_MS` поддельного времени): между отправкой и «легло» идут шаги и операции. */
+  | { k: 'regFault'; op: RegOp; kind: 'fail' | 'landed' | 'late'; n: number | null };
 
 interface Violation { inv: string; msg: string; op: number; seed: number; faults: number; cause?: string }
 interface Hero {
@@ -481,6 +532,8 @@ interface Hero {
 interface PreState {
   kind: 'live' | 'disc' | 'off'; area?: string; alive?: boolean; safe?: boolean; paid?: boolean; fled?: boolean; fledDescend?: boolean; body?: boolean;
   foreign?: boolean;
+  /** ⭐ Перепрогон R15: комната живого на переходе в подземелье (продолжение ждёт базу, `resuming`). */
+  moving?: boolean;
 }
 /** `seq` — номер последней легшей записи к моменту штрафа (`db.wseq`): запись этого же объекта сейва позже — штраф в базе. */
 interface Penalty { charId: string; removed: string[]; gold: number; src: string; op: number; save: SaveState; ev: number; run: string | null; where: string | null; seq: number }
@@ -515,6 +568,8 @@ interface W {
   /** K3: вещи, побывавшие на земле (видены там проверкой или подняты операцией `pickup`/`trade`) — их пропажа при откате — передача наполовину. */
   fromGround: Set<string>;
   ev: number;
+  /** ⭐ R16-09: счётчик событий на начало операции (`preState`). */
+  opEv0: number;
   recs: Map<string, { chests: Set<number>; killed: Set<number> }>;
   roomSeen: WeakMap<RoomIn, { key: string; st: RunNodeState; chests: Set<number>; killed: Set<number> }>;
   ids: WeakMap<object, number>; idSeq: number;
@@ -526,7 +581,25 @@ interface W {
   nodes: Inc[];
   incs: Inc[]; incSeq: number;
   roomInc: WeakMap<RoomIn, Inc>;
-  regFaults: { op: RegOp; kind: 'fail' | 'landed'; node?: string }[];
+  regFaults: { op: RegOp; kind: 'fail' | 'landed' | 'late'; node?: string }[];
+  /** ⭐ R15-08: свой поток поздних ответов реестра (`late`) — прежние операции идут как шли. */
+  lateReg: FuzzRng;
+  /** ⭐ R16-02: свой поток пауз машины ноды (`suspend`) — прежние операции идут как шли. */
+  pause: FuzzRng;
+  /** ⭐ R17-01: и свой — у места паузы посреди удара сердца (`suspend.mid`): поток пауз не сдвигается. */
+  midPause: FuzzRng;
+  /** ⭐ R15-08: поздних запросов реестра в пути; когда комната отпустила забег (`ключ@нода@комната` → час) — для `b-run-lock-orphan`. */
+  lateInFlight: number; runReleasedAt: Map<string, number>;
+  /**
+   * ⭐ Перепрогон R16: порядок запросов реестра по забегам (`regSeq`): когда лёг отпуск (`ключ@нода@комната` → номер). Взятие той же
+   * комнаты, ОТПРАВЛЕННОЕ после него, — новое держание, и прежний отпуск ему не судья; отправленное до него и легшее позже (R15-08) — судья.
+   */
+  regSeq: number; releasedSeq: Map<string, number>;
+  /**
+   * ⭐ Перепрогон R15: отпуск забега, не дошедший до реестра (`ключ@нода@комната` → час сбоя) — нода повторяет его ударом (`runsDue`): до её
+   * следующего дошедшего удара сирота законна. И что реестр ответил на взятие (`ключ@комната` держателя → час): отказ «Продолжить» пересказывает его.
+   */
+  releaseFailedAt: Map<string, number>; claimSaw: Map<string, number>;
   /** Герои, чья правда откатилась к строке базы (упала нода, копия снята проигравшей) — сверка вещей (c) на ближайшей проверке. */
   rolledBack: Set<string>;
   /** События кластера (падения, сливы, паузы, разделы) — в тексте нарушения и для корня. */
@@ -543,6 +616,11 @@ interface W {
   drainLost: boolean;
   /** K2: на падении процесса взятое на узле было в строке героя в базе, а в своде забега в базе — нет. */
   ledgerBehind: boolean;
+  /**
+   * ⭐ Перепрогон R16: нода вернулась с паузы машины, а реестр ей ещё недоступен (длинная пауза сердцебиения или раздел с базой дольше паузы —
+   * только `DM_FUZZ_OUTAGE_LONG`): сверка R16-02 не доходит, и до конца аренды нода не знает, что её героев и забеги уже отдали.
+   */
+  thawSilent: boolean;
 }
 
 let cfg: ConfigRegistry;
@@ -575,7 +653,8 @@ const letterOf = (nodeId: string): string => String.fromCharCode(65 + (Number(/(
 const nodeIdx = (nodeId: string): number => Number(/(\d+)$/.exec(nodeId)?.[1] ?? 0);
 /** Ключ забега: функция чистая, берём у любого процесса прогона (`room.ts` у всех один и тот же код). */
 let runLedgerKey: (cfg: RunConfig) => string = () => '';
-const alive = (w: W): Inc[] => w.nodes.filter((i) => !i.dead);
+/** Процессы, что есть для мира: не мёртвые и ⭐ R16-02 не на паузе машины (стоит целиком — ни ответа, ни записи, ни тика). */
+const alive = (w: W): Inc[] => w.nodes.filter((i) => !i.dead && !i.frozenAt);
 const incOfRoom = (w: W, room: RoomIn): Inc | undefined => w.roomInc.get(room);
 
 function violate(w: W, inv: string, msg: string, h?: Hero, cause?: string): void {
@@ -589,6 +668,7 @@ const ENVELOPE_INV = /^(a-|b-|7-|1-|2-revived|3-double|8-node|8-run|8-progress|4
 function causeOf(w: W, inv: string, h: Hero | undefined): string | undefined {
   if (w.envelope && ENVELOPE_INV.test(inv)) return 'ENV-outage-over-dead-sec';
   if (w.drainLost && /^(1-|2-revived|3-double|8-node|4-free)/.test(inv)) return 'ENV-drain-db-outage';
+  if (w.thawSilent && ENVELOPE_INV.test(inv)) return 'ENV-thaw-registry-silent';
   // K1: погиб (штраф и «мёртв, оплачено» — в строке), процесс его комнаты умер (падение, слив) — и вошёл живым в тот же забег в другой комнате.
   if (inv === '2-revived-elsewhere' && h?.deadRoom && incOfRoom(w, h.deadRoom)?.dead) return 'K1-dead-resumed-alive';
   // K2: взятое на узле легло строкой героя, а свод забега в базе — нет; процесс умер, и узел собрался по своду без взятого.
@@ -618,7 +698,7 @@ function allRooms(w: W): RoomIn[] {
     for (const c of inc.rm.conns.values()) out.add(c.room);
     for (const r of inc.rm.graceByChar.values()) out.add(r);
   }
-  for (const r of w.ticking) if (!incOfRoom(w, r)?.dead) out.add(r);
+  for (const r of w.ticking) { const inc = incOfRoom(w, r); if (!inc?.dead && !inc?.frozenAt) out.add(r); }
   return [...out];
 }
 const roomsOf = (w: W, inc: Inc): RoomIn[] => {
@@ -660,13 +740,14 @@ function locate(w: W): Map<string, Loc[]> {
   return out;
 }
 function preState(w: W): Map<string, PreState> {
+  w.opEv0 = w.ev;   // R16-09: состояние — на этот миг; оживления позже него проверка видит по `revivals`
   const locs = locate(w);
   const out = new Map<string, PreState>();
   for (const h of w.heroes) {
     const ls = locs.get(h.charId) ?? [];
     const live = ls.find((l) => l.kind === 'live');
     const disc = ls.find((l) => l.kind === 'disc');
-    if (live) out.set(h.charId, { kind: 'live', area: live.room.area, alive: live.p!.alive });
+    if (live) out.set(h.charId, { kind: 'live', area: live.room.area, alive: live.p!.alive, moving: live.room.resuming });
     else if (disc) {
       const i = disc.info!;
       const own = i.save.run?.config ? runLedgerKey(i.save.run.config) : null;
@@ -821,24 +902,32 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
     const st = pre.get(charId) ?? { kind: 'off' };
     const asked = (t: 'join' | 'abandon'): boolean => w.pending.some((p) => p.charId === charId && p.t === t);
     const counted = ps.filter((p) => p.src !== 'stored');
-    if (counted.length > 1 && !counted.every((p) => p.src === 'death' || p.src === 'linger')) violate(w, '3-double-penalty', `${charId}: за одну операцию штрафов ${counted.length} (${counted.map((p) => p.src).join(', ')})`, h);
+    // ⭐ Перепрогон R15: за одну операцию дважды — подряд, без оживления между штрафами (входы из очереди героя — одной операцией).
+    const byEv = [...counted].sort((a, b) => a.ev - b.ev);
+    const sameLife = byEv.some((p, i) => i > 0 && !h.revivals.some((r) => r > byEv[i - 1]!.ev && r < p.ev));
+    if (sameLife && !counted.every((p) => p.src === 'death' || p.src === 'linger')) violate(w, '3-double-penalty', `${charId}: за одну операцию штрафов ${counted.length} (${counted.map((p) => p.src).join(', ')})`, h);
     const firstEv = Math.min(...counted.map((p) => p.ev));
     const livedBetween = h.revivals.some((r) => r > h.penaltyEv && r < firstEv);
     const guest = !!h.lastPen && counted.every((p) => guestDeath(h.lastPen!, p));
     if (counted.length && h.penaltyEv > 0 && h.penaltyEv < firstEv && !livedBetween && !guest) violate(w, '3-double-penalty', `${charId}: штраф (${counted.map((p) => p.src).join(', ')}) — а прошлый ещё не «отжит» (живым не видели, пати забег не уводила); операция ${op ? fmt(op) : 'эпилог'}`, h);
+    // ⭐ R16-09: ожил ЗА ЭТУ операцию и раньше этого штрафа — состояние до операции (`st`) уже не про эту жизнь (см. фаззер одной ноды).
+    const revivedInOp = (p: Penalty): boolean => h.revivals.some((r) => r > w.opEv0 && r < p.ev);
     for (const p of ps) {
       const why = `${charId} ${p.src}: до операции ${JSON.stringify(st)}, операция ${op ? fmt(op) : 'эпилог'}`;
       if (p.src === 'abandonStored' && !asked('abandon')) violate(w, '3-unjustified-penalty', `штраф по строке базы без «Завершить»: ${why}`);
       if (p.src === 'abandonAsDead') {
-        if (!asked('abandon') && !asked('join')) violate(w, '3-unjustified-penalty', `«Завершить»-штраф без «Завершить»/входа: ${why}`);
-        else if (!asked('abandon') && st.kind === 'disc' && st.safe) violate(w, '3-safe-penalized', `страховка входа оштрафовала припаркованный (safe) забег: ${why}`);
-        if (st.kind === 'disc' && st.paid && !st.foreign) violate(w, '3-double-penalty', `штраф с оплаченной смерти (paid): ${why}`, h);
+        // ⭐ R16-01: забег за штраф бросает только «Завершить»; вход, чей бросок стоил бы штрафа, — отказ `run` (страховка — без штрафа).
+        if (!asked('abandon')) violate(w, '3-unjustified-penalty', `«Завершить»-штраф без «Завершить» (вход забег за штраф не бросает — R16-01): ${why}`);
+        if (st.kind === 'disc' && st.paid && !st.foreign && !revivedInOp(p)) violate(w, '3-double-penalty', `штраф с оплаченной смерти (paid): ${why}`, h);
       }
       if (p.src === 'bury' || p.src === 'buryFled' || p.src === 'stored') {
-        if (st.kind === 'off' && p.src !== 'stored') violate(w, '3-unjustified-penalty', `похоронен тот, кого нода не держала: ${why}`);
-        if (st.kind === 'live' && st.area !== 'dungeon') violate(w, '3-safe-penalized', `похоронен стоящий в городе/на арене: ${why}`);
+        // ⭐ Перепрогон R15: вход героя, шедший на начало операции (очередь за медленной записью, поздний ответ реестра), — держание: он дошёл,
+        // и похороны его копии за операцию — по правилам, а не «чужие».
+        if (st.kind === 'off' && p.src !== 'stored' && !asked('join')) violate(w, '3-unjustified-penalty', `похоронен тот, кого нода не держала: ${why}`);
+        // ⭐ Перепрогон R15: комната на переходе (продолжение ждало позднего ответа реестра) за операцию дошла до подземелья — не «город».
+        if (st.kind === 'live' && st.area !== 'dungeon' && !st.moving) violate(w, '3-safe-penalized', `похоронен стоящий в городе/на арене: ${why}`);
         if (st.kind === 'disc' && st.safe) violate(w, '3-safe-penalized', `похоронен тот, чей забег пати увела в город (safe): ${why}`);
-        if (st.kind === 'disc' && st.paid && p.src !== 'stored') violate(w, '3-double-penalty', `похоронен со штрафом погибший (paid): ${why}`, h);
+        if (st.kind === 'disc' && st.paid && p.src !== 'stored' && !revivedInOp(p)) violate(w, '3-double-penalty', `похоронен со штрафом погибший (paid): ${why}`, h);
         if (p.src === 'buryFled' && st.kind === 'disc' && !st.fled && !st.fledDescend && !st.body) violate(w, '3-safe-penalized', `спокойно ушедший (не fled) похоронен уходом пати: ${why}`);
       }
     }
@@ -963,6 +1052,23 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
     const text = rs.map((r) => `${r.code}@${r.runNodeId}/${incOfRoom(w, r)?.node}`).join(', ');
     violate(w, nodes.size > 1 ? 'b-run-two-rooms' : '8-run-in-two-rooms', `забег ${k} в подземелье двух комнат сразу: ${text}; операция ${op ? fmt(op) : 'эпилог'}`);
   }
+  // b (⭐ R15-08): НОДА НЕ ДЕРЖИТ ЗАБЕГ, КОТОРЫЙ ЕЁ КОМНАТА ОТПУСТИЛА. Строка держания, продлённая или взятая (`liveAt`) ПОСЛЕ отпуска этой
+  // комнатой, а комната забег не держит, — сирота: «Продолжить» на соседней ноде вело к исчезнувшей комнате до `CLAIM_IDLE_SEC`. Судим в
+  // тишине: поздних запросов реестра в пути нет, нода жива и не отрезана.
+  if (!w.lateInFlight) {
+    for (const [key, l] of w.cluster.runLocks) {
+      const at = w.runReleasedAt.get(`${key}@${l.node}@${l.room}`);
+      if (at === undefined || l.liveAt <= at) continue;
+      const inc = w.nodes.find((i) => i.node === l.node);
+      if (!inc || inc.dead || Date.now() < inc.stallUntil || Date.now() < inc.partitionUntil) continue;
+      const room = inc.rm.rooms.get(l.room);
+      if (room && room.holdsRun(key)) continue;
+      // ⭐ Перепрогон R15: повторный отпуск упал (раздел, сбой реестра) — его повторит ближайший удар ноды (`runsDue`): до него — законно.
+      const failed = w.releaseFailedAt.get(`${key}@${l.node}@${l.room}`);
+      if (failed !== undefined && inc.lastBeatOk <= failed) { tally('b:orphan-release-retry-pending'); continue; }
+      violate(w, 'b-run-lock-orphan', `забег ${key}: держание за ${l.node}/${l.room} продлено после отпуска комнатой, а комната его не держит; операция ${op ? fmt(op) : 'эпилог'}`);
+    }
+  }
   for (const room of rooms) {
     if (room.area !== 'dungeon' || !room.runConfig || !room.nodeState) continue;
     const st = room.nodeState;
@@ -984,11 +1090,13 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
     w.roomSeen.set(room, { key, st, chests: new Set(st.chests), killed: new Set(st.killed) });
   }
 
-  // 5: кадр лобби без ответа.
+  // 5: кадр лобби без ответа. ⭐ Перепрогон R16: кадр к ноде, чья машина на паузе (`suspend`), ждёт её конца — процесс не отвечает ничего;
+  // проснувшаяся уходит без записи, и её сокеты закрыты (а ожившая в самопроверке закрывает лобби сама, `thaw`).
   for (const p of [...w.pending]) {
     const want = p.t === 'join' ? ['joined', 'error'] : p.t === 'runStatus' ? ['runStatus', 'error'] : ['abandoned', 'error'];
     if (p.conn.since(p.idx).some((f) => want.includes(f.t))) { w.pending.splice(w.pending.indexOf(p), 1); continue; }
     if (!p.conn.open) { w.pending.splice(w.pending.indexOf(p), 1); continue; }
+    if (p.conn.inc?.frozenAt) continue;
     if (now - p.at > 40_000) { violate(w, '5-lobby-unanswered', `кадр «${p.t}» (операция ${p.op}, ${p.conn.inc?.node}) без ответа ${((now - p.at) / 1000).toFixed(0)} с`); w.pending.splice(w.pending.indexOf(p), 1); }
   }
 }
@@ -1033,7 +1141,8 @@ function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
       const lock = key ? w.cluster.runLocks.get(key) : undefined;
       if (lock && lock.room === f.roomCode && w.cluster.held(lock.liveAt, lock.node)) {
         const inc = w.nodes[nodeIdx(lock.node)];
-        if (inc?.dead) { ok = true; tally('d:resume-refused-dead-holder-window'); }
+        // ⭐ Перепрогон R16: и нода, чья машина на паузе (`suspend`), — для мира она ушла, как упавшая (`forget`).
+        if (inc?.dead || inc?.frozenAt) { ok = true; tally('d:resume-refused-dead-holder-window'); }
         // Держание без комнаты у живой ноды (взятие, чей ответ потерян; снятие, упавшее сбоем) нода не продлевает, и оно протухает само через
         // `CLAIM_IDLE_SEC` после её удара (удары не идут — позже, но не дольше окна дизайна): отказ временный. Дольше окна — заперт (d).
         else if (!refreshes(inc, key!)) {
@@ -1041,6 +1150,12 @@ function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
           tally(ok ? 'd:resume-refused-orphan-lock' : 'd:resume-refused-orphan-lock-long');
         }
       }
+      // ⭐ Перепрогон R15: держание-сирота (взятие ушедшей комнаты легло позже её отпуска — поздний ответ реестра) её нода уже сняла (R15-08:
+      // повтор отпуска по ответу взятия), а отказ пересказал ответ реестра до снятия: отказ временный — «Продолжить» снова находит забег.
+      // Строки уже нет или она за другой комнатой; реестр ТОЧНО так ответил на взятие только что (`claimSaw`, не старше удара) — не выдумка
+      // отказа. Путь, запертый насовсем, стережёт эпилог: каждый с забегом в строке жмёт «Продолжить» снова.
+      const saw = key ? w.claimSaw.get(`${key}@${f.roomCode}`) : undefined;
+      if (!ok && (!lock || lock.room !== f.roomCode) && saw !== undefined && Date.now() - saw <= BEAT_MS) { ok = true; tally('d:resume-refused-orphan-lock-gone'); }
     }
     if (!ok) violate(w, '5-resume-dead-end', `${h.charId}: «Продолжить» на ${c.inc.node} — отказ «${f.code}» (${f.msg}) ${f.roomCode ? `с кодом ${f.roomCode}, а эта комната его забег ${key ?? '—'} не держит (${holder ? `${holder.inc.node}` : 'комнаты нет'}; реестр: ${key ? JSON.stringify(w.cluster.runLocks.get(key) ?? null) : '—'})` : 'без кода комнаты, что держит его забег'}; операция ${w.opRef ? fmt(w.opRef) : 'эпилог'}`, h);
   }
@@ -1058,7 +1173,14 @@ function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
     h.deadRun = null; h.deadRoom = null; h.deadInst = null;
   }
   if (p?.alive && room.area !== 'arena') revived(w, h);
-  if (p && !p.alive && room.area !== 'arena') h.deadSeenEv = ++w.ev;
+  if (p && !p.alive && room.area !== 'arena') {
+    h.deadSeenEv = ++w.ev;
+    // ⭐ Раунд 16 (модель; большой прогон кластера, сид 200019): K1 — вход погибшего в новую комнату его забега (процесс комнаты смерти умер)
+    // ставит его мёртвым: якорь смерти — ЭТА комната, и смена её этажа (застрявшие мёртвые уходят в город, R12-07; пати увела в город) оживляет
+    // законно. Кадром — потому что вход, возврат застрявших в город и спуск из него бывают одной операцией, и проверка видела героя уже живым в
+    // городе, с якорем на комнате упавшей ноды: спуск пати числился `2-revived-elsewhere` (артефакт, как у ждущего реконнекта выше).
+    if (room.area === 'dungeon' && room.runConfig && h.deadRun === runLedgerKey(room.runConfig)) { h.deadRoom = room; h.deadInst = instOf(w, room); }
+  }
 }
 
 /** Нода держит забег `key` комнатой и продлевает его ударом сердца (`heldRuns` без его подметания — проверка не трогает состояние). */
@@ -1222,6 +1344,7 @@ function routeOf(w: W, h: Hero, code: string | undefined, via: Via): Inc | undef
   } else n = via % NODES;
   const inc = w.nodes[n];
   if (!inc || inc.dead) { tally('route:dead-node'); return undefined; }
+  if (inc.frozenAt) { tally('route:frozen-node'); return undefined; }   // ⭐ R16-02: машина на паузе — подключение не открывается
   return inc;
 }
 function lobby(w: W, h: Hero, frame: Record<string, unknown>, inc: Inc, conn?: FakeConn): FakeConn {
@@ -1241,7 +1364,7 @@ async function stepAll(w: W, n: number): Promise<void> {
     for (const room of [...w.ticking]) {
       if (!w.ticking.has(room)) continue;
       const inc = incOfRoom(w, room);
-      if (!inc || inc.dead) continue;
+      if (!inc || inc.dead || inc.frozenAt) continue;   // ⭐ R16-02: процесс на паузе не тикает
       process.env.DM_NODE_ID = inc.node;
       try { inProc(inc, () => room.step(false)); } catch (e) { violate(w, '6-step-threw', `шаг комнаты ${room.code}: ${e instanceof Error ? e.stack?.split('\n').slice(0, 4).join(' ') : String(e)}`); }
     }
@@ -1263,10 +1386,12 @@ async function pause(w: W): Promise<void> { await stepAll(w, 48); }
 
 async function exec(w: W, op: Op): Promise<void> {
   w.stepped = false;
+  // ⭐ R16-02: пауза машины кончилась — процесс продолжает (граница операции: так ложится на неё и повтор последовательности).
+  for (const inc of w.nodes) if (inc.frozenAt && !inc.dead && Date.now() >= inc.frozenUntil) await thaw(w, inc);
   switch (op.k) {
     case 'join': {
       const h = heroOf(w, op.h);
-      const reuse = op.reuse && h.conn?.open && h.conn.inc && !h.conn.inc.dead && !h.conn.inc.rm.conns.has(h.conn) && !w.pending.some((p) => p.conn === h.conn);
+      const reuse = op.reuse && h.conn?.open && h.conn.inc && !h.conn.inc.dead && !h.conn.inc.frozenAt && !h.conn.inc.rm.conns.has(h.conn) && !w.pending.some((p) => p.conn === h.conn);
       const frame: Record<string, unknown> = { t: 'join' };
       if (op.mode === 'fresh') frame.fresh = true;
       else if (op.mode === 'resume') frame.resume = true;
@@ -1547,13 +1672,13 @@ async function exec(w: W, op: Op): Promise<void> {
     }
     case 'drain': {
       const inc = w.nodes[op.n % NODES];
-      if (!inc || inc.dead || inc.draining) return;
+      if (!inc || inc.dead || inc.draining || inc.frozenAt) return;
       await drainNode(w, inc, !!op.bg);
       return;
     }
     case 'crashAt': {
       const inc = w.nodes[op.n % NODES];
-      if (!inc || inc.dead) return;
+      if (!inc || inc.dead || inc.frozenAt) return;
       inc.crashAt = op.calls;
       w.events.push(`crashAt:${inc.node}+${op.calls}@${w.op}`);
       return;
@@ -1567,7 +1692,7 @@ async function exec(w: W, op: Op): Promise<void> {
     }
     case 'stall': case 'partition': {
       const inc = w.nodes[op.n % NODES];
-      if (!inc || inc.dead) return;
+      if (!inc || inc.dead || inc.frozenAt) return;
       // Окно дизайна по умолчанию: паузы и разделы вместе (они накладываются) — не дольше `OUTAGE_CAP_MS` с последнего дошедшего удара.
       const until = OUTAGE_LONG || op.long ? Date.now() + op.ms : Math.min(Date.now() + op.ms, inc.lastBeatOk + OUTAGE_CAP_MS);
       if (op.k === 'stall') inc.stallUntil = Math.max(inc.stallUntil, until); else inc.partitionUntil = Math.max(inc.partitionUntil, until);
@@ -1577,7 +1702,97 @@ async function exec(w: W, op: Op): Promise<void> {
       return;
     }
     case 'regFault': w.regFaults.push({ op: op.op, kind: op.kind, ...(op.n !== null ? { node: `node-${op.n % NODES}` } : {}) }); return;
+    case 'suspend': {
+      const inc = w.nodes[op.n % NODES];
+      if (!inc || inc.dead || inc.frozenAt || inc.draining || alive(w).length < 2) return;
+      // ⭐ R17-01: пауза посреди удара сердца — удар идёт сейчас (как удар по расписанию), и машина встаёт на своём месте в нём (`pausePoint`).
+      // До этого места удар не дошёл (пауза сердцебиения, раздел, сверка его уже отгородила) — пауза ложится сразу, как прежде.
+      if (op.mid) {
+        inc.midPause = { at: op.mid, ms: op.ms, wall: op.wall };
+        process.env.DM_NODE_ID = inc.node;
+        inc.pausedBeat = inProc(inc, () => beat(w, inc)).catch(() => undefined);
+        await drain();
+        inc.midPause = undefined;
+        if (inc.dead) return;
+      }
+      if (!inc.frozenAt) freeze(w, inc, op.ms, op.wall);
+      // Сразу — до срока смерти ноды в реестре (удары другой ноды, уборка гейтвея): иначе паузу снимала бы первая операция со сдвигом времени.
+      for (let t = 0; t < (NODE_DEAD_SEC + 4) * 1000; t += BEAT_MS) await vi.advanceTimersByTimeAsync(BEAT_MS);
+      await drain();
+      return;
+    }
   }
+}
+
+/**
+ * ⭐ R16-02: МАШИНА НОДЫ ВСТАЛА (`suspend`). Для мира процесс ушёл с этого мига (как упавший: правда его героев — строка базы, взятое на узлах
+ * без записи — ушло с ним): вернувшись, он обязан уйти без записи (реестр его уже отдал), а не играть дальше своими копиями.
+ */
+function freeze(w: W, inc: Inc, ms: number, wall: boolean): void {
+  const left = inc.lease.leaseLeft();
+  forget(w, inc);
+  inc.frozenUntil = inc.frozenAt + ms; inc.frozenLeft = left; inc.frozenWall = wall;
+  w.clusterTouched = true;
+  w.events.push(`suspend:${inc.node}:${Math.round(ms / 1000)}с${wall ? '' : '(часы стояли)'}@${w.op}`);
+  tally('node:suspend');
+}
+
+/**
+ * ⭐ R17-01: МЕСТО ПАУЗЫ ПОСРЕДИ УДАРА СЕРДЦА (`suspend.mid`). Ответ реестра, на котором удар стоит (сверка возраста удара — «жива», продление
+ * своих), был верен в миг ответа, а машина встаёт сразу после: удар продолжится только после паузы (`thaw`) — с ответом, устаревшим на её длину.
+ */
+async function pausePoint(w: W, inc: Inc, at: 'claims' | 'beat'): Promise<void> {
+  const m = inc.midPause;
+  if (!m || m.at !== at) return;
+  inc.midPause = undefined;
+  freeze(w, inc, m.ms, m.wall);
+  w.events.push(`suspend-mid:${at}@${w.op}`);
+  tally(`node:suspend-mid-${at}`);
+  await new Promise<void>((res) => { inc.resumeBeat = res; });
+}
+
+/**
+ * ⭐ R16-02: ПАУЗА МАШИНЫ КОНЧИЛАСЬ. Часы процесса стояли: аренда — с тем же остатком, что на начало паузы, а настенные часы догнал chrony
+ * (`frozenWall`) — или стояли и они (тогда и сомнения нет). Первым — удар сердца: реестр уже отдал её героев и забеги, и процесс обязан уйти
+ * без записи (`node.ts`: сверка возраста удара по часам базы). Настенные часы ушли вперёд — сомнение в аренде, и `checkLease` шлёт удар сразу
+ * (записи до него отгорожены, `leaseLost`); стояли все часы — удар по расписанию не позже чем через `BEAT_MS`, а окно до него (запись копии
+ * ложится только поверх строки той же версии, её никто не трогал) — вне этой модели. Ожил (самопроверка) — клиенты за паузу ушли (сокеты
+ * закрыты — процесс видит это сразу), таймеры срабатывают через свой остаток на начало паузы.
+ */
+async function thaw(w: W, inc: Inc): Promise<void> {
+  const paused = Date.now() - inc.frozenAt;
+  inc.frozenAt = 0; inc.frozenUntil = 0; inc.thawed = true;
+  inc.lease.leaseBeat(inc.frozenWall ? inc.sentAt : inc.sentAt + paused, performance.now() - (LEASE_MS - inc.frozenLeft));
+  w.events.push(`resume:${inc.node}:${Math.round(paused / 1000)}с@${w.op}`);
+  tally('node:resume');
+  process.env.DM_NODE_ID = inc.node;
+  const resume = inc.resumeBeat;
+  inc.resumeBeat = undefined;
+  if (resume) {
+    // ⭐ R17-01: пауза легла посреди удара — он и продолжается (с ответом, устаревшим на её длину), а не начинается новый.
+    let done = false;
+    void (inc.pausedBeat ?? Promise.resolve()).then(() => { done = true; });
+    resume();
+    for (let t = 0; !done && t < 4 * LATE_MS; t += 50) { await drain(); if (!done) await vi.advanceTimersByTimeAsync(50); }
+  } else {
+    await inProc(inc, () => beat(w, inc)).catch(() => undefined);
+  }
+  await drain();
+  if (inc.dead) return;
+  // ⭐ Перепрогон R16: удар сверки не дошёл — реестр ещё недоступен (длинная пауза сердцебиения, раздел): нода жива до конца аренды (`ENV-thaw-registry-silent`).
+  if (Date.now() < inc.stallUntil || Date.now() < inc.partitionUntil) {
+    w.thawSilent = true;
+    w.events.push(`thaw-silent:${inc.node}@${w.op}`);
+    tally('env:thaw-registry-silent');
+  }
+  inc.writtenOff = false;   // ожил (самопроверка): дальше его копии — снова его
+  for (const c of w.lobbies) if (c.inc === inc && c.open) c.close();
+  const held = [...inc.held.values()];
+  inc.held.clear();
+  for (const t of held) inProc(inc, () => setTimeout(t.run, t.at));
+  await drain();
+  await vi.advanceTimersByTimeAsync(BEAT_MS + 50);
+  await drain();
 }
 const tierIds = (): string[] => cfg.get('difficulties').map((d) => d.id);
 /**
@@ -1593,7 +1808,7 @@ function kickRetry(w: W): void {
 
 // ── Процессы нод ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Сбой запроса реестра, заказанный фаззером (`regFault`): `fail` — до фиксации, `landed` — легло, ответ потерян. */
-function takeReg(w: W, op: RegOp, node: string | undefined): 'fail' | 'landed' | undefined {
+function takeReg(w: W, op: RegOp, node: string | undefined): 'fail' | 'landed' | 'late' | undefined {
   const i = w.regFaults.findIndex((f) => f.op === op && (f.node === undefined || f.node === node));
   if (i < 0) return undefined;
   tally(`regFault:${op}`);
@@ -1631,21 +1846,45 @@ function dbFor(inc: Inc, CommitUnknown: typeof import('../db/errors.js').CommitU
 function registryFor(w: W, inc: Inc): RegIn {
   const call = <T>(op: RegOp | null, fn: () => T): Promise<T> => gate(inc, () => {
     const f = op ? takeReg(w, op, inc.node) : undefined;
+    if (f === 'late') return lateReg(w, inc, fn);
     if (f === 'fail') throw injected(new Error(`реестр: ${op} упал до фиксации`));
     const r = fn();
     if (f === 'landed') throw injected(new Error(`реестр: ${op} — ответ на фиксацию потерян`));
     return r;
   }, op !== 'touchClaims' && op !== 'touchRuns' && op !== 'heartbeat');
   const c = w.cluster;
+  // `DM_FUZZ_TRACE=1`: и забеги реестра — кто, когда (поддельное время) и с каким итогом лёг (поздний — в миг, когда лёг).
+  const traced = <T>(what: string, fn: () => T): (() => T) => (!FUZZ_TRACE ? fn : () => {
+    const r = fn();
+    console.info(`[fuzz ${w.seed}]       реестр ${inc.node}#${inc.gen} +${Date.now() - T0}мс ${what} → ${r instanceof Set ? JSON.stringify([...r]) : JSON.stringify(r ?? null)}`);
+    return r;
+  });
   return {
     releaseChar: (id, n) => call('releaseChar', () => c.releaseChar(id, n)),
     claimForJoin: (id, n) => call('claimForJoin', () => (FUZZ_SELFTEST === 'claim' ? stealClaim(w, id, n) : c.claimForJoin(id, n))),
     claimOwner: (id) => call('claimOwner', () => c.claimOwner(id)),
-    claimRun: (k, n, r) => call('claimRun', () => (FUZZ_SELFTEST === 'runlock' ? (c.runLocks.set(k, { node: n, room: r, liveAt: Date.now() }), null) : c.claimRun(k, n, r))),
-    releaseRun: (k, n, r) => call('releaseRun', () => c.releaseRun(k, n, r)),
-    touchClaims: (ids, n) => call('touchClaims', () => c.touchClaims(ids, n)),
-    touchRuns: (rs, n) => call('touchRuns', () => c.touchRuns(rs, n)),
-    heartbeat: (n, s) => call('heartbeat', () => c.heartbeat(n, s)),
+    claimRun: (k, n, r) => {
+      const sent = ++w.regSeq;
+      return call('claimRun', traced(`claimRun ${k.slice(-6)} ${r}`, () => {
+        const held = FUZZ_SELFTEST === 'runlock' ? (c.runLocks.set(k, { node: n, room: r, liveAt: Date.now() }), null) : c.claimRun(k, n, r);
+        if (held) w.claimSaw.set(`${k}@${held}`, Date.now());
+        // ⭐ Перепрогон R16: комната взяла забег снова после своего отпуска — отпуск больше не судит её продления (`releasedSeq`).
+        else if ((w.releasedSeq.get(`${k}@${n}@${r}`) ?? Infinity) < sent) { w.runReleasedAt.delete(`${k}@${n}@${r}`); w.releasedSeq.delete(`${k}@${n}@${r}`); }
+        return held;
+      }));
+    },
+    releaseRun: (k, n, r) => {
+      const p = call('releaseRun', traced(`releaseRun ${k.slice(-6)} ${r}`, () => {
+        w.runReleasedAt.set(`${k}@${n}@${r}`, Date.now()); w.releasedSeq.set(`${k}@${n}@${r}`, ++w.regSeq);
+        return c.releaseRun(k, n, r);
+      }));
+      p.catch(() => { if (cur === w) w.releaseFailedAt.set(`${k}@${n}@${r}`, Date.now()); });
+      return p;
+    },
+    touchClaims: (ids, n, leased) => call('touchClaims', () => c.touchClaims(ids, n, leased)),
+    touchRuns: (rs, n, leased) => call('touchRuns', traced(`touchRuns ${rs.map((x) => `${x.key.slice(-6)} ${x.room}`).join(',')}`, () => c.touchRuns(rs, n, leased))),
+    heartbeat: (n, s, leased) => call('heartbeat', () => c.heartbeat(n, s, leased)),
+    nodeBeatAge: (n) => gate(inc, () => c.nodeBeatAge(n), false),
     releaseNode: (n) => call(null, () => c.releaseNode(n)),
     releaseNodeRuns: (n) => call(null, () => c.releaseNodeRuns(n)),
     clearAllRuns: (self) => call(null, () => {
@@ -1656,6 +1895,25 @@ function registryFor(w: W, inc: Inc): RegIn {
       return c.clearAllRuns(self, rows);
     }),
   };
+}
+/** ⭐ R15-08: поздний запрос реестра достаётся базе через этот срок поддельного времени (шаги комнат между — десяток). */
+const LATE_MS = 300;
+/**
+ * ⭐ R15-08: ЗАПРОС РЕЕСТРА ЛОЖИТСЯ С ОПОЗДАНИЕМ (`late`): база применит его через `LATE_MS`, и всё, что процесс сделал за это время (комната
+ * отпустила забег — её `DELETE` лёг сразу), легло раньше. Процесс умер — запрос всё равно лёг (он уже в базе), но ответа нет.
+ */
+function lateReg<T>(w: W, inc: Inc, fn: () => T): Promise<T> {
+  w.lateInFlight++;
+  tally('regFault:late');
+  return new Promise<T>((res, rej) => {
+    setTimeout(() => {
+      w.lateInFlight--;
+      if (cur !== w) return;
+      let r: T;
+      try { r = fn(); } catch (e) { if (!inc.dead) rej(e); return; }
+      if (!inc.dead) res(r);
+    }, LATE_MS);
+  });
 }
 /** Самопроверка `claim`: закрепление на входе забирается всегда (правило держания сломано) — фаззер обязан найти `a-live-two-nodes`. */
 function stealClaim(w: W, id: string, n: string): string {
@@ -1680,6 +1938,17 @@ function instrument(w: W, inc: Inc, rmMod: typeof import('./roomManager.js'), ro
       const got = this.session.pickupDropById(pid, dropId);
       if (got) void this.persist(pid);
       return Promise.resolve(got ? { ok: true } : { ok: false, reason: 'Далеко или инвентарь полон' });
+    };
+  }
+  // ⭐ Самопроверка `r15settle` (перепрогон R15): строка забега не сверяется с держателем, как до правки — отпуск, упавший сбоем, не
+  // повторяется, а строку, которую позднее продление переписало на прежнюю комнату ноды, никто не правит (фаззер обязан найти
+  // `b-run-lock-orphan`: повторы 7200355 и 7201016 падают; и отпуск при живом держателе молчит — `5-resume-dead-end`, повторы 7240242 и 7250928); и
+  // удар судит «чужие» забеги по снимку (`b-run-lock-lost`: повтор 7230032).
+  if (FUZZ_SELFTEST === 'r15settle') {
+    const rp = rmMod.RoomManager.prototype as unknown as Record<string, unknown>;
+    rp.releaseRun = (key: string, code: string): void => { void inc.reg.releaseRun(key, inc.node, code).catch(() => undefined); };
+    rp.settleRun = function (this: { runHolder(key: string): unknown }, key: string, code: string): void {
+      if (!this.runHolder(key)) void inc.reg.releaseRun(key, inc.node, code).catch(() => undefined);
     };
   }
   sched.tickScheduler.add = ((r: RoomIn) => { if (inc.dead || cur !== w) return; w.ticking.add(r); w.born.add(r); w.roomInc.set(r, inc); }) as never;
@@ -1710,10 +1979,15 @@ function instrument(w: W, inc: Inc, rmMod: typeof import('./roomManager.js'), ro
       h.reached.add(`${runLedgerKey(room.runConfig)}|${room.nodeState.id}`);
     }
   });
-  // c: копию героя сняли проигравшей (закрепление у другой ноды, R2-05) — его правда теперь там или в строке базы.
+  // c: копию героя сняли проигравшей (закрепление у другой ноды, R2-05) — его правда теперь там или в строке базы. ⭐ Перепрогон R17: снимает
+  // процесс, которого мир уже списал (пауза машины, `forget`; проснувшийся посреди удара продолжает его — R17-01 — и снимает свои копии до
+  // выхода), — правды героя это не трогает: его копии откатились ещё на паузе (как его смерть — `killInc`), а правда теперь у другой ноды.
   wrap(proto, 'fence', (self, a, call) => {
     const r = call();
-    if (mine(self as RoomIn) && r) { rollBack(w, [a[0] as string]); w.events.push(`fence:${String(a[0])}@${inc.node}#${inc.gen}`); tally('fence'); }
+    if (mine(self as RoomIn) && r) {
+      if (!inc.writtenOff) rollBack(w, [a[0] as string]);
+      w.events.push(`fence:${String(a[0])}@${inc.node}#${inc.gen}`); tally('fence');
+    }
     return r;
   });
   const taken = (charId: string): number => w.penaltyCount.get(charId) ?? 0;
@@ -1782,6 +2056,16 @@ function instrument(w: W, inc: Inc, rmMod: typeof import('./roomManager.js'), ro
     }
     return call();
   });
+  // 5 (⭐ R17-02, как у фаззера одной ноды): «Продолжить» живого участника — не в город (арену) держателя, где кто-то подключён: его спуск ждал
+  // бы чужого голоса, а выход был «Забросить». С забегом в сейве к держателю — только в подземелье.
+  wrap(proto, 'addPlayer', (self, a, call) => {
+    const room = self as RoomIn;
+    const ws = a[0] as FakeConn, save = a[2] as SaveState;
+    if (mine(room) && ws.resume && save.run?.config && room.area !== 'dungeon' && room.clients.size > 0) {
+      violate(w, '5-run-hostage', `${save.charId}: «Продолжить» на ${inc.node} — в ${room.area} комнаты ${room.code} (подключено ${room.clients.size}), чей забег ${runLedgerKey(save.run.config)} стоит не в подземелье: его спуск ждёт голоса других; операция ${opText()}`, heroBy(w, save.charId));
+    }
+    return call();
+  });
   wrap(proto, 'startRun', (self, _a, call) => {
     const room = self as RoomIn;
     if (mine(room)) {
@@ -1807,6 +2091,7 @@ async function boot(w: W, n: number): Promise<Inc | undefined> {
   const inc: Inc = {
     node, n, gen: ++w.incSeq, dead: false, diedAt: 0, why: '', draining: false, stopped: false,
     stallUntil: 0, partitionUntil: prev?.partitionUntil ?? 0, lastBeatOk: Date.now(), crashAt: 0, ever: new Set(),
+    frozenAt: 0, frozenUntil: 0, frozenLeft: 0, frozenWall: true, held: new Map(), sentAt: Date.now(), thawed: false, writtenOff: false,
     rm: null as unknown as RmIn, hooks: null as unknown as ClusterHooksIn, reg: null as unknown as RegIn, runLedgerKey: () => '',
     lease: null as unknown as typeof import('../cluster/lease.js'),
   };
@@ -1870,32 +2155,66 @@ async function beat(w: W, inc: Inc, first = false): Promise<void> {
     if (left <= 0) { tally('node:lease-lost'); killInc(w, inc, 'lease'); return; }
     if (left <= DRAIN_GUARD_MS) tally('node:lease-low');
   }
-  // Окно дизайна: живая нода молчит почти `NODE_DEAD_SEC` — дальше реестр по правилу отдаёт её героев и забеги другой (R7-09).
-  if (Date.now() - inc.lastBeatOk >= NODE_DEAD_SEC * 1000 - 2 * BEAT_MS && !w.envelope) {
+  // Окно дизайна: живая нода молчит почти `NODE_DEAD_SEC` — дальше реестр по правилу отдаёт её героев и забеги другой (R7-09). ⭐ R16-02: не
+  // пауза машины — после неё нода обязана уйти сама (сверка ниже), это не простой базы.
+  if (Date.now() - inc.lastBeatOk >= NODE_DEAD_SEC * 1000 - 2 * BEAT_MS && !w.envelope && !inc.thawed) {
     w.envelope = true;
     w.events.push(`envelope:${inc.node}@${w.op}`);
     tally('env:outage-over-dead-sec');
   }
   if (!first && Date.now() < inc.stallUntil) return;
   const sentAt = Date.now();
+  const sentMono = performance.now();   // ⭐ R15-06: срок аренды — по часам процесса (здесь они идут с настенными, `performance.now`)
+  // ⭐ R16-02: сперва — давно ли реестр видел ноду (часы базы, `node.ts`): дольше аренды или строки нет — выход без записи. Самопроверка `r1602` —
+  // без этой сверки и без её второго рубежа в продлении (`leased`): фаззер обязан найти `a-dead-node-revived`.
+  const guard = !teeth.r1602;
+  if (!first && guard) {
+    const age = await inc.reg.nodeBeatAge(inc.node);
+    if (inc.dead) return;
+    if (age === null || age * 1000 >= LEASE_MS) { tally('node:registry-saw-dead'); killInc(w, inc, 'lease'); return; }
+  }
+  // ⭐ R17-01: удар ноды с арендой ложится только с проверкой живости в нём самом (`heartbeat(…, leased)`). Самопроверка `r1701` — без неё
+  // (безусловная вставка, как до правки): пауза машины после ответа сверки обязана дать `a-dead-node-revived`.
+  const atomic = guard && !teeth.r1701;
+  await pausePoint(w, inc, 'claims');
+  if (inc.dead) return;
   const hooks = inc.hooks;
   const held = hooks.liveCharIds();
-  const kept = await inc.reg.touchClaims(held, inc.node);
+  const kept = await inc.reg.touchClaims(held, inc.node, guard);
   const runs = hooks.heldRuns();
   if (runs.length) {
-    const keptRuns = await inc.reg.touchRuns(runs, inc.node);
-    const lostRuns = runs.filter((r) => !keptRuns.has(r.key));
+    const keptRuns = await inc.reg.touchRuns(runs, inc.node, guard);
+    // ⭐ Перепрогон R15: чужие — только те, что нода держит и после ответа (`node.ts`): отпущенный за время продления забег взяла другая нода законно.
+    const nowHeld = hooks.heldRuns();
+    const lostRuns = FUZZ_SELFTEST === 'r15settle' ? runs.filter((r) => !keptRuns.has(r.key))
+      : nowHeld.filter((r) => !keptRuns.has(r.key) && runs.some((s) => s.key === r.key));
     if (lostRuns.length) {
       console.error(`[${inc.node}] ИНЦИДЕНТ: забеги комнат ${lostRuns.map((r) => r.room).join(', ')} кластер числит за другой нодой — один забег идёт в двух местах`);
       hooks.fenceRuns(lostRuns);
     }
+    // ⭐ R15-08: забег, который комната отпустила, пока продление шло в базу, — отпустить снова (`node.ts`, `runsGone`). Самопроверка `r1508` —
+    // без этого (фаззер обязан найти `b-run-lock-orphan`). ⭐ Перепрогон R15: по паре «забег, комната» — забег взяла другая комната ноды.
+    const pair = (r: { key: string; room: string }): string => (FUZZ_SELFTEST === 'r15settle' ? r.key : `${r.key}@${r.room}`);
+    const still = new Set(nowHeld.map(pair));
+    const goneRuns = runs.filter((r) => keptRuns.has(r.key) && !still.has(pair(r)));
+    if (goneRuns.length && FUZZ_SELFTEST !== 'r1508') hooks.releaseRuns(goneRuns);
   }
-  await inc.reg.heartbeat(inc.node, { players: inc.rm.live.size, rooms: inc.rm.rooms.size, draining: inc.draining });
+  await pausePoint(w, inc, 'beat');
   if (inc.dead) return;
+  const prevAge = w.cluster.nodeBeatAge(inc.node);   // (a, R16-02) — до удара: не оживляет ли он ноду, которую реестр уже вправе был счесть мёртвой
+  const landed = await inc.reg.heartbeat(inc.node, { players: inc.rm.live.size, rooms: inc.rm.rooms.size, draining: inc.draining }, !first && atomic);
+  if (inc.dead) return;
+  // ⭐ R17-01: удар не лёг — реестр уже счёл ноду мёртвой (ответ сверки устарел на паузу машины): выход без записи, аренда не продлена (`node.ts`).
+  if (!landed) { tally('node:beat-refused'); killInc(w, inc, 'lease'); return; }
+  // a (⭐ R16-02): удар дошёл, а реестр до него не видел ноду дольше аренды (или её строку сняла уборка) — ожила нода, чьих героев и забеги он
+  // уже вправе был отдать: её продление вставляло отданное и отпущенное другой нодой заново, и гейтвей вёл героя к её устаревшей копии.
+  if (!first && (prevAge === null || prevAge * 1000 >= LEASE_MS)) {
+    violate(w, 'a-dead-node-revived', `${inc.node}#${inc.gen}: удар сердца дошёл, а реестр до него не видел ноду ${prevAge === null ? '(строку сняла уборка)' : `${Math.round(prevAge)} с`} — дольше аренды: её героев и забеги он уже вправе был отдать; ${w.cluster.dump()}`);
+  }
   inc.lastBeatOk = Date.now();
   // Самопроверка `lease`: нода аренды не держит (как до ENV1/ENV2) — длинный простой обязан дать героя на двух нодах, слив в раздел — ИНЦИДЕНТ.
   // ⭐ R16 C-05: удар, дошедший уже после конца аренды, её не продлевает (`node.ts`): нода уходит с первой же сверкой.
-  if (FUZZ_SELFTEST !== 'lease' && !inc.lease.leaseLost()) { if (inc.lease.leaseLeft() <= DRAIN_GUARD_MS) tally('node:lease-renewed-late'); inc.lease.leaseBeat(sentAt); }
+  if (FUZZ_SELFTEST !== 'lease' && inc.lease.leaseLeft() > 0) { if (inc.lease.leaseLeft() <= DRAIN_GUARD_MS) tally('node:lease-renewed-late'); inc.lease.leaseBeat(sentAt, sentMono); inc.sentAt = sentAt; }
   const lost = held.filter((id) => !kept.has(id));
   if (lost.length && FUZZ_SELFTEST !== 'fence') hooks.fenceLost(lost);
   const still = new Set(hooks.liveCharIds());
@@ -1909,6 +2228,32 @@ async function beat(w: W, inc: Inc, first = false): Promise<void> {
  */
 function killInc(w: W, inc: Inc, why: string): void {
   if (inc.dead) return;
+  const held = inc.writtenOff ? new Set<string>() : heldBy(w, inc);
+  inc.dead = true; inc.diedAt = Date.now(); inc.why = why;
+  if (inc.timer) clearInterval(inc.timer);
+  for (const r of [...w.ticking]) if (w.roomInc.get(r) === inc) w.ticking.delete(r);
+  for (const c of w.lobbies) if (c.inc === inc) c.kill();
+  w.clusterTouched = true;
+  w.events.push(`${why}:${inc.node}#${inc.gen}@${w.op}`);
+  tally(`node:${why}`);
+  if (FUZZ_TRACE) console.info(`[fuzz ${w.seed}]     процесс ${inc.node}#${inc.gen} умер (${why}): откат к строке базы — ${[...held].join(', ') || '—'}`);
+  settleLost(w, held);
+}
+
+/**
+ * ⭐ R16-02: ПРОЦЕСС НА ПАУЗЕ МАШИНЫ — ДЛЯ МИРА УШЁЛ, КАК УПАВШИЙ (`killInc`), но жив: вернётся (`thaw`) и обязан уйти без записи. Правда
+ * героев, что он держал, — строка базы; взятое его комнатами на узлах без записи — ушло с ним.
+ */
+function forget(w: W, inc: Inc): void {
+  const held = heldBy(w, inc);
+  inc.frozenAt = Date.now();
+  inc.writtenOff = true;
+  if (FUZZ_TRACE) console.info(`[fuzz ${w.seed}]     процесс ${inc.node}#${inc.gen} на паузе машины: откат к строке базы — ${[...held].join(', ') || '—'}`);
+  settleLost(w, held);
+}
+
+/** Кого процесс держит (сессия, грейс, тело, копии на дописать, закрепление, последняя виденная копия) — и что лежало на земле его комнат. */
+function heldBy(w: W, inc: Inc): Set<string> {
   const held = new Set<string>();
   if (inc.rm) {
     for (const [charId, ls] of locate(w)) if (ls.some((l) => l.inc === inc)) held.add(charId);
@@ -1930,14 +2275,11 @@ function killInc(w: W, inc: Inc, why: string): void {
       for (const d of groundOf(r)) if (d.kind === 'item' && d.item && tracked(d.item)) w.lastLoc.set(d.item.uid, `ground:${r.code}`);
     }
   }
-  inc.dead = true; inc.diedAt = Date.now(); inc.why = why;
-  if (inc.timer) clearInterval(inc.timer);
-  for (const r of [...w.ticking]) if (w.roomInc.get(r) === inc) w.ticking.delete(r);
-  for (const c of w.lobbies) if (c.inc === inc) c.kill();
-  w.clusterTouched = true;
-  w.events.push(`${why}:${inc.node}#${inc.gen}@${w.op}`);
-  tally(`node:${why}`);
-  if (FUZZ_TRACE) console.info(`[fuzz ${w.seed}]     процесс ${inc.node}#${inc.gen} умер (${why}): откат к строке базы — ${[...held].join(', ') || '—'}`);
+  return held;
+}
+
+/** Процесса для мира больше нет (`killInc`, `forget`): правда `held` — строка базы; записи узлов, не легшие никуда, ушли с ним. */
+function settleLost(w: W, held: Set<string>): void {
   rollBack(w, held);
   // 8, c: взятое на узлах (сундуки, убитые) комнатами упавшего процесса, но не легшее никуда (свод базы, сейвы в базе, комнаты живых нод), —
   // ушло с ним вместе со своей добычей: узел соберётся с ним заново, и это не повтор.
@@ -2051,6 +2393,12 @@ function genOp(w: W, rng: FuzzRng): Op {
   const up = alive(w);
   // Лежат все — супервизор поднимает быстро (иначе прогон тратит операции впустую); последнюю живую роняем реже.
   if (dead.length && w.env.chance(up.length ? w.restartP : 0.6)) return { k: 'restart', n: w.env.pick(dead).n };
+  // ⭐ R16-02: пауза машины ноды дольше срока смерти (ВМ на паузе, сон хоста) — из своего потока (`pause`): прежние операции идут как шли.
+  if (up.length > 1 && w.pause.chance(0.012)) {
+    const op: Op = { k: 'suspend', n: w.pause.pick(up).n, ms: w.pause.pick([130_000, 200_000, 400_000]), wall: w.pause.chance(0.7) };
+    // ⭐ R17-01: половина пауз ложится посреди удара сердца — после ответа сверки или продления своих (из своего потока).
+    return w.midPause.chance(0.5) ? { ...op, mid: w.midPause.pick(['claims', 'beat'] as const) } : op;
+  }
   if (up.length && w.env.chance(up.length > 1 ? w.clusterP : w.clusterP / 3)) {
     const n = w.env.pick(up).n;
     const long = OUTAGE_LONG && w.env.chance(0.3);
@@ -2069,6 +2417,11 @@ function genOp(w: W, rng: FuzzRng): Op {
     }
   }
   if (hs.length < HEROES_MAX && w.crew.chance(0.02)) return { k: 'recruit' };
+  // ⭐ R15-08: поздний ответ реестра на продление и взятие забега — из своего потока (`lateReg`), пока забеги держат комнаты: отпуск забега
+  // комнатой ляжет в базу раньше.
+  if (up.some((i) => i.rm.runRooms.size) && w.lateReg.chance(0.06)) {
+    return { k: 'regFault', op: w.lateReg.pick(['touchRuns', 'touchRuns', 'claimRun'] as const), kind: 'late', n: w.lateReg.chance(0.7) ? w.lateReg.pick(up).n : null };
+  }
   // ⭐ R16 C-09: погибший вне игры (ждёт пати мёртвым — `paid`, или «мёртв, оплачено» в строке — `run.deadAt`, в том числе после падения и
   // слива ноды) — экран входа через гейтвей: статус и «Завершить» с него (`5-status-promise`). Из своего потока (`ask`).
   const deadOut = off.filter((h) => paidOut(w, h));
@@ -2172,6 +2525,8 @@ async function quiesce(w: W): Promise<void> {
   for (const inc of w.nodes) { inc.stallUntil = 0; inc.partitionUntil = 0; inc.crashAt = 0; }
   const leaveDead = fuzzRng(mixSeed(w.seed, 0xdead)).chance(0.4);   // свой поток: повтор и сжатие видят тот же эпилог
   await phase(null, async () => {
+    // ⭐ R16-02: пауза машины кончается — вернувшийся процесс уходит сам (реестр его уже отдал) или, если пауза была короче, играет дальше.
+    for (const inc of w.nodes) if (inc.frozenAt && !inc.dead) await thaw(w, inc);
     // Слив, идущий фоном, — до конца (он уводит ноду): решать, кого поднимать, можно только по его итогу.
     for (let t = 0; t <= DRAIN_MAX_MS && w.nodes.some((i) => i.draining && !i.dead); t += 250) await vi.advanceTimersByTimeAsync(250);
     const dead = w.nodes.filter((i) => i.dead);
@@ -2347,20 +2702,28 @@ async function run(seed: number, script: Op[] | null, nOps: number, stopAt: ((v:
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], now: T0 });
   // Таймер несёт процесс, который его завёл (`als`); процесса нет — таймер не срабатывает.
   const fakeTimeout = globalThis.setTimeout, fakeInterval = globalThis.setInterval;
-  const carry = (fake: typeof setTimeout) => ((cb: (...a: unknown[]) => void, ms?: number, ...a: unknown[]) => {
+  // ⭐ R16-02: процесс на паузе машины (`suspend`) — его таймер не срабатывает: часы процесса стоят. Разовый сработает после паузы через свой
+  // остаток на её начало (`thaw`), интервал — в свой срок после неё.
+  const carry = (fake: typeof setTimeout, once: boolean) => ((cb: (...a: unknown[]) => void, ms?: number, ...a: unknown[]) => {
     const st = als.getStore();
-    return st ? fake(() => { if (!st.dead) als.run(st, () => cb(...a)); }, ms) : fake(cb, ms, ...a);
+    if (!st) return fake(cb, ms, ...a);
+    const run = (): void => { if (!st.dead) als.run(st, () => cb(...a)); };
+    return fake(() => {
+      if (st.dead) return;
+      if (st.frozenAt) { if (once && !st.held.has(cb)) st.held.set(cb, { at: Math.max(0, Date.now() - st.frozenAt), run }); return; }
+      run();
+    }, ms);
   }) as unknown as typeof setTimeout;
-  globalThis.setTimeout = carry(fakeTimeout);
-  globalThis.setInterval = carry(fakeInterval as unknown as typeof setTimeout) as unknown as typeof setInterval;
+  globalThis.setTimeout = carry(fakeTimeout, true);
+  globalThis.setInterval = carry(fakeInterval as unknown as typeof setTimeout, false) as unknown as typeof setInterval;
   const w: W = {
     seed, heroes: [], rng: fuzzRng(mixSeed(seed, 0x0b5)), aux: fuzzRng(mixSeed(seed, 0xa11)), crew: fuzzRng(mixSeed(seed, 0xc4e)), env: fuzzRng(mixSeed(seed, 0xc1a5)),
-    ask: fuzzRng(mixSeed(seed, 0xc09)), asked: null,
+    ask: fuzzRng(mixSeed(seed, 0xc09)), asked: null, lateReg: fuzzRng(mixSeed(seed, 0x1508)), pause: fuzzRng(mixSeed(seed, 0x1602)), midPause: fuzzRng(mixSeed(seed, 0x1701)), lateInFlight: 0, runReleasedAt: new Map(), regSeq: 0, releasedSeq: new Map(), releaseFailedAt: new Map(), claimSaw: new Map(),
     penaltyCount: new Map(), ticking: new Set(), born: new WeakSet(), lobbies: [], pending: [], violations: [], seen: new Set(),
-    penalties: [], sinks: new Set(), carryGone: new Set(), lastLoc: new Map(), sunkBy: new Map(), sold: new Set(), durableSeen: new Set(), fromGround: new Set(), ev: 0, recs: new Map(), roomSeen: new WeakMap(), ids: new WeakMap(), idSeq: 0,
+    penalties: [], sinks: new Set(), carryGone: new Set(), lastLoc: new Map(), sunkBy: new Map(), sold: new Set(), durableSeen: new Set(), fromGround: new Set(), ev: 0, opEv0: 0, recs: new Map(), roomSeen: new WeakMap(), ids: new WeakMap(), idSeq: 0,
     errors: [], cmdFailed0: counters.cmdFailed, frameErrors0: counters.frameErrors, op: -1, opRef: null, stepped: false,
     cluster: new ClusterModel(() => Date.now()), nodes: [], incs: [], incSeq: 0, roomInc: new WeakMap(), regFaults: [], rolledBack: new Set(),
-    events: [], envelope: false, clusterTouched: false, expectCmd: 0, expectFrame: 0, clusterP: 0, restartP: 0, drainLost: false, ledgerBehind: false,
+    events: [], envelope: false, clusterTouched: false, expectCmd: 0, expectFrame: 0, clusterP: 0, restartP: 0, drainLost: false, ledgerBehind: false, thawSilent: false,
   };
   // Нрав кластера — из потока кластера до первой операции: у одних прогонов ноды падают редко и встают сразу, у других лежат долго.
   w.clusterP = w.env.pick([0.03, 0.07, 0.12]);
@@ -2462,12 +2825,18 @@ beforeAll(async () => {
   const keep = (lvl: 'error' | 'warn' | 'log' | 'info') => vi.spyOn(console, lvl).mockImplementation((...a: unknown[]) => {
     const s = a.map((x) => (x instanceof Error ? `${x.message}` : String(x))).join(' ');
     if (lvl === 'info' && s.startsWith('[fuzz')) { process.stdout.write(`${s}\n`); return; }
-    if (!cur || deadCode()) return;
+    // ⭐ R17-01: и процесс, который мир уже списал (пауза машины, `forget`) и который ещё не ожил: удар, вставший на паузе после ответа сверки,
+    // продолжается с устаревшим ответом — продление отказано (реестр счёл ноду мёртвой), и он честно пишет ИНЦИДЕНТ «забеги за другой нодой»
+    // прямо перед тем, как удар не ляжет и процесс уйдёт без записи. Нарушение здесь — только если он ожил (`a-dead-node-revived`).
+    if (!cur || deadCode() || als.getStore()?.writtenOff === true) return;
     cur.errors.push(s.slice(0, 300));
     if (cur.errors.length > 50) cur.errors.shift();
     // 6: команда, упавшая отказом базы или реестра, заказанным фаззером, — штатная «ошибка сервера, попробуйте ещё раз».
     if (/(команда «.*» игрока .* упала|обработка команды игрока .* упала)/.test(s) && a.some(isInjected)) cur.expectCmd++;
-    if (/продолжение забега из города упало|отказ при закрытии соединения|фоновая дописка копии|сундук на входе|изменил сейв .* — откачено/.test(s)) violate(cur, '6-internal-error', s.slice(0, 300));
+    // ⭐ R15-08: сундук на входе, чьё чтение упало разделом с базой, заказанным фаззером, — штатный сбой базы посреди входа (раздел начался, пока
+    // вход ждал поздний ответ реестра): комната живёт, сундук клиент перечитает своим действием.
+    const entryStashDown = /сундук на входе/.test(s) && a.some(isInjected);
+    if (/продолжение забега из города упало|отказ при закрытии соединения|фоновая дописка копии|сундук на входе|изменил сейв .* — откачено/.test(s) && !entryStashDown) violate(cur, '6-internal-error', s.slice(0, 300));
     // b: сердцебиение нашло забег своей комнаты за другой нодой — один забег в двух местах.
     if (/ИНЦИДЕНТ: забеги комнат/.test(s)) violate(cur, 'b-run-lock-lost', s.slice(0, 300));
     else if (/ИНЦИДЕНТ: забег .* кластер числит/.test(s)) violate(cur, 'b-run-lock-lost', s.slice(0, 300));
@@ -2496,6 +2865,12 @@ const KNOWN: Record<string, string> = {
   // ENV1 исправлен: молчащая нода отгораживает себя сама до срока, после которого реестр отдаёт её героев и забеги (аренда, `lease.ts`), —
   // нарушения после длинного простоя (`ENV-outage-over-dead-sec`) больше не прощаются.
   'ENV-drain-db-outage': 'слив ноды во время раздела с базой дольше аренды ноды (бюджета слива; или кончившегося меньше чем за круг дописки до его конца) — копии уходят с процессом (ИНЦИДЕНТ по дизайну, R12-04)',
+  // ⭐ Перепрогон R16 (только `DM_FUZZ_OUTAGE_LONG`): двойной сбой — пауза машины дольше срока смерти И реестр, недоступный ей и после паузы
+  // (пауза сердцебиения или раздел с базой дольше самой паузы). Сверка R16-02 (давно ли реестр видел ноду) до реестра не доходит, а часы
+  // процесса паузы не видели (стояли все часы — нода не отгорожена; настенные догнал chrony — отгорожена сомнением): до конца аренды нода держит
+  // героев и забеги, которые реестр уже отдал другой (a, b), и копии, которые та уже переписала (ИНЦИДЕНТ R6-06). Узнать это ей не у кого;
+  // конец аренды — выход без записи. Открытый вопрос владельцу — запись «по строке базы» в этом окне (см. отчёт перепрогона).
+  'ENV-thaw-registry-silent': 'нода вернулась с паузы машины дольше срока смерти, а реестр ей ещё недоступен — до конца аренды не знает, что её героев и забеги отдали',
   // K1 (вход, который комната не помнит, читает «мёртв, оплачено» из сейва), K2 (свод забега — в базу раньше строки героя) и K3 (передача
   // через землю записана наполовину) исправлены: их нарушения — снова неизвестные. ⭐ K3 (проход правок 2): окно было шире «одной записи в
   // пути» — подъём клал вещь в сумку раньше записи поднявшего, а та могла не лечь вовсе (пауза C-07, сбой без повтора, исход неизвестен, копия
@@ -2818,4 +3193,447 @@ describe('⭐ B1: фаззер коопа на двух нодах (два RoomM
     { k: 'attack', h: 1, r: 0.006681002443656325, weaken: true },
     { k: 'abandon', h: 0, via: 'gw', ask: true },
   ], '5-status-promise');
+
+  // ── Раунд 15 (сервер), ИСПРАВЛЕНО. R15-08: удар сердца взял снимок забегов, продление ответило поздно (`late`), а комната тем временем
+  // забег отпустила (вайп — её `DELETE` лёг раньше): продление вставило строку заново, и держание ушедшей комнаты жило до `CLAIM_IDLE_SEC`.
+  // Теперь удар отпускает такие забеги снова (`runsGone`; самопроверка `DM_FUZZ_SELFTEST=r1508` это снимает — повтор падает). Сжато фаззером.
+  fixedRoot('R15-08: продление забега, легшее после его отпуска комнатой, не оставляет держания без комнаты', 19, [
+    { k: 'join', h: 0, mode: 'friend', r: 0.45121140661649406, reuse: false, via: 'gw' },
+    { k: 'descend', h: 0, r: 0.3024489327799529, others: 'yes', near: false, pause: true },
+    { k: 'crashAt', n: 0, calls: 7 },
+    { k: 'join', h: 0, mode: 'code', r: 0.8036829486954957, reuse: false, via: 'gw' },
+    { k: 'restart', n: 0 },
+    { k: 'step', n: 1 },
+    { k: 'join', h: 3, mode: 'code', r: 0.6786514187697321, reuse: false, via: 'gw' },
+    { k: 'potion', h: 3, belt: true, r: 0.8588571685831994 },
+    { k: 'descend', h: 3, r: 0.8802298188675195, others: 'yes', near: true, pause: true, diff: 2 },
+    { k: 'hurt', h: 3, frac: 0.03 },
+    { k: 'regFault', op: 'touchRuns', kind: 'late', n: 0 },
+    { k: 'attack', h: 3, r: 0.08440084452740848, weaken: true },
+    { k: 'kill', h: 3, body: false },
+  ], 'b-run-lock-orphan');
+
+  // ── Перепрогон после правок раунда 15 (сиды 7 200 001…7 201 080), ИСПРАВЛЕНО: R15-08 закрыл не всё. Самопроверка `DM_FUZZ_SELFTEST=r15settle`
+  // возвращает поведение до правки — первые два повтора падают на `b-run-lock-orphan`. Сжато фаззером.
+  // (а) Соло-спуск h1 на node-1: взятие забега легло поздно (`late`), а h1 тут же погиб (вайп отпустил забег раньше вставки). Повторный отпуск
+  // по ответу взятия (R15-08) упал — node-1 отрезана от базы на 3 с, — и сбой глушился: строка без комнаты жила до `CLAIM_IDLE_SEC`. Теперь
+  // неудавшийся отпуск повторяет ближайший удар сердца (`RoomManager.runsDue`).
+  fixedRoot('перепрогон R15 (а): повторный отпуск забега, упавший в разделе с базой, повторяет удар сердца', 7200355, [
+    { k: 'town', h: 3, others: 'yes', near: true, pause: true },
+    { k: 'join', h: 2, mode: 'code', r: 0.8289919735398144, reuse: false, via: 0 },
+    { k: 'descend', h: 2, r: 0.161201739218086, others: 'yes', near: false, pause: true, diff: 0 },
+    { k: 'join', h: 1, mode: 'fresh', r: 0.24235298624262214, reuse: true, via: 'gw' },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: null },
+    { k: 'descend', h: 1, r: 0.12051907880231738, others: 'no', near: false, pause: true },
+    { k: 'kill', h: 1, body: false },
+    { k: 'partition', n: 1, ms: 3000 },
+    { k: 'wait', ms: 61000 },
+  ], 'b-run-lock-orphan');
+  // (б) Удар сердца node-0 взял снимок (забег — за городской комнатой A), продление ответило поздно, а h0 тем временем «Продолжить» — забег
+  // взяла новая комната B той же ноды. Продление легло с A: строка указывала на комнату, которая забег не держит, до следующего удара (и
+  // «Продолжить» на соседней ноде слало бы туда). `runsGone` сравнивал только ключ. Теперь — пару «забег, комната», и строка переписывается
+  // на держателя (`RoomManager.settleRun`).
+  fixedRoot('перепрогон R15 (б): позднее продление с прежней комнатой ноды — строка забега тут же переписана на держателя', 7201016, [
+    { k: 'join', h: 0, mode: 'friend', r: 0.9007073836401105, reuse: false, via: 'gw' },
+    { k: 'wait', ms: 1600 },
+    { k: 'descend', h: 0, r: 0.8901956903282553, others: 'none', near: false, pause: false, diff: 0 },
+    { k: 'recruit' },
+    { k: 'attack', h: 0, r: 0.14147656550630927, weaken: true },
+    { k: 'step', n: 3 },
+    { k: 'attack', h: 0, r: 0.2686340636573732, weaken: true },
+    { k: 'join', h: 1, mode: 'code', r: 0.40691171074286103, reuse: false, via: 'gw' },
+    { k: 'kill', h: 0, body: false },
+    { k: 'recruit' },
+    { k: 'step', n: 3 },
+    { k: 'join', h: 3, mode: 'code', r: 0.8857199891936034, reuse: true, via: 'gw' },
+    { k: 'join', h: 4, mode: 'friend', r: 0.7930156707298011, reuse: true, via: 'gw' },
+    { k: 'join', h: 2, mode: 'fresh', r: 0.5538507583551109, reuse: false, via: 'gw' },
+    { k: 'kill', h: 4, body: false },
+    { k: 'wait', ms: 1600 },
+    { k: 'kill', h: 3, body: false },
+    { k: 'step', n: 90 },
+    { k: 'arena', h: 2, others: 'yes', pause: true },
+    { k: 'kill', h: 2, body: false },
+    { k: 'wait', ms: 1600 },
+    { k: 'step', n: 10 },
+    { k: 'descend', h: 1, r: 0.2916975053958595, others: 'yes', near: false, pause: false },
+    { k: 'descend', h: 0, r: 0.8919000288005918, others: 'none', near: true, pause: true },
+    { k: 'wait', ms: 4200 },
+    { k: 'step', n: 30 },
+    { k: 'descend', h: 0, r: 0.11949410219676793, others: 'yes', near: false, pause: true },
+    { k: 'attack', h: 1, r: 0.7742634071037173, weaken: true },
+    { k: 'close', h: 1 },
+    { k: 'wait', ms: 61000 },
+    { k: 'kill', h: 0, body: false },
+    { k: 'wait', ms: 4200 },
+    { k: 'abandon', h: 3, via: 'gw', ask: true },
+    { k: 'descend', h: 0, r: 0.607214591698721, others: 'yes', near: false, pause: true, diff: 1 },
+    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
+    { k: 'abandon', h: 4, via: 'gw', ask: true },
+    { k: 'step', n: 30 },
+    { k: 'regFault', op: 'touchRuns', kind: 'late', n: null },
+    { k: 'step', n: 3 },
+    { k: 'join', h: 0, mode: 'resume', r: 0.7558056768029928, reuse: true, via: 'gw' },
+    { k: 'step', n: 30 },
+  ], 'b-run-lock-orphan');
+  // (в) МОДЕЛЬ ФАЗЗЕРА — окно по дизайну. Взятие забега комнатой node-1 легло поздно, когда её уже не было (h1 ушёл), а «Продолжить» h1 на
+  // node-0 спросило реестр как раз между этой вставкой и повторным отпуском node-1 (R15-08, миллисекунды): отказ с кодом ушедшей комнаты
+  // пересказал ответ реестра, а через миг строки уже нет — «Продолжить» снова находит забег. Судить такой отказ тупиком нельзя; тупик насовсем
+  // стережёт эпилог (каждый с забегом в строке жмёт «Продолжить» ещё раз).
+  fixedRoot('перепрогон R15 (в): отказ «Продолжить», пересказавший ответ реестра о сироте позднего взятия, — не тупик', 7200656, [
+    { k: 'join', h: 1, mode: 'friend', r: 0.5484650731086731, reuse: true, via: 0 },
+    { k: 'descend', h: 1, r: 0.23631936474703252, others: 'yes', near: false, pause: false, diff: 0 },
+    { k: 'drain', n: 0 },
+    { k: 'join', h: 1, mode: 'friend', r: 0.564534290926531, reuse: true, via: 'gw' },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 1 },
+    { k: 'restart', n: 0 },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: null },
+    { k: 'descend', h: 1, r: 0.9306421934161335, others: 'yes', near: false, pause: true, diff: 2 },
+    { k: 'close', h: 1 },
+    { k: 'join', h: 1, mode: 'resume', r: 0.7130583333782852, reuse: false, via: 'x' },
+    { k: 'step', n: 90 },
+  ], '5-resume-dead-end');
+  // (г) МОДЕЛЬ ФАЗЗЕРА. «Продолжить» h2 на node-1 ждало позднего ответа реестра на взятие забега (`late`) — операция кончилась, вход ещё в
+  // пути, и следующая (час ожидания) застала героя «вне игры». Вход дошёл, h2 встал на узел живым, его автосейв лёг с неизвестным исходом
+  // (сессия снята, копия ждёт реконнекта) — и через час грейса похороны со штрафом: по правилам, а не «похоронен тот, кого нода не держала».
+  // Вход героя, стоявший в очереди на начало операции, — держание (как у страховки входа).
+  fixedRoot('перепрогон R15 (г): похороны героя, чей вход ещё шёл на начало операции, — не «чужие»', 7210519, [
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 1 },
+    { k: 'join', h: 2, mode: 'code', r: 0.3690562506671995, reuse: false, via: 'gw' },
+    { k: 'descend', h: 2, r: 0.0758780324831605, others: 'yes', near: true, pause: false },
+    { k: 'drain', n: 0, bg: true },
+    { k: 'fault', f: 'unknownLanded', h: null },
+    { k: 'join', h: 2, mode: 'resume', r: 0.24626997439190745, reuse: false, via: 'x' },
+    { k: 'wait', ms: 3_601_000 },
+  ], '3-unjustified-penalty');
+  // (д) Удар сердца node-0 взял снимок (забег припаркован в городской комнате h1), продление ответило поздно, а h1 тем временем закрыл вкладку
+  // (комната забег отпустила) и «Продолжить» через гейтвей — забег законно взяла node-1. Позднее продление вернулось без него, и удар писал
+  // «ИНЦИДЕНТ: …один забег идёт в двух местах» и снимал комнаты (которых у забега уже не было): ложная тревога. Теперь «чужие» — только те,
+  // что нода держит и после ответа (`node.ts`). Самопроверка `r15settle` возвращает суд по снимку — повтор падает. Сжато фаззером.
+  fixedRoot('перепрогон R15 (д): забег, отпущенный за время продления и взятый другой нодой, — не «инцидент» удара', 7230032, [
+    { k: 'wait', ms: 3_601_000 },
+    { k: 'join', h: 0, mode: 'friend', r: 0.3344396997708827, reuse: true, via: 'gw' },
+    { k: 'wait', ms: 4200 },
+    { k: 'descend', h: 0, r: 0.5411802639719099, others: 'no', near: true, pause: false },
+    { k: 'step', n: 90 },
+    { k: 'recruit' },
+    { k: 'step', n: 3 },
+    { k: 'step', n: 30 },
+    { k: 'join', h: 1, mode: 'code', r: 0.3170796283520758, reuse: false, via: 0 },
+    { k: 'wait', ms: 4200 },
+    { k: 'join', h: 2, mode: 'friend', r: 0.7183859846554697, reuse: false, via: 'gw' },
+    { k: 'step', n: 10 },
+    { k: 'hurt', h: 2, frac: 0.1 },
+    { k: 'wait', ms: 61_000 },
+    { k: 'kill', h: 2, body: false },
+    { k: 'abandon', h: 2, via: 'gw', ask: true },
+    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
+    { k: 'abandon', h: 0, via: 'gw', ask: true },
+    { k: 'regFault', op: 'touchRuns', kind: 'late', n: 0 },
+    { k: 'step', n: 30 },
+    { k: 'close', h: 1 },
+    { k: 'join', h: 1, mode: 'resume', r: 0.9027325231581926, reuse: false, via: 'gw' },
+  ], 'b-run-lock-lost');
+  // (е) Продолжение из города (комната A, node-0) ждало взятие забега (R9-01, `runClaim`) — оно легло поздно, поверх строки новой комнаты B той
+  // же ноды (h2 тем временем «Продолжить» — забег взяла B), а A бросила продолжение (все ушли): `runDropped` при живом держателе молчал, и
+  // до удара сердца строка называла ушедшую A — «Продолжить» h1 на node-1 получал отказ с её кодом. Теперь отпуск при держателе — строку на
+  // него (`RoomManager.runFreed` → `settleRun`). Самопроверка `r15settle` — повтор падает. Сжато фаззером (сид 7240242).
+  fixedRoot('перепрогон R15 (е): позднее взятие брошенного продолжения — строка тут же на держателя, отказ «Продолжить» не ведёт в ушедшую', 7240242, [
+    { k: 'join', h: 1, mode: 'friend', r: 0.8358823657035828, reuse: true, via: 'x' },
+    { k: 'descend', h: 1, r: 0.9744348109234124, others: 'no', near: false, pause: false, diff: 3 },
+    { k: 'fault', f: 'unknownLost', h: 2 },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 1 },
+    { k: 'join', h: 2, mode: 'code', r: 0.5110722477547824, reuse: true, via: 'gw' },
+    { k: 'town', h: 1, others: 'yes', near: true, pause: true },
+    { k: 'leave', h: 1 },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: null },
+    { k: 'join', h: 2, mode: 'friend', r: 0.14631444099359214, reuse: true, via: 'gw' },
+    { k: 'descend', h: 2, r: 0.9270958297420293, others: 'yes', near: true, pause: true, diff: 0 },
+    { k: 'join', h: 1, mode: 'resume', r: 0.20347817800939083, reuse: false, via: 'x' },
+    { k: 'join', h: 2, mode: 'resume', r: 0.4302257669623941, reuse: false, via: 'gw' },
+  ], '5-resume-dead-end');
+  // (ж) «Продолжить» h0 на node-1 взял забег за новым кодом комнаты — взятие легло поздно, а за это время тот же забег взял «Продолжить» h3
+  // на той же ноде (комната B): h0 вошёл к ней, а строка осталась за кодом комнаты, которой не было, — до удара сердца «Продолжить» h2 на
+  // node-0 получал отказ с этим кодом. Теперь взятое за кодом, который не понадобился (держатель нашёлся здесь), — на держателя
+  // (`RoomManager.join` → `runFreedKey` → `settleRun`). Самопроверка `r15settle` — повтор падает. Сжато фаззером (сид 7250928).
+  fixedRoot('перепрогон R15 (ж): «Продолжить», чьё взятие легло поздно, а забег уже у комнаты ноды, — строка на неё, а не на несозданную', 7250928, [
+    { k: 'join', h: 1, mode: 'code', r: 0.7275196467526257, reuse: false, via: 'gw' },
+    { k: 'wait', ms: 61_000 },
+    { k: 'wait', ms: 61_000 },
+    { k: 'step', n: 30 },
+    { k: 'join', h: 3, mode: 'friend', r: 0.47992228739894927, reuse: true, via: 0 },
+    { k: 'wait', ms: 61_000 },
+    { k: 'descend', h: 1, r: 0.006927951704710722, others: 'yes', near: false, pause: true },
+    { k: 'wait', ms: 61_000 },
+    { k: 'join', h: 0, mode: 'fresh', r: 0.5479457837063819, reuse: false, via: 'gw' },
+    { k: 'join', h: 2, mode: 'code', r: 0.13349726935848594, reuse: true, via: 'gw' },
+    { k: 'attack', h: 1, r: 0.11577198072336614, weaken: true },
+    { k: 'close', h: 0 },
+    { k: 'join', h: 1, mode: 'fresh', r: 0.15657527814619243, reuse: true, via: 'gw' },
+    { k: 'join', h: 0, mode: 'code', r: 0.3441667705774307, reuse: true, via: 'x' },
+    { k: 'town', h: 3, others: 'yes', near: true, pause: true },
+    { k: 'close', h: 2 },
+    { k: 'step', n: 30 },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 1 },
+    { k: 'leave', h: 3 },
+    { k: 'close', h: 0 },
+    { k: 'join', h: 0, mode: 'resume', r: 0.7389698668848723, reuse: true, via: 'x' },
+    { k: 'join', h: 3, mode: 'resume', r: 0.07838283618912101, reuse: false, via: 'x' },
+    { k: 'wait', ms: 1600 },
+    { k: 'join', h: 2, mode: 'resume', r: 0.5927640041336417, reuse: false, via: 'x' },
+  ], '5-resume-dead-end');
+  // (з) МОДЕЛЬ ФАЗЗЕРА. h1 соло зовёт спуск из города — продолжение припаркованного забега ждёт взятия (R9-01), а оно отвечает поздно (`late`):
+  // операция кончилась, герой «в городе». Следующая (час) застала переход: h1 вошёл в подземелье, автосейв лёг с неизвестным исходом (сессия
+  // снята), грейс кончился — похороны по правилам, а не «похоронен стоящий в городе». Комната на переходе (продолжение ждёт базу) — не город.
+  fixedRoot('перепрогон R15 (з): похороны героя, чья комната на начало операции уже уходила в подземелье, — не «стоящий в городе»', 7270081, [
+    { k: 'join', h: 1, mode: 'fresh', r: 0.3659474460873753, reuse: true, via: 'gw' },
+    { k: 'descend', h: 1, r: 0.9370606255251914, others: 'yes', near: false, pause: false },
+    { k: 'town', h: 1, others: 'yes', near: false, pause: true },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: null },
+    { k: 'fault', f: 'unknownLanded', h: null },
+    { k: 'descend', h: 1, r: 0.30662332475185394, others: 'no', near: false, pause: true },
+    { k: 'wait', ms: 3_601_000 },
+  ], '3-safe-penalized');
+  // ⭐ Раунд 16 (фаззер кластера, большой прогон; сид 170085 — пауза машины здесь лишь сдвигала время): герой ушёл из комнаты, державшей его
+  // забег, а другая комната ноды начала новый — сверка строки забега (`settleRun`) переписывала её на держателя вставкой, и вставка, легшая
+  // ПОЗЖЕ отпуска держателем (его комната ушла), жила за исчезнувшей комнатой до `CLAIM_IDLE_SEC`. Теперь после вставки — сверка снова, как
+  // после взятия (`runTaken`, R15-08).
+  fixedRoot('раунд 16: сверка строки забега на держателя, легшая после его отпуска, — сверяется снова, а не держит забег за ушедшей комнатой', 170085, [
+    { k: 'crash', n: 0 },
+    { k: 'wait', ms: 124_000 },
+    { k: 'join', h: 1, mode: 'fresh', r: 0.5437627574428916, reuse: true, via: 'gw' },
+    { k: 'descend', h: 1, r: 0.981170765357092, others: 'none', near: true, pause: true, diff: 1 },
+    { k: 'wait', ms: 4200 },
+    { k: 'town', h: 1, others: 'yes', near: true, pause: false },
+    { k: 'join', h: 2, mode: 'friend', r: 0.5812762998975813, reuse: false, via: 'gw' },
+    { k: 'join', h: 1, mode: 'resume', r: 0.358477720990777, reuse: false, via: 1 },
+    { k: 'town', h: 1, others: 'no', near: true, pause: false },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 1 },
+    { k: 'descend', h: 2, r: 0.11676076636649668, others: 'none', near: true, pause: true, diff: 0 },
+    { k: 'close', h: 1 },
+  ], 'b-run-lock-orphan');
+  // ⭐ R16-02 (модель): машина node-0 на паузе, его герой h0 тем временем вошёл к пати на node-1, погиб там (штраф взят) и ждёт реконнекта в её
+  // грейсе. Проснувшаяся node-0 уходит на первом же ударе — и её смерть откатывала h0 «к строке базы» второй раз (мир списал её копии ещё на
+  // паузе): модель считала, что он с тех пор оживал, и «Завершить» оплаченной смерти без штрафа выглядело `3-missing-penalty`. Сжато фаззером
+  // (сид 190020).
+  fixedRoot('R16-02 (модель): смерть проснувшейся ноды не откатывает второй раз героев, которых мир списал с неё ещё на паузе', 190020, [
+    { k: 'join', h: 1, mode: 'fresh', r: 0.5622048997320235, reuse: true, via: 'gw' },
+    { k: 'abandon', h: 1, via: 'gw' },
+    { k: 'join', h: 1, mode: 'resume', r: 0.6475514837075025, reuse: true, via: 'x' },
+    { k: 'join', h: 1, mode: 'friend', r: 0.17499810177832842, reuse: true, via: 'gw' },
+    { k: 'join', h: 0, mode: 'fresh', r: 0.8568386784754694, reuse: true, via: 'gw' },
+    { k: 'suspend', n: 0, ms: 130_000, wall: false },
+    { k: 'descend', h: 1, r: 0.8712329412810504, others: 'yes', near: true, pause: true },
+    { k: 'join', h: 0, mode: 'code', r: 0.7072058960329741, reuse: false, via: 'gw' },
+    { k: 'kill', h: 0, body: false },
+    { k: 'fault', f: 'unknownLost', h: 0 },
+    { k: 'wait', ms: 61_000 },
+    { k: 'abandon', h: 0, via: 'gw', ask: true },
+  ], '3-missing-penalty');
+  // ⭐ Раунд 16 (модель; большой прогон, сид 200019 — пауза машины здесь лишь сдвигала время): h3 погиб в подземелье на node-1, node-1 упала;
+  // «Продолжить» ставит его мёртвым в новую комнату забега (K1), мёртвые застряли — комната уходит в город (R12-07, город оживляет), и пати
+  // спускается снова. Вход, возврат в город и спуск шли одной операцией, и якорь смерти оставался на комнате упавшей ноды: законное оживление
+  // городом числилось `2-revived-elsewhere` (K1). Якорь — комната, куда он вошёл мёртвым (`noteFrame`).
+  fixedRoot('раунд 16 (модель): вошедший мёртвым в новую комнату своего забега оживает сменой ЕЁ этажа, а не «в чужой комнате»', 200019, [
+    { k: 'join', h: 3, mode: 'code', r: 0.8227567246649414, reuse: true, via: 'gw' },
+    { k: 'crash', n: 0 },
+    { k: 'wait', ms: 124_000 },
+    { k: 'join', h: 2, mode: 'friend', r: 0.8796997691970319, reuse: true, via: 'gw' },
+    { k: 'wait', ms: 61_000 },
+    { k: 'join', h: 3, mode: 'friend', r: 0.7323144210968167, reuse: false, via: 'x' },
+    { k: 'restart', n: 0 },
+    { k: 'descend', h: 3, r: 0.8622460223268718, others: 'yes', near: true, pause: true },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: null },
+    { k: 'town', h: 0, others: 'no', near: true, pause: true },
+    { k: 'attack', h: 2, r: 0.15343769220635295, weaken: true },
+    { k: 'step', n: 90 },
+    { k: 'kill', h: 3, body: false },
+    { k: 'town', h: 2, others: 'no', near: true, pause: true },
+    { k: 'descend', h: 3, r: 0.1248106244020164, others: 'none', near: false, pause: true },
+    { k: 'step', n: 3 },
+    { k: 'town', h: 1, others: 'no', near: true, pause: true },
+    { k: 'crash', n: 1 },
+    { k: 'wait', ms: 124_000 },
+    { k: 'join', h: 3, mode: 'resume', r: 0.9971884347032756, reuse: false, via: 0 },
+    { k: 'fault', f: 'unknownLost', h: null },
+    { k: 'join', h: 2, mode: 'resume', r: 0.2206850196234882, reuse: false, via: 'gw' },
+    { k: 'wait', ms: 16_000 },
+    { k: 'descend', h: 3, r: 0.7600327336695045, others: 'yes', near: true, pause: true, diff: 3 },
+  ], '2-revived-elsewhere');
+  // ⭐ R16-02: ПАУЗА МАШИНЫ НОДЫ ДОЛЬШЕ СРОКА СМЕРТИ. h0 в подземелье своего забега на node-0; машина node-0 встаёт на 200 с (часы процесса
+  // стоят, настенные потом догоняет chrony — или стоят и они). Реестр за это время числит её мёртвой: h0 через гейтвей «Продолжить» — на node-1,
+  // доигрывает, возвращается в город и выходит (забег припаркован в строке, закрепление и забег node-1 отпустила). node-0 просыпается: раньше
+  // сверка аренды (удар) доходила и оживляла её — продление вставляло закрепление h0 и держание забега заново, за ней, и гейтвей вёл h0 к её
+  // устаревшей копии в грейсе (штраф за забег, законно припаркованный на node-1; сундуки и босс этажа — второй раз). Теперь удар сперва
+  // спрашивает реестр, давно ли тот видел ноду (часы базы), — дольше аренды: выход без записи. Самопроверка `r1602` (без сверки и без второго
+  // рубежа в продлении) — `a-dead-node-revived`.
+  const suspended = (wall: boolean): Op[] => [
+    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false, via: 0 },
+    { k: 'descend', h: 0, r: 0.5, others: 'none', near: false, pause: true },
+    { k: 'suspend', n: 0, ms: 200_000, wall },
+    { k: 'join', h: 0, mode: 'resume', r: 0, reuse: false, via: 'gw' },
+    { k: 'town', h: 0, others: 'none', near: true, pause: true },
+    { k: 'leave', h: 0 },
+    { k: 'wait', ms: 61_000 },
+    { k: 'wait', ms: 61_000 },
+    { k: 'step', n: 3 },
+  ];
+  fixedRoot('R16-02: машина ноды на паузе 200 с, её героя взяла и отпустила другая нода — проснувшаяся уходит без записи (настенные часы догнал chrony)', 11, suspended(true), 'a-dead-node-revived');
+  fixedRoot('R16-02: …и когда стояли все часы гостя (сомнения в аренде нет вовсе) — уходит на первом же ударе', 11, suspended(false), 'a-dead-node-revived');
+  // ⭐ R17-01: ТА ЖЕ ПАУЗА, НО ПОСРЕДИ УДАРА СЕРДЦА: сверка возраста удара уже ответила «жива» (ответ ждал в буфере сокета всю паузу), или
+  // продление своих уже легло. Проснувшаяся продолжает тот же удар: продление отказано (R16-02), а удар раньше был безусловной вставкой — строка
+  // node-0 оживала, аренда продлевалась, и следующий удар вставлял закрепление h0 и держание забега заново (гейтвей вёл h0 к её копии). Теперь
+  // удар ложится только с проверкой живости в нём самом: не лёг — выход без записи. Самопроверка `r1701` (удар без проверки) — `a-dead-node-revived`.
+  const suspendedMid = (mid: 'claims' | 'beat', wall: boolean): Op[] => suspended(wall).map((o) => (o.k === 'suspend' ? { ...o, mid } : o));
+  fixedRoot('R17-01: машина встала сразу после ответа сверки возраста удара — удар не ложится, проснувшаяся уходит без записи', 11, suspendedMid('claims', true), 'a-dead-node-revived');
+  fixedRoot('R17-01: …и между продлением своих и ударом (стояли все часы гостя)', 11, suspendedMid('beat', false), 'a-dead-node-revived');
+  it('самопроверка R17-01: удар без проверки живости в нём самом — пауза после ответа сверки даёт `a-dead-node-revived`', async () => {
+    const refused = stats.get('node:beat-refused') ?? 0;
+    expect((await replay(11, suspendedMid('claims', false))).map((v) => v.inv), 'с проверкой в ударе — чисто').toEqual([]);
+    expect(stats.get('node:beat-refused') ?? 0, 'проснувшаяся нода ушла по отказу удара, а не сверки').toBeGreaterThan(refused);
+    teeth.r1701 = true;
+    try {
+      for (const mid of ['claims', 'beat'] as const) {
+        for (const wall of [true, false]) expect((await replay(11, suspendedMid(mid, wall))).map((v) => v.inv), `${mid}, настенные ${wall ? 'догнал chrony' : 'стояли'}`).toContain('a-dead-node-revived');
+      }
+    } finally { teeth.r1701 = FUZZ_SELFTEST === 'r1701'; }
+  });
+  it('самопроверка R16-02: без сверки возраста удара и без второго рубежа в продлении — `a-dead-node-revived`', async () => {
+    const saw = stats.get('node:registry-saw-dead') ?? 0;
+    expect((await replay(11, suspended(true))).map((v) => v.inv), 'со сверкой — чисто').toEqual([]);
+    expect(stats.get('node:registry-saw-dead') ?? 0, 'проснувшаяся нода ушла по сверке с реестром').toBeGreaterThan(saw);
+    teeth.r1602 = true;
+    try {
+      for (const wall of [true, false]) expect((await replay(11, suspended(wall))).map((v) => v.inv)).toContain('a-dead-node-revived');
+    } finally { teeth.r1602 = FUZZ_SELFTEST === 'r1602'; }
+  });
+  // ── Перепрогон после правок раунда 16 (сиды 8 200 001…8 201 000), МОДЕЛЬ ФАЗЗЕРА — сервер прав. «Продолжить» через гейтвей ждёт взятия забега,
+  // чей ответ реестра опаздывает (`late`, сотни мс), и тут же машина этой ноды встаёт на паузу (`suspend`): операция паузы двигает время на срок
+  // смерти ноды (124 с), а процесс на паузе не отвечает ничего — проверка 5 читала это «кадром лобби без ответа». Кадр к ноде на паузе ждёт её
+  // конца: проснувшаяся уходит без записи (сокеты закрыты — ответ не нужен), а без паузы тот же вход садит героя в следующей же операции.
+  // Сжато фаззером (сиды 8200125 и 8200619).
+  fixedRoot('перепрогон R16 (модель): вход, ждущий позднего ответа реестра, и пауза машины его ноды — не «кадр лобби без ответа»', 8200125, [
+    { k: 'join', h: 2, mode: 'friend', r: 0.7484877316746861, reuse: true, via: 'gw' },
+    { k: 'descend', h: 2, r: 0.7313783599529415, others: 'yes', near: false, pause: false },
+    { k: 'wait', ms: 4200 },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 0 },
+    { k: 'town', h: 2, others: 'yes', near: true, pause: false },
+    { k: 'join', h: 2, mode: 'resume', r: 0.1476424764841795, reuse: true, via: 'gw' },
+    { k: 'suspend', n: 0, ms: 130_000, wall: true },
+  ], '5-lobby-unanswered');
+  fixedRoot('перепрогон R16 (модель): …и после выхода из города, новым соединением', 8200619, [
+    { k: 'join', h: 0, mode: 'friend', r: 0.35234176041558385, reuse: false, via: 'gw' },
+    { k: 'descend', h: 0, r: 0.5175720625557005, others: 'yes', near: true, pause: true, diff: 0 },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 1 },
+    { k: 'town', h: 2, others: 'no', near: false, pause: true },
+    { k: 'leave', h: 2 },
+    { k: 'join', h: 2, mode: 'resume', r: 0.09945983393117785, reuse: false, via: 'gw' },
+    { k: 'suspend', n: 1, ms: 130_000, wall: true },
+  ], '5-lobby-unanswered');
+  // Взятие забега опоздало (`late`), комната его тут же отпустила (спуск не состоялся), а потом взяла снова — спуском пати, законно: строка за ней
+  // и продлевается. Отпуск был ДО нового взятия, но проверка `b-run-lock-orphan` помнила его (`runReleasedAt`) и, когда последний участник
+  // забега ушёл из города (комната забег больше не держит, подметёт ближайший удар), читала продления нового держания «продлением после
+  // отпуска». Отпуск судит только взятия, отправленные до него (позднее взятие R15-08); взятое после него — новое держание. Сжато фаззером
+  // (сид 8220479; прогон с длинными простоями, но сжатая последовательность — в окне дизайна).
+  fixedRoot('перепрогон R16 (модель): забег, отпущенный комнатой и взятый ею снова, — не «продлён после отпуска»', 8220479, [
+    { k: 'regFault', op: 'route', kind: 'fail', n: null },
+    { k: 'join', h: 1, mode: 'fresh', r: 0.5010524122044444, reuse: true, via: 'gw' },
+    { k: 'join', h: 2, mode: 'friend', r: 0.8612289326265454, reuse: true, via: 'gw' },
+    { k: 'descend', h: 2, r: 0.4358929612208158, others: 'none', near: false, pause: true, diff: 0 },
+    { k: 'recruit' },
+    { k: 'join', h: 0, mode: 'friend', r: 0.2576081482693553, reuse: false, via: 'gw' },
+    { k: 'town', h: 0, others: 'none', near: true, pause: true },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 0 },
+    { k: 'fault', f: 'unknownLost', h: 0 },
+    { k: 'join', h: 2, mode: 'fresh', r: 0.871086437953636, reuse: false, via: 'gw' },
+    { k: 'descend', h: 2, r: 0.8230289863422513, others: 'yes', near: true, pause: false, diff: 3 },
+    { k: 'join', h: 1, mode: 'friend', r: 0.016975944861769676, reuse: false, via: 'gw' },
+    { k: 'descend', h: 1, r: 0.2100534753408283, others: 'yes', near: true, pause: true },
+    { k: 'join', h: 0, mode: 'friend', r: 0.13637704798020422, reuse: true, via: 'gw' },
+    { k: 'town', h: 2, others: 'yes', near: false, pause: true },
+    { k: 'close', h: 1 },
+    { k: 'leave', h: 2 },
+    { k: 'join', h: 3, mode: 'code', r: 0.9209239222109318, reuse: true, via: 'x' },
+    { k: 'leave', h: 0 },
+  ], 'b-run-lock-orphan');
+  // «Продолжить» на node-0 ждал ответа реестра, а тем временем машина node-1, чья комната держит его забег, встала на паузу: взятие ответило
+  // «забег в комнате BEY5WG65» (держание node-1 ещё в окне), и отказ назвал комнату процесса на паузе. Для мира такой процесс ушёл (`forget`, как
+  // упавший), и его держание — то же окно держания мёртвой ноды: отказ временный, после него «Продолжить» находит забег (эпилог это стережёт).
+  // Проверка знала окно только для упавших (`dead`). Сжато фаззером (сид 8220704; пауза — в окне дизайна, R16-02).
+  fixedRoot('перепрогон R16 (модель): отказ «Продолжить» с кодом комнаты ноды, чья машина встала на паузу, — окно держания, а не тупик', 8220704, [
+    { k: 'join', h: 0, mode: 'friend', r: 0.34143628692254424, reuse: false, via: 'gw' },
+    { k: 'step', n: 1 },
+    { k: 'step', n: 10 },
+    { k: 'descend', h: 0, r: 0.12227179808542132, others: 'yes', near: false, pause: true },
+    { k: 'crash', n: 0 },
+    { k: 'join', h: 2, mode: 'friend', r: 0.5799622295890003, reuse: true, via: 'gw' },
+    { k: 'recruit' },
+    { k: 'regFault', op: 'claimRun', kind: 'late', n: 0 },
+    { k: 'join', h: 3, mode: 'friend', r: 0.18954091472551227, reuse: false, via: 'gw' },
+    { k: 'descend', h: 3, r: 0.7459224094636738, others: 'yes', near: true, pause: true },
+    { k: 'wait', ms: 3_601_000 },
+    { k: 'restart', n: 0 },
+    { k: 'join', h: 0, mode: 'friend', r: 0.8491046014241874, reuse: false, via: 'gw' },
+    { k: 'abandon', h: 3, via: 'gw', ask: true },
+    { k: 'close', h: 0 },
+    { k: 'town', h: 2, others: 'no', near: false, pause: true },
+    { k: 'close', h: 2 },
+    { k: 'join', h: 2, mode: 'resume', r: 0.7270895775873214, reuse: false, via: 0 },
+    { k: 'suspend', n: 1, ms: 200_000, wall: false },
+  ], '5-resume-dead-end');
+  // ⭐ Перепрогон R16, ДВОЙНОЙ СБОЙ ЗА ОКНОМ ДИЗАЙНА (`DM_FUZZ_OUTAGE_LONG`): сердцебиение node-0 не доходит до реестра 400 с, и посреди этого её
+  // машина встаёт на 130 с (стояли все часы). Реестр отдаёт h0 и его забег node-1 («Продолжить» через гейтвей), а проснувшаяся node-0 спросить
+  // реестр не может — держит свою копию в грейсе и комнату забега до конца аренды (a, b). Это корень `ENV-thaw-registry-silent` (`KNOWN`), а без
+  // долгого простоя сердцебиения (ударом сверки R16-02 нода уходит сразу) тот же повтор чист. Сжато фаззером (сид 8220394).
+  const THAW_SILENT: Op[] = [
+    { k: 'stall', n: 0, ms: 400_000, long: true },
+    { k: 'join', h: 0, mode: 'code', r: 0.2973463968373835, reuse: false, via: 'gw' },
+    { k: 'descend', h: 0, r: 0.2639001728966832, others: 'yes', near: false, pause: true, diff: 0 },
+    { k: 'suspend', n: 0, ms: 130_000, wall: false },
+    { k: 'descend', h: 2, r: 0.27310377615503967, others: 'yes', near: false, pause: true, diff: 2 },
+    { k: 'descend', h: 0, r: 0.708571185125038, others: 'yes', near: true, pause: true, diff: 3 },
+    { k: 'step', n: 90 },
+    { k: 'join', h: 0, mode: 'resume', r: 0.6925311542581767, reuse: true, via: 'gw' },
+  ];
+  it('перепрогон R16 (модель): пауза машины, а реестр ей недоступен и после неё, — корень за окном дизайна (`ENV-thaw-registry-silent`)', async () => {
+    const vs = await replay(8220394, THAW_SILENT);
+    expect(vs.map((v) => v.inv), 'двойной сбой воспроизводится').toContain('a-live-two-nodes');
+    expect(vs.filter((v) => v.cause !== 'ENV-thaw-registry-silent').map((v) => `${v.inv}: ${v.msg}`), 'и объяснён своим корнем').toEqual([]);
+    const short: Op[] = [{ k: 'stall', n: 0, ms: 400_000 }, ...THAW_SILENT.slice(1)];
+    expect((await replay(8220394, short)).map((v) => `${v.inv}: ${v.msg}`), 'простой сердцебиения в окне дизайна — чисто').toEqual([]);
+  });
+  // ── Перепрогон после правок раунда 17 (сиды 9 430 001…9 430 300, 300 оп.), МОДЕЛЬ ФАЗЗЕРА — сервер прав. Машина node-0 встала сразу после
+  // ответа сверки удара (R17-01, `suspend.mid`); h0 «Продолжить» на node-1, h3 к нему по коду, h0 ушёл (грейс), node-1 в разделе с базой; оба
+  // погибли — штраф h0 взят в памяти node-1, его запись ждёт конца раздела (копия на дописать). Проснувшаяся node-0 продолжает тот же удар и
+  // снимает свои проигравшие копии h0 и h3 (`fenceLost`) — а модель откатывала по этому снятию правду h0 «к строке базы» (строка без штрафа:
+  // вещи снова «у героя», сток забыт), хотя его правда — копия node-1, а копии node-0 мир списал ещё на паузе (как смерть такой ноды, R16-02).
+  // Легла запись node-1 — штраф в строке, и взятые им вещи числились пропавшими без стока (`1-item-lost`). Снятие копии процессом, которого мир
+  // уже списал, правды героя не трогает. Сжато фаззером (сид 9430061).
+  fixedRoot('перепрогон R17 (модель): проснувшаяся посреди удара нода снимает свои проигравшие копии — правда героя на другой ноде не откатывается', 9430061, [
+    { k: 'join', h: 0, mode: 'fresh', r: 0.29429075587540865, reuse: false, via: 'gw' },
+    { k: 'join', h: 0, mode: 'resume', r: 0.5920183213893324, reuse: true, via: 'gw' },
+    { k: 'join', h: 1, mode: 'friend', r: 0.6996014229953289, reuse: true, via: 'gw' },
+    { k: 'close', h: 1 },
+    { k: 'join', h: 4, mode: 'friend', r: 0.3202300660777837, reuse: true, via: 1 },
+    { k: 'join', h: 3, mode: 'friend', r: 0.5415613993536681, reuse: false, via: 'x' },
+    { k: 'join', h: 0, mode: 'code', r: 0.12889971560798585, reuse: false, via: 0 },
+    { k: 'wait', ms: 3_601_000 },
+    { k: 'descend', h: 0, r: 0.31072546052746475, others: 'yes', near: true, pause: true },
+    { k: 'suspend', n: 0, ms: 400_000, wall: false, mid: 'claims' },
+    { k: 'join', h: 0, mode: 'resume', r: 0.5125974263064563, reuse: false, via: 'x' },
+    { k: 'join', h: 3, mode: 'code', r: 0.43106870958581567, reuse: false, via: 'gw' },
+    { k: 'step', n: 90 },
+    { k: 'leave', h: 0 },
+    { k: 'step', n: 30 },
+    { k: 'step', n: 30 },
+    { k: 'partition', n: 1, ms: 45_000 },
+    { k: 'step', n: 30 },
+    { k: 'wait', ms: 16_000 },
+    { k: 'step', n: 1 },
+    { k: 'step', n: 3 },
+    { k: 'step', n: 10 },
+    { k: 'descend', h: 0, r: 0.42568637686781585, others: 'yes', near: true, pause: true },
+    { k: 'step', n: 90 },
+    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
+  ], '1-item-lost');
 });

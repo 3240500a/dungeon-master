@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from './registry.js';
+import type { ConfigShapes } from './schemas.js';
 import { EventBus } from '../events/index.js';
 import { parseClientFrame, parseTownCommand, validateInput } from '../session/netSchemas.js';
 import {
@@ -277,5 +278,69 @@ describe('⚠ C-02: награда и вилки заданий', () => {
         for (const v of [q.reward.gold, q.reward.xp]) expect(Number.isSafeInteger(v) && v! >= 0, `${q.id} ${JSON.stringify(q.reward)}`).toBe(true);
       }
     }
+  });
+});
+
+/**
+ * ⚠ R17-03: ЦЕНА У КАЖДОЙ ФОРМЫ ЁМКОСТИ, КОТОРУЮ ДАЁТ КОВКА. `balance.craft.formMult` — словарь «P+S» → M, и схема не требовала в нём
+ * ни одной строки: ✕ у «3+2» в редакторе, опечатка «3 +2» или оверрайд баланса, сохранённый до §21.1 (раздела `craft` в нём нет —
+ * `formMult` берёт умолчание `{}`), проходили молча, а `formMult` отдавал на пропавшую форму ×1 — цену самой бедной. Короткий меч t6 3+2
+ * из ступени 5: сырьё 240 → 40, зачарование до редкого 14 328 → 2 400, перекатка 17 194 → 2 880. Теперь схема требует строку у каждой
+ * формы, которую дают ёмкость (`capacityByTier`) и лимиты редкого (не больше 3 на сторону), и ключ ровно «P+S».
+ */
+describe('⚠ R17-03: цена формы ёмкости — у каждой формы, которую даёт ковка', () => {
+  /** Свежий реестр на каждую попытку: принятая правка не должна течь в соседнюю проверку. */
+  const fresh = (): ConfigRegistry => { const x = new ConfigRegistry(); x.loadAll(); return x; };
+  const withCraft = (edit: (craft: ConfigShapes['balance']['craft']) => void) => () => {
+    const x = fresh();
+    const bal = structuredClone(x.get('balance'));
+    edit(bal.craft);
+    x.reload({ balance: bal });
+  };
+  /** Все формы «P+S», которые может спросить ковка при потолке ёмкости `cap`: по стороне не больше 3, всего от 1 до `cap`. */
+  const reachable = (cap: number): string[] => {
+    const out: string[] = [];
+    for (let p = 0; p <= 3; p++) for (let s = 0; s <= 3; s++) if (p + s >= 1 && p + s <= cap) out.push(`${p}+${s}`);
+    return out;
+  };
+
+  it('⭐ ✕ у любой формы, опечатка «3 +2», «3+2 » и «+5» вместо строки — отказ валидации', () => {
+    for (const key of reachable(5)) {
+      expect(withCraft((c) => { delete c.formMult[key]; }), `✕ у «${key}»`).toThrow(new RegExp(`${key.replace('+', '\\+')}`));
+    }
+    for (const typo of ['3 +2', '3+2 ', '+5', '3+2+0', '32', '4+1']) {
+      expect(withCraft((c) => { c.formMult[typo] = c.formMult['3+2']!; delete c.formMult['3+2']; }), `«${typo}» вместо «3+2»`).toThrow();
+    }
+    // Лишний ключ другой формы — тоже отказ, даже при целой таблице: ковка его не спросит никогда, а правивший думал, что правит цену.
+    expect(withCraft((c) => { c.formMult['3 +2'] = 99; }), '«3 +2» рядом с «3+2»').toThrow();
+  });
+
+  it('⭐ старый оверрайд баланса без раздела craft (до §21.1) — отказ, живой конфиг прежний', () => {
+    const x = fresh();
+    const { craft: _craft, ...stale } = structuredClone(x.get('balance'));
+    const was = x.get('balance').craft.formMult['3+2'];
+    expect(() => x.reload({ balance: stale }), 'formMult из умолчания {} — все формы по ×1').toThrow(/formMult/);
+    expect(x.get('balance').craft.formMult['3+2'], 'отказ не тронул живой баланс').toBe(was);
+  });
+
+  it('годное проходит: цена вверх, строка сверх нужного (3+3), ёмкость ниже — и лишние строки можно убрать', () => {
+    expect(withCraft((c) => { c.formMult['3+2'] = c.formMult['3+2']! * 2; })).not.toThrow();
+    expect(withCraft((c) => { c.formMult['3+3'] = 9; })).not.toThrow();
+    expect(withCraft((c) => {
+      c.capacityByTier = c.capacityByTier.map((n) => Math.min(n, 4));
+      delete c.formMult['3+2']; delete c.formMult['2+3'];
+    }), 'при ёмкости до 4 форм Σ5 ковка не даёт').not.toThrow();
+    // А поднять ёмкость, не заведя цены новых форм, — нельзя.
+    expect(withCraft((c) => {
+      c.capacityByTier = c.capacityByTier.map((n) => Math.min(n, 4));
+      delete c.formMult['3+2']; delete c.formMult['2+3'];
+      c.capacityByTier[6] = 5;
+    })).toThrow(/3\+2|2\+3/);
+  });
+
+  it('встроенные данные: цена есть у каждой формы, которую даёт ёмкость', () => {
+    const k = fresh().get('balance').craft;
+    const have = new Set(Object.keys(k.formMult));
+    expect(reachable(Math.max(...k.capacityByTier)).filter((key) => !have.has(key))).toEqual([]);
   });
 });

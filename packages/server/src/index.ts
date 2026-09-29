@@ -9,6 +9,7 @@ import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:
 import { CONFIG_REV_HEADER, ConfigRegistry, configSchemas, configRevs, type ConfigKey } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
 import { startConfigSync } from './configSync.js';
+import { liveConfig } from './configLive.js';
 import { configWriter } from './configWrites.js';
 import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
 import {
@@ -47,30 +48,22 @@ import { extractColliderFromGlb } from './glbMeshBbox.js';
 // эффективный конфиг через GET /api/config, правки редактора идут в POST /api/dev/config.
 const config = new ConfigRegistry();
 
-/** Накатывает сохранённые оверрайды `all` поверх дефолтов (устойчиво к невалидным — пропускает). */
-function applyConfigOverrides(all: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(all)) {
-    try {
-      config.reload({ [key]: value });
-    } catch (e) {
-      console.warn(`[dm-server] пропущен невалидный оверрайд конфига "${key}": ${e instanceof Error ? e.message : e}`);
-    }
-  }
-  // ГОВОРИМ ВСЛУХ, что перекрыто. Оверрайд из редактора живёт в БД и переживает рестарт, поэтому
-  // «правлю файл, а везде старое» выглядит как мистика, пока не увидишь эту строчку.
-  const keys = Object.keys(all);
-  if (keys.length) console.log(`[dm-server] поверх файлов лежат оверрайды редактора: ${keys.join(', ')}`);
-}
 /**
- * Полная пересборка живого конфига: дефолты + персистентные оверрайды (комнаты держат ссылку).
+ * ⭐ R15-05: живой конфиг — файлы данных, КАКИЕ ОНИ СЕЙЧАС (импорт старта + правки файлов, увиденные наблюдателем или записанные ручкой
+ * «в файл»), и оверрайды редактора поверх (`configLive.ts`). Раньше основой пересборки был импорт старта, и сверка (R16 C-02) откатывала
+ * правку файла, как только сдвигалась ревизия оверрайдов.
+ */
+const live = liveConfig({
+  config, readOverrides: getConfigOverrides, deleteOverride: deleteConfigOverride,
+  changed: () => rebuildConfigCache(),   // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
+});
+/**
+ * Полная пересборка живого конфига: файлы данных + персистентные оверрайды (комнаты держат ссылку).
  * ⭐ R16 C-02: оверрайды — СПЕРВА из базы, сама сборка — без ожиданий. Раньше дефолты ставились до чтения базы: на время запроса (под нагрузкой —
  * секунды) комнаты, тикавшие между, играли на встроенных таблицах без правок редактора. Теперь пересборка идёт и по сверке (`configSync.ts`).
  */
 async function rebuildConfig(): Promise<void> {
-  const all = await getConfigOverrides();
-  config.loadAll();
-  applyConfigOverrides(all);
-  rebuildConfigCache(); // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
+  await live.rebuild();
 }
 /** ⭐ R16 C-02: ревизия оверрайдов, снятая на старте ДО сборки конфига: правку, легшую после, соберёт первая сверка (`startConfigSync`). */
 let bootConfigRev: string | undefined;
@@ -329,7 +322,8 @@ app.post('/api/dev/config', devGate, devJson, ah(async (req, res) => {
 
 // «Применить везде»: пишет правку прямо в ФАЙЛ-источник (data/*.json) → попадёт в git и на деплой.
 // Дополнительно ставит оверрайд в БД, чтобы живой конфиг остался верным (не откатился на дефолт,
-// импортированный в память при старте — файл перечитается лишь при рестарте процесса). DEV-only.
+// импортированный в память при старте). ⭐ R15-05: и сам файл — основа следующих пересборок (`live.noteFile`): наблюдатель снимет
+// оверрайд («файл главнее»), и сверка, пересобрав конфиг, возьмёт таблицу из файла, а не из импорта старта. DEV-only.
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
 app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
@@ -350,6 +344,7 @@ app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
         // детали давала diff на весь файл (`configFileFormat.ts`).
         const path = configFileFor(key);
         writeFileSync(path, formatConfigFile(value, existsSync(path) ? readFileSync(path, 'utf8') : null, arrayElementSchema(key)));
+        live.noteFile(key, value);   // ⭐ R15-05: файл теперь такой — основа пересборок (наблюдатель снимет оверрайд, сверка пересоберёт)
         await setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
         written.push(key);
       }
@@ -410,12 +405,8 @@ async function applyFileChange(_key: string, file: string): Promise<void> {
   if (!real) return;
   try {
     const value = JSON.parse(readFileSync(join(DATA_DIR, file), 'utf8'));
-    config.reload({ [real]: value });                       // сперва валидация: невалидный файл сюда не пройдёт
-    if (Object.prototype.hasOwnProperty.call(await getConfigOverrides(), real)) {
-      await deleteConfigOverride(real);                     // снимаем устаревший снимок, иначе он переживёт рестарт
-      console.log(`[dm-server] снят устаревший оверрайд «${real}» — теперь главенствует файл`);
-    }
-    rebuildConfigCache();
+    // Проверка, живой реестр, основа пересборок (R15-05), снятие устаревшего оверрайда, тело `/api/config` — `configLive.ts`.
+    await live.applyFile(real, value);
     console.log(`[dm-server] конфиг перечитан с диска: ${real}`);
   } catch (e) {
     // Файл могли поймать на середине записи или он реально невалиден — живой конфиг не трогаем.
@@ -646,7 +637,8 @@ if (ROLE === 'node' || ROLE === 'single') {
     (lost) => clusterHooks.fenceLost(lost), (gone) => clusterHooks.releaseIdle(gone), () => clusterHooks.heldRuns(),   // V2: и забеги
     // ⭐ ENV1: забег, числящийся за другой нодой, комната отпускает; нода кластера держит аренду и на её исходе отгораживает себя сама
     // (одиночному процессу отдавать героев некому — аренды у него нет).
-    { runsLost: (runs) => clusterHooks.fenceRuns(runs), lease: ROLE === 'node' });
+    // ⭐ R15-08: забег, который комната отпустила, пока удар его продлевал, — отпустить снова.
+    { runsLost: (runs) => clusterHooks.fenceRuns(runs), runsGone: (runs) => clusterHooks.releaseRuns(runs), lease: ROLE === 'node' });
   installNodeShutdown(nodeId, (budgetMs) => clusterHooks.flushAll(budgetMs));
   console.log(`[${nodeId}] в кластере: ${url}`);
 }

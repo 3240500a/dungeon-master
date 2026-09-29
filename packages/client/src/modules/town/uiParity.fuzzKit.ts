@@ -1,10 +1,11 @@
 import { vi } from 'vitest';
 import {
-  CRAFT_SLOT_LIST, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng, defaultParts,
-  enchantCost, enchantItem, familiesOf, forgeGold, forgeSalvage, fullJournal, keySlotOf, keyVariantsByBase, materialItem, normalizeJournal,
-  parseClientFrame, repairCost, salvageRange, shopBuyPrice, shopSellPrice, upgradeCost, variantsFor,
-  type AccountStash, type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type Item, type Rng, type SaveState,
-  type ServerFrame, type TownCommand,
+  ATTRIBUTES, CRAFT_SLOT_LIST, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng,
+  defaultParts, enchantCost, enchantItem, equip, familiesOf, finalAttributes, forgeGold, forgeSalvage, fullJournal, keySlotOf, keyVariantsByBase,
+  materialItem, modifiersFromItems, normalizeJournal, offhandRefusal, parseClientFrame, repairCost, salvageRange, shopBuyPrice, shopSellPrice,
+  unequip, upgradeCost, variantsFor,
+  type AccountStash, type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type EquipSlot, type Item, type Rng,
+  type SaveState, type ServerFrame, type TownCommand,
 } from '@dm/shared';
 import { foundItem, newWorld, pristineTables, regFrom, reloadTable } from '../../../../shared/src/economy/fuzz/economyFuzz.js';
 import { App } from '../../core/app.js';
@@ -18,18 +19,18 @@ import { forgePanel } from './forgePanel.js';
 import { inventoryPanel } from '../inventory/inventoryPanel.js';
 import { salvageInField } from '../inventory/disposeConfirm.js';
 import { itemDescLines } from '../inventory/itemView.js';
-import { PITCH } from '../inventory/heldItem.js';
+import { PITCH, beginHold, clearHeld, getHeld } from '../inventory/heldItem.js';
 
 /**
  * ⭐ B3: ФАЗЗЕР ПАРИТЕТА «ОКНО ≡ СЕРВЕР» — модель и прогон. Состояние героя (сейв, сундук аккаунта с кошельком сырья и журналом
  * кузнеца, прилавок, конфиг с живыми правками хозяина) катится случайными шагами; на каждом шаге-окне НАСТОЯЩИЕ модули клиента
  * (верстак `forgeBench`, окно ковки `craftWindow` с игровым хозяином `gameCraftHost`, лавка `shopPanel`, «🛒 Купить» кузницы
- * `forgePanel`, меню инвентаря `inventoryPanel` → `salvageInField`) рисуются в DOM-заглушку, из неё читается ТО, ЧТО ВИДИТ ИГРОК
- * (карточка горит или погашена и почему, цена построчно, вилка выхода, урон «от–до», требования, ценник прилавка, «+N» скупки,
- * вопросы перед утратой вещи), затем кликается — и команда уходит НАСТОЯЩИМ `App` / `NetClient` по проводу (как через шлюз
- * `roomManager.frameGate`) в НАСТОЯЩУЮ `Room.handleCmd` с маленькой честной базой (мок `db.ts` у теста). Кадры сервера идут
- * обратно в клиент тем же проводом. Погашенную карточку кликнуть нельзя — её команда уходит напрямую, ровно такой, какой её
- * собрал бы клик (так проверяется «погашено ⇒ сервер откажет»).
+ * `forgePanel`, меню инвентаря `inventoryPanel` → `salvageInField`, пупсик `inventoryPanel` с вещью на курсоре — R16-08) рисуются в
+ * DOM-заглушку, из неё читается ТО, ЧТО ВИДИТ ИГРОК (карточка горит или погашена и почему, цена построчно, вилка выхода, урон
+ * «от–до», требования, ценник прилавка, «+N» скупки, вопросы перед утратой вещи, отказ пупсика), затем кликается — и команда уходит
+ * НАСТОЯЩИМ `App` / `NetClient` по проводу (как через шлюз `roomManager.frameGate`) в НАСТОЯЩУЮ `Room.handleCmd` с маленькой честной
+ * базой (мок `db.ts` у теста). Кадры сервера идут обратно в клиент тем же проводом. Погашенную карточку кликнуть нельзя — её команда
+ * уходит напрямую, ровно такой, какой её собрал бы клик (так проверяется «погашено ⇒ сервер откажет»).
  *
  * Инварианты (ключ нарушения — `вид:код`):
  *  (1) горит ⇒ сервер исполняет; погашено ⇒ сервер отказывает, и причина — того же рода (`parity:*`);
@@ -195,18 +196,18 @@ class ServerWs {
 
 export type OpKind =
   // окна (проверки паритета)
-  | 'bench' | 'craft' | 'windowEnchant' | 'sketch' | 'buy' | 'sell' | 'field'
+  | 'bench' | 'craft' | 'windowEnchant' | 'sketch' | 'buy' | 'sell' | 'field' | 'paperdoll'
   // состояние (сервер меняет, клиент узнаёт кадрами)
   | 'loot' | 'lootCrafted' | 'mats' | 'gold' | 'goldEdge' | 'matsEdge' | 'journal' | 'config' | 'clientSync' | 'shopRefresh'
-  | 'breakItem' | 'bagFill' | 'equip' | 'unequip' | 'fund' | 'stashDrift';
+  | 'breakItem' | 'bagFill' | 'equip' | 'unequip' | 'wear' | 'fund' | 'stashDrift';
 export interface Op { k: OpKind; s: number }
 
 export const OP_WEIGHTS: Record<OpKind, number> = {
-  bench: 16, craft: 12, windowEnchant: 5, sketch: 5, buy: 7, sell: 6, field: 6,
+  bench: 16, craft: 12, windowEnchant: 5, sketch: 5, buy: 7, sell: 6, field: 6, paperdoll: 6,
   loot: 8, lootCrafted: 6, mats: 6, gold: 3, goldEdge: 7, matsEdge: 6, journal: 5, config: 7, clientSync: 2, shopRefresh: 2,
-  breakItem: 3, bagFill: 2, equip: 2, unequip: 1, fund: 8, stashDrift: 2,
+  breakItem: 3, bagFill: 2, equip: 2, unequip: 1, wear: 3, fund: 8, stashDrift: 2,
 };
-export const UI_OPS: ReadonlySet<OpKind> = new Set(['bench', 'craft', 'windowEnchant', 'sketch', 'buy', 'sell', 'field']);
+export const UI_OPS: ReadonlySet<OpKind> = new Set(['bench', 'craft', 'windowEnchant', 'sketch', 'buy', 'sell', 'field', 'paperdoll']);
 
 /** Цепочка шагов из сида: виды по весам, от состояния не зависит (сжатие это и требует). */
 export function genOps(seed: number, len: number, weights: Partial<Record<OpKind, number>> = OP_WEIGHTS): Op[] {
@@ -1264,6 +1265,114 @@ async function opField(g: Rig, r: Rng): Promise<string> {
   }
 }
 
+const DOLL: readonly EquipSlot[] = ['helm', 'amulet', 'weapon', 'chest', 'offhand', 'gloves', 'belt', 'ring', 'boots'];
+/**
+ * Герой — на грани одного требования: база атрибута подогнана так, что требование держится ровно (±1). Грань — из тех, где правила
+ * «что будет надето после смены» расходятся с наивными: требование брошенной вещи без вещи целевой ячейки (прежняя пред-проверка пупсика),
+ * оно же без снятой второй руки (двуручник снимает щит), требование надетой вещи сейчас (смена снимет вещь, что её подпирала). Чаще —
+ * грань, где снимаемое прибавляет к тому же атрибуту (там правила и расходились бы). Сервер меняет сейв, клиент узнаёт кадром.
+ */
+function edgeAttributes(g: Rig, item: Item, cell: EquipSlot, r: Rng): string {
+  const s = g.srv();
+  const worn = Object.values(s.equipment).filter(Boolean) as Item[];
+  const without = (...gone: (Item | undefined)[]): Item[] => worn.filter((i) => !gone.includes(i));
+  const prev = s.equipment[cell];
+  const off = s.equipment.offhand;
+  const twoH = cell === 'weapon' && (item.hands ?? 1) >= 2 && !item.versatile;
+  const boosted = (it: Item | undefined): Set<string> =>
+    new Set(it ? modifiersFromItems([it]).filter((m) => m.kind === 'flat' && m.value > 0).map((m) => m.stat) : []);
+  const offUp = twoH ? boosted(off) : new Set<string>(), prevUp = boosted(prev);
+  const edges: { who: Item; wearing: Item[]; hot: Set<string> }[] = [
+    { who: item, wearing: without(prev), hot: offUp },
+    ...(twoH && off ? [{ who: item, wearing: without(prev, off), hot: new Set<string>() }] : []),
+    ...without(prev).map((w) => ({ who: w, wearing: without(w), hot: prevUp })),
+  ];
+  const cand = edges.flatMap((e) => Object.entries(e.who.requirements ?? {}).filter(([, v]) => (v ?? 0) > 0)
+    .map(([a, v]) => ({ ...e, a: a as keyof SaveState['attributes'], v: v! })));
+  if (!cand.length) return '';
+  const hot = cand.filter((c) => c.hot.has(c.a));
+  const c = hot.length && r.chance(0.75) ? r.pick(hot) : r.pick(cand);
+  // Прочие требования брошенной вещи закрыты базой с запасом: держит (или нет) ровно выбранная грань.
+  for (const [a, v] of Object.entries(item.requirements ?? {})) {
+    const k = a as keyof SaveState['attributes'];
+    if (k !== c.a && (v ?? 0) > s.attributes[k]) s.attributes[k] = v!;
+  }
+  const have = finalAttributes(s.attributes, modifiersFromItems(c.wearing))[c.a];
+  const base = Math.max(0, s.attributes[c.a] + Math.ceil(c.v - have) + r.pick([0, 0, 1, -1]));
+  s.attributes[c.a] = base;
+  return `, ${c.a} = ${base} (грань «${c.who.name}» ${c.v})`;
+}
+
+/**
+ * ⭐ R16-08: ПУПСИК. Вещь сумки — на курсор (`beginHold`), клик по ячейке пупсика настоящего `inventoryPanel`: чаще своя ячейка вещи,
+ * иногда вторая рука или чужая; часто герой — на грани требования (`edgeAttributes`). Инварианты: ушла команда ⇒ сервер надел, и туда,
+ * куда бросили (`parity:enabled-refused:paperdoll`); не ушла, а ячейка своя или вторая рука ⇒ сервер отказывает и сам (проба той же
+ * командой, `parity:disabled-accepted:paperdoll`); отказ — строкой в окне, вещь остаётся на курсоре.
+ */
+async function opPaperdoll(g: Rig, r: Rng): Promise<string> {
+  const pool = g.cli().inventory.filter((it) => it.pos && it.slot && nonMat(it) && it.kind !== 'consumable');
+  if (!pool.length) return 'пупсик: надеть нечего';
+  // Вторая рука занята — чаще двуручник на курсоре: он её снимет (правило ядра, которое пупсик обязан повторить).
+  const twoHanders = g.cli().equipment.offhand ? pool.filter((it) => it.slot === 'weapon' && (it.hands ?? 1) >= 2) : [];
+  const pick = twoHanders.length && r.chance(0.35) ? r.pick(twoHanders) : r.pick(pool);
+  const x = r.next();
+  const cell: EquipSlot = x < 0.65 ? pick.slot! : x < 0.9 ? 'offhand' : r.pick(DOLL);
+  let edge = '';
+  if (r.chance(0.6)) {
+    edge = edgeAttributes(g, g.srv().inventory.find((i) => i.uid === pick.uid) ?? pick, cell, r);
+    if (edge) await g.pushSave();
+  }
+  const item = g.cli().inventory.find((i) => i.uid === pick.uid);
+  if (!item) return `пупсик: «${pick.name}» пропала из сумки клиента`;
+  const sy = g.synced();
+  const body = new El('div');
+  const panel = g.render('inventoryPanel', () => inventoryPanel(g.app, uiStub as never)) as unknown as { render(b: El): void } | null;
+  if (!panel || !g.render('inventoryPanel.render', () => { panel.render(body); return body; })) return 'пупсик: инвентарь бросил';
+  const texts = (): string[] => body.all().map((e) => e.textContent).filter(Boolean);
+  const shown = new Set(texts());
+  const target = body.all().find((e) => e.dataset.eqslot === cell);
+  if (!target) { g.violate('ui:paperdoll-no-cell', `ячейка ${cell} не нарисована`); return 'пупсик: нет ячейки'; }
+  const at = g.sent.length;
+  try {
+    beginHold(g.app, item, 0, 0, 'inv');
+    target.dispatch('click', { clientX: 5, clientY: 5 });
+    await g.flush();
+    const sent = g.sent.slice(at).filter((s) => s.command.cmd === 'equip');
+    const held = getHeld() !== null;
+    const note = texts().filter((t) => !shown.has(t)).join(' | ');
+    const desc = `пупсик: «${item.name}»${item.broken ? ' (сломана)' : ''} → ${cell}${edge}`;
+    if (sent.length > 1) { g.violate('ui:paperdoll-double', `${desc}: ушло ${sent.length} команды`); return desc; }
+    if (sent.length === 1) {
+      const rep = g.replies.get(sent[0]!.id);
+      if (!rep) return `${desc}: ответа нет`;
+      const res = `${desc} → ${rep.ok ? 'надета' : `отказ «${rep.reason}»`}`;
+      g.tally('paperdoll', true, rep);
+      if (held) g.violate('ui:paperdoll-held-after-send', `${res}: команда ушла, а вещь осталась на курсоре`);
+      // Род отказа правила — по тексту (без имени вещи): «сломано», «недостаточно атрибутов», «не хватит на надетое» — разные корни.
+      const code = reasonClass(rep.reason) === 'rule' ? normReason(rep.reason ?? '').replace(/«.*$/, '').trim().slice(0, 40) : reasonClass(rep.reason);
+      if (sy.all && !rep.ok) g.violate(`parity:enabled-refused:paperdoll:${code}`, `${res}: пупсик пустил`);
+      if (rep.ok && g.srv().equipment[cell]?.uid !== item.uid) g.violate('parity:paperdoll-wrong-cell', `${res}: сервер надел не в ${cell}`);
+      return res;
+    }
+    // Не ушла: отказ — строкой в окне, вещь на курсоре; где сервер надел бы брошенное (своя ячейка, вторая рука с целью), — проба той же командой.
+    if (!note) g.violate('ui:paperdoll-silent', `${desc}: команда не ушла, а окно молчит`);
+    if (!held) g.violate('ui:paperdoll-dropped', `${desc}: команда не ушла, а вещь слетела с курсора`);
+    if (cell !== 'offhand' && cell !== item.slot) return `${desc} → ячейка чужая: «${note}»`;
+    g.probe = true;
+    const rep = await g.request({ cmd: 'equip', uid: item.uid, ...(cell === 'offhand' ? { slot: 'offhand' as const } : {}) });
+    g.probe = false;
+    if (!rep) return `${desc}: проба без ответа`;
+    const res = `${desc} → пупсик «${note}», сервер ${rep.ok ? 'надел' : `отказал «${rep.reason}»`}`;
+    g.tally('paperdoll', false, rep);
+    if (sy.all && rep.ok) g.violate('parity:disabled-accepted:paperdoll', res);
+    return res;
+  } finally {
+    clearHeld();
+    g.probe = false;
+    g.body.children = [];
+  }
+}
+
 // ── Состояние ─────────────────────────────────────────────────────────────────────────────────────
 
 async function opLoot(g: Rig, r: Rng): Promise<string> {
@@ -1636,6 +1745,33 @@ async function opEquip(g: Rig, r: Rng): Promise<string> {
   const rep = await g.request({ cmd: 'equip', uid: it.uid });
   return `надеть «${it.name}» → ${rep?.ok ? 'ок' : `отказ «${rep?.reason}»`}`;
 }
+/**
+ * ⭐ R16-08: ГЕРОЙ В ВЕЩАХ С ПРИБАВКОЙ К АТРИБУТАМ. Находка с «+Сила» (и т. п.) надета законным путём — ядром `equip` по сейву сервера
+ * (атрибуты под её требования — как вложенные очки); оружие — иногда во вторую руку. Без таких вещей грани пупсика не встречаются:
+ * вторая рука, которую снимет двуручник, подпирает требование, а смена вещи оставляет другую надетую без опоры.
+ */
+async function opWear(g: Rig, r: Rng): Promise<string> {
+  const s = g.srv();
+  // Прибавка — чаще к тому, что требует оружие (Сила, Ловкость, Интеллект): иначе она ни одной грани не подпирает.
+  const want = r.pick(['strength', 'strength', 'dexterity', 'intelligence', 'vitality']);
+  const boosts = (it: Item): boolean => modifiersFromItems([it]).some((m) => m.kind === 'flat' && m.value > 0 && m.stat === want);
+  // Чаще — вторая рука (щит или одноручное оружие): её снимает двуручник, и её прибавку пупсик обязан не считать.
+  const offhand = r.chance(0.5);
+  const fits = (x: Item): boolean => !offhand || x.slot === 'offhand' || (x.slot === 'weapon' && (x.hands ?? 1) < 2 && !x.versatile);
+  let it: Item | undefined;
+  for (let k = 0; k < 150 && !it; k++) {
+    const x = foundItem(g.reg, r, { near: s.level, weapon: !offhand && r.chance(0.3) });
+    if (x.slot && !x.broken && x.kind !== 'consumable' && boosts(x) && fits(x)) it = x;
+  }
+  if (!it) return 'надел с прибавкой: не выпало';
+  if (!addToInventory(s.inventory, it, g.reg.get('balance').inventory)) return 'надел с прибавкой: сумка полна';
+  for (const a of ATTRIBUTES) s.attributes[a] = Math.max(s.attributes[a], it.requirements?.[a] ?? 0);
+  // Вторую руку запирает двуручник в основной — сперва снять его (ядром, как игрок).
+  if (offhand && offhandRefusal(it, s.equipment.weapon) === 'Занято двумя руками') unequip(g.reg, s, 'weapon');
+  const rep = equip(g.reg, s, it.uid, offhand && it.slot === 'weapon' ? 'offhand' : undefined);
+  await g.pushSave();
+  return `надел с прибавкой «${it.name}» (${it.slot}) → ${rep.ok ? 'ок' : `отказ «${rep.reason}»`}`;
+}
 async function opUnequip(g: Rig, r: Rng): Promise<string> {
   const slots = Object.entries(g.cli().equipment).filter(([, v]) => v).map(([k]) => k);
   if (!slots.length) return 'снять: нечего';
@@ -1645,10 +1781,10 @@ async function opUnequip(g: Rig, r: Rng): Promise<string> {
 }
 
 const EXEC: Record<OpKind, (g: Rig, r: Rng) => Promise<string>> = {
-  bench: opBench, craft: opCraft, windowEnchant: opWindowEnchant, sketch: opSketch, buy: opBuy, sell: opSell, field: opField,
+  bench: opBench, craft: opCraft, windowEnchant: opWindowEnchant, sketch: opSketch, buy: opBuy, sell: opSell, field: opField, paperdoll: opPaperdoll,
   loot: opLoot, lootCrafted: opLootCrafted, mats: opMats, gold: opGold, goldEdge: opGoldEdge, matsEdge: opMatsEdge, journal: opJournal,
   config: opConfig, clientSync: opClientSync, shopRefresh: opShopRefresh, breakItem: opBreak, bagFill: opBagFill, equip: opEquip, unequip: opUnequip, fund: opFund,
-  stashDrift: opStashDrift,
+  wear: opWear, stashDrift: opStashDrift,
 };
 
 /** Для отчёта: подписи шагов сжатой цепочки (прогон с журналом). */

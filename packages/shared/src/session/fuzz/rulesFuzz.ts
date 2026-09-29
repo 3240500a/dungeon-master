@@ -67,7 +67,8 @@ import { validateInput } from '../netSchemas.js';
  *       не берётся; дверь открывает только её рычаг; добыча не пропадает и не двоится (uid уникальны); золото — ровно поднятое;
  *       сейв под транзакцией тиком не трогается; зелье без эффекта не тратится.
  *  I6 — прокачка и пулы: опыт только за убийство (сумма = опыт монстра), уровень и очки — по таблице; атрибуты/скилы тиком не
- *       меняются; здоровье/мана/выносливость не выше максимума (мана и выносливость — и не выше резерва аур/стоек).
+ *       меняются; здоровье/мана/выносливость не выше максимума (мана и выносливость — и не выше резерва аур/стоек); левелап лечит
+ *       до максимума С аурами/стойками/баффами, и снимок тика до его конца их держит (R15-10).
  *  I7 — ничего не бросает, числа конечны.
  *  M1/M2 — монстры: не сквозь стены/закрытые двери, ближний удар монстра — в досягаемости и видимости.
  */
@@ -408,6 +409,8 @@ export function newWorld(seed: number, hooks: FuzzHooks = {}): FuzzWorld {
   const about: string[] = [];
   for (let i = 0; i < n; i++) {
     const { save, kit } = makeHero(reg, r, i);
+    // Профиль `levelup` (R15-10): до уровня — одно очко опыта, первое же убийство его поднимает. Без бросков: поток мира прежний.
+    if (hooks.world?.levelup) save.xp = Math.max(save.xp, xpForLevel(save.level + 1, reg.get('balance').xpTable) - 1);
     // Два первых — один аккаунт (альты), третий — другой: выброшенное чужим аккаунтом не поднять (R2-02).
     const account = i < 2 ? 'acc-a' : 'acc-b';
     const pid = `p${i}`;
@@ -612,6 +615,11 @@ export interface Probe {
   chests: Map<number, string>;
   /** Герои, которых преграда декора втолкнула в стену (V-RF-05): пока не выбрались, стены у них — следствие той же причины. */
   tainted: Set<string>;
+  /**
+   * ⭐ Перепрогон R15: максимумы в миг левелапа за тик (с рантайм-модами того мига, R15-10). Бафф, истёкший в том же тике, их не отменяет:
+   * левелап налил до них законно, следующий тик подрежет — максимум тика (I6) и они.
+   */
+  levelMax: Map<string, { hp: number; mana: number; stamina: number; effMana: number; effStam: number }>;
   resetFloor(): void;
   oracle(p: PlayerEntity): PlayerSnapshot;
 }
@@ -679,6 +687,7 @@ function instrument(w: FuzzWorld): Probe {
     taken: new Map(),
     chests: new Map(),
     tainted: new Set(),
+    levelMax: new Map(),
     resetFloor(): void { ctx.length = 0; exec.length = 0; projLast.clear(); sight = world.obstacles.filter((o) => o.blocksSight).map((o) => ({ ...o })); },
     oracle(p: PlayerEntity): PlayerSnapshot {
       const eq = Object.entries(p.save.equipment).filter(([, it]) => it).map(([k, it]) => `${k}:${it!.uid}`).join('|');
@@ -878,6 +887,28 @@ function instrument(w: FuzzWorld): Probe {
     const b = { mana: killer.mana, stamina: killer.stamina };
     const out = orig(killer, m, packet, attacker, opts);
     gains.set(killer.id, (gains.get(killer.id) ?? 0) + Math.max(0, killer.mana - b.mana) + Math.max(0, killer.stamina - b.stamina));
+    return out;
+  });
+  // I6 (R15-10): левелап лечит до максимума С РАНТАЙМ-МОДАМИ (аура, стойка, бафф, бафф зелья), и снимок тика до его конца — с ними же:
+  // по нему идут замах, удар монстра по броне/сопротивлениям/блоку и потолок вампиризма. Голый сейв лечил стойку +15 % к жизни до ~87 %.
+  wrap('awardXp', (orig) => (p: PlayerEntity, amount: number) => {
+    const n0 = events().length;
+    const out = orig(p, amount);
+    if (!p.alive || !events().slice(n0).some((e) => e.type === 'levelup' && e.playerId === p.id)) return out;
+    const cov = p.toggles.length > 0 || Object.keys(p.skillBuffs).length > 0 ? 'levelup-mods' : 'levelup';
+    w.cover[cov] = (w.cover[cov] ?? 0) + 1;
+    const o = probe.oracle(p).derived;
+    probe.levelMax.set(p.id, {
+      hp: o.maxHp, mana: o.maxMana, stamina: o.maxStamina,
+      effMana: effectivePool(o.maxMana, reservedFrac(reg, p.toggles, 'mana')), effStam: effectivePool(o.maxStamina, reservedFrac(reg, p.toggles, 'stamina')),
+    });
+    const on = `тоглы ${p.toggles.join(',') || '—'}, баффы ${Object.keys(p.skillBuffs).join(',') || '—'}`;
+    if (!(Math.abs(p.maxHp - o.maxHp) <= EPS) || !(Math.abs(p.hp - o.maxHp) <= EPS)) {
+      V('I6', 'levelup-heal', `${heroName(p)}: левелап — здоровье ${p.hp.toFixed(3)}/${p.maxHp.toFixed(3)}, максимум с рантайм-модами ${o.maxHp.toFixed(3)} (${on})`);
+    }
+    const d = w.s.snapshotOf(p.id)?.derived as unknown as Record<string, unknown> | undefined;
+    const off = d ? Object.entries(o).filter(([k, v]) => typeof v === 'number' && !(Math.abs((d[k] as number) - v) <= EPS * Math.max(1, Math.abs(v)))).map(([k]) => k) : ['нет снимка'];
+    if (off.length) V('I6', 'levelup-snap', `${heroName(p)}: снимок тика после левелапа — не с рантайм-модами, расходятся ${off.join(', ')} (${on})`);
     return out;
   });
   wrap('hitPlayer', (orig) => (t: PlayerEntity, packet: unknown, attacker: unknown, onHit: unknown, by: string, source?: MonsterEntity) => {
@@ -1306,15 +1337,17 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
     if (!b.alive && dist(b.pos, p.pos) > EPS) V('I1', 'dead-moved', `мёртвый ${name} сдвинулся ${fmt(b.pos)}→${fmt(p.pos)}`);
     // I4: ресурсы не отрицательны.
     if (p.hp < -EPS || p.mana < -EPS || p.stamina < -EPS) V('I4', 'negative', `${name}: hp ${p.hp} mana ${p.mana} stamina ${p.stamina}`);
-    // I6: не выше максимума (максимум — на начало тика или на конец: бафф, истёкший в тике, подрежет на следующем) и резерва.
+    // I6: не выше максимума (максимум — на начало тика или на конец: бафф, истёкший в тике, подрежет на следующем; ⭐ перепрогон R15 — и в миг
+    // левелапа за тик: он наливает до максимума с баффом, который истечёт к концу того же тика) и резерва.
     if (p.alive) {
       const o = w.probe.oracle(p).derived;
-      const maxHp = Math.max(b.maxHp, o.maxHp), maxMana = Math.max(b.maxMana, o.maxMana), maxStam = Math.max(b.maxStam, o.maxStamina);
+      const lv = w.probe.levelMax.get(p.id);
+      const maxHp = Math.max(b.maxHp, o.maxHp, lv?.hp ?? 0), maxMana = Math.max(b.maxMana, o.maxMana, lv?.mana ?? 0), maxStam = Math.max(b.maxStam, o.maxStamina, lv?.stamina ?? 0);
       if (p.hp > maxHp + 1e-6) V('I6', 'hp-max', `${name}: hp ${p.hp.toFixed(3)} > максимума ${maxHp.toFixed(3)}`);
       if (p.mana > maxMana + 1e-6) V('I6', 'mana-max', `${name}: мана ${p.mana.toFixed(3)} > максимума ${maxMana.toFixed(3)}`);
       if (p.stamina > maxStam + 1e-6) V('I6', 'stamina-max', `${name}: выносливость ${p.stamina.toFixed(3)} > максимума ${maxStam.toFixed(3)}`);
-      const effM = Math.max(b.effMana, effectivePool(o.maxMana, reservedFrac(reg, p.toggles, 'mana')));
-      const effS = Math.max(b.effStam, effectivePool(o.maxStamina, reservedFrac(reg, p.toggles, 'stamina')));
+      const effM = Math.max(b.effMana, effectivePool(o.maxMana, reservedFrac(reg, p.toggles, 'mana')), lv?.effMana ?? 0);
+      const effS = Math.max(b.effStam, effectivePool(o.maxStamina, reservedFrac(reg, p.toggles, 'stamina')), lv?.effStam ?? 0);
       if (p.mana > effM + 1e-6 && p.mana <= maxMana + 1e-6) V('I6', 'mana-reserve', `${name}: мана ${p.mana.toFixed(3)} выше резерва аур ${effM.toFixed(3)} (тоглы ${p.toggles.join(',')})`);
       if (p.stamina > effS + 1e-6 && p.stamina <= maxStam + 1e-6) V('I6', 'stamina-reserve', `${name}: выносливость ${p.stamina.toFixed(3)} выше резерва стоек ${effS.toFixed(3)}`);
       // I4: тоглы — только выученные (сброс вычищает их в начале тика у живого).
@@ -1466,8 +1499,11 @@ export interface FuzzHooks {
   resetUids?: () => void;
   /** Только для зубов сторожа: подложить «баг» в сессию ДО наблюдателя (его обёртки окажутся снаружи). */
   install?: (w: FuzzWorld) => void;
-  /** Профиль мира: доля арен (0…1), доля PvP на арене, наименьшее число героев, доля арен с колоннами в линии огня (C-10). */
-  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number };
+  /**
+   * Профиль мира: доля арен (0…1), доля PvP на арене, наименьшее число героев, доля арен с колоннами в линии огня (C-10), все герои
+   * на пороге уровня (R15-10: левелап поверх аур, стоек и баффов — в общем профиле он редок, убийств мало).
+   */
+  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean };
   /** Только для зубов сторожа: подложить «баг» после каждого тика. */
   afterTick?: (w: FuzzWorld) => void;
 }
@@ -1491,7 +1527,7 @@ function runTicks(w: FuzzWorld, n: number, build: (i: number) => Record<string, 
   while (i < n) {
     const inputs = build(i);
     const pre = capture(w);
-    w.probe.taken.clear(); w.probe.chests.clear();
+    w.probe.taken.clear(); w.probe.chests.clear(); w.probe.levelMax.clear();
     const ev = w.s.tick(TICK_DT, inputs);
     i++;
     hooks.afterTick?.(w);

@@ -6,6 +6,7 @@ import { getCharacter } from '../db/db.js';
 import { limits } from '../net/rateLimit.js';
 import { localCaller } from '../net/adminAccess.js';
 import { cachedJson } from '../net/cachedJson.js';
+import { logThrottle } from '../net/logThrottle.js';
 import { queryText } from '../net/asyncRoute.js';
 import { sessionUser, routePass } from '../net/authSession.js';
 import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow } from './registry.js';
@@ -116,15 +117,12 @@ function pendingIssued(): number {
 
 /**
  * R7-05: лог отказов маршрутизации (база не ответила и т. п.) — не чаще раза в 10 с, с числом промолчанных (как `warnFrame` у
- * кадров): поток запросов в лежащую базу лог не топит.
+ * кадров): поток запросов в лежащую базу лог не топит. ⭐ R17-06: срок — по часам процесса (`logThrottle`). Экспорт — для теста.
  */
-let routeWarnAt = 0;
-let routeWarnMuted = 0;
-function warnRoute(e: unknown): void {
-  const now = Date.now();
-  if (now - routeWarnAt < 10_000) { routeWarnMuted++; return; }
-  const muted = routeWarnMuted ? ` (и ещё ${routeWarnMuted} с прошлого сообщения)` : '';
-  routeWarnAt = now; routeWarnMuted = 0;
+const routeLog = logThrottle();
+export function warnRoute(e: unknown): void {
+  const muted = routeLog.pass();
+  if (muted === null) return;
   console.error(`[гейтвей] отказ маршрутизации${muted}:`, e);
 }
 

@@ -8,6 +8,8 @@ type Handler = (frame: ServerFrame) => void;
  * (`on(t, cb)`), плюс `onOpen`/`onClose`. Реконнект — базовый (по желанию позже).
  */
 const PING_INTERVAL_MS = 1000;
+/** ⭐ R15-04: неотправленного в сокете больше этого (≈20 кадров ввода) — связь встала: ввод не шлём (`send`). */
+const INPUT_BACKLOG_BYTES = 4096;
 
 export class NetClient {
   private ws?: WebSocket;
@@ -122,7 +124,12 @@ export class NetClient {
   clearLifecycle(): void { this.openCbs = []; this.closeCbs = []; }
 
   send(frame: ClientFrame): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame));
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    // ⭐ R15-04: связь встала, а сокет жив (роуминг Wi-Fi, смена соты) — ввод не копится в буфере сокета: вернувшаяся связь отдала бы
+    // серверу секунды накопленного ввода разом (сервер его отбросит, а поток сверх меры рвёт кодом 4008), а устаревшее нажатие сработало бы
+    // с опозданием. Комната берёт последний ввод, и следующий кадр после разгрузки буфера несёт текущее состояние.
+    if (frame.t === 'input' && this.ws.bufferedAmount > INPUT_BACKLOG_BYTES) return;
+    this.ws.send(JSON.stringify(frame));
   }
 
   get connected(): boolean { return this.ws?.readyState === WebSocket.OPEN; }

@@ -366,9 +366,24 @@ export async function listAllCharacters(): Promise<CharacterSummary[]> {
 function summary(s: SaveState): CharacterSummary {
   return { charId: s.charId, name: s.name, classId: s.classId, level: s.level };
 }
+/**
+ * Удалить героя. ⭐ R15-03: ВЕЩИ УДАЛЁННОГО УХОДЯТ ОТ АККАУНТА ЖУРНАЛОМ. Раньше удалялась только строка героя, а его вещи оставались в
+ * леджере у «char:<удалённого>» (связи строк вещей с героями в базе нет): ночной аудит каждую ночь находил их «потерянными» —
+ * инциденты, которых никто не разберёт, и их полсотни примеров вытесняли настоящие пропажи (круг «создал — удалил» стартового комплекта
+ * давал пять вечных инцидентов). Теперь — одной транзакцией: строка героя под блокировкой (в порядке записи игры: героя, потом вещи),
+ * его вещи — в `world` событием `gone` (`charDeleted`), и только потом строка. Живая сессия удалённого (героя на ноде) дальше не пишет:
+ * её запись строки не находит (отказ по версии, R1-01), и отданного ею не остаётся ни у кого.
+ */
 export async function deleteCharacter(charId: string, userId: string): Promise<void> {
-  await q('DELETE FROM characters WHERE char_id = $1 AND user_id = $2', [charId, userId]);
+  await tx(async (c) => {
+    const row = await c.query('SELECT 1 FROM characters WHERE char_id = $1 AND user_id = $2 FOR UPDATE', [charId, userId]);
+    if (!row.rowCount) return;
+    await syncItems(c, userId, charId, NO_ITEMS, undefined, 'charDeleted');
+    await c.query('DELETE FROM characters WHERE char_id = $1 AND user_id = $2', [charId, userId]);
+  });
 }
+/** Сейв без вещей: сверка леджера с ним уводит все вещи героя в `world` (`deleteCharacter`). */
+const NO_ITEMS = { equipment: {}, inventory: [], belt: [] } as unknown as SaveState;
 export async function countCharacters(userId: string): Promise<number> {
   const r = await q1<{ n: string }>('SELECT COUNT(*) AS n FROM characters WHERE user_id = $1', [userId]);
   return Number(r?.n ?? 0);

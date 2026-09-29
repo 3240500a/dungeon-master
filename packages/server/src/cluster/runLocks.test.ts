@@ -75,6 +75,19 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('⭐ V2: забег за нодо
     expect(await holder(foreign), 'чужая не перехвачена').toEqual({ node_id: nodeB, room: 'BBBB4' });
   });
 
+  it('⭐ R15-08: комната отпустила забег, пока удар продлевал снимок, — продление вставило строку заново, повторный отпуск (`runsGone`) её снимает: забег свободен другой ноде', async () => {
+    if (!alive) return;
+    const k = run();
+    expect(await reg.claimRun(k, nodeA, 'AROOM')).toBeNull();
+    const snapshot = [{ key: k, room: 'AROOM' }];   // `heldRuns` удара
+    await reg.releaseRun(k, nodeA, 'AROOM');         // комната ушла — её отпуск лёг раньше продления
+    const kept = await reg.touchRuns(snapshot, nodeA);
+    expect(kept.has(k), 'продление вставило строку ушедшей комнаты заново').toBe(true);
+    expect(await reg.claimRun(k, nodeB, 'BROOM'), 'без повторного отпуска — «идёт в комнате AROOM»').toBe('AROOM');
+    await reg.releaseRun(k, nodeA, 'AROOM');         // ⭐ R15-08: нода отпускает его снова (`RoomManager.releaseRuns`)
+    expect(await reg.claimRun(k, nodeB, 'BROOM'), 'забег свободен').toBeNull();
+  });
+
   it('снятие — только своей строки и только за той комнатой; старт ноды и её уход снимают все её забеги', async () => {
     if (!alive) return;
     const k = run();

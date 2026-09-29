@@ -331,7 +331,7 @@ describe('⭐ R12-07: мёртвый, оставшийся в подземель
     pB.debuffs = { poison: { stacks: 10, mag: 1000, expiresAt: w.timeMs + 60_000 } };
     await room.removePlayer(pb);
     expect(room.disconnected.get(b.charId)?.fled, 'ушёл посреди боя').toBe(true);
-    expect(room.strandAt - Date.now(), 'ушедший посреди боя ждёт грейс, а не 15 с').toBeGreaterThan(60_000);
+    expect(room.strandAt - performance.now(), 'ушедший посреди боя ждёт грейс, а не 15 с').toBeGreaterThan(60_000);
     for (let i = 0; i < 30 * 5; i++) room.step();   // подключён один мёртвый A — мир стоит
     await settle();
     expect(room.disconnected.has(b.charId), 'B ждёт').toBe(true);

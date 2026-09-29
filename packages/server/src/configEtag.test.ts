@@ -28,6 +28,29 @@ describe('ETag конфига', () => {
     expect(configEtagOf(b)).toBe(configEtagOf(b));
   });
 
+  it('⭐ R15-07: знак, чей младший байт совпадает с заменой («G»/«ч», «0»/«а», «1»/«б», пробел/«Р»), меняет ETag', () => {
+    // Раньше хэш брал только младший байт кода знака: правка той же длины такой заменой давала ТОТ ЖЕ ETag при новой ревизии — 304 со
+    // старым конфигом и старой ревизией, и каждая команда согласия — «Цена изменилась» по кругу.
+    for (const [a, b] of [['G', 'ч'], ['0', 'а'], ['1', 'б'], [' ', 'Р'], ['A', 'с']] as const) {
+      expect(a.charCodeAt(0) & 0xff, `${a}/${b}: младшие байты равны`).toBe(b.charCodeAt(0) & 0xff);
+      expect(configEtagOf(`{"name":"Клинок ${a}"}`), `${a} → ${b}`).not.toBe(configEtagOf(`{"name":"Клинок ${b}"}`));
+    }
+  });
+
+  it('⭐ R15-07: настоящий конфиг — «Обычный» → «О1ычный» (та же длина): другой ETag, как и другая ревизия', () => {
+    const a = new ConfigRegistry(); a.loadAll();
+    const b = new ConfigRegistry(); b.loadAll();
+    const rar = structuredClone(b.get('rarities')) as { name: string }[];
+    const i = rar.findIndex((r) => r.name.includes('б'));
+    expect(i, 'в названиях редкостей есть «б»').toBeGreaterThanOrEqual(0);
+    rar[i]!.name = rar[i]!.name.replace('б', '1');
+    b.reload({ rarities: rar });
+    const ra = configReplyOf(a), rb = configReplyOf(b);
+    expect(rb.body.length).toBe(ra.body.length);
+    expect(rb.rev, 'ревизия другая').not.toBe(ra.rev);
+    expect(rb.etag, 'и ETag другой — 304 со старым конфигом невозможен').not.toBe(ra.etag);
+  });
+
   it('формат слабого ETag сохранён', () => {
     expect(configEtagOf('{}')).toMatch(/^W\/"[0-9a-z]+-[0-9a-z]+"$/);
   });

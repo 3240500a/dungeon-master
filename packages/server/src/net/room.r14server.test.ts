@@ -252,7 +252,7 @@ describe('⭐ R14-01: тело ушедшего посреди боя — в м�
     await room.removePlayer(pb);
     expect(room.lingering.size).toBe(1);
     killA(room, pa);
-    expect(room.strandAt - Date.now(), 'пати застряла, но ждёт отвалившегося посреди боя весь грейс').toBeGreaterThan(60_000);
+    expect(room.strandAt - performance.now(), 'пати застряла, но ждёт отвалившегося посреди боя весь грейс').toBeGreaterThan(60_000);
     steps(room, 240);
     await settle();
     expect(room.disconnected.get(b.charId)?.paid).toBe(false);

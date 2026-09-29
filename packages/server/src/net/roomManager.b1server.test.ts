@@ -223,7 +223,7 @@ describe('⭐ K1: «мёртв, оплачено» — по сейву, и та�
     const p = room.session.world.players[j!.playerId]!;
     expect(p.alive, 'мёртвым, а не живым с полным здоровьем').toBe(false);
     expect(ws.frames.some((f) => f.t === 'died' && f.status === true && f.toTown === true), 'один — «возвращаетесь в город»').toBe(true);
-    room.strandAt = Date.now() - 1;   // срок возврата застрявших вышел
+    room.strandAt = 1;   // срок возврата застрявших вышел
     room.step();
     expect(room.area).toBe('town');
     expect(p.save.run, 'забег окончен (вайп)').toBeUndefined();
@@ -326,7 +326,7 @@ describe('⭐ K2: строка героя не ложится поперёд с�
     await turns(200);
     expect(db.chars.get('B1K2C')!.version, 'строка не обогнала свод').toBe(v0);
     db.ledgerDown = false;
-    room.lastSaveAt = 0;
+    room.lastSaveAt = -Infinity;   // R15-06: срок автосейва — по часам процесса
     room.step();   // автосейв
     await until('автосейв лёг', () => db.chars.get('B1K2C')!.version > v0);
     expect(db.ahead, `строки поперёд свода: ${db.ahead.join(', ')}`).toEqual([]);

@@ -46,6 +46,20 @@ const wireId = z.string().max(WIRE_ID_MAX).refine(isWireText, 'управляю�
 const safeKeyId = (max = WIRE_ID_MAX) =>
   z.string().max(max).refine(isSafeKey, 'только латиница, цифры, «_» и «-»: этим id ключуется словарь в сейве (R10-10)');
 
+/** Свойств на сторону у скованной вещи — не больше, чем у редкого с дропа: формы 3+3 дроп не даёт, значит и ковка (`formOf`, §6.1). */
+export const AFFIX_SIDE_MAX = 3;
+const FORM_KEY = new RegExp(`^[0-${AFFIX_SIDE_MAX}]\\+[0-${AFFIX_SIDE_MAX}]$`);
+/**
+ * ⚠ R17-03: ФОРМЫ ЁМКОСТИ «P+S», КОТОРЫЕ ИГРА ВЫСТАВЛЯЕТ К ОПЛАТЕ при потолке ёмкости `cap`: ковка (`formOf` — не больше
+ * `AFFIX_SIDE_MAX` на сторону) и зачарование с перекаткой (`rolledFormMult` — та же форма, зажатая лимитами редкости, то есть
+ * любая её часть). У каждой обязана быть строка `balance.craft.formMult`: без неё у формы нет цены, и кузнец её не куёт.
+ */
+export function affixFormKeys(cap: number): string[] {
+  const out: string[] = [];
+  for (let p = 0; p <= AFFIX_SIDE_MAX; p++) for (let s = 0; s <= AFFIX_SIDE_MAX; s++) if (p + s >= 1 && p + s <= cap) out.push(`${p}+${s}`);
+  return out;
+}
+
 // ── balance ───────────────────────────────────────────────────────────────
 export const balanceSchema = z.object({
   /** xpTable[level] = требуемый суммарный опыт для достижения уровня. */
@@ -644,7 +658,11 @@ export const balanceSchema = z.object({
       bite: z.record(z.string(), z.object({ stat: z.string(), value: z.number() })).default({}),
       /** Потолок Σ ёмкости аффиксов по индексу тира t0..t6 (§6.2). Форма — от обвязки. */
       capacityByTier: z.array(z.number().int().min(0).max(5)).default([2, 2, 3, 4, 4, 5, 5]),
-      /** Множитель цены формы M = 1 / частота такой формы у найденных редких (§6.1). Ключ «P+S». */
+      /**
+       * Множитель цены формы M = 1 / частота такой формы у найденных редких (§6.1). Ключ «P+S».
+       * ⚠ R17-03: строка обязана быть у КАЖДОЙ формы, которую даёт ёмкость (`affixFormKeys`), — проверка ниже, на всём `craft`.
+       * Умолчание `{}` её не проходит нарочно: оверрайд баланса без раздела `craft` (сохранён до §21.1) — отказ, а не ковка по ×1.
+       */
       formMult: z.record(z.string(), z.number().min(1)).default({}),
       /**
        * ⭐ СТУПЕНЬ ИЗ ДЕТАЛЕЙ (§11): средний уровень материала ПО МАССЕ. Q = Σ(вес·ступень) / Σвес,
@@ -792,6 +810,23 @@ export const balanceSchema = z.object({
           detect: z.object({ flare: z.number().min(0).default(1.15), spine: z.number().min(0).default(3) }).default({}),
         })
         .default({}),
+    })
+    // ⚠ R17-03: ЦЕНА У КАЖДОЙ ФОРМЫ, КОТОРУЮ ДАЁТ ЁМКОСТЬ, И КЛЮЧ РОВНО «P+S». Раньше ✕ у строки «3+2» в редакторе, опечатка «3 +2» или
+    // оверрайд баланса старше §21.1 (раздела `craft` нет — `formMult` из умолчания `{}`) проходили молча, а `formMult` отдавал на
+    // пропавшую форму ×1 — цену самой бедной: 3+2 ковалась, зачаровывалась и перекатывалась вшестеро дешевле. Теперь отказ: редактор
+    // получает 422 с именем формы, старый оверрайд при старте пропускается с предупреждением (`configLive`). Лишняя строка ГОДНОЙ формы
+    // (3+3, Σ5 при ёмкости до 4) не мешает: ковка её просто не спросит.
+    .superRefine((k, ctx) => {
+      for (const key of Object.keys(k.formMult)) {
+        if (!FORM_KEY.test(key)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['formMult', key], message: `ключ формы «${key}» — не «P+S» (цифры 0–${AFFIX_SIDE_MAX} без пробелов): такую форму ковка не спросит никогда (R17-03)` });
+        }
+      }
+      for (const key of affixFormKeys(Math.max(0, ...k.capacityByTier))) {
+        if (!Object.prototype.hasOwnProperty.call(k.formMult, key)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['formMult', key], message: `нет цены формы «${key}»: ёмкость её даёт, а без цены кузнец её не куёт и не зачаровывает (R17-03)` });
+        }
+      }
     })
     .default({}),
   /**

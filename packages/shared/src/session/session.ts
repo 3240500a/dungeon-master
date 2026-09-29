@@ -2040,8 +2040,13 @@ export class GameSession {
     this.events.push({ type: 'xp', playerId: p.id, amount });
     const { leveled } = gainXp(save, this.cfg.get('balance'), amount);
     if (leveled) {
-      const snap = playerSnapshot(save, this.cfg);
-      p.hp = snap.derived.maxHp;
+      // ⚠ R15-10: снимок — с рантайм-модами, как у тика (аура/стойка/бафф/бафф зелья): голый сейв лечил стойку +15 % к жизни до
+      // ~87 %, а до конца тика `snaps` держал его же — замах, удар монстра по броне/сопротивлениям/блоку и вампиризм шли без аур и стоек.
+      // `p.maxHp` — сразу новый: старый жил до следующего тика, и кадр левелапа показывал здоровье выше максимума.
+      // Возрождение (`respawnPlayer`) голым снимком обходится: тоглы и баффы оно снимает до расчёта.
+      const snap = playerSnapshot(save, this.cfg, this.runtimeMods(p));
+      p.maxHp = snap.derived.maxHp;
+      p.hp = p.maxHp;
       // Мана/выносливость — до эффективного максимума: активные ауры/стойки резервируют часть пула.
       p.mana = effectivePool(snap.derived.maxMana, this.reservedFrac(p, 'mana'));
       p.stamina = effectivePool(snap.derived.maxStamina, this.reservedFrac(p, 'stamina'));

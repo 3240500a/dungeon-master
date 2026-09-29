@@ -167,13 +167,19 @@ async function partyBackInTown(rm: RMIn, a: string, b: string): Promise<{ room: 
 }
 
 describe('⭐ C-05: пати забега полна — «Продолжить» отказывает с кодом её комнаты, «Соло» — город без штрафа', () => {
-  it('⭐ вышел из города, его место занял друг: «нет мест» с кодом держателя; лобби «Соло» — город, забег цел; место освободилось — к пати', async () => {
+  // ⭐ R17-02: держатель забега в ГОРОДЕ забег живому участнику отдаёт («Продолжить» — в новую комнату, `roomManager.r17server.test.ts`), и
+  // «нет мест» остаётся только у пати, что ведёт забег в подземелье: её узел и есть забег, и вход — только к ней.
+  it('⭐ вышел из города, его место занял друг, пати ушла в подземелье: «нет мест» с кодом держателя; лобби «Соло» — город, забег цел; место освободилось — к пати', async () => {
     const rm = manager();
     for (const id of ['F2CA', 'F2CB', 'F2CC', 'F2CD', 'F2CE']) seed(id);
-    const { room } = await partyBackInTown(rm, 'F2CA', 'F2CB');
+    const { room, pidA } = await partyBackInTown(rm, 'F2CA', 'F2CB');
     const guests: FakeConn[] = [];
     for (const id of ['F2CC', 'F2CD', 'F2CE']) guests.push(await lobby(rm, id, { roomCode: room.code }));
     expect(room.seatsTaken('F2CB'), 'пати полна: A и трое друзей').toBe(4);
+    await until('записи входа легли', () => !rm.inflight.size);
+    room.movedAt = 0; room.descend(pidA);
+    for (const g of guests) g.push({ t: 'vote', accept: true });
+    await until('пати продолжила забег', () => room.area === 'dungeon');
     const gold = row('F2CB').gold;
 
     const r = await lobby(rm, 'F2CB', { resume: true });
@@ -189,9 +195,15 @@ describe('⭐ C-05: пати забега полна — «Продолжить�
     solo.close();
     await until('B вышел из своей комнаты', () => !rm.live.has('F2CB') && !rm.charOps.has('F2CB'));
 
-    // Друг ушёл — место есть: «Продолжить» ведёт к пати.
+    // Друг ушёл совсем («Завершить» — его место в подземелье больше никто не ждёт): место есть — «Продолжить» ведёт к пати.
     guests[2]!.close();
     await until('гость вышел', () => !rm.live.has('F2CE') && !rm.charOps.has('F2CE'));
+    const ab = new FakeConn('198.51.100.251', 'F2CE');
+    rm.handleConnection(ab);
+    ab.push({ t: 'abandon', token: TOK, charId: 'F2CE' });
+    await until('гость завершил забег', () => !!ab.last('abandoned') || !!ab.last('error'));
+    expect(ab.last('abandoned'), JSON.stringify(ab.last('error'))).toBeDefined();
+    await until('его прощальная запись легла', () => !rm.charOps.has('F2CE') && !rm.inflight.has('F2CE'));
     const back = await lobby(rm, 'F2CB', { resume: true });
     expect(back.last('joined')?.roomCode, JSON.stringify(back.last('error'))).toBe(room.code);
     expect(row('F2CB').gold).toBe(gold);

@@ -22,6 +22,9 @@ vi.setConfig({ testTimeout: 60_000 });
  *    участник его забега, и бегство из боя платит штраф (раньше гость с запаркованным забегом уходил из любого боя даром).
  *  • C-06: автосейв не множит записи в очереди героя (одна ждёт — вторая не встаёт), а свод, который база только что не приняла
  *    `LEDGER_FIRST_ROUNDS` раз подряд, запись сейва не ждёт таймаутом каждого круга.
+ *  • R16-01: вход без «Продолжить» (новая комната, по коду) при грейсе, чей бросок стоил бы штрафа, — отказ `run`, а не штраф и снятие забега
+ *    молча: Unity шлёт статус забега и `join{fresh}` подряд, не читая ответа, и любой обрыв посреди подземелья стоил ему смерти.
+ *  • R16-06: бюджет слива (`flushAll`) — по часам процесса: шаг настенных часов не растягивает дописку за предохранитель ноды и не обрывает её.
  * Менеджер и комната — настоящие, база — маленькая честная (версии строк), с воротами записи и сбоем свода.
  */
 const TOK = 'e6'.repeat(32);
@@ -38,6 +41,9 @@ const db = vi.hoisted(() => ({
   ledgerDown: false,
   /** Попытки записи свода. */
   ledgerTries: 0,
+  /** ⭐ R16-06: запись строки героя падает (база лежит); `onDown` — зовётся на каждом таком сбое. */
+  down: false,
+  onDown: null as null | (() => void),
 }));
 vi.mock('../db/db.js', () => ({
   getRunLedger: async () => [],
@@ -55,6 +61,7 @@ vi.mock('../db/db.js', () => ({
   putCharacter: async (charId: string, _u: string, data: SaveState, v: number) => {
     const json = JSON.stringify(data);   // снимок — в момент вызова, как `snapshotOf`
     db.tries.set(charId, (db.tries.get(charId) ?? 0) + 1);
+    if (db.down) { db.onDown?.(); throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' }); }
     await db.gate.get(charId);
     const r = db.chars.get(charId);
     if (!r || v !== r.version) return null;
@@ -117,7 +124,8 @@ type RoomIn = {
 };
 type RMIn = {
   rooms: Map<string, RoomIn>; inflight: Map<string, unknown>; unsaved: Map<string, unknown>; live: Map<string, unknown>;
-  handleConnection(ws: GameConn): void;
+  graceByChar: Map<string, RoomIn>;
+  handleConnection(ws: GameConn): void; flushAll(budgetMs?: number): Promise<void>;
 };
 let RoomManagerCtor: typeof import('./roomManager.js').RoomManager;
 let cfg: ConfigRegistry;
@@ -142,7 +150,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  db.gate.clear(); db.writes = []; db.tries.clear(); db.ledgerDown = false; db.ledgerTries = 0;
+  db.gate.clear(); db.writes = []; db.tries.clear(); db.ledgerDown = false; db.ledgerTries = 0; db.down = false; db.onDown = null;
 });
 afterEach(() => {
   for (const rm of managers.splice(0)) for (const r of rm.rooms.values()) r.stop();
@@ -505,5 +513,141 @@ describe('⭐ R16 C-06: очередь записей героя при лежа
     db.ledgerDown = false;
     await room.persistAll();
     await until('автосейв лёг', () => db.chars.get('R16D2')!.version > v0);
+  });
+});
+
+describe('⭐ R16-01: вход без «Продолжить» не бросает забег за штраф', () => {
+  /** Герой спустился один и ушёл обрывом из подземелья: грейс, в строке — забег. */
+  async function dropped(rm: RMIn, id: string): Promise<{ room: RoomIn; before: SaveState }> {
+    seed(id);
+    const u = await solo(rm, id);
+    u.room.movedAt = 0; u.room.descend(u.pid);
+    expect(u.room.area).toBe('dungeon');
+    await until('записи спуска легли', () => !rm.inflight.size);
+    u.ws.close();
+    await until('в грейсе, прощальная запись легла', () => rm.graceByChar.get(id) === u.room && !rm.inflight.size);
+    const before = structuredClone(row(id));
+    expect(before.run, 'забег в строке').toBeTruthy();
+    return { room: u.room, before };
+  }
+  const kit = (s: SaveState): string[] =>
+    [...s.inventory.map((i) => i.uid), ...Object.values(s.equipment).filter((i): i is Item => !!i).map((i) => i.uid)].sort();
+
+  it('Unity: статус забега и `join{fresh}` подряд, не читая ответа, — отказ `run`: золото, вещи и забег целы, грейс ждёт; «Продолжить» — в ту же комнату', async () => {
+    const rm = manager();
+    const { room, before } = await dropped(rm, 'R16U1');
+    const ws = new FakeConn(`198.51.100.${++ipSeq % 250}`);
+    rm.handleConnection(ws);
+    // `NetClient.Connect` Unity: статус забега и вход «Соло» — подряд, ответ на статус не читается.
+    ws.push({ t: 'runStatus', token: TOK, charId: 'R16U1' });
+    ws.push({ t: 'join', token: TOK, charId: 'R16U1', fresh: true });
+    await until('ответ на вход', () => ws.frames.some((f) => f.t === 'joined' || f.t === 'error'));
+    expect(ws.last('runStatus'), 'статус: забег есть').toMatchObject({ hasRun: true });
+    expect(ws.last('joined'), 'в новую комнату не вошёл').toBeUndefined();
+    expect(ws.last('error'), JSON.stringify(ws.last('error'))).toMatchObject({ code: 'run' });
+    await turns(30);
+    expect(rm.inflight.size, 'записей в пути нет').toBe(0);
+    const after = row('R16U1');
+    expect(after.gold, 'золото цело').toBe(before.gold);
+    expect(kit(after), 'вещи целы').toEqual(kit(before));
+    expect(after.run, 'забег цел').toEqual(before.run);
+    expect(rm.graceByChar.get('R16U1'), 'грейс ждёт реконнекта').toBe(room);
+    // «Продолжить» — в ту же грейс-комнату.
+    ws.push({ t: 'join', token: TOK, charId: 'R16U1', resume: true });
+    await until('вернулся', () => !!ws.last('joined'));
+    expect(joined(ws).roomCode).toBe(room.code);
+    expect(room.area).toBe('dungeon');
+  });
+
+  it('вход по коду к другу — тот же отказ; бросить забег за штраф — только «Завершить», после него «Соло» входит', async () => {
+    const rm = manager();
+    const { before } = await dropped(rm, 'R16U2');
+    seed('R16U3');
+    const friend = await solo(rm, 'R16U3');
+    const byCode = await join(rm, 'R16U2', friend.room.code);
+    expect(byCode.last('joined'), 'к другу не сел').toBeUndefined();
+    expect(byCode.last('error'), JSON.stringify(byCode.last('error'))).toMatchObject({ code: 'run' });
+    expect(friend.room.clients.size, 'у друга он один').toBe(1);
+    await turns(30);
+    expect(row('R16U2').gold, 'золото цело').toBe(before.gold);
+    expect(row('R16U2').run, 'забег цел').toEqual(before.run);
+    // «Завершить» — явный бросок: штраф, забег снят.
+    const ab = new FakeConn(`198.51.100.${++ipSeq % 250}`);
+    rm.handleConnection(ab);
+    ab.push({ t: 'abandon', token: TOK, charId: 'R16U2' });
+    await until('брошен', () => !!ab.last('abandoned') || !!ab.last('error'));
+    expect(ab.last('abandoned'), JSON.stringify(ab.last('error'))).toBeDefined();
+    await until('штраф лёг', () => !rm.inflight.size && !rm.graceByChar.has('R16U2'));
+    expect(row('R16U2').gold, '«Завершить» штрафует').toBeLessThan(before.gold);
+    expect(row('R16U2').run).toBeUndefined();
+    const fresh = await join(rm, 'R16U2');
+    expect(fresh.last('joined'), JSON.stringify(fresh.last('error'))).toBeDefined();
+  });
+
+  it('страховка без штрафа цела: погибший в коопе (смерть оплачена) — `join{fresh}` входит в город, забег снят без второго штрафа', async () => {
+    const rm = manager();
+    seed('R16K1'); seed('R16K2');
+    const a = await solo(rm, 'R16K1');
+    const wsB = await join(rm, 'R16K2', a.room.code);
+    const pidB = joined(wsB).playerId;
+    a.room.movedAt = 0; a.room.descend(a.pid); a.room.castVote(pidB, true);
+    expect(a.room.area).toBe('dungeon');
+    await until('записи спуска легли', () => !rm.inflight.size);
+    const pb = a.room.session.world.players[pidB]!;
+    const world = a.room.session.world as unknown as { timeMs: number };
+    pb.hp = 1;
+    (pb as unknown as { debuffs: Record<string, unknown> }).debuffs.poison = { stacks: 1, maxStacks: 1, expiresAt: world.timeMs + 60_000, mag: 9999, mag2: 0 };
+    for (let i = 0; i < 4 && pb.alive; i++) a.room.step();
+    expect(pb.alive, 'B погиб, ждёт пати').toBe(false);
+    wsB.close();
+    await until('B в грейсе, записи легли', () => rm.graceByChar.get('R16K2') === a.room && !rm.inflight.size);
+    const paid = row('R16K2').gold;
+    const ws = await join(rm, 'R16K2');
+    expect(ws.last('joined'), JSON.stringify(ws.last('error'))).toBeDefined();
+    expect(joined(ws).roomCode).not.toBe(a.room.code);
+    await until('записи легли', () => !rm.inflight.size);
+    expect(row('R16K2').gold, 'второго штрафа нет').toBe(paid);
+    expect(row('R16K2').run, 'забег снят').toBeUndefined();
+  });
+});
+
+describe('⭐ R16-06: бюджет слива — по часам процесса', () => {
+  /**
+   * Герой вышел из города, база лежит — копия ждёт дописки (`unsaved`); слив с бюджетом `budget`, и на первом же сбое записи настенные
+   * часы шагают на `stepMs`. Сколько слив шёл по часам процесса, сколько раз пробовал и сказал ли ИНЦИДЕНТ.
+   */
+  async function drainWithStep(id: string, stepMs: number, budget = 2_000): Promise<{ took: number; incident: boolean; tries: number }> {
+    const rm = manager();
+    seed(id);
+    const { ws } = await solo(rm, id);
+    db.down = true;
+    ws.close();
+    await until('копия не легла — ждёт дописки', () => rm.unsaved.has(id) && !rm.inflight.size);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
+    let stepped = false;
+    db.onDown = () => { if (!stepped) { stepped = true; vi.setSystemTime(Date.now() + stepMs); } };
+    const tries0 = db.tries.get(id) ?? 0;
+    const t0 = performance.now();
+    let doneAt: number | undefined;
+    void rm.flushAll(budget).then(() => { doneAt = performance.now(); });
+    for (let i = 0; i < 400 && doneAt === undefined; i++) await vi.advanceTimersByTimeAsync(50);
+    expect(stepped, 'часы шагнули посреди слива').toBe(true);
+    const incident = vi.mocked(console.error).mock.calls.some((c) => String(c[0]).includes(`слив не дописал героя ${id}`));
+    return { took: (doneAt ?? Infinity) - t0, incident, tries: (db.tries.get(id) ?? 0) - tries0 };
+  }
+
+  it('часы шагнули на минуту назад — слив кончается с бюджетом по часам процесса (не на минуту позже, за предохранителем ноды), с ИНЦИДЕНТОМ', async () => {
+    const r = await drainWithStep('R16S1', -60_000);
+    expect(r.took, 'в бюджет, а не на минуту дольше').toBeLessThanOrEqual(2_600);
+    expect(r.took).toBeGreaterThanOrEqual(1_500);
+    expect(r.incident, 'недописанное — ИНЦИДЕНТ').toBe(true);
+  });
+
+  it('часы шагнули на минуту вперёд — слив не бросает дописку сразу: круги идут весь бюджет', async () => {
+    const r = await drainWithStep('R16S2', 60_000);
+    expect(r.took, 'весь бюджет').toBeGreaterThanOrEqual(1_500);
+    expect(r.took).toBeLessThanOrEqual(2_600);
+    expect(r.tries, 'кругов дописки больше одного').toBeGreaterThan(1);
+    expect(r.incident).toBe(true);
   });
 });

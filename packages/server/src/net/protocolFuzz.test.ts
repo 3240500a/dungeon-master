@@ -6,7 +6,8 @@ import { MAX_FRAME_BYTES } from './conn.js';
 import {
   ConfigRegistry, newCharacterSave, clientFrameSchema, validateInput, shopBuyPrice, ATTRIBUTES, stashDims, emptyStash,
   generateItem, createRng, addToInventory, materialItem, uuidv7,
-  type SaveState, type Item, type TownCommand,
+  CRAFT_SLOT_LIST, keySlotOf, keyVariantsByBase, variantsFor, craftWeapon, emptyJournal, sketchable, normalizeCraftNonces,
+  type SaveState, type Item, type TownCommand, type CraftInput, type CraftJournal, type AccountStash,
 } from '@dm/shared';
 import { counters } from './metrics.js';
 import { limits, known, ipBucket } from './rateLimit.js';
@@ -30,13 +31,17 @@ import { Prng, mutateFrame, junkText, junkBytes, shrinkOps } from './protocolFuz
  *       аккаунта — кроме документированных лимитов АККАУНТА).
  *  I4 — исходящее на входящий кадр ограничено: кривой кадр — не больше пары маленьких кадров; сейв в ответ на отказ — только в
  *       меру `limits.cmdResync`.
- *  I5 — честные кадры в честном темпе принимаются всегда: у каждого — свой ответ, не «часто», не «неверно», не «занято».
+ *  I5 — честные кадры в честном темпе принимаются всегда: у каждого — свой ответ, не «часто», не «неверно», не «занято»; ⭐ R15-04: и после
+ *       обрыва связи без закрытия сокета (`stall`: ввод копится секунды, TCP отдаёт его разом) — соединение живо, ввод идёт дальше.
  *  I6 — после закрытия соединений карты на соединение и на адрес подметены: ни очередей, ни бакетов, ни комнат без людей; через
  *       11 минут простоя пусты и все лимитеры (рост ограничен временем, а не числом соединений).
  *  I7 — ни одна вещь (uid) не живёт в двух местах сразу (герои, сундуки, земля); золото — целое ≥ 0.
  *  I8 — застрявших нет: после последовательности каждый вошедший герой входит снова («Продолжить» или новая комната).
  *  I9 — закрытое соединение не действует: закрытое сервером не остаётся игроком и его кадры вдогонку ничего не меняют; ⭐ C-06: закрытое
  *       клиентом снимается с игры сразу, по событию закрытия, а не в конце очереди своих кадров.
+ *  I10 — ⭐ E2E 29.09: телеметрия кузницы (`/metrics` и `play_sessions`) считает ровно состоявшиеся действия: удачная ковка с НОВЫМ ключом —
+ *       одна ковка (повтор ключа — ноль), удачный разбор — одна переплавка скованного или один разбор найденного, удачное зачарование — одно;
+ *       эскиз, отказ и прочие команды — ноль. Судится только операция, начатая в тишине (иначе в окно попала бы чужая запись в полёте).
  * HTTP-ручки аккаунта — свой блок в конце файла (H1–H4).
  *
  * МОДЕЛЬ. Сценарии: «смесь» (честный один или с другом, соседняя вкладка аккаунта, чужие аккаунты, анонимы, мусор всех видов) и
@@ -246,7 +251,7 @@ vi.mock('./scheduler.js', async (importOriginal) => {
 // ── Внутренности, до которых дотягивается проверка (это тест) ────────────────
 type Pt = { x: number; y: number };
 type PlayerIn = { id: string; save: SaveState; pos: Pt; hp: number; alive: boolean };
-type ClientIn = { ws: GameConn; input: { dodge?: boolean; cast: string | null; useBelt?: number }; userId: string; saveVersion: number };
+type ClientIn = { ws: GameConn; input: { dodge?: boolean; cast: string | null; useBelt?: number; facing?: number }; userId: string; saveVersion: number };
 type RoomIn = {
   code: string; area: 'town' | 'dungeon' | 'arena'; depth: number; runNodeId: string | null; movedAt: number; frozen: boolean;
   vote: { kind: string; by: string; yes: Set<string>; no: Set<string> } | null;
@@ -328,6 +333,8 @@ const HONEST_CMDS: readonly (readonly [number, CmdKind])[] = [
   [3, 'sell'], [3, 'drop'], [3, 'pickup'], [2, 'useConsumable'], [2, 'moveBelt'], [3, 'acceptQuest'], [1, 'respec'],
   [1, 'depositMaterials'], [1, 'forgeRepair'], [1, 'salvage'],
 ];
+/** ⭐ E2E 29.09: кузница честного — в своём темпе (`pace` 800 мс под лимитом кузницы): ковка по журналу, эскиз, зачарование, разбор (I10). */
+const FORGE_CMDS: readonly (readonly [number, CmdKind])[] = [[3, 'craft'], [1, 'forgeSketch'], [2, 'forgeEnchant'], [2, 'forgeSalvage']];
 
 type HonestAct =
   | { a: 'enter'; p: number } | { a: 'joinFriend' } | { a: 'ping' } | { a: 'runStatus' } | { a: 'leave' }
@@ -335,7 +342,9 @@ type HonestAct =
   | { a: 'cmd'; cmd: CmdKind; pick: number }
   | { a: 'descend'; alt: boolean } | { a: 'return' } | { a: 'arena' } | { a: 'lever' } | { a: 'chest' }
   | { a: 'reconnect'; mode: Mode; p: number }
-  | { a: 'flap'; mode: Mode; p: number };
+  | { a: 'flap'; mode: Mode; p: number }
+  /** ⭐ R15-04: связь пропала на `sec` секунд без закрытия сокета — клиент копил ввод (`hz`), TCP отдал всё разом. */
+  | { a: 'stall'; sec: number; hz: 30 | 60 };
 type Junk =
   | { j: 'mutate'; base: FrameKind; seed: number }
   | { j: 'text'; seed: number; len: number }
@@ -469,8 +478,34 @@ beforeAll(async () => {
   RoomProto = (await import('./room.js')).Room.prototype as unknown as typeof RoomProto;
   cfg = new ConfigRegistry();
   cfg.loadAll();
+  FORGE = forgePlan(cfg);
   process.on('unhandledRejection', onUnhandled);
 });
+
+/**
+ * ⭐ E2E 29.09: ЧЕСТНАЯ КОВКА В МОДЕЛИ. Раньше заявка фаззера была всегда кривой (детали `x`), а эскиз — чужим id: ни ковка, ни эскиз не
+ * удавались ни разу, и путь удачи (запись, телеметрия, повтор ключа) фаззер не видел — эскиз считался в `/metrics` ковкой, и I10 было не
+ * на чем поймать. Теперь в сундуке каждого аккаунта — журнал одной базы (её четыре детали, ступень t0, два эскиза) и сырьё на три ковки.
+ */
+let FORGE: { input: CraftInput; gold: number; materials: Record<string, number>; journal: CraftJournal; sketchable: string[] };
+function forgePlan(reg: ConfigRegistry): typeof FORGE {
+  const cls = 'sword', hands = 1, step = 1;
+  const keySlot = keySlotOf(reg, cls);
+  const group = keyVariantsByBase(reg, cls, hands).find((g) => g.variants.some((p) => p.stepMin <= step && step <= p.stepMax))!;
+  const parts = {} as CraftInput['parts'];
+  for (const slot of CRAFT_SLOT_LIST) {
+    const pool = slot === keySlot ? group.variants : variantsFor(reg, cls, slot, hands);
+    parts[slot] = { id: pool.find((v) => v.stepMin <= step && step <= v.stepMax)!.id, step };
+  }
+  const input: CraftInput = { weaponClass: cls, hands, parts };
+  const pv = craftWeapon(reg, input, { materialsOn: true });
+  const baseId = pv.type?.baseId;
+  if (!pv.ok || !pv.cost || !baseId) throw new Error(`фаззер: честная заявка не куётся (${pv.reason ?? '?'})`);
+  const journal: CraftJournal = { ...emptyJournal(), bases: [baseId], variants: CRAFT_SLOT_LIST.map((s) => parts[s].id), tierHi: 0, sketches: 2 };
+  const open = reg.get('weapon-parts').filter((p) => sketchable(reg, journal, p.id)).map((p) => p.id).slice(0, 4);
+  if (!open.length) throw new Error('фаззер: эскизом нечего открыть');
+  return { input, gold: pv.cost.gold, materials: pv.cost.materials, journal, sketchable: open };
+}
 afterAll(() => { process.off('unhandledRejection', onUnhandled); });
 
 /** Оборот цикла без часов: `setImmediate` не ждёт шага системного таймера (на Windows setTimeout(0) — это ~15 мс). */
@@ -601,6 +636,9 @@ class Run {
           it.pos = at;
           (st.tabs[0] ??= []).push(it);
         }
+        // ⭐ E2E 29.09: журнал кузнеца (база и её детали, два эскиза) и сырьё на три ковки — ковке и эскизу есть чем удаться (I10).
+        st.forgeJournal = structuredClone(FORGE.journal);
+        st.materials = Object.fromEntries(Object.entries(FORGE.materials).map(([id, n]) => [id, 3 * n]));
         db.stash.set(a.user, { data: st, version: 1 });
       }
     }
@@ -984,6 +1022,8 @@ class Run {
           if (e && ['full', 'no-room', 'no-run'].includes(String(e.code))) return null;
           // ⭐ R16 C-03: и к другу по коду со своим припаркованным забегом, а комната друга — в подземелье другого: отказ `run` (клиент — в
           // лобби, «Соло» без штрафа). E2E 28.09, большой прогон (сиды 71192, 71979): модель честного этого правила не знала — ложное I3.
+          // ⭐ R16-01: и к другу по коду, пока герой ждёт реконнекта в грейсе своего забега (бросок стоил бы штрафа): вход его больше не бросает
+          // молча — отказ `run`; «Соло» с `hasRun` честный клиент не шлёт (сперва «Завершить», как выше).
           if (e && String(e.code) === 'run' && code && hasRun) return null;
           return e ? `joined; отказ ${String(e.code)}` : 'joined';
         });
@@ -1084,6 +1124,23 @@ class Run {
         await this.honest(this.slots[s.n], { a: 'enter', p: act.p });
         return;
       }
+      case 'stall': {
+        if (!me) return;
+        // ⭐ R15-04: роуминг Wi-Fi, смена соты, провал у провайдера — сокет жив, клиент копит ввод в буфере (веб 30 Гц, Unity 60 Гц; буфер
+        // сокета клиент не смотрит), а связь вернулась — TCP отдаёт накопленное разом, и дальше ввод идёт в своём темпе. Честный — не флуд.
+        this.advance(act.sec * 1000);
+        const input = { move: { x: 0, y: 0 }, facing: 0.5, attack: false, cast: null, interact: false, ...(s.mode === 'ws' || act.hz === 60 ? { dodge: false } : {}) };
+        const from = s.frames.length;
+        for (let i = 0; i < act.sec * act.hz && s.serverClosed === undefined; i++) this.deliver(s, JSON.stringify({ t: 'input', seq: ++s.seq, input }));
+        // Дальше — свежий ввод в своём темпе: он обязан доходить до комнаты.
+        const fresh = { ...input, facing: 1.5 };
+        for (let i = 0; i < 6 && s.serverClosed === undefined; i++) { this.advance(1000 / 30); this.deliver(s, JSON.stringify({ t: 'input', seq: ++s.seq, input: fresh })); }
+        await this.settle();
+        const now = this.me(s);
+        if (s.serverClosed !== undefined) this.judgeHonest(s, { t: 'input' }, s.frames.slice(from), null);
+        else if (now && !now.room.frozen && now.c.input.facing !== 1.5) this.judgeHonest(s, { t: 'input' }, s.frames.slice(from), 'ввод после обрыва не дошёл до комнаты');
+        return;
+      }
       case 'flap': {
         // Обрыв связи посреди входа: сокет упал (без `leave`), клиент переподключился, спросил статус забега, послал вход — и связь
         // упала снова, пока вход ждал базу. Потом — честное переподключение до конца.
@@ -1121,6 +1178,12 @@ class Run {
     const charId = me?.p.save.charId;
     const user = s.acct?.user;
     const before = charId ? { live: econ(me.p.save), db: dbRow(charId), stash: user ? dbStash(user) : '' } : undefined;
+    // I10: снимок до кадра — только в тишине (ни запроса к базе в полёте, ни неосуждённой гонки): иначе в окно попала бы чужая запись.
+    const tally = !this.racing && db.pending === 0 && this.deferred.length === 0 ? forgeTally() : undefined;
+    const c = (command ?? {}) as { cmd?: unknown; uid?: unknown; nonce?: unknown };
+    const melt = typeof c.uid === 'string' && !!me?.p.save.inventory.some((i) => i.uid === c.uid && !!i.parts);
+    const replay = c.cmd === 'craft' && !!user
+      && normalizeCraftNonces((db.stash.get(user)?.data as AccountStash | undefined)?.craftNonces).some((e) => e.n === c.nonce);
     const frame: Record<string, unknown> = { t: 'cmd', command };
     if (id !== undefined) frame.id = id;
     const from = s.frames.length;
@@ -1134,6 +1197,20 @@ class Run {
     if (this.racing) return;
     const got = s.frames.slice(from);
     const res = got.find((g) => g.t === 'cmdResult' && (id === undefined || g.f?.id === id))?.f;
+    if (tally && res) {
+      // I10: телеметрия кузницы — ровно состоявшееся действие этой команды.
+      const want: ForgeTally = { crafted: 0, melted: 0, salvaged: 0, enchanted: 0 };
+      if (res.ok === true) {
+        if (c.cmd === 'craft' && !replay) want.crafted = 1;
+        else if (c.cmd === 'forgeSalvage' || c.cmd === 'salvage') want[melt ? 'melted' : 'salvaged'] = 1;
+        else if (c.cmd === 'forgeEnchant') want.enchanted = 1;
+      }
+      const t1 = forgeTally();
+      const got2 = { crafted: t1.crafted - tally.crafted, melted: t1.melted - tally.melted, salvaged: t1.salvaged - tally.salvaged, enchanted: t1.enchanted - tally.enchanted };
+      if (JSON.stringify(got2) !== JSON.stringify(want)) {
+        this.violate('I10', `телеметрия кузницы разошлась с действием (${String(c.cmd)})`, `${res.ok ? 'ok' : `отказ «${String(res.reason)}»`}${replay ? ', повтор ключа' : ''}: ждали ${JSON.stringify(want)}, счётчики ${JSON.stringify(got2)}`);
+      }
+    }
     if (!res || res.ok !== false || !charId || !before) return;
     const now = this.me(s);
     // Отказ: экономика героя и сундук аккаунта — как были (сток прилавка и забег — не экономика команды, R8-01).
@@ -1201,16 +1278,30 @@ class Run {
         return it ? { cmd: kind, uid: it.uid, maxGold: save.gold } as TownCommand : null;
       }
       case 'salvage': case 'forgeSalvage': {
-        const it = nth(inv.filter((i) => i.kind !== 'consumable' && i.kind !== 'material'));
+        // ⭐ E2E 29.09: через раз — скованное (переплавка), иначе любое (разбор найденного, отказ по зелью или сырью — нет, их не берём).
+        const forged = pick % 2 ? inv.filter((i) => !!i.parts) : [];
+        const it = nth(forged.length ? forged : inv.filter((i) => i.kind !== 'consumable' && i.kind !== 'material'));
         return it && (kind === 'salvage' || town) ? { cmd: kind, uid: it.uid } as TownCommand : null;
       }
-      case 'forgeEnchant': { const it = nth(inv.filter((i) => i.slot)); return it && town ? { cmd: 'forgeEnchant', uid: it.uid, rarity: pick % 2 ? 'magic' : 'rare', maxGold: save.gold } : null; }
-      case 'forgeSketch': return town ? { cmd: 'forgeSketch', variantId: `v-${pick % 7}` } : null;
+      case 'forgeEnchant': {
+        // ⭐ E2E 29.09: зачаровать можно только скованное — через раз берём его (удача), иначе любое надеваемое (отказ).
+        const forged = pick % 4 ? inv.filter((i) => !!i.parts) : [];
+        const it = nth(forged.length ? forged : inv.filter((i) => i.slot));
+        return it && town ? { cmd: 'forgeEnchant', uid: it.uid, rarity: pick % 2 ? 'magic' : 'rare', maxGold: save.gold } : null;
+      }
+      // ⭐ E2E 29.09: половина — деталь, которую эскиз журнала открывает (удача), половина — чужой id (отказ).
+      case 'forgeSketch': return town ? { cmd: 'forgeSketch', variantId: pick % 2 ? `v-${pick % 7}` : FORGE.sketchable[(pick >> 1) % FORGE.sketchable.length]! } : null;
       case 'allocPassive': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'allocPassive', nodeId: n.id, maxGold: save.gold } : null; }
       case 'allocSkill': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'allocSkill', nodeId: n.id } : null; }
       case 'socketInsert': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'socketInsert', nodeId: n.id, slot: pick % 3, insertId: `ins-${pick % 5}` } : null; }
       case 'socketClear': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'socketClear', nodeId: n.id, slot: pick % 3 } : null; }
-      case 'craft': return town ? { cmd: 'craft', nonce: `nonce-${pick.toString(36).padStart(8, '0')}`, input: { weaponClass: 'sword', hands: 1, parts: { strike: { id: 'x', step: 1 }, grip: { id: 'x', step: 1 }, bind: { id: 'x', step: 1 }, head: { id: 'x', step: 1 } } } } : null;
+      case 'craft': {
+        if (!town) return null;
+        // ⭐ E2E 29.09: каждая четвёртая — кривая (таких деталей нет: отказ ядра), прочие — честная заявка журнала с ценой карточки. Ключей
+        // двенадцать на аккаунт — повтор ключа (та же вещь, без траты) случается сам, в том числе с другого героя аккаунта.
+        if (pick % 4 === 0) return { cmd: 'craft', nonce: `nonce-${pick.toString(36).padStart(8, '0')}`, input: { weaponClass: 'sword', hands: 1, parts: { strike: { id: 'x', step: 1 }, grip: { id: 'x', step: 1 }, bind: { id: 'x', step: 1 }, head: { id: 'x', step: 1 } } } };
+        return { cmd: 'craft', nonce: `forge-${(pick % 12).toString(36).padStart(8, '0')}`, input: structuredClone(FORGE.input), maxGold: FORGE.gold, maxMaterials: { ...FORGE.materials } };
+      }
     }
     return null;
   }
@@ -1465,6 +1556,7 @@ class Run {
     left('комнат на тике', sched.rooms.size);
     left('бакеты wsFrames', limits.wsFrames.size);
     left('бакеты wsInput', limits.wsInput.size);
+    left('бакеты wsInputOver', limits.wsInputOver.size);   // ⭐ R15-04
     left('бакеты lobbyConn', limits.lobbyConn.size);
     left('бакеты промахов кода на соединение', keysOf(limits.roomCodeMiss).filter((k) => k.startsWith('conn:')).length);
     left('бакеты «адреса» соединений без адреса', [...keysOf(limits.lobbyIp), ...keysOf(limits.roomCodeMissIp)].filter((k) => /^ip:c\d+$/.test(k)).length);
@@ -1535,6 +1627,11 @@ function onWire(mode: Mode, raw: string): string {
 
 function dbRow(charId: string): string { const r = db.chars.get(charId); return r ? `${r.version}|${econ(r.data as SaveState)}` : '-'; }
 function dbStash(user: string): string { const r = db.stash.get(user); return r ? `${r.version}|${JSON.stringify(r.data)}` : '-'; }
+/** I10: счётчики кузницы процесса (`/metrics`) — их же растит телеметрия сессии (`tallyForge`). */
+type ForgeTally = { crafted: number; melted: number; salvaged: number; enchanted: number };
+function forgeTally(): ForgeTally {
+  return { crafted: counters.forgeCrafted, melted: counters.forgeMelted, salvaged: counters.forgeSalvaged, enchanted: counters.forgeEnchanted };
+}
 /** Первое расхождение двух строк — с окрестностью, для отчёта. */
 function firstDiff(a: string | undefined, b: string | undefined): string {
   if (a === undefined || b === undefined) return `${a === undefined ? 'не было' : 'было'} → ${b === undefined ? 'не стало' : 'стало'}`;
@@ -1556,7 +1653,9 @@ function errorClass(e: string): string {
  *  • `i5-rate`    — потолок команд города аккаунта: одна в 5 с (I3/I5);
  *  • `i6-leak`    — закрытие соединения не снимает его бакеты (I6);
  *  • `i7-dupe`    — выброшенная вещь остаётся и в сумке (I7);
- *  • `i8-stuck`   — прощальная запись героя h1 «не легла» навсегда: вход — «сохраняем, повторите» (I8).
+ *  • `i8-stuck`   — прощальная запись героя h1 «не легла» навсегда: вход — «сохраняем, повторите» (I8);
+ *  • `r1504`      — ввод сверх потолка снова рвёт соединение (4008), а не отбрасывается: хвост обрыва связи (`stall`) — I5;
+ *  • `i10-sketch` — эскиз пишется с причиной ковки, как до правки E2E 29.09: `/metrics` считает его ковкой (I10).
  */
 const SELFTEST = process.env.DM_FUZZ_SELFTEST ?? '';
 function injectBug(name: string, rm: RMIn): () => void {
@@ -1604,6 +1703,14 @@ function injectBug(name: string, rm: RMIn): () => void {
       break;
     }
     case 'i6-leak': spies.push(vi.spyOn(M, 'forgetConn').mockImplementation(() => undefined)); break;
+    case 'r1504': spies.push(vi.spyOn(limits.wsInputOver, 'take').mockReturnValue(false)); break;
+    case 'i10-sketch': {
+      const orig = R.withAccount!;
+      spies.push(vi.spyOn(R, 'withAccount').mockImplementation(function (this: unknown, c: unknown, pid: unknown, why: unknown, ...rest: unknown[]) {
+        return orig.call(this, c, pid, why === 'sketch' ? 'craft' : why, ...rest);
+      }));
+      break;
+    }
     case 'i8-stuck': {
       const orig = M.settleFarewell!;
       spies.push(vi.spyOn(M, 'settleFarewell').mockImplementation(function (this: unknown, charId: unknown) {
@@ -1638,7 +1745,7 @@ const TRACE_LINES: string[] = [];
 // ── Генератор последовательности ────────────────────────────────────────────
 const OPS_PER_SEQ = Math.max(10, Number(process.env.DM_FUZZ_OPS ?? 60) || 60);
 /** Действия честного из нескольких кадров с ожиданием ответа между ними — гонкой не исполняются. */
-const MULTI_STEP: ReadonlySet<string> = new Set(['enter', 'joinFriend', 'reconnect', 'flap', 'input']);
+const MULTI_STEP: ReadonlySet<string> = new Set(['enter', 'joinFriend', 'reconnect', 'flap', 'input', 'stall']);
 
 function genOps(seed: number, len = OPS_PER_SEQ): Op[] {
   const r = new Prng(seed);
@@ -1665,6 +1772,7 @@ function genOps(seed: number, len = OPS_PER_SEQ): Op[] {
     [10, { a: 'ping' }],
     [14, { a: 'input', n: r.range(1, 20), hz: r.chance(0.5) ? 30 : 60, press: r.pick([0, 0, 1, 2, 3] as const), mv: r.int(16) }],
     [24, { a: 'cmd', cmd: r.weighted(HONEST_CMDS), pick: r.int(1 << 16) }],
+    [10, { a: 'cmd', cmd: r.weighted(FORGE_CMDS), pick: r.int(1 << 16) }],
     [4, { a: 'enter', p: r.int(1000) }],
     [s === 1 ? 4 : 0, { a: 'joinFriend' }],
     [6, { a: 'descend', alt: r.chance(0.5) }],
@@ -1676,6 +1784,7 @@ function genOps(seed: number, len = OPS_PER_SEQ): Op[] {
     [3, { a: 'reconnect', mode: mode(), p: r.int(1000) }],
     [2, { a: 'flap', mode: mode(), p: r.int(1000) }],
     [3, { a: 'runStatus' }],
+    [1.5, { a: 'stall', sec: r.pick([4, 9, 15, 25]), hz: r.chance(0.5) ? 30 : 60 }],
   ]);
   const junk = (): Junk => r.weighted<Junk>([
     [40, { j: 'mutate', base: r.weighted(FRAME_KINDS), seed: r.fork() }],
@@ -1947,6 +2056,24 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
     expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
     expect(run.slots[1]?.frames.some((f) => f.t === 'error' && f.f?.code === 'run'), 'отказ `run` пришёл').toBe(true);
   });
+  // ⭐ E2E 29.09 (живой зонд ковки): эскиз шёл транзакцией с причиной `craft` — `/metrics` и `play_sessions` считали его ковкой (сессия с
+  // четырьмя ковками и эскизом — «сковано 5»). I10 стережёт телеметрию кузницы на удаче: ковка, повтор ключа, эскиз, зачарование, разбор.
+  it('E2E 29.09: телеметрия кузницы — ковка, повтор ключа, эскиз, зачарование, разбор: ровно состоявшееся (I10)', async () => {
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'uws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 1 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'forgeSketch', pick: 0 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'craft', pick: 1 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'craft', pick: 13 } },   // тот же ключ — повтор
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'craft', pick: 2 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'forgeEnchant', pick: 3 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'forgeSalvage', pick: 3 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'forgeSalvage', pick: 0 } },
+    ], 29090);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    expect(run.stats.get('honest cmd:forgeSketch ok'), 'эскиз удался').toBe(1);
+    expect(run.stats.get('honest cmd:craft ok'), 'две ковки и повтор ключа').toBe(3);
+  });
   it('контроль: те же последовательности на uWS — закрытие окончательно, нарушений нет', async () => {
     const uws = (ops: Op[]): Op[] => ops.map((o) => (o.k === 'open' ? { ...o, mode: 'uws' } : o));
     expect(i9(await runOps(uws(V1_OPS), 7))).toEqual([]);
@@ -1987,7 +2114,8 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
       const rm = run.rm;
       expect({ conns: rm.conns.size, inputRate: rm.inputRate.size, charOps: rm.charOps.size, sessionLookups: rm.sessionLookups.size })
         .toEqual({ conns: 0, inputRate: 0, charOps: 0, sessionLookups: 0 });
-      expect({ wsFrames: sizes.wsFrames, wsInput: sizes.wsInput, lobbyConn: sizes.lobbyConn }).toEqual({ wsFrames: 0, wsInput: 0, lobbyConn: 0 });
+      expect({ wsFrames: sizes.wsFrames, wsInput: sizes.wsInput, wsInputOver: sizes.wsInputOver, lobbyConn: sizes.lobbyConn })
+        .toEqual({ wsFrames: 0, wsInput: 0, wsInputOver: 0, lobbyConn: 0 });
       expect(keysOf(limits.roomCodeMiss).filter((k) => k.startsWith('conn:')), 'промахи кода на соединение').toEqual([]);
       expect(sizes.lobbyIp!, 'бакеты адреса: не больше трёх ступеней на адрес').toBeLessThanOrEqual(3 * addrs.size);
       expect(keysOf(limits.lobbyIp).filter((k) => k.includes('198.51.100.7')).length, 'NAT: 300 соединений — один бакет').toBeLessThanOrEqual(1);

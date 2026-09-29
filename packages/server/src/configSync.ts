@@ -1,3 +1,5 @@
+import { logThrottle } from './net/logThrottle.js';
+
 /**
  * ⭐ R16 C-02, C-08: ПРАВКА КОНФИГА — ВО ВСЕХ ПРОЦЕССАХ КЛАСТЕРА.
  *
@@ -16,7 +18,7 @@
 
 /** ⭐ R16 C-02: как часто процесс сверяет ревизию оверрайдов конфига в базе, мс. */
 export const CONFIG_SYNC_MS = 3_000;
-/** Сбой сверки — в лог не чаще раза в минуту (лежащая база не топит лог). */
+/** Сбой сверки — в лог не чаще раза в минуту (лежащая база не топит лог). ⭐ R17-06: срок — по часам процесса (`logThrottle`). */
 const WARN_MS = 60_000;
 
 export interface ConfigSyncDeps {
@@ -41,13 +43,13 @@ export function startConfigSync(deps: ConfigSyncDeps): ConfigSync {
   const who = deps.who ?? 'dm-server';
   let known = deps.initial;
   let running: Promise<boolean> | null = null;
-  let warnAt = 0;
+  const warnLog = logThrottle(WARN_MS);
   const once = async (): Promise<boolean> => {
     let rev: string;
     try {
       rev = await deps.readRev();
     } catch (e) {
-      if (Date.now() - warnAt >= WARN_MS) { warnAt = Date.now(); console.warn(`[${who}] сверка конфига с базой не удалась — повтор позже:`, e); }
+      if (warnLog.pass() !== null) console.warn(`[${who}] сверка конфига с базой не удалась — повтор позже:`, e);
       return false;
     }
     if (known === undefined) { known = rev; return false; }
@@ -55,7 +57,7 @@ export function startConfigSync(deps: ConfigSyncDeps): ConfigSync {
     try {
       await deps.rebuild();
     } catch (e) {
-      if (Date.now() - warnAt >= WARN_MS) { warnAt = Date.now(); console.warn(`[${who}] конфиг в базе изменился, но пересобрать его не удалось — повтор позже:`, e); }
+      if (warnLog.pass() !== null) console.warn(`[${who}] конфиг в базе изменился, но пересобрать его не удалось — повтор позже:`, e);
       return false;
     }
     known = rev;

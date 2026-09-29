@@ -1,4 +1,5 @@
 import { isDifficultyUnlocked, type ConfigRegistry, type ServerFrame } from '@dm/shared';
+import { runNodeLabel } from '../modules/run/runLabels.js';
 
 /** Кадр начала голосования (`voteStart`). */
 export type VoteStartFrame = Extract<ServerFrame, { t: 'voteStart' }>;
@@ -14,11 +15,17 @@ function esc(s: string): string {
  * их в `voteStart`). Раньше оба окна знали только «Спуск на след. этаж?»: зовущий с открытым «кошмаром» звал «кошмар», а
  * принявший входил в тир, которого не открывал и не выбирал. `progress` — прогресс сложностей своего героя: закрытый ему тир
  * окно называет прямо. Имена — из своего конфига по id кадра; нет такого — сам id.
+ * ⭐ R16-04: и в подземелье — куда ведёт: финал (`finish`) — «завершить забег и вернуться в город», спуск по ребру — тип узла цели
+ * (`targetNodeType`, та же подпись, что у выхода зовущего, C-10, и на карте забега). Раньше оба окна там спрашивали «Спуск на след.
+ * этаж?»: напарник принимал спуск в босса вместо лавки, а на финале — уход в город, и всё, что лежало на полу финала, пропадало.
+ * «Спуск на след. этаж?» — только кадру без цели (сервер старше правки).
  */
 export function voteQuestion(f: VoteStartFrame, cfg: ConfigRegistry, progress?: Record<string, number>): string {
   if (f.kind === 'town') return 'Вернуться в город?';
   if (f.kind === 'arena') return 'Войти в PvP-арену?';
-  if (!f.difficultyId) return 'Спуск на след. этаж?';   // в подземелье: тир уже идёт, ветку показывает карта забега
+  if (f.finish) return 'Завершить забег и вернуться в город?';
+  if (f.targetNodeType) return `Спуск: ${esc(runNodeLabel(f.targetNodeType))}?`;
+  if (!f.difficultyId) return 'Спуск на след. этаж?';   // кадр без цели — тир уже идёт
   const nameOf = (list: readonly { id: string; name?: string }[], id: string | undefined): string =>
     esc(list.find((x) => x.id === id)?.name ?? id ?? '—');
   const diffs = cfg.get('difficulties');

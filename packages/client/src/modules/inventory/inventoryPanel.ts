@@ -1,7 +1,7 @@
-import { meetsRequirements, type EquipSlot, type Item } from '@dm/shared';
+import { equipRefusal, type EquipSlot, type Item } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { PanelFactory } from '../../ui/domUi.js';
-import { effectiveAttributes, paperdollCommand } from './equip.js';
+import { paperdollEquip } from './equip.js';
 import { itemsOverlapping, type Dims } from './grid.js';
 import { itemTooltipHtml } from './itemView.js';
 import { rarityHex } from '../loot/rarity.js';
@@ -97,13 +97,10 @@ function onSlotClick(app: App, slot: EquipSlot, msg: HTMLElement): void {
   if (held) {
     // Надеть можно только из инвентаря (сервер экипирует из save.inventory). Из сундука — сначала в инвентарь.
     if (held.from !== 'inv') { msg.textContent = 'Сначала перенесите предмет в инвентарь'; return; }
-    // R11-02: щит или второе одноручное (дуал-вилд) — по правилу сервера; вторая рука уходит С ЦЕЛЬЮ.
-    const cmd = paperdollCommand(held.item, slot, state.save.equipment.weapon);
+    // R11-02: щит или второе одноручное (дуал-вилд) — по правилу сервера; вторая рука уходит С ЦЕЛЬЮ. ⭐ R16-08: требования и место —
+    // решением сервера (`equipRefusal`): отказ — строкой в окне, вещь остаётся на курсоре, команда не уходит.
+    const cmd = paperdollEquip(app.config, state.save, held.item, slot);
     if (typeof cmd === 'string') { msg.textContent = cmd; return; }
-    if (!meetsRequirements(held.item, effectiveAttributes(state, state.save.equipment[slot] ?? undefined))) {
-      msg.textContent = 'Недостаточно атрибутов';
-      return;
-    }
     app.sendCmd(cmd);
     clearHeld();
   } else {
@@ -126,7 +123,10 @@ function gridView(app: App, dims: Dims): HTMLElement {
 }
 
 function itemMenu(app: App, item: Item, x: number, y: number): void {
-  const actions = item.kind === 'consumable'
+  // ⭐ R16-08: «Надеть» — по решению сервера (`equipRefusal`: требования после смены, всё надетое, место под снятое). Откажет — пункт
+  // говорит почему и ничего не шлёт (как «Разобрать нельзя»); раньше команда уходила, и отказ был виден только в логе игры.
+  const wear = item.slot ? equipRefusal(app.config, app.state!.save, item.uid) : null;
+  const actions: { label: string; run: () => void }[] = item.kind === 'consumable'
     ? [
         { label: 'Выпить', run: () => app.sendCmd({ cmd: 'useConsumable', uid: item.uid }) },
         { label: 'В пояс', run: () => app.sendCmd({ cmd: 'moveBelt', uid: item.uid }) },
@@ -134,9 +134,11 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
     : item.broken
       // Сломанное не предлагаем надеть вовсе: сервер всё равно откажет, а пункт меню врал бы.
       ? [{ label: 'Сломано — к кузнецу', run: () => {} }]
-      : [
-        { label: 'Надеть', run: () => app.sendCmd({ cmd: 'equip', uid: item.uid }) },
-      ];
+      : !item.slot
+        ? []   // не носится (сырьё): «Надеть» сервер отказал бы всегда
+        : wear
+          ? [{ label: `Надеть нельзя: ${wear}`, run: () => {} }]
+          : [{ label: 'Надеть', run: () => { app.sendCmd({ cmd: 'equip', uid: item.uid }); } }];
   actions.push({ label: 'Выбросить', run: () => app.sendCmd({ cmd: 'drop', uid: item.uid }) });
   // Разбор НА МЕСТЕ: выход меньше, чем у кузнеца, зато нести ничего не надо и при смерти
   // не потеряешь. В городе пункта нет — там кузница выгоднее всегда (docs/ECONOMY.md, ч3).

@@ -55,6 +55,13 @@ beforeAll(async () => {
 const rooms: Room[] = [];
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); for (const r of rooms.splice(0)) r.stop(); });
 
+/** Шаг комнаты «через `ms`»: и настенные часы, и часы процесса (⭐ R15-06: сроки комнаты — по ним). */
+function later(ms: number): void {
+  const wall = Date.now() + ms, mono = performance.now() + ms;
+  vi.spyOn(Date, 'now').mockReturnValue(wall);
+  vi.spyOn(performance, 'now').mockReturnValue(mono);
+}
+
 class FakeWs implements GameConn {
   open = true;
   readonly ip = '127.0.0.1';
@@ -377,7 +384,7 @@ describe('⭐ R7-06: сложность забега — только откры
     room.descend(a.pid, 'nightmare');
     expect(inner(room).runConfig?.tier).toBe('nightmare');
     kill(room, a.pid);
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000);
+    later(10_000);
     room.step(false);                                           // окно смерти прошло — вайп вернул в город
     vi.restoreAllMocks();
     expect(inner(room).area).toBe('town');
@@ -391,7 +398,7 @@ describe('⭐ R7-06: сложность забега — только откры
       expect(inner(room).runConfig?.tier, String(pick)).toBe(firstUnlocked());
       expect(hb.save.difficultyProgress.nightmare, String(pick)).toBeUndefined();
       kill(room, b.pid);
-      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_000);
+      later(10_000);
       room.step(false);
       vi.restoreAllMocks();
       expect(inner(room).area).toBe('town');

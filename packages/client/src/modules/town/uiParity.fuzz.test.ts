@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import type { AccountStash, SaveState } from '@dm/shared';
+import type { AccountStash, Item, SaveState } from '@dm/shared';
 import { genOps, runSeq, shrinkSeq, type Hit, type Op } from './uiParity.fuzzKit.js';
 
 /**
@@ -67,6 +67,24 @@ vi.mock('../../../../server/src/db/db.js', () => ({
   landedVersion: () => Promise.resolve(null),
 }));
 vi.mock('../../../../server/src/db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
+/**
+ * ⭐ R16-08, самопроверка сторожа пупсика: `paperdollHook.old` возвращает прежнюю пред-проверку (требования — сняв с героя только вещь
+ * целевой ячейки, без второй руки под двуручником, без прочего надетого, без места под снятое). Тест «зубов» ниже включает её на своей
+ * цепочке; `DM_FUZZ_SELFTEST=r1608` — на весь прогон (фаззер обязан найти `parity:enabled-refused:paperdoll`).
+ */
+const paperdollHook = vi.hoisted(() => ({ old: process.env.DM_FUZZ_SELFTEST === 'r1608' }));
+vi.mock('../inventory/equip.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../inventory/equip.js')>();
+  const { finalAttributes, meetsRequirements, modifiersFromItems } = await import('@dm/shared');
+  const paperdollEquip: typeof real.paperdollEquip = (reg, save, item, cell) => {
+    if (!paperdollHook.old) return real.paperdollEquip(reg, save, item, cell);
+    const cmd = real.paperdollCommand(item, cell, save.equipment.weapon);
+    if (typeof cmd === 'string') return cmd;
+    const worn = Object.values(save.equipment).filter((i): i is Item => !!i && i.uid !== save.equipment[cell]?.uid);
+    return meetsRequirements(item, finalAttributes(save.attributes, modifiersFromItems(worn))) ? cmd : 'Недостаточно атрибутов';
+  };
+  return { ...real, paperdollEquip };
+});
 
 /**
  * ИЗВЕСТНЫЕ НАРУШЕНИЯ — ждут правки продукта (шаг правки). У каждого: образец ключа (главный прогон на нём не краснеет) и
@@ -140,6 +158,24 @@ const FIXED: Known[] = [
       { seed: 11995, ops: [op('fund', 1313658462), op('config', 691501595), op('craft', 1841287644)], key: /^stale:range:craft-req$/ },
       { seed: 11890, ops: [op('config', 949550270), op('windowEnchant', 1117953636)], key: /^stale:enabled-refused:windowEnchant:closed$/ },
     ],
+  },
+  {
+    // Шов: `equipRefusal` — проверки `equip` без записи, одно решение для ядра и пупсика (`paperdollEquip`) и меню «Надеть».
+    // Нашёл обзор (R16-08), цепочки — фаззер с прежней пред-проверкой (`paperdollHook.old`, тест «зубов» ниже).
+    id: 'R16-08', key: /^(parity:(enabled-refused|disabled-accepted):paperdoll|ui:paperdoll)/,
+    what: 'пупсик: вещь слетала с курсора, а сервер отказывал — двуручник, которому хватало атрибута лишь со второй рукой (он её снимает), сломанная вещь, снятому некуда лечь',
+    repro: [
+      { seed: 28, ops: [op('wear', 198088804), op('paperdoll', 1897979352)], key: /^parity:enabled-refused:paperdoll:Недостаточно атрибутов$/ },
+      { seed: 5, ops: [op('paperdoll', 1454926767)], key: /^parity:enabled-refused:paperdoll:Сломано/ },
+      { seed: 14, ops: [op('paperdoll', 1742906520), op('bagFill', 1442437393), op('wear', 252115651), op('paperdoll', 1177352525)], key: /^parity:enabled-refused:paperdoll:space$/ },
+    ],
+  },
+  {
+    // Шов: `Room.shopFrame` — прилавок в кадре собирается в миг отправки по правилу продажи (зелья — `shopConsumableIds`, снаряжение —
+    // `gearOn`), ценник — по тому же списку. Нашёл фаззер на свежем диапазоне сидов (9 100 001…9 101 600).
+    id: 'R17-04', key: /^parity:enabled-refused:buy:rule$/,
+    what: 'лавка: базу зелья выключили живьём — после покупки другого зелья оно оставалось на прилавке с ценником, а сервер отказывал «нет в ассортименте»',
+    repro: [{ seed: 9100067, ops: [op('config', 49817727), op('buy', 1421943494), op('buy', 648701762)], key: /^parity:enabled-refused:buy:rule$/ }],
   },
 ];
 
@@ -225,6 +261,24 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG)('B3: поправленны
         expect(out.hits.filter((h) => k.key.test(h.key)).map((h) => `${h.key}: ${h.msg}`), out.log.join(' ⏎ ')).toEqual([]);
       });
     }
+  }
+});
+
+/**
+ * ⭐ R16-08: У СТОРОЖА ПУПСИКА ЕСТЬ ЗУБЫ. Те же цепочки с прежней пред-проверкой пупсика (`paperdollHook.old`: требования — сняв только
+ * вещь целевой ячейки) дают своё нарушение: вторая рука с «+Интеллект» под двуручным посохом, сломанная вещь, снятому некуда лечь.
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || paperdollHook.old)('R16-08: прежняя пред-проверка пупсика ловится своим ключом', () => {
+  for (const [i, r] of FIXED.find((k) => k.id === 'R16-08')!.repro.entries()) {
+    it(`R16-08.${i + 1}: ${r.key.source}`, async () => {
+      paperdollHook.old = true;
+      try {
+        const out = await runSeq(db, cryptoHook, r.seed, r.ops);
+        expect(out.hits.map((h) => h.key), out.log.join(' ⏎ ')).toContainEqual(expect.stringMatching(r.key));
+      } finally {
+        paperdollHook.old = false;
+      }
+    });
   }
 });
 

@@ -514,6 +514,7 @@ export function bestCraft(
       const gold = Math.round(k.cost.goldPerReqMult * (tiers[t]?.reqMult ?? 1));
       if (!(save.gold >= gold)) continue;
       const M = formMult(reg, formOf(capacityOf(reg, t), parts.bind.axis));
+      if (M === undefined) continue;   // форма без цены — кузнец её не куёт (R17-03)
       const need: MaterialCost = {};
       for (const slot of CRAFT_SLOT_LIST) {
         const id = materialId(partFamily(anat, slot, parts[slot]), picks[slot].step);

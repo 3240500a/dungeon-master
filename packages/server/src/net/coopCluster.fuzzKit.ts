@@ -7,6 +7,7 @@
  * с SQL — ложные нарушения фаззера (или слепота), поэтому правила пишутся буквой запроса, а не «по смыслу».
  */
 import { NODE_DEAD_SEC, CLAIM_IDLE_SEC } from '../cluster/claimRule.js';
+import { LEASE_MS } from '../cluster/lease.js';
 
 /** `registry.ts`: сколько нода может молчать, прежде чем её перестанут считать живой (маршрут гейтвея, `liveClaim`). */
 export const NODE_STALE_SEC = 10;
@@ -39,9 +40,27 @@ export class ClusterModel {
     return n.beatAt > this.now() - NODE_DEAD_SEC * 1000 && liveAt > n.beatAt - CLAIM_IDLE_SEC * 1000;
   }
 
-  /** `heartbeat`: вставка или обновление строки ноды, `beat_at = now()`. */
-  heartbeat(id: string, s: { players: number; rooms: number; draining: boolean }): void {
+  /**
+   * `heartbeat`: вставка или обновление строки ноды, `beat_at = now()`. ⭐ R17-01: `leased` — нода с арендой: только обновление, и только пока
+   * реестр видел её меньше аренды назад (`beat_at > now() - LEASE_MS`); иначе — ничего (`false`).
+   */
+  heartbeat(id: string, s: { players: number; rooms: number; draining: boolean }, leased = false): boolean {
+    const n = this.nodes.get(id);
+    if (leased && (!n || n.beatAt <= this.now() - LEASE_MS)) return false;
     this.nodes.set(id, { id, players: s.players, rooms: s.rooms, draining: s.draining, beatAt: this.now() });
+    return true;
+  }
+
+  /** ⭐ R16-02: `nodeBeatAge` — сколько секунд назад реестр видел удар ноды (часы базы); строки нет — `null`. */
+  nodeBeatAge(id: string): number | null {
+    const n = this.nodes.get(id);
+    return n ? (this.now() - n.beatAt) / 1000 : null;
+  }
+
+  /** ⭐ R16-02: условие продления нодой с арендой (`leased`) — строка ноды есть и её удар не старше `NODE_DEAD_SEC`. */
+  private leaseAlive(nodeId: string): boolean {
+    const n = this.nodes.get(nodeId);
+    return !!n && n.beatAt > this.now() - NODE_DEAD_SEC * 1000;
   }
 
   /** `liveNodes`: били сердцем за `NODE_STALE_SEC`, по id. */
@@ -96,10 +115,14 @@ export class ClusterModel {
     return c.liveAt > now - CLAIM_IDLE_SEC * 1000 && n.beatAt > now - NODE_STALE_SEC * 1000 ? c.node : null;
   }
 
-  /** `touchClaims`: нет строки — вставка за нодой; своя — продление; чужая — не трогаем. Возвращает продлённых (и вставленных). */
-  touchClaims(charIds: readonly string[], nodeId: string): Set<string> {
+  /**
+   * `touchClaims`: нет строки — вставка за нодой; своя — продление; чужая — не трогаем. Возвращает продлённых (и вставленных). ⭐ R16-02:
+   * `leased` — нода с арендой: мёртвая по реестру (`leaseAlive`) ничего не вставляет и не продлевает.
+   */
+  touchClaims(charIds: readonly string[], nodeId: string, leased = false): Set<string> {
     const now = this.now();
     const out = new Set<string>();
+    if (leased && !this.leaseAlive(nodeId)) return out;
     for (const id of charIds) {
       const c = this.claims.get(id);
       if (!c) { this.claims.set(id, { node: nodeId, touchedAt: now, liveAt: now }); out.add(id); continue; }
@@ -130,10 +153,11 @@ export class ClusterModel {
     return l.room;
   }
 
-  /** `touchRuns`: нет строки — вставка; своя — продление (и комната); чужая — не трогаем. */
-  touchRuns(runs: readonly { key: string; room: string }[], nodeId: string): Set<string> {
+  /** `touchRuns`: нет строки — вставка; своя — продление (и комната); чужая — не трогаем. ⭐ R16-02: `leased` — как у `touchClaims`. */
+  touchRuns(runs: readonly { key: string; room: string }[], nodeId: string, leased = false): Set<string> {
     const now = this.now();
     const out = new Set<string>();
+    if (leased && !this.leaseAlive(nodeId)) return out;
     for (const r of runs) {
       const l = this.runLocks.get(r.key);
       if (!l) { this.runLocks.set(r.key, { node: nodeId, room: r.room, liveAt: now }); out.add(r.key); continue; }

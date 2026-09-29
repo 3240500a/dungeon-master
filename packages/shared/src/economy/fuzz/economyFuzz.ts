@@ -1,5 +1,5 @@
 import { ConfigRegistry } from '../../config/registry.js';
-import { questsRandomSchema, type ConfigShapes } from '../../config/schemas.js';
+import { affixFormKeys, questsRandomSchema, type ConfigShapes } from '../../config/schemas.js';
 import type { SaveState } from '../../types/save.js';
 import type { CraftParts, EquipSlot, Item, ItemOrigin } from '../../types/items.js';
 import type { AccountStash } from '../../types/stash.js';
@@ -9,9 +9,9 @@ import { createRng, type Rng } from '../../formulas/rng.js';
 import { generateItem, itemFromBaseId, rollTierLevel } from '../../formulas/itemgen.js';
 import { CRAFT_SLOT_LIST, baseOfKeyPart, keySlotOf } from '../../formulas/craftType.js';
 import {
-  baseTierRange, countsAsFind, countsAsMythicFind, craftTiers, craftWeapon, enchantCost, isCraftNonce, journalTierCap, normalizeCraftNonces, normalizeJournal,
-  parseCraftInput, partById, partsOf, salvageIntoJournal, shapeFoundWeapon, tierIndexOfItem, typeOfItem, variantsFor,
-  type CraftInput, type CraftJournal,
+  affixSlotsFor, baseTierRange, countsAsFind, countsAsMythicFind, craftTiers, craftWeapon, enchantCost, formKey, formMult, isCraftNonce, journalTierCap,
+  normalizeCraftNonces, normalizeJournal, parseCraftInput, partById, partsOf, salvageIntoJournal, shapeFoundWeapon, tierIndexOfItem, typeOfItem, variantsFor,
+  type AffixForm, type CraftInput, type CraftJournal,
 } from '../../formulas/craft.js';
 import { meetsRequirements, unmetWorn } from '../../formulas/stats.js';
 import { isVersatile } from '../../formulas/versatile.js';
@@ -54,7 +54,9 @@ import { canAffordBoth, giveMaterialsTo, type MaterialCost } from '../materials.
  *  I7 — каждая вещь проходит zod-схему сейва (`validation/save.ts`) туда-обратно без изменений;
  *  плюс сетка (вещь в своих клетках, без наложений), экипировка по правилам слотов и требований, правила вещи (свойств не больше
  *  редкости и оплаченной формы, ступень в окне базы, сумма требований под потолком), очки (вложенное + свободное = выданное
- *  уровнями), согласие на цену (`maxGold`/`minGold`/`maxMaterials`/`minYield`), «не упал» и «конфиг никто не правит на месте».
+ *  уровнями), согласие на цену (`maxGold`/`minGold`/`maxMaterials`/`minYield`), «не упал» и «конфиг никто не правит на месте»; цена у
+ *  каждой формы ёмкости, которую даёт ковка, и богаче не дешевле (`formPrices`, R17-03), и ковка, зачарование и перекатка платят
+ *  только за форму с ценой (`unpricedForm`).
  *
  * Шаг хранится АБСТРАКТНО — `{k, h, s}`: вид, герой, сид своих бросков; что именно он берёт (какую вещь, какую цену), решается
  * по состоянию в момент исполнения. Поэтому сжатие (`shrink`) выбрасывает шаги, и оставшиеся по-прежнему осмысленны.
@@ -498,6 +500,18 @@ function pickUid(w: FuzzWorld, r: Rng, h: 0 | 1, pred?: (it: Item) => boolean): 
 const invItem = (s: SaveState, uid: string): Item | undefined => s.inventory.find((i) => i.uid === uid);
 const isFoundWeapon = (it: Item): boolean => it.kind === 'weapon' && !it.parts;
 const isCrafted = (it: Item): boolean => !!it.parts;
+/**
+ * ⚠ R17-03: форма, за которую платит шаг (ковка — ёмкость вещи; зачарование и перекатка — она же, зажатая лимитами редкости, как
+ * `rolledFormMult`), — по СЫРОЙ таблице `balance.craft.formMult`, мимо `formMult`: форма без строки шла по ×1, и сверка той же функцией
+ * этого не увидела бы. Нарушение строкой или `null`.
+ */
+function unpricedForm(reg: ConfigRegistry, cap: AffixForm | undefined, rarity?: string): string | null {
+  if (!cap) return null;
+  const s = rarity ? affixSlotsFor(reg.get('rarities').find((x) => x.id === rarity), cap) : { maxPrefix: cap.prefix, maxSuffix: cap.suffix };
+  const f = { prefix: s.maxPrefix, suffix: s.maxSuffix };
+  if (f.prefix + f.suffix === 0 || Object.prototype.hasOwnProperty.call(reg.get('balance').craft.formMult, formKey(f))) return null;
+  return `оплачена форма ${formKey(f)} без цены в balance.craft.formMult (ёмкость вещи ${formKey(cap)})`;
+}
 
 // ── Ковка: заявки ────────────────────────────────────────────────────────────────────────────────
 
@@ -765,6 +779,8 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
                 const offMat = Object.keys(cost.materials).find((id) => !reg.get('craft-materials').some((m) => m.id === id && m.enabled !== false));
                 if (offMat) return `ковка съела выключенный материал ${offMat}`;
                 if (it.rarity !== 'normal' || it.affixes.length) return 'скованная вещь не обычная';
+                const noPrice = unpricedForm(reg, it.affixCap);
+                if (noPrice) return `ковка: ${noPrice}`;
                 const nonceRec = normalizeCraftNonces(w.stash.craftNonces).find((e) => e.n === nonce);
                 if (nonceRec?.uid !== it.uid) return 'ключ заявки не записан с uid вещи';
                 return null;
@@ -791,6 +807,8 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
           transforms: [uid],
           extra: () => {
             if (!can.ok) return 'зачарование прошло там, где canEnchantItem отказывал';
+            const noPrice = unpricedForm(reg, before?.affixCap, rarity);
+            if (noPrice) return `зачарование: ${noPrice}`;
             const after = invItem(s, uid);
             if (after?.rarity !== rarity) return `редкость после зачарования ${after?.rarity}`;
             return onlyChanged(before!, after, ['rarity', 'affixes', 'name']);
@@ -902,6 +920,8 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
             if ((after.rerolls ?? 0) > limit) return `перекаток ${after.rerolls} сверх предела ${limit}`;
             if (before.rarity === 'unique') return 'перекатан уник';
             if (before.broken) return 'перекатана сломанная вещь';
+            const noPrice = unpricedForm(reg, before.affixCap, before.rarity);
+            if (noPrice) return `перекатка: ${noPrice}`;
             return onlyChanged(before, after, ['affixes', 'rerolls']);
           },
         }),
@@ -1338,13 +1358,49 @@ function editQuests(reg: ConfigRegistry, r: Rng): string {
 }
 
 /**
+ * ⚠ R17-03: ПРАВКА ЦЕН ФОРМ ЁМКОСТИ — как хозяин в редакторе: ✕ у строки `balance.craft.formMult` или опечатка в ключе («3 +2»,
+ * «3+2 », «3-2»). Такую таблицу обязана отвергнуть схема (`reload` бросает — конфиг прежний): форма без строки шла по ×1, вшестеро
+ * дешевле. Пропущенную схемой ловит `formPrices` (цена у каждой формы, которую даёт ёмкость, и богаче не дешевле). И законная правка:
+ * ёмкость опущена до 4, строки Σ5 убраны — вещи 3+2 в сумках остаются без цены формы, и зачарование с перекаткой обязаны им
+ * отказывать (спеки шагов, `unpricedForm`).
+ */
+function editForms(reg: ConfigRegistry, r: Rng): string {
+  let what = '';
+  try {
+    if (r.chance(0.3)) {
+      reloadTable(reg, 'balance', (b) => {
+        const k = b.craft;
+        k.capacityByTier = k.capacityByTier.map((n) => Math.min(n, 4));
+        for (const key of Object.keys(k.formMult)) if (key.split('+').reduce((n, x) => n + Number(x), 0) > 4) delete k.formMult[key];
+        what = 'ёмкость до 4, строки Σ5 убраны';
+      });
+    } else {
+      reloadTable(reg, 'balance', (b) => {
+        const fm = b.craft.formMult;
+        const key = r.pick(Object.keys(fm));
+        const v = fm[key]!;
+        delete fm[key];
+        const typo = r.pick([null, `${key} `, key.replace('+', ' +'), key.replace('+', '-'), `${key}+0`]);
+        if (typo) fm[typo] = v;
+        what = typo ? `строка formMult «${key}» → «${typo}»` : `строка formMult «${key}» ✕`;
+      });
+    }
+    return `цены форм: ${what}`;
+  } catch (e) {
+    if (!/не прошёл валидацию/.test(String((e as Error)?.message))) throw e;
+    return `цены форм: ${what} — отказ схемы`;
+  }
+}
+
+/**
  * ПРАВКА КОНФИГА ЖИВЬЁМ — как хозяин из редактора: галки (сырьё, деталь, база, ступень) в обе стороны, правки «игроку хуже»
  * (цена ковки и кузницы вверх, выход разбора и цена сырья вниз; требования базы, множитель ступени и потолок требований — вверх,
- * с посадкой ровно на потолок, C-01), правка заданий с опечатками (C-02) и откат к умолчанию. Клиент перечитывает конфиг не всегда.
+ * с посадкой ровно на потолок, C-01), правка заданий с опечатками (C-02), цен форм ёмкости (R17-03) и откат к умолчанию. Клиент
+ * перечитывает конфиг не всегда.
  */
 function configPlan(w: FuzzWorld, r: Rng): Plan {
   const reg = w.reg;
-  const x = r.int(0, 11);
+  const x = r.int(0, 12);
   let desc = '';
   let edit: () => void;
   type Row = { id: string; enabled?: boolean };
@@ -1389,6 +1445,9 @@ function configPlan(w: FuzzWorld, r: Rng): Plan {
       break;
     case 11:
       edit = () => { desc = editQuests(reg, r); };
+      break;
+    case 12:
+      edit = () => { desc = editForms(reg, r); };
       break;
     default:
       edit = () => { (reg as unknown as { data: Tables }).data = { ...pristineTables() }; desc = 'конфиг — по умолчанию'; w.landed = undefined; };
@@ -1488,6 +1547,25 @@ function itemRules(w: FuzzWorld, it: Item, where: string, out: Violation[]): voi
   const reqSum = Object.values(it.requirements ?? {}).reduce<number>((n, v) => n + (v ?? 0), 0);
   const cap = birthCap(w, it);
   if (reqSum > cap) bad('req-cap', `требований ${reqSum} сверх потолка ${cap} (${JSON.stringify(it.requirements)}, происхождение ${it.origin})`);
+}
+
+/**
+ * ⚠ R17-03: ЦЕНЫ ФОРМ ЁМКОСТИ. У каждой формы, которую даёт ёмкость (`affixFormKeys`), цена есть — по `formMult`, которым платят
+ * ковка, зачарование и перекатка, — и форма на свойство богаче (с любой стороны) не дешевле. ✕ у строки или опечатка, пропущенные
+ * схемой, — здесь: без строки форма шла по ×1 (3+2 дешевле 3+1 вшестеро), с нынешним `formMult` — «цены нет».
+ */
+function formPrices(reg: ConfigRegistry, out: Violation[]): void {
+  const keys = affixFormKeys(Math.max(0, ...reg.get('balance').craft.capacityByTier));
+  const m = (key: string): number | undefined => { const [p, s] = key.split('+').map(Number); return formMult(reg, { prefix: p!, suffix: s! }); };
+  for (const key of keys) {
+    const v = m(key);
+    if (v === undefined || !(v >= 1)) { out.push({ inv: 'rule', code: 'form-price', id: `form:${key}`, msg: `форма ${key}: цены нет (${v}) — ковка, зачарование и перекатка ей обязаны отказывать` }); continue; }
+    const [p, s] = key.split('+').map(Number);
+    for (const poorer of [`${p! - 1}+${s}`, `${p}+${s! - 1}`]) {
+      const u = keys.includes(poorer) ? m(poorer) : undefined;
+      if (u !== undefined && v < u) out.push({ inv: 'rule', code: 'form-price', id: `form:${key}<${poorer}`, msg: `форма ${key} (×${v}) дешевле беднее её ${poorer} (×${u})` });
+    }
+  }
 }
 
 /** Сетка: каждая вещь в своих клетках, без наложений. */
@@ -1604,6 +1682,7 @@ export function stateInvariants(w: FuzzWorld, c: Census, zodFor: { hero: boolean
     if (zodFor.hero[h]) zodCheck(s, who, out);
   });
   for (const d of w.board) questNumbers(d, 'доска', out);
+  formPrices(reg, out);
   // Сундук: кошелёк, вкладки, журнал.
   for (const [id, n] of Object.entries(w.stash.materials ?? {})) if (!(isInt(n) && n >= 1)) out.push({ inv: 'I2', code: 'wallet', msg: `кошелёк: ${id}=${n}` });
   const sd = stashDims(reg);

@@ -13,7 +13,10 @@ import { serializeWorld } from './serialize.js';
 import { respecSkills, equip, unequip, allocAttr, respec, socketInsert, socketClear } from '../economy/townActions.js';
 import { addDebuffStack } from '../world/debuffs.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
+import { xpForLevel } from '../formulas/xp.js';
 import { addToInventory } from '../inventory/grid.js';
+import { playerSnapshot } from './derive.js';
+import { effectivePool, reservedFrac, toggleBuffMods } from './toggles.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -2280,5 +2283,48 @@ describe('⭐ R14-05: мёртвый вещей не бросает', () => {
     p.alive = true; p.hp = 10;
     expect(s.dropToGround('p1', item.uid)?.uid, 'контроль: живой бросает').toBe(item.uid);
     expect(s.world.drops.length).toBe(1);
+  });
+});
+
+/**
+ * ⚠ R15-10: ЛЕВЕЛАП ЛЕЧИТ ДО НАСТОЯЩЕГО МАКСИМУМА. Полное лечение считало снимок из одного сейва — без рантайм-модов (аура,
+ * стойка, бафф, бафф зелья): герой в стойке +15 % к жизни вставал на ~87 %, а до конца тика этот же голый снимок лежал в
+ * `snaps` — замах, удар монстра по броне/сопротивлениям/блоку и потолок вампиризма шли без аур и стоек.
+ */
+describe('⚠ R15-10: левелап — полный максимум с аурами/стойками/баффами, и снимок тика их держит', () => {
+  it('⭐ стойка +15 % к жизни, 20 % здоровья, убийство через порог уровня: здоровье = максимуму со стойкой', () => {
+    const r = reg();
+    const s = new GameSession(r, 7, 'normal');
+    const save = newBotSave(r, 'warrior');
+    save.level = 40; save.skills['b-stance-a5'] = 1;
+    const p = s.addPlayer('p1', save);
+    const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(9));
+    def.hp = 1; def.armor = 0; def.evade = 0; def.xp = 50;
+    const far = cellToWorld(25, 6);   // монстр далеко: сначала включаем стойку
+    s.enterFloor(1, { grid: openField(30, 12), spawn: cellToWorld(3, 6), monsters: [{ def, x: far.x, y: far.y }] });
+    s.tick(1 / 30, { p1: { ...idle, cast: 'b-stance-a5' } });
+    s.tick(1 / 30, { p1: idle });
+    expect(p.toggles).toEqual(['b-stance-a5']);
+    const m = s.world.monsters[0]!;
+    m.pos = { x: p.pos.x + 30, y: p.pos.y };
+    save.xp = xpForLevel(41, r.get('balance').xpTable) - 1;
+    p.hp = p.maxHp * 0.2;
+    let leveled = false;
+    for (let i = 0; i < 300 && !leveled; i++) {
+      const facing = Math.atan2(m.pos.y - p.pos.y, m.pos.x - p.pos.x);
+      leveled = s.tick(1 / 30, { p1: { ...idle, facing, attack: true } }).some((e) => e.type === 'levelup' && e.playerId === 'p1');
+    }
+    expect(leveled, 'убил и поднял уровень').toBe(true);
+    expect(save.level).toBe(41);
+    const inTick = s.snapshotOf('p1')!;
+    const want = playerSnapshot(save, r, toggleBuffMods(r, p.toggles));
+    expect(inTick.derived, 'снимок до конца тика левелапа — со стойкой').toEqual(want.derived);
+    expect(inTick.combat).toEqual(want.combat);
+    expect(p.maxHp, 'максимум тика левелапа — со стойкой').toBe(want.derived.maxHp);
+    expect(p.hp, 'вылечен до максимума со стойкой').toBe(want.derived.maxHp);
+    s.tick(1 / 30, { p1: idle });
+    expect(p.maxHp).toBe(want.derived.maxHp);
+    expect(p.hp, 'и на следующем тике — полон').toBe(p.maxHp);
+    expect(p.stamina, 'выносливость — до резерва стойки').toBeCloseTo(effectivePool(want.derived.maxStamina, reservedFrac(r, p.toggles, 'stamina')), 6);
   });
 });

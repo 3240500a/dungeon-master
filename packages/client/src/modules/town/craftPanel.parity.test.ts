@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  CRAFT_SLOT_LIST, ConfigRegistry, addToInventory, availableMaterials, craftAction, craftWeapon, createRng, emptyStash, fullJournal,
+  CRAFT_SLOT_LIST, ConfigRegistry, addToInventory, availableMaterials, craftAction, craftWeapon, createRng, defaultParts, emptyStash, fullJournal,
   materialItem, newBotSave, normalizeJournal, type AccountStash, type CraftInput, type Item, type SaveState,
 } from '@dm/shared';
 import { craftWindow, initialCraftState, normalizeCraftState, type CraftHost, type CraftWindowState } from './craftPanel.js';
@@ -171,5 +171,43 @@ describe('⭐ V-B3-06: гнездо класса снято с игры цели
     const r1 = craftWindow({ config: off } as never, host, one) as unknown as El;
     expect(r1.button('Ковать')!.disabled).toBe(true);
     expect(r1.button('Ковать')!.title).toBe('Кузнец сейчас не куёт это семейство');
+  });
+});
+
+/**
+ * ⚠ R17-03: ЗАЧАРОВАНИЕ ФОРМЫ БЕЗ ЦЕНЫ — окно гасит «✦ Редкий» тем же правилом, что сервер (`canEnchantItem` → «Форма без цены»).
+ * Законный путь к такой вещи: хозяин опустил ёмкость до 4 и убрал строки 3+2/2+3 (схема пускает), а меч 3+2 уже скован. Раньше
+ * зачарование шло по ×1 (дешевле вшестеро); без цены у формы окно показывало бы «NaN з.» на живой кнопке.
+ */
+describe('⚠ R17-03: зачарование формы без цены — окно гасит, как сервер', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  beforeEach(() => { G.document = { createElement: (t: string) => new El(t), body: new El('body') }; });
+  afterEach(() => { delete G.document; });
+
+  it('меч 3+2 при ёмкости до 4: «✦ Редкий» погашен «Форма без цены», «✦ Магический» (катает 1+1) — с ценой', () => {
+    const input: CraftInput = { weaponClass: 'sword', hands: 1, parts: defaultParts(reg, 'sword', 1, 5)! };
+    const item = craftWeapon(reg, input, { rng: createRng(5) }).item;
+    expect(item?.affixCap, 'предусловие: скован меч 3+2').toEqual({ prefix: 3, suffix: 2 });
+    const low = new ConfigRegistry();
+    low.loadAll();
+    const bal = structuredClone(low.get('balance'));
+    bal.craft.capacityByTier = bal.craft.capacityByTier.map((n) => Math.min(n, 4));
+    delete bal.craft.formMult['3+2'];
+    delete bal.craft.formMult['2+3'];
+    low.reload({ balance: bal });
+    const save = newBotSave(low, 'warrior');
+    save.gold = 9_999_999;
+    save.inventory.push(item!);
+    const host = { ...gameLike(low, save, richStash(low)), find: (uid: string) => (uid === item!.uid ? { item: item!, inBag: true } : null) };
+    const st = initialCraftState(low, 'sword', 1);
+    st.crafted = item!;
+    const root = craftWindow({ config: low } as never, host, st) as unknown as El;
+    const rare = root.button('✦ Редкий')!;
+    expect(rare.disabled, `«${rare.textContent}» — было: зачарование по ×1`).toBe(true);
+    expect(rare.title).toMatch(/без цены/);
+    expect(rare.textContent).not.toContain('NaN');
+    const magic = root.button('✦ Магический')!;
+    expect(magic.disabled).toBe(false);
+    expect(magic.textContent).toMatch(/· \d+ з\./);
   });
 });

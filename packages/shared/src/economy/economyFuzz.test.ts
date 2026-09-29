@@ -114,6 +114,17 @@ const BUGS: { name: string; want: string; bug: (w: World, op: Op, res: Res) => v
     name: 'доска: цель, которую игра не считает', want: 'I2:quest-untracked:restock',
     bug: (w, op, res) => { const o = op.k === 'restock' && res.ok ? w.board[0]?.objectives[0] : undefined; if (o) o.type = 'talk-npc' as typeof o.type; },
   },
+  // R17-03: цена формы 3+2 пропала мимо схемы (так было до правки: ✕ в редакторе, оверрайд баланса старше §21.1) — ловит `formPrices`.
+  {
+    name: 'конфиг: у формы 3+2 пропала цена мимо схемы', want: 'rule:form-price:config',
+    bug: (w, op, res) => {
+      if (op.k !== 'config' || !res.ok) return;
+      const data = (w.reg as unknown as { data: Record<string, unknown> }).data;
+      const bal = data.balance as { craft: { formMult: Record<string, number> } };
+      const { ['3+2']: _gone, ...rest } = bal.craft.formMult;
+      data.balance = { ...bal, craft: { ...bal.craft, formMult: rest } };
+    },
+  },
 ];
 
 /** Воспроизведение известного нарушения: `it.fails`, пока не поправлено; `DM_FUZZ_SHOW_KNOWN=1` — обычный `it` (показать, как падает). */
@@ -221,6 +232,37 @@ describe('⚠ C-02: фаззер — правка заданий живьём', 
     expect(typeRefused, 'C-13: цель, которую игра не считает («talk-npc»), схема отвергает').toBeGreaterThan(0);
     expect(accepted, 'годные правки проходят').toBeGreaterThan(0);
     expect(turnedIn, 'задания сдаются').toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ⚠ R17-03: ЦЕНЫ ФОРМ ЁМКОСТИ ЖИВЬЁМ — свой профиль весов: ковка, зачарование, перекатка, добыча и конфиг чаще прочего. Хозяин жмёт ✕
+ * у строки `balance.craft.formMult` или ошибается в ключе («3 +2»): схема обязана отвергнуть каждую такую правку (форма без строки шла
+ * по ×1 — 3+2 вшестеро дешевле), пропущенную ловит `formPrices`. Законная правка — ёмкость до 4 и строки Σ5 убраны: вещам 3+2 в сумках
+ * зачарование и перекатка отказывают «Форма без цены», и за форму без цены не платит ни один шаг (`unpricedForm` в спеках).
+ */
+describe('⚠ R17-03: фаззер — правка цен форм ёмкости живьём', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  const FORMS: Partial<Record<OpKind, number>> = {
+    config: 8, craft: 14, enchant: 8, reroll: 6, lootMats: 10, loot: 4, gold: 4, forgeSalvage: 4, sketch: 1, clientSync: 1, stashMove: 2,
+  };
+  it('24 цепочки по 70 шагов: ни одного нарушения; ✕ и опечатки в formMult отвергает схема, опущенная ёмкость проходит', () => {
+    const hits: string[] = [];
+    let rowRefused = 0, rowAccepted = 0, lowered = 0, crafted = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 70, FORMS), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      for (const l of out.log) {
+        if (!l.includes('конфиг: цены форм:')) continue;
+        if (l.includes('ёмкость до 4')) { if (!l.includes('отказ схемы')) lowered++; } else if (l.includes('отказ схемы')) rowRefused++; else rowAccepted++;
+      }
+      crafted += out.stats.craft?.ok ?? 0;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(rowRefused, '✕ и опечатки доходят до схемы').toBeGreaterThan(0);
+    expect(rowAccepted, 'ни одна ✕ или опечатка в formMult не прошла схему').toBe(0);
+    expect(lowered, 'законная правка ёмкости проходит').toBeGreaterThan(0);
+    expect(crafted, 'ковка идёт').toBeGreaterThan(0);
   });
 });
 

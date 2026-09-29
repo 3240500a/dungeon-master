@@ -86,6 +86,9 @@ let seq = 0;
 function roomWith(levels: number[], gold = 10_000): { room: Room; ws: FakeWs[]; pids: string[]; saves: SaveState[] } {
   const room = new RoomCtor('R6S', cfg, { onEmpty() {}, onGrace() {}, onUngrace() {}, onFarewell() {} });
   rooms.push(room);
+  // ⭐ R17-07: тик — только шагами теста (как `room.r8server`): под нагрузкой полного прогона настоящий планировщик тикал комнату посреди
+  // `settle`, и монстр добивал тело сбежавшего в бою (1 HP) — «сбежавший» становился «погибшим со штрафом», и сторож R6-01 падал через раз.
+  room.stop();
   const ws: FakeWs[] = [], pids: string[] = [], saves: SaveState[] = [];
   for (const level of levels) {
     const charId = `char-r6s-${++seq}`;
@@ -127,6 +130,12 @@ function cornered(room: Room, pid: string): void {
   m.pos = { x: p.pos.x + 20, y: p.pos.y };
   m.aiState = 'chase';
 }
+/** ⭐ R17-07: тело ушедшего посреди боя (R13-03) — ещё в бою и живо: комнату не тикнул никто, кроме теста. */
+function bodyAlive(room: Room, charId: string): void {
+  const l = (room as unknown as { lingering: Map<string, { p: { alive: boolean } }> }).lingering.get(charId);
+  expect(l, 'тело — в бою').toBeDefined();
+  expect(l!.p.alive, 'и живо: планировщик комнату не тикал').toBe(true);
+}
 
 describe('⭐ R6-01: сбежавший из боя отключением не уходит живым на следующий узел', () => {
   it('напарник у выхода спускает, пока сбежавший в грейсе, — сбежавший похоронен со штрафом, забег снят, ждать его нечего', async () => {
@@ -137,6 +146,7 @@ describe('⭐ R6-01: сбежавший из боя отключением не 
     await room.removePlayer(a!);
     await settle();
     expect(inner(room).disconnected.get(sa!.charId)?.fled, 'ушёл посреди боя').toBe(true);
+    bodyAlive(room, sa!.charId);
     const to = nodeNow(room).edges[0]!.to;
     inner(room).movedAt = 0;
     toExit(room, b!, to);
@@ -199,6 +209,7 @@ describe('⭐ R6-01: сбежавший из боя отключением не 
       cornered(room, a!);
       await room.removePlayer(a!);
       await settle();
+      bodyAlive(room, sa!.charId);
       if (how === 'finish') {
         for (let g = 0; g < 40 && nodeNow(room).edges.length; g++) {
           inner(room).movedAt = 0;

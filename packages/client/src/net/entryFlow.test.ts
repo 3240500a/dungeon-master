@@ -34,6 +34,9 @@ class El {
 }
 
 const TOKEN = 'ab'.repeat(32);
+/** Отказы входа `run` без кода комнаты — строки сервера (`RUN_PARKED_JOIN`, `RUN_CLASH_JOIN` в `roomManager.ts`). */
+const RUN_PARKED = 'У вас незавершённый забег — продолжите или завершите его';
+const RUN_CLASH = 'У вас незавершённый забег — продолжите или завершите его, прежде чем идти в чужой';
 
 /** Поддельный `NetClient`: кадры сервера — `fire`, жизнь сокета — `open`/`close`; `server` — что сервер делает с кадром. */
 function fakeNet() {
@@ -139,6 +142,93 @@ describe('⭐ EntryFlow — вход в мир и потеря связи (об�
     c.net.fire('abandoned', {} as never);
     expect(c.text()).toContain('Кооп');
     expect(c.text()).not.toContain('Незавершённое');
+  });
+
+  // ⭐ R16-01: вход без «Продолжить» при грейсе, чей бросок стоил бы штрафа, сервер отказывает `run` (раньше бросал забег молча). Лобби об этом
+  // знать не могло (забег появился, пока оно висело) — и строка «продолжите или завершите» без таких кнопок оставляла только F5.
+  it('⭐ R16-01: «Соло» отказан `run` (висит забег) — статус забега заново и экран «Продолжить / Забросить» с причиной', () => {
+    const c = client();
+    c.start(); c.net.open();
+    c.net.fire('runStatus', { hasRun: false });
+    c.click('[data-a="solo"]');
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', fresh: true });
+    const sent = c.net.sent.length;
+    c.net.fire('error', { code: 'run', msg: 'У вас незавершённый забег — продолжите или завершите его' });
+    expect(c.net.sent.slice(sent), 'статус забега заново').toEqual([{ t: 'runStatus', token: TOKEN, charId: 'hero-1' }]);
+    c.net.fire('runStatus', { hasRun: true, roomCode: 'QWER', depth: 2 });
+    expect(c.text()).toContain('Незавершённое прохождение');
+    expect(c.text(), 'и почему').toContain('незавершённый забег');
+    c.click('[data-a="resume"]');
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+    c.net.fire('joined', {} as never);
+    expect(c.root.children).toHaveLength(0);
+  });
+
+  // ⭐ R17-05: причина отказа R16-01 — разовая строка экрана «Продолжить / Забросить», а не причина потери связи (`note`): та живёт до входа, и
+  // лобби после «Забросить» (штраф уже взят) твердило «у вас незавершённый забег» — будто бросок не удался — на каждом экране до входа.
+  it('⭐ R17-05: после «Забросить» лобби не твердит «незавершённый забег» — причина отказа разовая, не причина потери связи', () => {
+    const c = client();
+    c.start(); c.net.open();
+    c.net.fire('runStatus', { hasRun: false });
+    c.click('[data-a="solo"]');
+    c.net.fire('error', { code: 'run', msg: RUN_PARKED });
+    c.net.fire('runStatus', { hasRun: true, roomCode: 'QWER', depth: 2 });
+    expect(c.text()).toContain('Незавершённое прохождение');
+    expect(c.text(), 'и почему').toContain(RUN_PARKED);
+    c.click('[data-a="abandon"]');
+    expect(c.net.sent.at(-1)).toEqual({ t: 'abandon', token: TOKEN, charId: 'hero-1' });
+    c.net.fire('abandoned', {} as never);
+    expect(c.text()).toContain('Кооп');
+    expect(c.text(), 'было: «… продолжите или завершите его» в лобби сразу после броска').not.toContain('незавершённый забег');
+    expect(c.flow.lostNote, 'было: причина отказа жила как причина потери связи до следующего входа').toBe('');
+    c.net.fire('runStatus', { hasRun: true, depth: 1 });
+    expect(c.text(), 'и не всплывает на следующем экране «Продолжить»').not.toContain('незавершённый забег');
+
+    // Статус заново сказал «забега нет» (кончился, пока спрашивали) — лобби без строки, и позже она не всплывает.
+    const d = client('hero-2');
+    d.start(); d.net.open();
+    d.net.fire('runStatus', { hasRun: false });
+    d.click('[data-a="solo"]');
+    d.net.fire('error', { code: 'run', msg: RUN_PARKED });
+    d.net.fire('runStatus', { hasRun: false });
+    expect(d.text()).toContain('Кооп');
+    expect(d.text()).not.toContain('незавершённый забег');
+    d.net.fire('runStatus', { hasRun: true, depth: 1 });
+    expect(d.text()).not.toContain('незавершённый забег');
+
+    // Причина потери связи после «Забросить» тоже устарела: лобби — после броска, а не «после обрыва».
+    const e = client('hero-3');
+    enterWorld(e);
+    e.net.close(4009);
+    e.net.open();
+    e.net.fire('runStatus', { hasRun: true, roomCode: 'ABCD', depth: 2 });
+    expect(e.text()).toContain('Сессия устарела');
+    e.click('[data-a="abandon"]');
+    e.net.fire('abandoned', {} as never);
+    expect(e.text()).toContain('Кооп');
+    expect(e.text()).not.toContain('Сессия устарела');
+  });
+
+  // ⭐ R17-05: вход ПО КОДУ сервер отказывает `run` без кода комнаты так же, как «Соло»: грейс героя держит забег за штраф (`RUN_PARKED_JOIN`) или
+  // комната кода — в подземелье чужого забега, а у героя свой (`RUN_CLASH_JOIN`). Ветка R16-01 смотрела на код ВХОДА — и по коду игрок оставался в
+  // лобби со строкой «продолжите или завершите» без таких кнопок (выход — угадать «Соло» или F5).
+  it('⭐ R17-05: вход по коду отказан `run` без кода комнаты (висит свой забег) — статус забега и «Продолжить / Забросить» с причиной', () => {
+    for (const msg of [RUN_PARKED, RUN_CLASH]) {
+      const c = client();
+      c.start(); c.net.open();
+      c.net.fire('runStatus', { hasRun: false });
+      c.screen()!.querySelector('.code').value = 'A7K3F9XY';
+      c.click('[data-a="join"]');
+      expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', roomCode: 'A7K3F9XY' });
+      const sent = c.net.sent.length;
+      c.net.fire('error', { code: 'run', msg });
+      expect(c.net.sent.slice(sent), `${msg}: было — ничего, лобби «Кооп» со строкой и без кнопок`).toEqual([{ t: 'runStatus', token: TOKEN, charId: 'hero-1' }]);
+      c.net.fire('runStatus', { hasRun: true, depth: 2 });
+      expect(c.text()).toContain('Незавершённое прохождение');
+      expect(c.text(), 'и почему').toContain(msg);
+      c.click('[data-a="resume"]');
+      expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+    }
   });
 
   it('незавершённый забег без кода комнаты (из сейва) — без пустого «комната »', () => {
@@ -813,6 +903,40 @@ describe('⭐ C-05, C-08: «Продолжить», отказанный из-з
       expect(c.text(), code).toContain('Кооп');
       expect(c.text(), code).not.toContain('Незавершённое прохождение');
       expect(c.net.urls, `${code}: без маршрута — к той же ноде не кружим`).toHaveLength(1);
+    }
+  });
+
+  // ⭐ R17-05: кластер — к другу по коду поток подключился к ноде его комнаты (плашка «Подключение…»), и там вход отказан `run` без кода комнаты
+  // (висит свой забег): было — `refused` → лобби со строкой «продолжите или завершите» без таких кнопок. Теперь — статус забега у той же ноды.
+  it('⭐ R17-05: кластер — вход по коду (и «Соло») отказан `run` без кода комнаты — статус забега и «Продолжить / Забросить», а не лобби со строкой', async () => {
+    for (const byCode of [true, false]) {
+      for (const msg of [RUN_PARKED, RUN_CLASH]) {
+        const gw = gateway();
+        const c = client('hero-1', { route: gw.route });
+        c.start();
+        await vi.advanceTimersByTimeAsync(0);
+        c.net.open(); c.net.fire('runStatus', { hasRun: false });
+        if (byCode) {
+          c.screen()!.querySelector('.code').value = HOLDER;
+          c.click('[data-a="join"]');
+          await vi.advanceTimersByTimeAsync(0);
+          expect(c.net.urls).toEqual([NODE0, NODE1]);
+          c.net.open();
+          expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', roomCode: HOLDER });
+        } else {
+          c.click('[data-a="solo"]');
+          expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', fresh: true });
+        }
+        const sent = c.net.sent.length;
+        c.net.fire('error', { code: 'run', msg });
+        expect(c.net.sent.slice(sent), `${byCode}/${msg}: было (по коду) — ничего, лобби «Кооп» со строкой и без кнопок`).toEqual([{ t: 'runStatus', token: TOKEN, charId: 'hero-1' }]);
+        c.net.fire('runStatus', { hasRun: true, depth: 2 });
+        expect(c.text()).toContain('Незавершённое прохождение');
+        expect(c.text(), 'и почему').toContain(msg);
+        c.click('[data-a="resume"]');
+        expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+        expect(gw.calls, 'маршрут — только тот, что к ноде комнаты').toHaveLength(byCode ? 2 : 1);
+      }
     }
   });
 
