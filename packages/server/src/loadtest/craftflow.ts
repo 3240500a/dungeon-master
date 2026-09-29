@@ -203,6 +203,30 @@ class Conn {
   }
 }
 
+/** Кузница в телеметрии героя (`play_sessions`) — суммой по его сессиям; `sessions`/`open` — сколько строк и сколько без `ended_at`. */
+interface ForgeTelemetry { crafted: number; melted: number; salvaged: number; enchanted: number; sessions: number; open: number }
+/**
+ * ⭐ E2E 29.09 (шестой прогон): телеметрия героя, когда она сойдётся с ожидаемым (`want` — суммы кузницы) и все его сессии закрыты. Строку
+ * сессия пишет при снятии, не дожидаясь прощальной записи сейва, — одно чтение сразу после выхода её не видит. Ждём до `ms`; `ok` — сошлась.
+ */
+async function telemetryOf(db: pg.Pool, charId: string, want: Partial<Record<'crafted' | 'melted' | 'salvaged' | 'enchanted', number>>,
+  ms = 10_000): Promise<{ ok: boolean; row?: ForgeTelemetry }> {
+  const end = Date.now() + ms;
+  let row: ForgeTelemetry | undefined;
+  for (;;) {
+    const r = (await db.query<Record<keyof ForgeTelemetry, string>>(
+      `SELECT sum(crafted) crafted, sum(melted) melted, sum(salvaged) salvaged, sum(enchanted) enchanted, count(*) sessions,
+              count(*) FILTER (WHERE ended_at IS NULL) open FROM play_sessions WHERE char_id = $1`, [charId])).rows[0];
+    row = r && {
+      crafted: Number(r.crafted), melted: Number(r.melted), salvaged: Number(r.salvaged), enchanted: Number(r.enchanted),
+      sessions: Number(r.sessions), open: Number(r.open),
+    };
+    const ok = !!row && row.open === 0 && Object.entries(want).every(([k, n]) => row![k as keyof ForgeTelemetry] === n);
+    if (ok || Date.now() > end) return { ok, row };
+    await sleep(200);
+  }
+}
+
 /** Найденное оружие, которое кузнец разберёт в журнал: найдено, не уник, не скованное, разбор возможен. */
 function foundWeapon(reg: ConfigRegistry, save: SaveState | undefined): Item | undefined {
   return save?.inventory.find((i) => i.kind === 'weapon' && !i.parts && i.rarity !== 'unique'
@@ -507,11 +531,12 @@ async function main(): Promise<void> {
     check(evFind.includes('gone:salvage') && (await loc(find.uid)) === 'world', `леджер находки: ${evFind.join(' → ')}`);
     check(evCraft[0] === 'created:craft' && evCraft.includes('changed:enchant') && evCraft.at(-1) === 'gone:melt' && (await loc(rc.uid!)) === 'world',
       `леджер скованной: ${evCraft.join(' → ')}`);
-    const tel = (await db.query<{ crafted: string; melted: string; salvaged: string; enchanted: string }>(
-      `SELECT sum(crafted) crafted, sum(melted) melted, sum(salvaged) salvaged, sum(enchanted) enchanted FROM play_sessions WHERE char_id = $1`,
-      [character.charId])).rows[0];
-    check(Number(tel?.crafted) === 1 && Number(tel?.melted) === 1 && Number(tel?.salvaged) === 1 && Number(tel?.enchanted) === 1,
-      `телеметрия: сковано ${tel?.crafted}, переплавлено ${tel?.melted}, разобрано ${tel?.salvaged}, зачаровано ${tel?.enchanted}`);
+    // ⭐ E2E 29.09 (шестой прогон): строку телеметрии сессия пишет, когда её снимают, — рядом с прощальной записью, а сейв в базе совпал
+    // с последним `saveUpdate` ещё ДО выхода (запись команды): одно чтение сразу за ним видело только сессию охоты (кластер — «сковано 0»,
+    // а `/metrics` нод — ровно состоявшееся). Строку ждём; не легла за 10 с или легла не та — провал.
+    const tel = await telemetryOf(db, character.charId, { crafted: 1, melted: 1, salvaged: 1, enchanted: 1 });
+    check(tel.ok, `телеметрия: сковано ${tel.row?.crafted}, переплавлено ${tel.row?.melted}, разобрано ${tel.row?.salvaged}, зачаровано ${tel.row?.enchanted}`
+      + `, сессий ${tel.row?.sessions}, открытых ${tel.row?.open}`);
 
     // ── 6. Два героя одного аккаунта — один кошелёк на одну ковку ────────────
     // Сырьё общее (сундук аккаунта), герои — в разных комнатах. Обе заявки уходят в один миг: сковаться обязана ровно одна,

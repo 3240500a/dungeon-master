@@ -5,8 +5,8 @@
 
 | Ключ | Файл | Назначение | Основные поля |
 |---|---|---|---|
-| balance | data/balance.json | глобальный баланс | xpTable (кап ~90), pointsPerLevel, masteryPointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, passiveRespecCostPct (комиссия сброса мастерства = доля вложенного золота), **skillRespecCostPerPoint** (комиссия сброса скилов = золото за вложенное очко), inventory(cols,rows), autoPickup[], passiveRankCostMult |
-| classes | data/classes.json | стартовые классы (архетипы) | id, name, startAttributes, startWeaponId, sprite, affinity[], derived (per-класс масштаб HP/маны/выносливости от атрибутов) |
+| balance | data/balance.json | глобальный баланс | xpTable (кап ~90; 0, 0, дальше строго растёт, числа конечные ≥ 0 — R20-05), pointsPerLevel, masteryPointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, passiveRespecCostPct (комиссия сброса мастерства = доля вложенного золота), **skillRespecCostPerPoint** (комиссия сброса скилов = золото за вложенное очко), inventory(cols,rows), autoPickup[], passiveRankCostMult |
+| classes | data/classes.json | стартовые классы (архетипы) | id, name, startAttributes (целые ≥ 0, R18-07; герой помнит их копией — правка строки старых героев не догоняет; оверрайд из базы старше R18-07 с дробью или минусом при сборке приводится вниз до целого, не ниже нуля — `upgradeStoredOverride`, R20-08), startWeaponId, sprite, affinity[], derived (per-класс масштаб HP/маны/выносливости от атрибутов) |
 | items.base | data/items-base.json | базы предметов | id, slot (incl. belt), weaponType?, baseStats, requirements, itemLevel, gridW, gridH |
 | affixes | data/affixes.json | префиксы/суффиксы | id, kind, stat, tiers[min,max,ilvl] |
 | uniques | data/uniques.json | уникальные предметы | id, baseId, fixedAffixes |

@@ -137,6 +137,19 @@ describe('R5-16: подписка на кадр снимается своей о
     expect(got).toEqual(['a', 'b', 'b']);
     net.close();
   });
+
+  it('⭐ R19-02: у открытия и закрытия сокета — тоже своя отписка: соседний колбэк (поток входа другого владельца) слышит дальше', () => {
+    const net = new NetClient();
+    const got: string[] = [];
+    const offOpen = net.onOpen(() => got.push('open-a'));
+    net.onOpen(() => got.push('open-b'));
+    const offClose = net.onClose((c) => got.push(`close-a ${c}`));
+    net.onClose((c) => got.push(`close-b ${c}`));
+    offOpen(); offClose(); offClose();
+    net.connect('ws://x/ws');
+    const ws = FakeWs.all[0]!; ws.open(); ws.drop(4009);
+    expect(got).toEqual(['open-b', 'close-b 4009']);
+  });
 });
 
 describe('⭐ R4-13: маршрут к ноде — ответ гейтвея глазами браузера', () => {

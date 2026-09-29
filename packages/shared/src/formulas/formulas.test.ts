@@ -24,6 +24,23 @@ describe('xp', () => {
     expect(xpForLevel(2, t)).toBe(t[2]);
     expect(xpForLevel(30, t)).toBeGreaterThan(xpForLevel(29, t));
   });
+  // ⚠ R20-05: негодную кривую отвергает схема; формула — вторая линия: по ступеньке (порог не выше прежнего) она не лезет, иначе кривая,
+  // прошедшая мимо схемы, подняла бы героя 10-го с одного очка опыта до 20-го. На годной кривой — то же, что прежде.
+  it('R20-05: по ступеньке кривой (мимо схемы) уровень не лезет', () => {
+    const typo = t.map((v, i) => (i >= 11 && i <= 20 ? 100 : v));
+    expect(levelForXp(t[10]! + 1, typo), 'ступенька xp[11..20] = 100').toBe(10);
+    const dup = t.map((v, i) => (i === 30 ? t[29]! : v));
+    expect(levelForXp(t[31]!, dup), 'повтор порога').toBe(29);
+    const neg = t.map((v, i) => (i === 5 ? -1 : v));
+    expect(levelForXp(t[6]!, neg), 'минус').toBe(4);
+    const nan = t.map((v, i) => (i === 5 ? Number.NaN : v));
+    expect(levelForXp(t[6]!, nan), 'NaN').toBe(4);
+    for (const xp of [0, 1, t[2]! - 1, t[2]!, t[10]!, t[10]! + 1, t[50]! - 1, Number.MAX_SAFE_INTEGER]) {
+      let want = 1;
+      for (let i = 2; i < t.length && xp >= t[i]!; i++) want = i;
+      expect(levelForXp(xp, t), `годная кривая, опыт ${xp}`).toBe(want);
+    }
+  });
 });
 
 describe('stats', () => {

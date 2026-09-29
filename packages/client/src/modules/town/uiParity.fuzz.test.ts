@@ -1,13 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import type { AccountStash, Item, SaveState } from '@dm/shared';
-import { genOps, runSeq, shrinkSeq, type Hit, type Op } from './uiParity.fuzzKit.js';
+import { genOps, runSeq, setBuildHook, setSceneHook, shrinkSeq, type Hit, type Op } from './uiParity.fuzzKit.js';
+import { OnlineScene } from '../../scenes/OnlineScene.js';
 
 /**
  * ⭐ B3: ФАЗЗЕР ПАРИТЕТА «ОКНО ≡ СЕРВЕР» (города). Модель и инварианты — `uiParity.fuzzKit.ts`: случайные сейвы, сундуки, журналы,
  * прилавки и живые правки конфига; на каждом шаге-окне НАСТОЯЩИЕ окна клиента (верстак, окно ковки, эскизы, лавка, «Купить»
- * кузницы, меню инвентаря) говорят, что горит, почём и что выйдет, — и клик уходит НАСТОЯЩИМ `App` / `NetClient` в НАСТОЯЩУЮ
- * `Room.handleCmd` (мок базы ниже — маленькая честная база, как у `room.economyFuzz.test.ts`). Нарушение печатается с сидом и
+ * кузницы, меню инвентаря, кнопка сброса атрибутов мастера — R19-07) говорят, что горит, почём и что выйдет, — и клик уходит
+ * НАСТОЯЩИМ `App` / `NetClient` в НАСТОЯЩУЮ `Room.handleCmd` (мок базы ниже — маленькая честная база, как у `room.economyFuzz.test.ts`);
+ * нечётные сиды — через настоящую 2D-сцену `OnlineScene` поверх `App` (R19-02, подмены Phaser ниже). Нарушение печатается с сидом и
  * СЖАТОЙ цепочкой шагов (выброшено всё, без чего оно не воспроизводится).
  *
  * Умолчание — 36 цепочек по 30 шагов (~10 с) на полный прогон. Больше — `DM_FUZZ_SEEDS=N` (с `DM_FUZZ_FROM` — первый сид, `DM_FUZZ_OPS`
@@ -68,6 +70,45 @@ vi.mock('../../../../server/src/db/db.js', () => ({
 }));
 vi.mock('../../../../server/src/db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
 /**
+ * ⭐ R18-08: ДЕПЛОЙ СО СМЕНОЙ КОДА ЦЕН (шаг `deploy`, инвариант (5) в `uiParity.fuzzKit.ts`). `server` — штамп сборки сервера в `joined.build`
+ * (null — настоящий, `serverBuild`); `drift` — формулы цен старого бандла вкладки: подмена `forgeGold` и `shopSellPrice` индекса `@dm/shared`
+ * видна окнам клиента (верстак, «+N» лавки), а сервер считает их внутри `townActions.ts`, мимо индекса, — по-настоящему. `stamp: false` — вкладка
+ * без штампа сборки (как до правки): фаззер обязан поймать молчаливый круг отказов (тест «зубов» ниже, `DM_FUZZ_SELFTEST=r1808` — на весь прогон).
+ */
+const buildHook = vi.hoisted(() => ({
+  server: null as string | null,
+  drift: null as null | { forge: number; sell: number },
+  stamp: process.env.DM_FUZZ_SELFTEST !== 'r1808',
+}));
+/**
+ * ⭐ R19-07, самопроверка сторожа сброса атрибутов: `respecHook.old` возвращает прежнее гашение кнопки мастера (только «нечего сбрасывать» и
+ * золото — без надетого, что держится на вложенных очках). Подмена `respecRefusal` индекса видна кнопке, а ядро `respec` сервера зовёт свои
+ * проверки внутри `townActions.ts` — по-настоящему. Тест «зубов» ниже включает её на своих цепочках; `DM_FUZZ_SELFTEST=r1907` — на весь прогон.
+ */
+const respecHook = vi.hoisted(() => ({ old: process.env.DM_FUZZ_SELFTEST === 'r1907' }));
+vi.mock('@dm/shared', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@dm/shared')>();
+  const forgeGold: typeof real.forgeGold = (reg, item, op) => {
+    const p = real.forgeGold(reg, item, op);
+    return buildHook.drift ? Math.max(1, Math.floor(p * buildHook.drift.forge)) : p;
+  };
+  const shopSellPrice: typeof real.shopSellPrice = (reg, item) => {
+    const p = real.shopSellPrice(reg, item);
+    return buildHook.drift ? Math.ceil(p * buildHook.drift.sell) + 1 : p;
+  };
+  const respecRefusal: typeof real.respecRefusal = (reg, save, maxGold) => {
+    if (!respecHook.old) return real.respecRefusal(reg, save, maxGold);
+    if (real.attrRespecRefund(reg, save) === 0) return 'Атрибуты не вложены';
+    return save.gold < reg.get('balance').respecCost ? 'Недостаточно золота' : null;
+  };
+  return { ...real, forgeGold, shopSellPrice, respecRefusal };
+});
+vi.mock('../../../../server/src/buildStamp.js', async (importOriginal) => {
+  const real = await importOriginal<{ serverBuild: () => string }>();
+  return { ...real, serverBuild: () => buildHook.server ?? real.serverBuild() };
+});
+setBuildHook(buildHook);
+/**
  * ⭐ R16-08, самопроверка сторожа пупсика: `paperdollHook.old` возвращает прежнюю пред-проверку (требования — сняв с героя только вещь
  * целевой ячейки, без второй руки под двуручником, без прочего надетого, без места под снятое). Тест «зубов» ниже включает её на своей
  * цепочке; `DM_FUZZ_SELFTEST=r1608` — на весь прогон (фаззер обязан найти `parity:enabled-refused:paperdoll`).
@@ -84,6 +125,55 @@ vi.mock('../inventory/equip.js', async (importOriginal) => {
     return meetsRequirements(item, finalAttributes(save.attributes, modifiersFromItems(worn))) ? cmd : 'Недостаточно атрибутов';
   };
   return { ...real, paperdollEquip };
+});
+
+/**
+ * ⭐ R19-02: 2D-КЛИЕНТ В ПРОГОНЕ — настоящая сцена `OnlineScene` (нечётные сиды, `SceneHook` в `uiParity.fuzzKit.ts`). Phaser и модули-спрайты
+ * подменены, как в `scenes/OnlineScene.test.ts`; маршрута у гейтвея нет (сокет открыт прогоном). `scene2d.legacyOff` — самопроверка сторожа:
+ * прежний вход в сцену, снимавший обработчики кадров ОПТОМ (`NetClient.off(t)`), а с ними — подписку `App` на штамп сборки (R18-08). Тест «зубов»
+ * ниже включает её на своих цепочках; `DM_FUZZ_SELFTEST=r1902` — на весь прогон (фаззер обязан найти `hint:*` у 2D-цепочек).
+ */
+const scene2d = vi.hoisted(() => ({ legacyOff: process.env.DM_FUZZ_SELFTEST === 'r1902' }));
+vi.mock('phaser', () => ({
+  default: {
+    Scene: class { constructor(_key?: string) { } },
+    Input: { Keyboard: { KeyCodes: { E: 69 }, JustDown: () => false } },
+    Scenes: { Events: { SHUTDOWN: 'shutdown' } },
+    Math: { Distance: { Between: (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by) } },
+  },
+}));
+vi.mock('../movement/player.js', () => ({
+  Player: class { x = 0; y = 0; cameraTarget = {}; setPos(): void { } update(): void { } destroy(): void { } },
+}));
+vi.mock('../../net/netDriver.js', () => ({
+  NetDriver: class {
+    setMyId(): void { } seedPeers(): void { } buildMonsters(): void { } resetInterpolation(): void { }
+    resetWorld(): void { } update(): void { } destroy(): void { }
+  },
+}));
+vi.mock('../../world/tileWorld.js', () => ({ renderGrid: () => ({ walls: { destroy: () => { } }, objects: [] }) }));
+vi.mock('../../world/fogOfWar.js', () => ({ FogOfWar: class { revealSpawn(): void { } destroy(): void { } update(): void { } } }));
+vi.mock('../../world/torch.js', () => ({ Torch: class { x = 0; y = 0; flicker = 1; destroy(): void { } update(): void { } } }));
+vi.mock('../../world/lighting.js', () => ({ Lighting: class { destroy(): void { } update(): void { } } }));
+vi.mock('../../net/netClient.js', async (orig) => ({ ...(await orig<typeof import('../../net/netClient.js')>()), routeToNode: undefined }));
+/** Прежний вход в 2D-сцену снимал эти кадры оптом (до R19-02). */
+const LEGACY_OFF = ['joined', 'areaChanged', 'doorOpened', 'died', 'voteStart', 'voteUpdate', 'voteEnd', 'runStatus', 'abandoned', 'error'];
+setSceneHook({
+  mount: (app) => {
+    if (scene2d.legacyOff) for (const t of LEGACY_OFF) (app.net as unknown as { handlers: Map<string, unknown> }).handlers.delete(t);
+    const chain: unknown = new Proxy(() => chain, { get: (_t, k) => (k === 'then' ? undefined : chain), apply: () => chain });
+    const scene = new OnlineScene() as unknown as { create(): void };
+    let shutdown: (() => void) | undefined;
+    Object.assign(scene, {
+      game: { registry: { get: () => app } },
+      input: { keyboard: { addKey: () => ({}) }, activePointer: {} },
+      add: chain, cameras: { main: { startFollow: () => { }, setZoom: () => { } } }, textures: { exists: () => false }, time: { now: 0 },
+      scene: { start: () => { }, stop: () => { }, isActive: () => true, launch: () => { } },
+      events: { once: (_e: string, cb: () => void) => { shutdown = cb; } },
+    });
+    scene.create();
+    return () => shutdown?.();
+  },
 });
 
 /**
@@ -177,6 +267,42 @@ const FIXED: Known[] = [
     what: 'лавка: базу зелья выключили живьём — после покупки другого зелья оно оставалось на прилавке с ценником, а сервер отказывал «нет в ассортименте»',
     repro: [{ seed: 9100067, ops: [op('config', 49817727), op('buy', 1421943494), op('buy', 648701762)], key: /^parity:enabled-refused:buy:rule$/ }],
   },
+  {
+    // Шов: штамп сборки (`buildStampOf` исходников shared: `__DM_BUILD__` бандла ↔ `joined.build` сервера) и `App.rereadCannotHelp` у отказа
+    // «Цена изменилась». Нашёл обзор (R18-08), цепочки — фаззер с вкладкой без штампа (`buildHook.stamp`, тест «зубов» ниже).
+    id: 'R18-08', key: /^hint:/,
+    what: 'деплой сменил код цен при том же конфиге: старая вкладка переподключилась сама и кликала в «Цена изменилась» (перечитывание — 304), ни разу не услышав «перезагрузите»',
+    repro: [
+      { seed: 4, ops: [op('deploy', 2001502154)], key: /^hint:deploy-untold$/ },
+      { seed: 39, ops: [op('deploy', 1209977487), op('sell', 602148880)], key: /^hint:silent-price-loop:sell$/ },
+      {
+        seed: 5,
+        ops: [op('fund', 726297956), op('lootCrafted', 1691340884), op('craft', 650839500), op('craft', 670743862), op('deploy', 223633339), op('bench', 1448082675)],
+        key: /^hint:silent-price-loop:bench$/,
+      },
+    ],
+  },
+  {
+    // Шов: подписки сети снимает только их владелец (`NetClient.on` → отписка; `off`/`clearLifecycle` убраны), 2D-сцена — свои (`offNet`).
+    // Нашёл обзор (R19-02), цепочки — фаззер с 2D-сценой (нечётные сиды) и прежним входом в неё (`scene2d.legacyOff`, тест «зубов» ниже).
+    id: 'R19-02', key: /^hint:/,
+    what: '2D-сцена на входе снимала обработчики кадров оптом — и подписку App на штамп сборки: деплой со сменой кода цен 2D-вкладке не говорили',
+    repro: [
+      { seed: 5, ops: [op('deploy', 223633339)], key: /^hint:deploy-untold$/ },
+      { seed: 39, ops: [op('deploy', 1209977487), op('sell', 602148880)], key: /^hint:silent-price-loop:sell$/ },
+    ],
+  },
+  {
+    // Шов: `respecRefusal` — проверки ядра `respec` без записи, одно решение для сервера и кнопки «Сбросить атрибуты» мастера.
+    // Нашёл обзор (R19-07), цепочки — фаззер с прежним гашением кнопки (`respecHook.old`, тест «зубов» ниже).
+    id: 'R19-07', key: /^(parity:(enabled-refused|disabled-accepted):respec|ui:respec)/,
+    what: 'кнопка сброса атрибутов горела и спрашивала подтверждение, когда надетое держится на вложенных очках, — сервер отказывал «сперва сними её»',
+    repro: [
+      { seed: 4, ops: [op('respec', 404)], key: /^parity:enabled-refused:respec:После сброса/ },
+      { seed: 3, ops: [op('respec', 404)], key: /^parity:enabled-refused:respec:После сброса/ },
+      { seed: 1, ops: [op('bench', 1043863146), op('craft', 419498659), op('goldEdge', 501493848), op('respec', 1035640358)], key: /^parity:enabled-refused:respec:После сброса/ },
+    ],
+  },
 ];
 
 interface Found { seed: number; ops: Op[]; hit: Hit }
@@ -232,6 +358,11 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: паритет «окно
     expect(sum(/^bench:.*:on:ok$/), 'верстак: исполненные карточки').toBeGreaterThan(SEEDS);
     expect(sum(/^craft:on:ok$/), 'ковка: скованные вещи').toBeGreaterThan(0);
     expect(sum(/^(buy|sell):on:ok$/), 'лавка: сделки').toBeGreaterThan(SEEDS / 2);
+    // ⭐ R18-08: инвариант (5) не холостой — были отказы ценой, которые перечитывание не лечит (деплой со сменой кода цен).
+    if (buildHook.stamp) expect(sum(/^hint:owed$/), 'деплой со сменой кода цен: отказы, за которыми обязано «перезагрузите»').toBeGreaterThan(0);
+    // ⭐ R19-02: цепочки шли и через настоящую 2D-сцену; ⭐ R19-07: кнопка сброса атрибутов и горела, и сервер по ней сбрасывал.
+    expect(sum(/^client:2d$/), '2D-сцена OnlineScene').toBeGreaterThan(0);
+    expect(sum(/^respec:on:ok$/), 'сброс атрибутов: исполненные').toBeGreaterThan(0);
     const unknown = [...found.keys()].filter((k) => !knownOf(k));
     expect(unknown, shown.join('\n\n')).toEqual([]);
   });
@@ -277,6 +408,61 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || paperdollHook.old)('R16-0
         expect(out.hits.map((h) => h.key), out.log.join(' ⏎ ')).toContainEqual(expect.stringMatching(r.key));
       } finally {
         paperdollHook.old = false;
+      }
+    });
+  }
+});
+
+/**
+ * ⭐ R18-08: У ИНВАРИАНТА (5) ЕСТЬ ЗУБЫ. Те же цепочки с вкладкой БЕЗ штампа сборки (`buildHook.stamp = false` — как до правки: сравнивать
+ * вкладке нечего) дают своё нарушение: деплой прошёл молча, отказы ценой при серверном конфиге — без «перезагрузите».
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || !buildHook.stamp)('R18-08: вкладка без штампа сборки ловится своим ключом', () => {
+  for (const [i, r] of FIXED.find((k) => k.id === 'R18-08')!.repro.entries()) {
+    it(`R18-08.${i + 1}: ${r.key.source}`, async () => {
+      buildHook.stamp = false;
+      try {
+        const out = await runSeq(db, cryptoHook, r.seed, r.ops);
+        expect(out.hits.map((h) => h.key), out.log.join(' ⏎ ')).toContainEqual(expect.stringMatching(r.key));
+      } finally {
+        buildHook.stamp = true;
+      }
+    });
+  }
+});
+
+/**
+ * ⭐ R19-02: У 2D-РЕЖИМА ПРОГОНА ЕСТЬ ЗУБЫ. Те же цепочки (нечётные сиды — через 2D-сцену) с прежним входом в неё (`scene2d.legacyOff`: обработчики
+ * кадров сняты оптом, как `NetClient.off(t)`) дают своё нарушение: подписка `App` на штамп сборки снята, деплой и отказы ценой — молча.
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || scene2d.legacyOff)('R19-02: прежний вход в 2D-сцену ловится своим ключом', () => {
+  for (const [i, r] of FIXED.find((k) => k.id === 'R19-02')!.repro.entries()) {
+    it(`R19-02.${i + 1}: ${r.key.source}`, async () => {
+      scene2d.legacyOff = true;
+      try {
+        const out = await runSeq(db, cryptoHook, r.seed, r.ops);
+        expect(out.log[0], 'цепочка идёт через 2D-сцену').toMatch(/2D-сцена/);
+        expect(out.hits.map((h) => h.key), out.log.join(' ⏎ ')).toContainEqual(expect.stringMatching(r.key));
+      } finally {
+        scene2d.legacyOff = false;
+      }
+    });
+  }
+});
+
+/**
+ * ⭐ R19-07: У СТОРОЖА СБРОСА АТРИБУТОВ ЕСТЬ ЗУБЫ. Те же цепочки с прежним гашением кнопки (`respecHook.old`: только «нечего сбрасывать» и золото)
+ * дают своё нарушение: кнопка горит, а сервер отказывает «После сброса не хватит атрибутов на «…» — сперва сними её».
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || respecHook.old)('R19-07: прежнее гашение кнопки сброса ловится своим ключом', () => {
+  for (const [i, r] of FIXED.find((k) => k.id === 'R19-07')!.repro.entries()) {
+    it(`R19-07.${i + 1}: ${r.key.source}`, async () => {
+      respecHook.old = true;
+      try {
+        const out = await runSeq(db, cryptoHook, r.seed, r.ops);
+        expect(out.hits.map((h) => h.key), out.log.join(' ⏎ ')).toContainEqual(expect.stringMatching(r.key));
+      } finally {
+        respecHook.old = false;
       }
     });
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ConfigRegistry, allocAttr, newCharacterSave, type SaveState, type TownCommand } from '@dm/shared';
+import { ConfigRegistry, allocAttr, newCharacterSave, respec, unequip, type SaveState, type TownCommand } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { respecAttrsButton } from './respecAttrs.js';
 
@@ -90,5 +90,45 @@ describe('⚠ R6-11: кнопка сброса атрибутов', () => {
     answer({ ok: false, reason: 'Недостаточно золота' });
     await Promise.resolve(); await Promise.resolve();
     expect(logs).toEqual(['Не вышло: Недостаточно золота']);
+  });
+
+  /**
+   * ⭐ R19-07: «ГОРИТ ⇒ СЕРВЕР СБРОСИТ». Кнопка смотрела только на возврат и золото, а ядро `respec` отказывает и тогда, когда надетое держится
+   * на вложенных очках (R4-08): воин вложил очки в Силу ради оружия — кнопка горела, спрашивала «Вернётся 45 очк., цена 500 зол.», а в лог
+   * приходило «Не вышло: После сброса не хватит атрибутов на «…» — сперва сними её». Теперь погашена, и подсказка — та же причина, что у сервера.
+   */
+  it('⭐ R19-07: надетое держится на вложенных очках — погашена с причиной сервера, команды нет; снял вещь — снова горит', () => {
+    const save = newCharacterSave(reg, 'warrior', 'Силач', 'r1907-c1');
+    save.gold = cost * 10;
+    save.level = 10;
+    save.unspentAttributePoints = 45;
+    expect(allocAttr(save, 'strength', 45).ok).toBe(true);
+    const weapon = save.equipment.weapon!;
+    weapon.requirements = { ...weapon.requirements, strength: save.attributes.strength };   // оружие, ради которого вкладывал
+    const server = respec(reg, structuredClone(save), cost);
+    expect(server.ok, 'ядро отказывает — вещь без опоры').toBe(false);
+    const { app, sent } = fakeApp(save);
+    const b = respecAttrsButton(app) as unknown as El;
+    expect(b.disabled, 'было: горела — и сброс кончался отказом').toBe(true);
+    expect(b.title, 'подсказка — причина сервера').toBe(server.reason);
+    b.click();
+    expect(sent, 'ни вопроса, ни команды').toEqual([]);
+    expect(asked).toBe(0);
+    expect(unequip(reg, save, 'weapon').ok).toBe(true);
+    const again = respecAttrsButton(app) as unknown as El;
+    expect(again.disabled, 'вещь снята — сбрасывать можно').toBe(false);
+    expect(respec(reg, structuredClone(save), cost).ok, 'и сервер сбросит').toBe(true);
+    again.click();
+    expect(sent).toEqual([{ cmd: 'respec', maxGold: cost }]);
+  });
+
+  it('R19-07: не хватает золота — погашена с причиной сервера', () => {
+    const save = newCharacterSave(reg, 'warrior', 'Бедняк', 'r1907-c2');
+    save.gold = cost - 1;
+    save.unspentAttributePoints = 3;
+    expect(allocAttr(save, 'vitality', 3).ok).toBe(true);
+    const b = respecAttrsButton(fakeApp(save).app) as unknown as El;
+    expect(b.disabled).toBe(true);
+    expect(b.title).toBe(respec(reg, structuredClone(save), cost).reason);
   });
 });

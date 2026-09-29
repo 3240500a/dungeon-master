@@ -1,4 +1,4 @@
-import { attrRespecRefund } from '@dm/shared';
+import { attrRespecRefund, respecRefusal } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { button } from '../../ui/kit.js';
 
@@ -10,12 +10,16 @@ const inFlight = new WeakSet<object>();
  * `attrRespecRefund` — то же число, по которому отказывает ядро) или не хватает золота; спрашивает подтверждение, как сбросы
  * скилов и мастерств; пока команда в полёте — погашена. Окно перерисовывается только по `saveUpdate`, и двойной клик раньше
  * уходил двумя командами: второй платил 500 за ничто.
+ * ⭐ R19-07: горит ⇒ сервер сбросит — гашение по `respecRefusal`, тем же проверкам и в том же порядке, что у ядра `respec` (и надетое,
+ * что держится на вложенных очках, R4-08); подсказка — причина сервера. Раньше кнопка смотрела только на возврат и золото.
  */
 export function respecAttrsButton(app: App): HTMLButtonElement {
   const cost = app.config.get('balance').respecCost;
   const save = app.state!.save;
   const refund = attrRespecRefund(app.config, save);
-  const blocked = (): boolean => inFlight.has(app) || refund === 0 || save.gold < cost;
+  // Цена кнопки — согласие команды (`maxGold`): отказ проверяется с ней, как на сервере.
+  const refusal = respecRefusal(app.config, save, cost);
+  const blocked = (): boolean => inFlight.has(app) || refusal !== null;
   const b = button(`Сбросить атрибуты (${cost} золота)`, () => {
     if (blocked()) return;
     if (!window.confirm(`Сбросить атрибуты?\nВернётся ${refund} очк. атрибутов, цена ${cost} зол.`)) return;
@@ -30,5 +34,6 @@ export function respecAttrsButton(app: App): HTMLButtonElement {
     });
   }, 'default', blocked());
   if (refund === 0) b.title = 'Атрибуты не вложены — сбрасывать нечего';
+  else if (refusal) b.title = refusal;
   return b;
 }

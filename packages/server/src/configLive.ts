@@ -1,4 +1,5 @@
-import { defaultConfigData, type ConfigRegistry } from '@dm/shared';
+import { defaultConfigData, upgradeStoredOverride, type ConfigRegistry } from '@dm/shared';
+import { counters } from './net/metrics.js';
 
 /**
  * ⭐ R15-05: ЖИВОЙ КОНФИГ ПРОЦЕССА = ФАЙЛЫ ДАННЫХ, КАКИЕ ОНИ СЕЙЧАС, + ОВЕРРАЙДЫ РЕДАКТОРА ИЗ БАЗЫ.
@@ -24,6 +25,8 @@ export interface LiveConfigDeps {
   changed: () => void;
   log?: (line: string) => void;
   warn?: (line: string) => void;
+  /** ⚠ R20-08: оверрайд пропущен целиком — ИНЦИДЕНТ (правок хозяина в таблице нет). Умолчание — `console.error`. */
+  incident?: (line: string) => void;
 }
 
 export interface LiveConfig {
@@ -42,15 +45,24 @@ export function liveConfig(deps: LiveConfigDeps): LiveConfig {
   const { config } = deps;
   const log = deps.log ?? ((s: string) => console.log(s));
   const warn = deps.warn ?? ((s: string) => console.warn(s));
+  const incident = deps.incident ?? ((s: string) => console.error(s));
   /** Файлы, прочитанные с диска после старта (ключ → сырое значение): поверх импорта старта. */
   const files = new Map<string, unknown>();
-  /** Накатывает оверрайды `all` поверх основы (устойчиво к невалидным — пропускает). */
+  /**
+   * Накатывает оверрайды `all` поверх основы (устойчиво к невалидным — пропускает).
+   * ⚠ R20-08: сохранённое под прежней схемой сперва приводится (`upgradeStoredOverride`: старт класса дробью или минусом, до R18-07 — вниз
+   * до целого, не ниже нуля) — иначе одно старое значение выбрасывало все правки таблицы, — и приведённое говорится вслух. Пропуск таблицы
+   * целиком — ИНЦИДЕНТ (`console.error` и `dm_config_override_skipped_total`), а не строка предупреждения: правок хозяина в игре нет.
+   */
   const applyOverrides = (all: Record<string, unknown>): void => {
-    for (const [key, value] of Object.entries(all)) {
+    for (const [key, stored] of Object.entries(all)) {
+      const { value, fixes } = upgradeStoredOverride(key, stored);
       try {
         config.reload({ [key]: value });
+        if (fixes.length) warn(`[dm-server] оверрайд конфига "${key}" сохранён под прежней схемой — приведён при загрузке (в базе прежний: записать — «Применить» в редакторе или npm run db:repair -- --fix): ${fixes.join(', ')}`);
       } catch (e) {
-        warn(`[dm-server] пропущен невалидный оверрайд конфига "${key}": ${e instanceof Error ? e.message : e}`);
+        counters.configOverridesSkipped++;
+        incident(`[dm-server] ИНЦИДЕНТ: пропущен невалидный оверрайд конфига "${key}" — таблица целиком живёт на файле, правок хозяина в ней в игре нет (сохранить заново из редактора или npm run db:repair): ${e instanceof Error ? e.message : e}`);
       }
     }
     // ГОВОРИМ ВСЛУХ, что перекрыто. Оверрайд из редактора живёт в БД и переживает рестарт, поэтому

@@ -90,6 +90,9 @@ describe.runIf(!!uWS)('⭐ R6-07: переполнение исходящей о
     const chunk = 'x'.repeat(16 * 1024);
     for (let i = 0; i < 4000 && rec.conn.open; i++) rec.conn.send(`{"t":"snap","n":${i},"pad":"${chunk}"}`);
     expect(rec.conn.open, 'для игры соединения больше нет').toBe(false);
+    // ⭐ R18-01: закрытое изнутри отправки снимается ближайшей микрозадачей — не поперёк синхронного шага комнаты, который слал кадр.
+    expect(rec.closed, 'не изнутри отправки').toBe(false);
+    await Promise.resolve();
     expect(rec.closed, 'onClose — дальше грейс и реконнект, как у транспорта ws').toBe(true);
     expect(counters.slowClientsDropped - dropped0).toBe(1);
     // Клиент снова читает: всё, что успело уйти, и закрывающий кадр 1013; потом сокет закрыт.

@@ -1,6 +1,6 @@
 import { ConfigRegistry } from '../../config/registry.js';
 import { createRng, type Rng } from '../../formulas/rng.js';
-import { abilityCooldown, swingHalfWidth } from '../../formulas/combat.js';
+import { abilityCooldown, BUFF_MIN_REST, swingHalfWidth } from '../../formulas/combat.js';
 import { skillWeaponAllowed } from '../../formulas/skills.js';
 import { attackWeaponsOf } from '../../formulas/playerCombat.js';
 import { asHeld, gripOf } from '../../formulas/versatile.js';
@@ -62,13 +62,15 @@ import { validateInput } from '../netSchemas.js';
  *       снаряд (героя и монстра) не пролетает стену, шов и колонну, закрывающую обзор, и бьёт только видимое с места полёта (C-10).
  *  I3 — темп: удар/атака-скил не чаще общего лока по формуле скорости, скил — не чаще своего отката; серия — не больше `hits`.
  *  I4 — скилы и ресурсы: невыученное (ранг 0), чужого класса и не тем оружием не срабатывает; цена списана и была по карману;
- *       ресурсы не отрицательны; тоглы — только выученные; бафф — не дольше длительности и не поверх отката.
+ *       ресурсы не отрицательны; тоглы — только выученные; бафф — не дольше длительности, не поверх отката и с отдыхом после
+ *       истечения (R19-03: не раньше «действие × (1 + BUFF_MIN_REST)» от прошлого каста).
  *  I5 — взаимодействие и добыча: подбор/сундук/рычаг — в радиусе и видимости, живым, не оглушённым (кроме автоподбора), чужое
  *       не берётся; дверь открывает только её рычаг; добыча не пропадает и не двоится (uid уникальны); золото — ровно поднятое;
  *       сейв под транзакцией тиком не трогается; зелье без эффекта не тратится.
  *  I6 — прокачка и пулы: опыт только за убийство (сумма = опыт монстра), уровень и очки — по таблице; атрибуты/скилы тиком не
  *       меняются; здоровье/мана/выносливость не выше максимума (мана и выносливость — и не выше резерва аур/стоек); левелап лечит
- *       до максимума С аурами/стойками/баффами, и снимок тика до его конца их держит (R15-10).
+ *       до максимума С аурами/стойками/баффами, и снимок тика до его конца их держит (R15-10); ⭐ R20-07: сумка мёртвого не растёт
+ *       (`dead-bag-grew`: ни тиком, ни командой подбора — поднятое мимо броска штрафа смерти).
  *  I7 — ничего не бросает, числа конечны.
  *  M1/M2 — монстры: не сквозь стены/закрытые двери, ближний удар монстра — в досягаемости и видимости.
  */
@@ -411,6 +413,12 @@ export function newWorld(seed: number, hooks: FuzzHooks = {}): FuzzWorld {
     const { save, kit } = makeHero(reg, r, i);
     // Профиль `levelup` (R15-10): до уровня — одно очко опыта, первое же убийство его поднимает. Без бросков: поток мира прежний.
     if (hooks.world?.levelup) save.xp = Math.max(save.xp, xpForLevel(save.level + 1, reg.get('balance').xpTable) - 1);
+    // Профиль `buffs` (R19-03): бафф своего класса (по уровню) — на высшем ранге. Без бросков: поток мира прежний.
+    if (hooks.world?.buffs) {
+      const tree = reg.get('skill-tree');
+      const own = tree.nodes.find((nd) => nd.effect.active?.category === 'buff' && save.level >= nd.levelReq && tree.branches.find((b) => b.id === nd.branchId)?.classId === save.classId);
+      if (own) save.skills[own.id] = own.maxRank;
+    }
     // Два первых — один аккаунт (альты), третий — другой: выброшенное чужим аккаунтом не поднять (R2-02).
     const account = i < 2 ? 'acc-a' : 'acc-b';
     const pid = `p${i}`;
@@ -599,6 +607,8 @@ interface Track {
   lockUntil: number;
   /** Не раньше (мс мира) — следующее применение узла. */
   cdUntil: Record<string, number>;
+  /** ⚠ R19-03: не раньше (мс мира) — следующий каст баффа: его действие и отдых (`BUFF_MIN_REST` доли действия). */
+  buffNext?: Record<string, number>;
   /** Подпись снаряжения и тоглов на старте замаха (R6-02). */
   castSig?: string;
   castNode?: string;
@@ -1057,6 +1067,11 @@ function instrument(w: FuzzWorld): Probe {
       w.cover.buff = (w.cover.buff ?? 0) + 1;
       if (before.buff > 0) V('I4', 'buff-refresh', `${heroName(p)}: бафф «${nodeId}» обновлён, пока действует (${before.buff.toFixed(2)} с)`);
       if ((p.skillBuffs[nodeId] ?? 0) > a.durationSec + EPS) V('I4', 'buff-duration', `${heroName(p)}: бафф «${nodeId}» ${p.skillBuffs[nodeId]} с > ${a.durationSec}`);
+      // ⚠ R19-03: после истечения — отдых: ранг режет откат, а не действие, и откат ≤ действия держал бафф 100 % времени (повтор в кадр
+      // истечения). Не от формулы отката ядра — от действия: каст не раньше «действие × (1 + BUFF_MIN_REST)» от прошлого (допуск — сотые).
+      const next = (t.buffNext ??= {})[nodeId];
+      if (next !== undefined && world.timeMs < next - 10) V('I4', 'buff-rest', `${heroName(p)}: бафф «${nodeId}» (ранг ${rank}) снова на ${(next - world.timeMs).toFixed(0)} мс раньше отдыха — после ${a.durationSec} с действия отдых не короче ${(a.durationSec * BUFF_MIN_REST).toFixed(2)} с`);
+      t.buffNext![nodeId] = world.timeMs + a.durationSec * (1 + BUFF_MIN_REST) * 1000;
     }
     if (a.category === 'attack') {
       if (before.attackCd > 0 || before.windup) V('I3', 'attack-lock', `${heroName(p)}: атака-скил «${nodeId}» при идущем локе/замахе`);
@@ -1400,6 +1415,8 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
     }
     const picked = new Set(ev.filter((e): e is Extract<SessionEvent, { type: 'item-picked' }> => e.type === 'item-picked' && e.playerId === p.id).map((e) => e.item.uid));
     for (const it of p.save.inventory) {
+      // I6 (⭐ R20-07): сумка мёртвого не растёт — ни подбором, ни автоподбором (поднятое мимо броска штрафа смерти).
+      if (!b.alive && !b.inv.has(it.uid)) V('I6', 'dead-bag-grew', `мёртвый ${name}: в сумке появилась ${it.baseId}/${it.uid.slice(-6)}`);
       if (b.inv.has(it.uid) || picked.has(it.uid) || it.kind === 'material') continue;
       V('I5', 'inv-appeared', `${name}: в сумке появилась ${it.baseId}/${it.uid.slice(-6)} без подбора`);
     }
@@ -1501,9 +1518,10 @@ export interface FuzzHooks {
   install?: (w: FuzzWorld) => void;
   /**
    * Профиль мира: доля арен (0…1), доля PvP на арене, наименьшее число героев, доля арен с колоннами в линии огня (C-10), все герои
-   * на пороге уровня (R15-10: левелап поверх аур, стоек и баффов — в общем профиле он редок, убийств мало).
+   * на пороге уровня (R15-10: левелап поверх аур, стоек и баффов — в общем профиле он редок, убийств мало), бафф своего класса — на
+   * высшем ранге (R19-03: там откат по рангу короче действия — в общем профиле ранги размазаны по дереву).
    */
-  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean };
+  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean; buffs?: boolean };
   /** Только для зубов сторожа: подложить «баг» после каждого тика. */
   afterTick?: (w: FuzzWorld) => void;
 }
@@ -1614,7 +1632,10 @@ function execOp(w: FuzzWorld, op: Op, vs: Violation[], hooks: FuzzHooks, stopOn:
       const ticks = goal && r.chance(0.5) ? walkTo(w, h.pid, goal, 150, vs, hooks, stopOn) : 0;
       if (vs.some(stopOn)) return { desc: `к дропу #${id} (${h.pid})`, ok: true, ticks };
       // Ядро держит правило чужого аккаунта само (`takeDrop`) — команда идёт мимо проверки `Room`, чтобы проверить именно его.
+      const dead = !p.alive, bag0 = new Set(p.save.inventory.map((x) => x.uid));
       const got = w.s.pickupDropById(h.pid, id);
+      // I6 (⭐ R20-07): мёртвый не поднимает — сумка мёртвого не растёт.
+      if (dead && p.save.inventory.some((x) => !bag0.has(x.uid))) vs.push({ inv: 'I6', code: 'dead-bag-grew', msg: `мёртвый ${h.pid}: подбор #${id} положил вещь в сумку` });
       return { desc: `${ticks ? `дойти (${ticks} т.) и ` : ''}подбор #${id} (${h.pid})`, ok: !!got, why: got ? undefined : 'далеко/нет/полон', ticks };
     }
     case 'drink': {

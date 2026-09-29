@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ConfigRegistry, newBotSave, TILE, type FloorInit, type ServerFrame } from '@dm/shared';
+import { ConfigRegistry, newBotSave, PRICE_CHANGED, PROTOCOL_VERSION, TILE, type FloorInit, type ServerFrame } from '@dm/shared';
 import { OnlineScene } from './OnlineScene.js';
+import { App } from '../core/app.js';
+import { NetClient } from '../net/netClient.js';
+import { PROTOCOL_STALE } from '../net/entryFlow.js';
 import { askInGame } from '../ui/kit.js';
 import { KeyNode, phaserKeyboard } from '../net/phaserKeyboardHarness.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,10 +87,9 @@ function fakeNet() {
     },
     /** Сколько обработчиков кадра `t` висит сейчас. */
     count(t: string): number { return handlers.get(t)?.length ?? 0; },
-    off(t: string): void { handlers.delete(t); },
-    clearLifecycle(): void { opens = []; closes = []; },
-    onOpen(cb: () => void): void { opens.push(cb); },
-    onClose(cb: (code?: number) => void): void { closes.push(cb); },
+    /** R19-02: и жизнь сокета — с отпиской ровно своего колбэка; снять оптом, как и у `NetClient`, нечем. */
+    onOpen(cb: () => void): () => void { opens.push(cb); return () => { opens = opens.filter((c) => c !== cb); }; },
+    onClose(cb: (code?: number) => void): () => void { closes.push(cb); return () => { closes = closes.filter((c) => c !== cb); }; },
     connect(): void { net.connects++; },
     resetWorld(): void { net.resets++; },
     send(f: unknown): void { if (net.connected) net.sent.push(f); },
@@ -114,6 +116,15 @@ function setup(keyboard: unknown = { addKey: () => ({}) }) {
     clearAuth: vi.fn(),
     syncConfig: vi.fn(() => Promise.resolve()),
   };
+  const { scene, camera, shutdown } = stage(app, keyboard);
+  scene.create();
+  const save = newBotSave(reg, reg.get('classes')[0]!.id);
+  const join = (area: 'town' | 'dungeon', pid = 'p1'): void => net.fire('joined', { playerId: pid, save, floor: floor(area), peers: [], roomCode: 'ABCD' } as never);
+  return { net, app, scene, join, logs, events, camera, shutdown };
+}
+
+/** Сцена без Phaser: реестр игры отдаёт `app`, прочее — заглушки. `create` — зовёт тест. */
+function stage(app: unknown, keyboard: unknown = { addKey: () => ({}) }) {
   const chain: unknown = new Proxy(() => chain, { get: (_t, k) => (k === 'then' ? undefined : chain), apply: () => chain });
   const scene = new OnlineScene() as unknown as Record<string, unknown> & { create(): void; update(t: number, dt: number): void };
   let shutdown: (() => void) | undefined;
@@ -126,10 +137,7 @@ function setup(keyboard: unknown = { addKey: () => ({}) }) {
     scene: { start: vi.fn(), stop: vi.fn(), isActive: () => true, launch: () => { } },
     events: { once: (_e: string, cb: () => void) => { shutdown = cb; } },
   });
-  scene.create();
-  const save = newBotSave(reg, reg.get('classes')[0]!.id);
-  const join = (area: 'town' | 'dungeon', pid = 'p1'): void => net.fire('joined', { playerId: pid, save, floor: floor(area), peers: [], roomCode: 'ABCD' } as never);
-  return { net, app, scene, join, logs, events, camera, shutdown: () => shutdown?.() };
+  return { scene, camera, shutdown: () => shutdown?.() };
 }
 
 describe('OnlineScene — проводка 2D-клиента к серверу', () => {
@@ -447,5 +455,135 @@ describe('OnlineScene — проводка 2D-клиента к серверу',
     expect(box(/отключился посреди боя/)).toBeDefined();
     s.net.fire('areaChanged', { floor: floor('town') } as never);
     expect(box(/отключился посреди боя/), 'смена области — плашка прочь').toBeUndefined();
+  });
+});
+
+/**
+ * ⭐ R19-02: СЦЕНА НЕ СНИМАЕТ ЧУЖИХ ПОДПИСОК. `App` (живёт всё приложение, создан в `main.ts` до сцен) слушает `joined` — штамп сборки сервера
+ * (R18-08) — и `cmdResult`. 2D-сцена на каждом входе снимала обработчики кадров ОПТОМ (`NetClient.off(t)` — все обработчики типа), и штамп
+ * сборки молча уходил вместе со своими: деплой со сменой кода цен при том же конфиге оставлял 2D-вкладку в круге «Цена изменилась» (перечитывание —
+ * 304) без «перезагрузите», ровно как до R18-08. 3D и тесты `App` этого не видели: там `off` не зовёт никто. Здесь — настоящие `App` и
+ * `NetClient` (сокет поддельный), сцена — та, что в 2D-клиенте.
+ */
+class FakeWs {
+  static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
+  static all: FakeWs[] = [];
+  readyState = FakeWs.CONNECTING;
+  binaryType = '';
+  bufferedAmount = 0;
+  sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onclose: ((ev?: { code?: number }) => void) | null = null;
+  onmessage: ((ev: { data: unknown }) => void) | null = null;
+  constructor(public url: string) { FakeWs.all.push(this); }
+  send(s: string): void { this.sent.push(s); }
+  close(): void { this.readyState = FakeWs.CLOSED; }
+  open(): void { this.readyState = FakeWs.OPEN; this.onopen?.(); }
+  drop(code?: number): void { this.readyState = FakeWs.CLOSED; this.onclose?.({ code }); }
+  frame(f: unknown): void { this.onmessage?.({ data: JSON.stringify(f) }); }
+}
+
+describe('⭐ R19-02: 2D-сцена и подписки App — штамп сборки на входе и отказ ценой', () => {
+  const G = globalThis as unknown as { document?: unknown; WebSocket?: unknown; fetch?: unknown; location?: unknown };
+  let saved: { ws: unknown; fetch: unknown; location: unknown; warn: { mockRestore(): void } };
+  beforeEach(() => {
+    saved = { ws: G.WebSocket, fetch: G.fetch, location: G.location, warn: vi.spyOn(console, 'warn').mockImplementation(() => { }) };
+    G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body: new El('body') };
+    G.WebSocket = FakeWs; FakeWs.all = [];
+    // `/api/config`: тело конфига то же (304) — деплой сменил КОД цен, не конфиг.
+    G.fetch = () => Promise.resolve({ ok: false, status: 304, headers: { get: () => null }, json: () => Promise.reject(new Error('304 без тела')) });
+    G.location = { protocol: 'http:', host: 'game.test', hostname: 'game.test' };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.stubGlobal('__DM_BUILD__', 'build-1');   // штамп, который сборка вписала в бандл вкладки
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    G.WebSocket = saved.ws; G.fetch = saved.fetch; G.location = saved.location;
+    saved.warn.mockRestore();
+    delete G.document;
+  });
+  const flush = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+  /** Страница 2D: `App` из `main.ts`, вход в аккаунт и выбор героя, затем сцена «Online». */
+  async function page() {
+    const app = new App();
+    await flush();
+    app.auth = { token: 'ab'.repeat(32), userId: 'u1', username: 'hero' };
+    app.pendingCharId = 'hero-1';
+    const hints: number[] = [];
+    app.bus.on('log:message', (m) => { if (m.text === PROTOCOL_STALE) hints.push(Date.now()); });
+    const st = stage(app);
+    st.scene.create();
+    const save = newBotSave(app.config, app.config.get('classes')[0]!.id);
+    const ws = (): FakeWs => FakeWs.all.at(-1)!;
+    /** Сокет открылся, статус забега (лобби), кадр `joined` сервера сборки `build`. */
+    const enter = async (build: string, pid = 'p1'): Promise<void> => {
+      if (ws().readyState !== FakeWs.OPEN) ws().open();
+      ws().frame({ t: 'runStatus', hasRun: false });
+      ws().frame({ t: 'joined', v: PROTOCOL_VERSION, build, playerId: pid, save, floor: floor('town'), peers: [], roomCode: 'ABCD' });
+      await flush();
+    };
+    /** Отказ ценой: команда без ждущего (продажа), перечитывание конфига — 304. */
+    const refuse = async (): Promise<void> => {
+      vi.setSystemTime(Date.now() + 5_000);   // игрок думает дольше повтора подсказки
+      ws().frame({ t: 'cmdResult', id: 900 + hints.length, cmd: 'sell', ok: false, reason: `${PRICE_CHANGED}: лавка даст 31 золота` });
+      await flush();
+    };
+    /** Сколько обработчиков висит на кадре `t` и на жизни сокета (приватное `NetClient` — только для счёта). */
+    const count = (t: ServerFrame['t']): number => ((app.net as unknown as { handlers: Map<string, unknown[]> }).handlers.get(t) ?? []).length;
+    const life = (): number => {
+      const n = app.net as unknown as { openCbs: unknown[]; closeCbs: unknown[] };
+      return n.openCbs.length + n.closeCbs.length;
+    };
+    return { app, hints, enter, refuse, count, life, ...st };
+  }
+
+  it('⭐ деплой сменил код цен, конфиг тот же: «перезагрузите» на входе и на каждый отказ ценой — и после пере-входа в сцену', async () => {
+    const p = await page();
+    await p.enter('build-1');
+    expect(p.hints, 'сборки одни — ни слова').toEqual([]);
+    FakeWs.all.at(-1)!.drop(4009);                     // деплой: сервер новой сборки, вкладка переподключилась сама
+    await p.enter('build-2');
+    expect(p.hints.length, 'было: 0 — сцена сняла обработчик штампа App вместе со своими').toBe(1);
+    await p.refuse();
+    expect(p.hints.length, 'было: 0 — отказ ценой при том же конфиге, «перезагрузите» ни разу').toBe(2);
+    // Выход к выбору героя и новый вход (R4-22 / R5-16: `scene.start('Online')` — та же сцена заново; сокет жив).
+    p.shutdown();
+    p.scene.create();
+    await p.enter('build-2', 'p2');
+    expect(p.hints.length, 'тот же штамп сервера — на входе второй раз не твердим').toBe(2);
+    await p.refuse();
+    expect(p.hints.length, 'отказ ценой после пере-входа в сцену — снова сказано').toBe(3);
+    FakeWs.all.at(-1)!.drop(4009);                     // следующий деплой
+    await p.enter('build-3', 'p3');
+    expect(p.hints.length, 'новая сборка сервера после пере-входа в сцену — сказано на входе').toBe(4);
+  });
+
+  it('пере-вход в сцену не копит подписок и не снимает подписок App: выход оставляет ровно подписки App', async () => {
+    const p = await page();
+    const types = ['joined', 'cmdResult', 'shop', 'stash', 'questBoard', 'runPlan', 'areaChanged', 'died', 'error', 'runStatus', 'abandoned', 'snapshot'] as const;
+    const shown = Object.fromEntries(types.map((t) => [t, p.count(t)]));
+    const shownLife = p.life();
+    p.shutdown();
+    const bare = new App();                            // подписки самого App (страница без сцены)
+    const own = (t: ServerFrame['t']): number => ((bare.net as unknown as { handlers: Map<string, unknown[]> }).handlers.get(t) ?? []).length;
+    expect(Object.fromEntries(types.map((t) => [t, p.count(t)])), 'после выхода — только подписки App').toEqual(Object.fromEntries(types.map((t) => [t, own(t)])));
+    expect(p.life(), 'и жизнь сокета сцене больше не нужна').toBe(0);
+    p.scene.create();
+    p.scene.create();                                  // и второй показ без выхода — не копит
+    expect(Object.fromEntries(types.map((t) => [t, p.count(t)]))).toEqual(shown);
+    expect(p.life()).toBe(shownLife);
+  });
+
+  it('сторож: снять обработчики кадра оптом нельзя — у `NetClient` нет `off`/`clearLifecycle`, и клиент их не зовёт', () => {
+    const proto = Object.getOwnPropertyNames(NetClient.prototype);
+    expect(proto, 'подписку снимает только её владелец — отпиской, которую вернул `on`').not.toContain('off');
+    expect(proto).not.toContain('clearLifecycle');
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : /\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name) ? [join(dir, e.name)] : []));
+    const calls = files(root).filter((f) => /\bnet\??\.(off|clearLifecycle)\(/.test(readFileSync(f, 'utf8')));
+    expect(calls, 'снятие подписок оптом').toEqual([]);
   });
 });

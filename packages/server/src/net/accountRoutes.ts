@@ -207,20 +207,24 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     // соседи по NAT с верным паролем получали 429. Теперь адрес платит только попытка, которая дойдёт до сверки.
     // ⭐ R3-07: по НИКУ — перебор пароля одного героя с сотни адресов лимит по адресу не держит. Ник без регистра:
     // так его ищет база (`getUserByName`), иначе «Victim» и «victim» были бы двумя бакетами.
-    if (!limits.loginUser.take(who)) return tooMany(limits.loginUser, who);
+    // ⭐ R18-05: с годным токеном устройства этого ника — СВОЙ потолок ника (`loginUserDevice`). Раньше и такой вход платил общий: тролль
+    // неверным паролем раз в 30 с (без токена, с любого адреса) держал его пустым — и владелец со своим токеном и верным паролем получал 429
+    // бессрочно. Токен — только от верного пароля и подписан по нику: чужие неудачи этот бакет не тратят, перебор с утёкшим токеном — держит.
+    const nick = device ? limits.loginUserDevice : limits.loginUser;
+    if (!nick.take(who)) return tooMany(nick, who);
     // ⭐ R10-04: и верный пароль — не без предела (`loginOk`, на ник): знакомый ник поиск с адреса не платит, а верный пароль бакет
     // адреса возвращает — сверки своего пароля иначе не держало бы ничего. Неверный токен возвращает: его держат бакеты выше.
-    if (!limits.loginOk.take(who)) { limits.loginUser.refund(who); return tooMany(limits.loginOk, who); }
+    if (!limits.loginOk.take(who)) { nick.refund(who); return tooMany(limits.loginOk, who); }
     // ⭐ R8-05: БАКЕТ АДРЕСА — СПИСАНИЕМ ДО scrypt, и между списанием и scrypt нет ожидания. Раньше до поиска в базе его только
     // спрашивали (`peek`), а списывали после scrypt, не глядя на итог: полсотни одновременных входов проходили проверку все, пока
     // бакет полон, и каждый стоил scrypt. Верный пароль токен возвращает (`refund` ниже). С токеном устройства — не платится.
     if (!device && !limits.login.take(net)) {
-      limits.loginUser.refund(who); limits.loginOk.refund(who);
+      nick.refund(who); limits.loginOk.refund(who);
       return tooMany(limits.login, net);
     }
     // ⭐ R11-01: и общий бюджет scrypt процесса (`scryptGate`): кончился — «занят» без scrypt, и попытка ничего не стоит.
     if (!scryptGate.admit(device)) {
-      limits.loginUser.refund(who); limits.loginOk.refund(who);
+      nick.refund(who); limits.loginOk.refund(who);
       if (!device) limits.login.refund(net);
       res.setHeader('Retry-After', String(scryptGate.retryAfterSec()));
       return res.status(503).json({ error: 'Сервер занят. Попробуйте через несколько секунд' });
@@ -236,7 +240,7 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     // к своему, и так по кругу: перебор с одного адреса шёл ~9 scrypt в секунду вместо одного в 3 с (его держал только поиск
     // ника, 10/с). Счёт НИКА обнуляется, как прежде: его неудачи — попытки именно к этому герою, и верный пароль его владельца их снимает.
     if (!device) limits.login.refund(net);
-    limits.loginUser.reset(who);
+    limits.loginUser.reset(who); limits.loginUserDevice.reset(who);   // R18-05: оба потолка ника — неудачи к нему снимает верный пароль владельца
     const token = await createSession(user.id);
     noteSession(token, user.id);   // R10-04: сессию завёл этот процесс — бакет адреса ей не нужен
     res.json({ token, userId: user.id, username: user.username, device: deviceToken(who) });

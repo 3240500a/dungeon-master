@@ -2,13 +2,14 @@ import { vi } from 'vitest';
 import {
   ATTRIBUTES, CRAFT_SLOT_LIST, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng,
   defaultParts, enchantCost, enchantItem, equip, familiesOf, finalAttributes, forgeGold, forgeSalvage, fullJournal, keySlotOf, keyVariantsByBase,
-  materialItem, modifiersFromItems, normalizeJournal, offhandRefusal, parseClientFrame, repairCost, salvageRange, shopBuyPrice, shopSellPrice,
-  unequip, upgradeCost, variantsFor,
+  legacyStartAttributes, materialItem, modifiersFromItems, normalizeJournal, offhandRefusal, parseClientFrame, repairCost, respec, salvageRange, shopBuyPrice,
+  shopSellPrice, unequip, upgradeCost, variantsFor,
   type AccountStash, type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type EquipSlot, type Item, type Rng,
   type SaveState, type ServerFrame, type TownCommand,
 } from '@dm/shared';
 import { foundItem, newWorld, pristineTables, regFrom, reloadTable } from '../../../../shared/src/economy/fuzz/economyFuzz.js';
-import { App } from '../../core/app.js';
+import { App, REFUSAL_REPEAT_MS } from '../../core/app.js';
+import { PROTOCOL_STALE } from '../../net/entryFlow.js';
 import { GameState } from '../../core/gameState.js';
 import { forgeBench } from './forgeBench.js';
 import { benchActions, diffStrings, type BenchAction } from './forgeActions.js';
@@ -20,6 +21,7 @@ import { inventoryPanel } from '../inventory/inventoryPanel.js';
 import { salvageInField } from '../inventory/disposeConfirm.js';
 import { itemDescLines } from '../inventory/itemView.js';
 import { PITCH, beginHold, clearHeld, getHeld } from '../inventory/heldItem.js';
+import { respecAttrsButton } from '../progression/respecAttrs.js';
 
 /**
  * ⭐ B3: ФАЗЗЕР ПАРИТЕТА «ОКНО ≡ СЕРВЕР» — модель и прогон. Состояние героя (сейв, сундук аккаунта с кошельком сырья и журналом
@@ -39,7 +41,12 @@ import { PITCH, beginHold, clearHeld, getHeld } from '../inventory/heldItem.js';
  *  (3) вилки «от–до» (выход разбора, урон и требования ковки, предпросмотр улучшения/починки) содержат исход сервера (`range:*`,
  *      `preview:*`);
  *  (4) ни одно окно не бросает ни на каком состоянии (`ui-throw:*`), сервер не падает (`server:*`), команда клиента проходит схему
- *      комнаты (`wire:*`), и после ответа клиент видит сейв и сундук сервера (`sync:*`).
+ *      комнаты (`wire:*`), и после ответа клиент видит сейв и сундук сервера (`sync:*`);
+ *  (5) ⭐ R18-08: деплой со сменой КОДА цен при том же конфиге (шаг `deploy`: сервер другой сборки, вкладка переподключилась со старым
+ *      бандлом) — игроку «перезагрузите» на входе (`hint:deploy-untold`) и на каждый отказ «Цена изменилась», который перечитывание конфига
+ *      не лечит (`hint:silent-price-loop`: не раньше `REFUSAL_REPEAT_MS` до отказа или сразу за ним), а без деплоя — ни разу (`hint:false-reload`).
+ *      ⭐ R19-02: и у 2D-клиента — нечётные сиды идут через настоящую сцену `OnlineScene` (`SceneHook`) с её пере-подпиской на кадры.
+ * ⭐ R19-07: (1) — и у кнопки «Сбросить атрибуты» мастера (шаг `respec`): горит ⇒ сервер сбросил, погашена ⇒ отказал, подсказка — его причина.
  * «Строго» проверяется, только когда клиент видит то же, что сервер (конфиг, сейв, сундук); иначе — только согласие на цену.
  *
  * Шаг хранится АБСТРАКТНО (`{k, s}`): что именно он берёт — решается по состоянию в момент исполнения, поэтому сжатие
@@ -119,7 +126,7 @@ export function installDom(confirm: (msg: string) => boolean): { body: El; resto
   const G = globalThis as Record<string, unknown>;
   const saved = { document: G.document, window: G.window, WebSocket: G.WebSocket };
   const body = new El('body');
-  G.document = { createElement: (t: string) => new El(t), body, addEventListener: () => {}, removeEventListener: () => {} };
+  G.document = { createElement: (t: string) => new El(t), body, getElementById: () => null, addEventListener: () => {}, removeEventListener: () => {} };
   G.window = { confirm, addEventListener: () => {}, removeEventListener: () => {}, innerWidth: 1600, innerHeight: 900 };
   G.WebSocket = BrowserWs;
   return {
@@ -166,7 +173,7 @@ interface RoomIn {
   stop(): void;
 }
 type RoomCtor = new (code: string, cfg: ConfigRegistry, hooks: object) => RoomIn;
-interface ServerApi { Room: RoomCtor; limits: Record<string, { reset(k: string): void }> }
+interface ServerApi { Room: RoomCtor; limits: Record<string, { reset(k: string): void }>; serverBuild: () => string }
 let serverApi: ServerApi | null = null;
 /**
  * Комната — ДИНАМИЧЕСКИМ импортом с путём из переменной: пакет клиента не тянет сервер в свою проверку типов (у сервера — node,
@@ -176,11 +183,34 @@ export async function loadServer(): Promise<ServerApi> {
   if (serverApi) return serverApi;
   const ROOM = '../../../../server/src/net/room.js';
   const LIMITS = '../../../../server/src/net/rateLimit.js';
+  const BUILD = '../../../../server/src/buildStamp.js';
   const room = (await import(/* @vite-ignore */ ROOM)) as { Room: RoomCtor };
   const rl = (await import(/* @vite-ignore */ LIMITS)) as { limits: ServerApi['limits'] };
-  serverApi = { Room: room.Room, limits: rl.limits };
+  const bs = (await import(/* @vite-ignore */ BUILD)) as { serverBuild: () => string };
+  serverApi = { Room: room.Room, limits: rl.limits, serverBuild: bs.serverBuild };
   return serverApi;
 }
+
+/**
+ * ⭐ R18-08: ДЕПЛОЙ СО СМЕНОЙ КОДА ЦЕН — подмены теста (`vi.mock`): `server` — штамп сборки сервера (`serverBuild` → `joined.build`; null — настоящий),
+ * `drift` — формулы цен СТАРОГО бандла вкладки (`forgeGold` карточек верстака × `forge`, `shopSellPrice` «+N» лавки × `sell`; сервер считает их
+ * внутри `townActions.ts`, мимо подмены), `stamp: false` — вкладка без штампа (как до правки: проверка зубов инварианта). Без подмен шаг
+ * `deploy` не меняет ничего, и инвариант (5) молчит.
+ */
+export interface BuildHook { server: string | null; drift: { forge: number; sell: number } | null; stamp: boolean }
+let buildHook: BuildHook = { server: null, drift: null, stamp: true };
+export function setBuildHook(h: BuildHook): void { buildHook = h; }
+const G_BUILD = globalThis as { __DM_BUILD__?: string };
+
+/**
+ * ⭐ R19-02: 2D-КЛИЕНТ — настоящая сцена `OnlineScene` поверх `App` прогона (подмены Phaser и спрайтов — у теста, `vi.mock`): её обработчики кадров,
+ * пере-подписка на входе в сцену и поток входа (`EntryFlow`) — те же, что в браузере. Нечётные сиды идут через неё, чётные — голым `App` (как веб-3D,
+ * у которого свои обработчики). Раньше прогон знал только голый `App` — и не видел, что 2D-сцена на входе снимала подписку `App` на штамп сборки.
+ * `mount` — показать сцену (вернуть выход из неё); нет — все цепочки голым `App`.
+ */
+export interface SceneHook { mount: ((app: App) => () => void) | null }
+let sceneHook: SceneHook = { mount: null };
+export function setSceneHook(h: SceneHook): void { sceneHook = h; }
 
 class ServerWs {
   open = true;
@@ -195,19 +225,21 @@ class ServerWs {
 // ── Шаги ──────────────────────────────────────────────────────────────────────────────────────────
 
 export type OpKind =
-  // окна (проверки паритета)
-  | 'bench' | 'craft' | 'windowEnchant' | 'sketch' | 'buy' | 'sell' | 'field' | 'paperdoll'
+  // окна (проверки паритета); ⭐ R19-07: и кнопка «Сбросить атрибуты» мастера
+  | 'bench' | 'craft' | 'windowEnchant' | 'sketch' | 'buy' | 'sell' | 'field' | 'paperdoll' | 'respec'
   // состояние (сервер меняет, клиент узнаёт кадрами)
   | 'loot' | 'lootCrafted' | 'mats' | 'gold' | 'goldEdge' | 'matsEdge' | 'journal' | 'config' | 'clientSync' | 'shopRefresh'
-  | 'breakItem' | 'bagFill' | 'equip' | 'unequip' | 'wear' | 'fund' | 'stashDrift';
+  | 'breakItem' | 'bagFill' | 'equip' | 'unequip' | 'wear' | 'fund' | 'stashDrift'
+  // ⭐ R18-08: деплой со сменой кода цен (вкладка переподключается со старым бандлом) — и перезагрузка страницы игроком (следующий такой шаг)
+  | 'deploy';
 export interface Op { k: OpKind; s: number }
 
 export const OP_WEIGHTS: Record<OpKind, number> = {
-  bench: 16, craft: 12, windowEnchant: 5, sketch: 5, buy: 7, sell: 6, field: 6, paperdoll: 6,
+  bench: 16, craft: 12, windowEnchant: 5, sketch: 5, buy: 7, sell: 6, field: 6, paperdoll: 6, respec: 4,
   loot: 8, lootCrafted: 6, mats: 6, gold: 3, goldEdge: 7, matsEdge: 6, journal: 5, config: 7, clientSync: 2, shopRefresh: 2,
-  breakItem: 3, bagFill: 2, equip: 2, unequip: 1, wear: 3, fund: 8, stashDrift: 2,
+  breakItem: 3, bagFill: 2, equip: 2, unequip: 1, wear: 3, fund: 8, stashDrift: 2, deploy: 2,
 };
-export const UI_OPS: ReadonlySet<OpKind> = new Set(['bench', 'craft', 'windowEnchant', 'sketch', 'buy', 'sell', 'field', 'paperdoll']);
+export const UI_OPS: ReadonlySet<OpKind> = new Set(['bench', 'craft', 'windowEnchant', 'sketch', 'buy', 'sell', 'field', 'paperdoll', 'respec']);
 
 /** Цепочка шагов из сида: виды по весам, от состояния не зависит (сжатие это и требует). */
 export function genOps(seed: number, len: number, weights: Partial<Record<OpKind, number>> = OP_WEIGHTS): Op[] {
@@ -292,6 +324,18 @@ export class Rig {
   stepProbe = false;
   /** Сундук в базе менял другой герой (`stashDrift`), и кадра сундука с тех пор не было: слепок клиента законно устарел. */
   drift = false;
+  /** ⭐ R18-08: штамп сборки сервера, с которым вкладка открылась; строк «перезагрузите» в логе игры и время последней. */
+  stamp = '';
+  hints = 0;
+  hintAt = -Infinity;
+  /** ⭐ R18-08: отказы «Цена изменилась» этого шага, которые перечитывание не лечит (время отказа): за каждым — «перезагрузите». */
+  owed: number[] = [];
+  deploys = 0;
+  /** ⭐ R19-02: клиент — 2D-сцена `OnlineScene` (`SceneHook`), а не голый `App`; выход из сцены — на разборе прогона. */
+  scene2d = false;
+  private unmount: (() => void) | null = null;
+  /** Часы прогона (`Date.now`): +7 мс на каждый вызов, от сида. */
+  clock = 0;
   /** Сборка, на которую последний раз «накопили» (`fund`): ковка чаще берёт её. */
   funded?: CraftWindowState;
   prompts: string[] = [];
@@ -343,7 +387,9 @@ export class Rig {
       stash: structuredClone(st),
     };
   }
-  /** Видит ли клиент то же, что сервер: конфиг, сейв, сундук. */
+  /** Код вкладки — не той сборки, что у сервера (шаг `deploy`, R18-08): её цены — старые формулы, строгие сверки уступают согласию на цену. */
+  get codeDrift(): boolean { return buildHook.drift !== null; }
+  /** Видит ли клиент то же, что сервер: конфиг, сейв, сундук (и тот же код цен — R18-08). */
   synced(): { cfg: boolean; save: boolean; stash: boolean; all: boolean } {
     const cfg = this.cfgVer === this.clientCfgVer;
     const s = this.srv(), c = this.cli();
@@ -351,7 +397,7 @@ export class Rig {
     const st = this.dbStash(), cs = this.app.stash;
     const stash = !!cs && canonMats(st.materials) === canonMats(cs.materials)
       && canon(normalizeJournal(st.forgeJournal)) === canon(normalizeJournal(cs.forgeJournal));
-    return { cfg, save, stash, all: cfg && save && stash };
+    return { cfg, save, stash, all: cfg && save && stash && !this.codeDrift };
   }
 
   // ── Провод ──
@@ -381,7 +427,11 @@ export class Rig {
     if (f.t === 'stash') this.drift = false;
     this.cws?.onmessage?.({ data: raw });
     // Клиент на «Цена изменилась» перечитывает конфиг (`App.syncConfig` → `/api/config`); у `App` без сервера это делает прогон.
-    if (f.t === 'cmdResult' && !f.ok && f.reason?.startsWith(PRICE_CHANGED)) this.syncClientConfig();
+    if (f.t === 'cmdResult' && !f.ok && f.reason?.startsWith(PRICE_CHANGED)) {
+      // ⭐ R18-08: конфиг клиента и так серверный, а код цен — старой сборки: перечитывание не поможет, игроку обязано прозвучать «перезагрузите».
+      if (this.codeDrift && this.cfgVer === this.clientCfgVer) { this.owed.push(Date.now()); this.count('hint:owed'); }
+      this.syncClientConfig();
+    }
   }
   /** Дождаться, пока команды исполнятся и все кадры дойдут до клиента. */
   async flush(): Promise<void> {
@@ -426,14 +476,27 @@ export class Rig {
   }
   matIdByName(): Map<string, string> { return new Map(this.app.config.get('craft-materials').map((m) => [m.name, m.id])); }
 
+  /**
+   * ⭐ R18-08: связь оборвалась (деплой перезапустил сервер) — вкладка переподключается сама: та же комната, тот же герой (сейв и версия — как
+   * у записи), кадр `joined` заново (с ним — штамп сборки сервера), за ним сундук и прилавок.
+   */
+  async reconnect(): Promise<void> {
+    await this.flush();
+    clearHeld();
+    this.pid = this.room.addPlayer(new ServerWs((raw) => this.fromServer(raw)), this.userId, structuredClone(this.srv()), this.db.saves.get(this.charId) ?? 1);
+    await this.flush();
+    this.room.stop();
+    await this.flush();
+  }
+
   // ── Жизненный цикл ──
   async setup(): Promise<void> {
     // Детерминизм: uuid вещей (`Math.random`, `Date.now`) и бросок сервера (`randomInt`) — от сида.
     const rnd = createRng((this.seed * 1597334677) >>> 0 || 5);
-    let clock = 1_760_000_000_000;
+    this.clock = 1_760_000_000_000;
     const crnd = createRng((this.seed * 3812015801) >>> 0 || 9);
     this.spies.push(vi.spyOn(Math, 'random').mockImplementation(() => rnd.next()));
-    this.spies.push(vi.spyOn(Date, 'now').mockImplementation(() => (clock += 7)));
+    this.spies.push(vi.spyOn(Date, 'now').mockImplementation(() => (this.clock += 7)));
     this.crypto.randomInt = (a, b) => a + Math.floor(crnd.next() * Math.max(1, b - a));
     const dom = installDom((m) => { this.prompts.push(m); return this.confirmAnswer; });
     this.body = dom.body as El;
@@ -449,17 +512,35 @@ export class Rig {
     this.db.data.set(this.charId, structuredClone(hero));
     this.db.stashes.set(this.userId, { data: structuredClone(w.stash), version: 1 });
 
+    // ⭐ R18-08: вкладка открыта с той же сборки, что сервер (штамп бандла = штамп сервера); `stamp: false` — вкладка без штампа (до правки).
+    buildHook.server = null;
+    buildHook.drift = null;
+    this.stamp = serverApi!.serverBuild();
+    G_BUILD.__DM_BUILD__ = buildHook.stamp ? this.stamp : '';
+
     // Клиент: настоящий `App` без сервера конфига; конфиг — тот же, что у сервера (как после `/api/config`).
     const app = new App({ offline: true });
     this.app = app;
+    app.bus.on('log:message', (m) => { if (m.text === PROTOCOL_STALE) { this.hints++; this.hintAt = Date.now(); } });
     this.syncClientConfig();
-    app.net.on('joined', (f) => { const gs = new GameState(f.save); gs.restoreFull(); app.state = gs; });
+    // Сейв с сервера — как у драйвера сцены (`NetDriver.applySave`); вход в мир — сцена 2D (R19-02) или свой обработчик.
     app.net.on('saveUpdate', (f) => { if (app.state) app.state.save = f.save; app.bus.emit('state:changed', {}); });
     BrowserWs.sink = (raw) => this.fromClient(raw);
     app.net.connect('ws://fuzz/ws');
     this.cws = BrowserWs.last;
     this.cws!.readyState = BrowserWs.OPEN;
     this.cws!.onopen?.();
+    this.scene2d = !!sceneHook.mount && this.seed % 2 === 1;
+    if (this.scene2d) {
+      // Вход в аккаунт и выбор героя — как у 2D до `scene.start('Online')`; сцена вешает свои обработчики поверх подписок `App` и спрашивает статус.
+      app.auth = { token: 'ab'.repeat(32), userId: this.userId, username: this.charId };
+      app.pendingCharId = this.charId;
+      this.unmount = sceneHook.mount!(app);
+      this.count('client:2d');
+      this.log.push('клиент: 2D-сцена OnlineScene');
+    } else {
+      app.net.on('joined', (f) => { const gs = new GameState(f.save); gs.restoreFull(); app.state = gs; });
+    }
 
     const { Room } = serverApi!;
     this.room = new Room(`UI${this.seed}-${n}`, this.reg, { onEmpty: () => {}, onGrace: () => {}, onUngrace: () => {} });
@@ -470,11 +551,16 @@ export class Rig {
     if (!app.state) this.violate('harness:no-joined', 'клиент не получил кадр joined');
   }
   teardown(): void {
+    try { this.unmount?.(); } catch { /* уже */ }   // R19-02: выход из сцены — до закрытия сокета: поток входа не переподключается
+    this.unmount = null;
     try { this.room?.stop(); } catch { /* уже */ }
     try { this.cws?.onclose?.({ code: 1000 }); } catch { /* уже */ }
     try { this.app?.replies.dropAll(); } catch { /* уже */ }
     BrowserWs.sink = () => {};
     this.crypto.randomInt = undefined;
+    buildHook.server = null;
+    buildHook.drift = null;
+    delete G_BUILD.__DM_BUILD__;
     for (const s of this.spies.splice(0)) s.mockRestore();
     this.restoreDom?.();
   }
@@ -495,6 +581,10 @@ export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: 
       let desc = '';
       g.serverErrors = [];
       g.stepProbe = false;
+      const hints = g.hints;
+      // ⭐ R18-08: со старым кодом цен игрок между кликами думает дольше повтора подсказки — каждый отказ ценой обязан сказать «перезагрузите» сам,
+      // а не за счёт строки входа или прошлого клика.
+      if (g.codeDrift) g.clock += REFUSAL_REPEAT_MS;
       try {
         desc = await EXEC[op.k](g, r);
       } catch (e) {
@@ -502,6 +592,12 @@ export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: 
         g.violate(`harness-throw:${op.k}:${msg.slice(0, 50)}`, `${op.k}: ${e instanceof Error ? e.stack?.split('\n').slice(0, 6).join(' ⏎ ') : msg}`);
         desc = `${op.k}: БРОСОК ${msg}`;
       }
+      // (5) ⭐ R18-08: отказ ценой, который перечитывание не лечит, — «перезагрузите» сразу за ним или не раньше `REFUSAL_REPEAT_MS` до него (повтор
+      // гасится, как повтор отказа); без деплоя — ни одной такой строки.
+      for (const at of g.owed.splice(0)) {
+        if (!(g.hintAt > at - REFUSAL_REPEAT_MS)) g.violate(`hint:silent-price-loop:${op.k}`, `«${desc}»: отказ «Цена изменилась» при серверном конфиге и старом коде цен — «перезагрузите» не сказано (последний раз ${g.hintAt === -Infinity ? 'никогда' : `${at - g.hintAt} мс назад`})`);
+      }
+      if (!g.codeDrift && g.hints > hints) g.violate(`hint:false-reload:${op.k}`, `«${desc}»: сборки вкладки и сервера одни, а игроку «перезагрузите страницу»`);
       g.log.push(`#${i} ${desc}`);
       for (const h of g.hits) if (h.at === i && h.log.at(-1) !== g.log.at(-1)) h.log.push(g.log.at(-1)!);
       g.count(`op:${op.k}`);
@@ -1373,6 +1469,85 @@ async function opPaperdoll(g: Rig, r: Rng): Promise<string> {
   }
 }
 
+/**
+ * ⭐ R19-07: «СБРОСИТЬ АТРИБУТЫ» МАСТЕРА — настоящая кнопка `respecAttrsButton`. Часто герой в вещи, которая держится на вложенных очках (её
+ * требование выше старта героя, атрибут поднят ровно под него — как очки, вложенные ради неё), иногда золото у края цены. Инвариант (1): горит ⇒
+ * сервер сбросил (`parity:enabled-refused:respec`); погашена ⇒ сервер отказывает и сам (проба той же командой, `parity:disabled-accepted:respec`),
+ * а подсказка кнопки — его причина (`ui:respec-title`).
+ */
+async function opRespec(g: Rig, r: Rng): Promise<string> {
+  const s = g.srv();
+  const cost = g.reg.get('balance').respecCost;
+  const notes: string[] = [];
+  const start = s.startAttributes ?? legacyStartAttributes(g.reg, s);
+  const worn = (Object.values(s.equipment).filter(Boolean) as Item[]).filter((it) => !it.parts);
+  if (start && worn.length && r.chance(0.4)) {
+    const it = r.pick(worn);
+    const a = r.pick(ATTRIBUTES);
+    const need = Math.max(s.attributes[a], start[a] + r.int(1, 8));
+    it.requirements = { ...it.requirements, [a]: need };
+    s.attributes[a] = need + r.pick([0, 0, 1]);
+    notes.push(`«${it.name}» требует ${a} ${need}`);
+  }
+  // Игрок послушал подсказку «сперва сними её»: снял мешающее ядром (как команда `unequip`) — иначе вещь, раз надетая на вложенные очки, гасит
+  // кнопку до конца цепочки, и горящих почти нет.
+  if (r.chance(0.4)) {
+    for (let k = 0; k < 4; k++) {
+      const name = /^После сброса.*«(.+)»/.exec(respec(g.reg, structuredClone(s), cost).reason ?? '')?.[1];   // отказ ядра — на копии
+      const slot = name ? (Object.keys(s.equipment) as EquipSlot[]).find((sl) => s.equipment[sl]?.name === name) : undefined;
+      if (!slot || !unequip(g.reg, s, slot).ok) break;
+      notes.push(`снял «${name}»`);
+    }
+  }
+  // Золото — у края цены или накоплено на сброс (иначе погашенных «не хватает золота» больше, чем горящих).
+  const gold0 = s.gold;
+  if (r.chance(0.25)) s.gold = Math.max(0, cost + r.pick([-1, 0, 1]));
+  else if (s.gold < cost && r.chance(0.7)) s.gold = cost + r.int(0, 5000);
+  if (s.gold !== gold0) notes.push(`золота было ${gold0}`);
+  if (notes.length) await g.pushSave();
+  const sy = g.synced();
+  const strict = sy.cfg && sy.save;   // сброс не зависит ни от сундука, ни от кода цен кузницы и лавки
+  const b = g.render('respecAttrs', () => respecAttrsButton(g.app)) as unknown as El | null;
+  if (!b) return 'сброс: кнопка бросила';
+  const on = !b.disabled;
+  const desc = `сброс атрибутов (${cost} зол., золото ${s.gold}${notes.length ? `; ${notes.join(', ')}` : ''}) — кнопка ${on ? 'горит' : `погашена «${b.title}»`}`;
+  const at = g.sent.length;
+  g.prompts = [];
+  g.confirmAnswer = r.chance(0.92);
+  try {
+    b.click();
+    await g.flush();
+    const sent = g.sent.slice(at).filter((x) => x.command.cmd === 'respec');
+    if (!on) {
+      if (sent.length) g.violate('ui:respec-disabled-sent', `${desc}: погашенная кнопка послала команду`);
+      g.probe = true;
+      const rep = await g.request({ cmd: 'respec', maxGold: cost });
+      g.probe = false;
+      if (!rep) return `${desc}: проба без ответа`;
+      const res = `${desc} → сервер ${rep.ok ? 'сбросил' : `отказал «${rep.reason}»`}`;
+      g.tally('respec', false, rep);
+      if (!rep.ok) g.count(`respec:off:${normReason(rep.reason ?? '').replace(/«.*$/, '').trim().slice(0, 30)}`);
+      if (strict && rep.ok) g.violate('parity:disabled-accepted:respec', res);
+      if (strict && !rep.ok && !b.title.startsWith(rep.reason ?? '')) g.violate('ui:respec-title', `${res}: подсказка кнопки «${b.title}»`);
+      return res;
+    }
+    if (!g.confirmAnswer) {
+      if (sent.length) g.violate('ui:respec-despite-no', `${desc}: «нет» на вопрос, а сброс ушёл`);
+      return `${desc} → отменено`;
+    }
+    if (sent.length !== 1) { g.violate('ui:no-command:respec', `${desc}: ушло команд ${sent.length}`); return desc; }
+    const rep = g.replies.get(sent[0]!.id);
+    if (!rep) return `${desc}: ответа нет`;
+    const res = `${desc} → ${rep.ok ? 'сброшено' : `отказ «${rep.reason}»`}`;
+    g.tally('respec', true, rep);
+    const code = reasonClass(rep.reason) === 'rule' ? normReason(rep.reason ?? '').replace(/«.*$/, '').trim().slice(0, 40) : reasonClass(rep.reason);
+    if (strict && !rep.ok) g.violate(`parity:enabled-refused:respec:${code}`, res);
+    return res;
+  } finally {
+    g.probe = false;
+  }
+}
+
 // ── Состояние ─────────────────────────────────────────────────────────────────────────────────────
 
 async function opLoot(g: Rig, r: Rng): Promise<string> {
@@ -1780,11 +1955,33 @@ async function opUnequip(g: Rig, r: Rng): Promise<string> {
   return `снять ${slot} → ${rep?.ok ? 'ок' : `отказ «${rep?.reason}»`}`;
 }
 
+/**
+ * ⭐ R18-08: ДЕПЛОЙ СО СМЕНОЙ КОДА ЦЕН при том же теле конфига. Сервер — новой сборки (свой штамп в `joined.build`) и считает цену кузницы и
+ * скупки по-новому, вкладка переподключилась САМА (L2 / R3-25) со старым бандлом: её карточки считают старой формулой (дешевле ковку, щедрее
+ * скупку — такую сервер отказывает «Цена изменилась»). Инвариант (5): игроку «перезагрузите» на входе и на каждый такой отказ. Следующий шаг
+ * `deploy` — игрок перезагрузил страницу: бандл новой сборки, формулы те же, что у сервера.
+ */
+async function opDeploy(g: Rig, r: Rng): Promise<string> {
+  if (!g.codeDrift) {
+    buildHook.server = `${g.stamp}+deploy${++g.deploys}`;
+    buildHook.drift = { forge: 0.5 + r.next() * 0.4, sell: 1.15 + r.next() * 0.85 };
+    const hints = g.hints;
+    await g.reconnect();
+    if (buildHook.stamp && g.hints === hints) g.violate('hint:deploy-untold', 'деплой сменил код цен, вкладка переподключилась со старым бандлом — «перезагрузите» не сказано');
+    if (!buildHook.stamp && g.hints === hints) g.violate('hint:deploy-untold', 'вкладка без штампа (до правки R18-08): деплой, сменивший код цен, прошёл молча');
+    return `деплой: код цен сервера другой (кузница ×${(1 / buildHook.drift.forge).toFixed(2)}, скупка ×${(1 / buildHook.drift.sell).toFixed(2)}), конфиг тот же; вкладка переподключилась со старым бандлом`;
+  }
+  buildHook.drift = null;
+  G_BUILD.__DM_BUILD__ = buildHook.stamp ? buildHook.server ?? g.stamp : '';
+  await g.reconnect();
+  return 'игрок перезагрузил страницу: бандл той же сборки, что сервер';
+}
+
 const EXEC: Record<OpKind, (g: Rig, r: Rng) => Promise<string>> = {
-  bench: opBench, craft: opCraft, windowEnchant: opWindowEnchant, sketch: opSketch, buy: opBuy, sell: opSell, field: opField, paperdoll: opPaperdoll,
+  bench: opBench, craft: opCraft, windowEnchant: opWindowEnchant, sketch: opSketch, buy: opBuy, sell: opSell, field: opField, paperdoll: opPaperdoll, respec: opRespec,
   loot: opLoot, lootCrafted: opLootCrafted, mats: opMats, gold: opGold, goldEdge: opGoldEdge, matsEdge: opMatsEdge, journal: opJournal,
   config: opConfig, clientSync: opClientSync, shopRefresh: opShopRefresh, breakItem: opBreak, bagFill: opBagFill, equip: opEquip, unequip: opUnequip, fund: opFund,
-  wear: opWear, stashDrift: opStashDrift,
+  wear: opWear, stashDrift: opStashDrift, deploy: opDeploy,
 };
 
 /** Для отчёта: подписи шагов сжатой цепочки (прогон с журналом). */

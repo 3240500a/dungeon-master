@@ -344,3 +344,53 @@ describe('⚠ R17-03: цена формы ёмкости — у каждой ф�
     expect(reachable(Math.max(...k.capacityByTier)).filter((key) => !have.has(key))).toEqual([]);
   });
 });
+
+/**
+ * ⚠ R20-05: КРИВАЯ ОПЫТА — 0, 0, ДАЛЬШЕ СТРОГО РАСТЁТ. Схема пускала любой массив чисел: опечатка хозяина (вставка мимо, пропущенная
+ * цифра) делала участок порогов ниже прежних, и герой 10-го уровня с одного очка опыта вставал 20-м — с очками атрибутов, скилов и
+ * мастерства за все десять уровней, полным лечением и новым прилавком. Вернуть таблицу — уровни не отнимаются (R9-05): навсегда.
+ */
+describe('⚠ R20-05: balance.xpTable — кривая опыта строго растёт', () => {
+  const fresh = (): ConfigRegistry => { const x = new ConfigRegistry(); x.loadAll(); return x; };
+  const withXp = (x: ConfigRegistry, edit: (t: number[]) => void): (() => void) => () => {
+    const t = [...x.get('balance').xpTable];
+    edit(t);
+    x.reload({ balance: { ...x.get('balance'), xpTable: t } });
+  };
+
+  it('опечатки — отказ, живая кривая прежняя: ступенька, пропущенная цифра, повтор, минус, NaN, бесконечность, ненулевое начало', () => {
+    const x = fresh();
+    const live = structuredClone(x.get('balance').xpTable);
+    const typos: [string, (t: number[]) => void][] = [
+      ['ступенька xp[11..20] = 100', (t) => { for (let i = 11; i <= 20; i++) t[i] = 100; }],
+      ['пропущенная цифра xp[15] / 10', (t) => { t[15] = Math.round(t[15]! / 10); }],
+      ['повтор xp[30] = xp[29]', (t) => { t[30] = t[29]!; }],
+      ['последний ниже предпоследнего', (t) => { t[t.length - 1] = t[t.length - 2]! - 1; }],
+      ['минус в начале', (t) => { t[0] = -5; }],
+      ['минус в середине', (t) => { t[40] = -t[40]!; }],
+      ['NaN', (t) => { t[20] = Number.NaN; }],
+      ['бесконечность в хвосте', (t) => { t[t.length - 1] = Number.POSITIVE_INFINITY; }],
+      ['xp[1] ≠ 0 (уровень 1 — даром)', (t) => { t[1] = 50; }],
+      ['xp[0] ≠ 0', (t) => { t[0] = 1; }],
+      ['xp[2] = 0 (второй уровень даром)', (t) => { t[2] = 0; }],
+    ];
+    for (const [how, edit] of typos) {
+      expect(withXp(x, edit), how).toThrow(/xpTable/);
+      expect(x.get('balance').xpTable, `${how}: отказ не тронул живую кривую`).toEqual(live);
+    }
+  });
+
+  it('годное проходит: медленнее, быстрее, потолок ниже, минимальная таблица, дробный порог', () => {
+    expect(withXp(fresh(), (t) => { t.splice(0, t.length, ...t.map((v) => Math.round(v * 1.1))); }), 'медленнее ×1.1').not.toThrow();
+    expect(withXp(fresh(), (t) => { t.splice(0, t.length, ...t.map((v) => Math.round(v * 0.8))); }), 'быстрее ×0.8').not.toThrow();
+    expect(withXp(fresh(), (t) => { t.length = 60; }), 'потолок 59').not.toThrow();
+    expect(withXp(fresh(), (t) => { t.splice(0, t.length, 0, 0); }), 'один уровень').not.toThrow();
+    expect(withXp(fresh(), (t) => { t[3] = t[3]! + 0.5; }), 'дробный порог (опыт целый — сравнение то же)').not.toThrow();
+  });
+
+  it('встроенные данные: 0, 0, дальше строго растёт', () => {
+    const t = fresh().get('balance').xpTable;
+    expect(t.slice(0, 2)).toEqual([0, 0]);
+    expect(t.findIndex((v, i) => i >= 2 && !(v > t[i - 1]!))).toBe(-1);
+  });
+});

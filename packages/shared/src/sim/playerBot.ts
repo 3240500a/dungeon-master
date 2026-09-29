@@ -33,6 +33,7 @@ export function newBotSave(reg: ConfigRegistry, classId: string): SaveState {
     name: 'Bot', charId: 'bot', createdAt: 0,
     classId: cls.id, level: 1, xp: 0, gold: 0,
     attributes: { ...cls.startAttributes },
+    startAttributes: { ...cls.startAttributes },   // R18-07: как у героя игры (`newCharacterSave`)
     unspentAttributePoints: 0, unspentSkillPoints: 0, unspentMasteryPoints: 0,
     skills: {}, masteries: {},
     equipment, inventory: [], stash: [], belt: [],

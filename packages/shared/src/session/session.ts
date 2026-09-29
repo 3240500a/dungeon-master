@@ -8,7 +8,7 @@ import type { StatModifier } from '../types/attributes.js';
 import { emptyPacket, packetTotal } from '../types/combat.js';
 import type { Difficulty } from '../formulas/power.js';
 import { createRng, type Rng } from '../formulas/rng.js';
-import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
+import { resolveAttack, abilityCooldown, abilityRankMult, buffCooldown, swingHalfWidth } from '../formulas/combat.js';
 import { hitMaterialOf, type HitMaterial } from '../formulas/hitMaterial.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
@@ -872,15 +872,17 @@ export class GameSession {
         this.toggleStance(p, snap, nodeId, active);
         return;
       // Временный бафф: стат-моды за ресурс на durationSec; не рефрешим, пока активен.
-      // ⚠ R6-15: и свой ОТКАТ, как у прочих активок: у всех баффов игры он длиннее действия, и без него повтор в кадр
-      // истечения держал бафф 100 % времени. ⚠ R8-15: клиенту — событие отката (залить слот), НЕ свинг: свинг — удар.
+      // ⚠ R6-15: и свой ОТКАТ, как у прочих активок: без него повтор в кадр истечения держал бафф 100 % времени. ⚠ R19-03: откат
+      // не короче действия с отдыхом (`buffCooldown`) — ранг режет откат, а не действие, и с какого-то ранга (у «Огненных чар» — с
+      // первого) откат ≤ действия снова давал 100 %. ⚠ R8-15: клиенту — событие отката (залить слот), НЕ свинг: свинг — удар.
       case 'buff': {
         if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
         if ((p.skillCd[nodeId] ?? 0) > 0) return;
         if (!this.canSpend(p, active, res.extraCost)) return;
         this.spend(p, active, res.extraCost);
         p.skillBuffs[nodeId] = active.durationSec;
-        if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
+        const cd = buffCooldown(active.cooldown, active.durationSec, rank);
+        if (cd > 0) p.skillCd[nodeId] = cd;
         this.events.push({ type: 'cooldown', playerId: p.id, ability: nodeId, cooldownMs: (p.skillCd[nodeId] ?? 0) * 1000 });
         return;
       }

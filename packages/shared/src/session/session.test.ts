@@ -13,6 +13,7 @@ import { serializeWorld } from './serialize.js';
 import { respecSkills, equip, unequip, allocAttr, respec, socketInsert, socketClear } from '../economy/townActions.js';
 import { addDebuffStack } from '../world/debuffs.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
+import { BUFF_MIN_REST, buffCooldown } from '../formulas/combat.js';
 import { xpForLevel } from '../formulas/xp.js';
 import { addToInventory } from '../inventory/grid.js';
 import { playerSnapshot } from './derive.js';
@@ -1924,6 +1925,63 @@ describe('⚠ R6-15: бафф держит свой откат', () => {
     expect(evs.filter((e) => e.type === 'swing').map((e) => (e as { ability: string }).ability)).toEqual(['attack']);
     expect(evs.filter((e) => e.type === 'cooldown').map((e) => (e as { ability: string }).ability)).toEqual(['b-class-warrior-a5']);
     expect((p.skillBuffs['b-class-warrior-a5'] ?? 0) > 0, 'бафф встал').toBe(true);
+  });
+
+  /**
+   * ⚠ R19-03: РАНГ РЕЖЕТ ОТКАТ, А НЕ ДЕЙСТВИЕ. `abilityCooldown` снимает 3 % за ранг (до 35 % базы), `durationSec` не меняется: с ранга,
+   * где откат ≤ действия, повтор в кадр истечения держал бафф 100 % времени — ровно то, что закрывал R6-15. «Огненные чары» (откат 12 с
+   * на 12 с действия) — с первого ранга (99.8 %), клич воина и щит бури — с 13-го, мантия — с 11-го, прицельный выстрел — с 15-го.
+   */
+  it('⭐ каждый бафф игры на каждом ранге: под баффом меньше 90 % времени (повтор каждый кадр, ресурс бесконечен)', () => {
+    const r = reg();
+    const tree = r.get('skill-tree');
+    const buffs = tree.nodes.filter((n) => n.effect.active?.category === 'buff');
+    expect(buffs.length, 'баффы в игре есть').toBeGreaterThan(0);
+    const dt = 1 / 30;
+    const over: string[] = [];
+    const honest: string[] = [];
+    for (const node of buffs) {
+      const a = node.effect.active!;
+      if (a.category !== 'buff') continue;
+      const cls = tree.branches.find((b) => b.id === node.branchId)?.classId ?? 'warrior';
+      for (let rank = 1; rank <= node.maxRank; rank++) {
+        const s = new GameSession(r, 7, 'normal');
+        const p = s.addPlayer('p1', newBotSave(r, cls));
+        p.save.level = 99;
+        p.save.skills[node.id] = rank;
+        s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+        // Два полных цикла «каст → каст → каст»: доля времени под баффом между первым и третьим кастом — без хвоста окна.
+        const casts: number[] = [];
+        let up = 0;
+        for (let i = 0; i < 60 * 30; i++) {
+          p.stamina = 1e6; p.mana = 1e6;
+          const had = (p.skillBuffs[node.id] ?? 0) > 0;
+          s.tick(dt, { p1: { ...idle, cast: node.id } });
+          const has = (p.skillBuffs[node.id] ?? 0) > 0;
+          if (!had && has) { casts.push(i); if (casts.length === 3) break; }
+          if (casts.length && has) up++;
+        }
+        const span = casts.length === 3 ? casts[2]! - casts[0]! : 0;
+        if (!span || up / span >= 0.9) over.push(`${node.id} ранг ${rank}: ${span ? `${(100 * up / span).toFixed(1)} %` : `кастов за минуту ${casts.length}`}`);
+        // Честная игра прежняя: на первом ранге бафф с откатом длиннее действия (с запасом) кастуется ровно по своему откату.
+        if (rank === 1 && a.cooldown >= a.durationSec * 1.25 && span && Math.abs((casts[1]! - casts[0]!) * dt - a.cooldown) > dt + 1e-6) {
+          honest.push(`${node.id}: каст раз в ${((casts[1]! - casts[0]!) * dt).toFixed(2)} с при откате ${a.cooldown}`);
+        }
+      }
+    }
+    expect(over, 'бафф висит (почти) всё время — или не встал вовсе').toEqual([]);
+    expect(honest, 'первый ранг — по откату из данных').toEqual([]);
+  }, 60_000);   // ~100 сессий по два цикла баффа: работа, а не ожидание
+
+  it('R19-03: у каждого баффа в данных откат не короче действия с отдыхом — откат из описания и есть настоящий на первом ранге', () => {
+    const bad = reg().get('skill-tree').nodes.flatMap((n) => {
+      const a = n.effect.active;
+      return a?.category === 'buff' && buffCooldown(a.cooldown, a.durationSec, 1) !== a.cooldown ? [`${n.id}: откат ${a.cooldown} с на ${a.durationSec} с действия`] : [];
+    });
+    expect(bad).toEqual([]);
+    expect(buffCooldown(12, 12, 1), '«Огненные чары» до правки данных: 12 с на 12 с').toBe(12 * (1 + BUFF_MIN_REST));
+    expect(buffCooldown(12, 8, 20), 'ранг режет откат не ниже действия с отдыхом').toBe(8 * (1 + BUFF_MIN_REST));
+    expect(buffCooldown(12, 8, 1)).toBe(12);
   });
 });
 

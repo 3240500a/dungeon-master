@@ -12,6 +12,7 @@ import {
 import { counters } from './metrics.js';
 import { limits, known, ipBucket } from './rateLimit.js';
 import { sessionKey } from './authSession.js';
+import { upsertPlaySession } from '../db/telemetry.js';
 import { Prng, mutateFrame, junkText, junkBytes, shrinkOps } from './protocolFuzz.frames.js';
 
 /**
@@ -42,6 +43,8 @@ import { Prng, mutateFrame, junkText, junkBytes, shrinkOps } from './protocolFuz
  *  I10 — ⭐ E2E 29.09: телеметрия кузницы (`/metrics` и `play_sessions`) считает ровно состоявшиеся действия: удачная ковка с НОВЫМ ключом —
  *       одна ковка (повтор ключа — ноль), удачный разбор — одна переплавка скованного или один разбор найденного, удачное зачарование — одно;
  *       эскиз, отказ и прочие команды — ноль. Судится только операция, начатая в тишине (иначе в окно попала бы чужая запись в полёте).
+ *       ⭐ E2E 29.09 (шестой прогон): и строки `play_sessions` (своя модель с задержкой базы, периодическая запись — раз в 2 с): у сессии одна
+ *       строка, у закрытой — закрыта и несёт её итог.
  * HTTP-ручки аккаунта — свой блок в конце файла (H1–H4).
  *
  * МОДЕЛЬ. Сценарии: «смесь» (честный один или с другом, соседняя вкладка аккаунта, чужие аккаунты, анонимы, мусор всех видов) и
@@ -64,6 +67,9 @@ vi.setConfig({ testTimeout: 60 * 60_000, hookTimeout: 60_000 });
 // Потолок неотправленного — наименьший допустимый (64 КБ, `conn.ts`): медленный читатель упирается в него за пару кадров, и путь
 // «закрыть посреди рассылки» (1013) идёт в каждой такой последовательности. Ставится до импорта `conn.ts`.
 vi.hoisted(() => { process.env.DM_MAX_BACKPRESSURE = String(64 * 1024); });
+// ⭐ E2E 29.09 (шестой прогон): периодическая запись телеметрии сессии — раз в 2 с часов фаззера (боевое — 5 мин): её гонка с прощальной
+// (вторая строка одной сессии, запоздавший UPDATE поверх закрытия) иначе не встречалась бы вовсе (I10). Ставится до импорта `room.ts`.
+vi.hoisted(() => { process.env.DM_TELEMETRY_FLUSH_MS = '2000'; });
 const db = vi.hoisted(() => ({
   sessions: new Map<string, string>(),
   chars: new Map<string, { userId: string; data: unknown; version: number }>(),
@@ -80,7 +86,17 @@ const db = vi.hoisted(() => ({
   /** HTTP-часть: аккаунты по нику (без регистра) и журнал того, что ручки аккаунта в базе создали и удалили. */
   users: new Map<string, { id: string; username: string; passHash: string; passSalt: string; net: string }>(),
   mut: [] as string[],
+  /**
+   * ⭐ E2E 29.09 (шестой прогон): `play_sessions` — строки по id (запись несёт снимок счётчиков кузницы и `ended` на миг вызова, как настоящая)
+   * и сколько строк завела каждая сессия (ключ — её `SessionTelemetry`, `t`). I10: у сессии одна строка, у закрытой — её итог.
+   */
+  tm: {
+    seq: 0,
+    rows: new Map<string, { t: TmCounts; ended: boolean } & TmCounts>(),
+    inserts: new Map<object, number>(),
+  },
 }));
+type TmCounts = { crafted: number; melted: number; salvaged: number; enchanted: number };
 /** Поток случайных чисел для подменённого `node:crypto` — свой у каждой последовательности (по сиду). */
 const rnd = vi.hoisted(() => ({ next: (): number => Math.random() }));
 /** Комнаты «на тике»: планировщик подменён, тик делает сам фаззер (операция `tick`). */
@@ -226,7 +242,32 @@ vi.mock('../db/db.js', () => {
     listUsernames: () => q(() => [...db.users.keys()]),
   };
 });
-vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
+// ⭐ E2E 29.09 (шестой прогон): `play_sessions` — с задержкой базы (`db.lat`), как прочие запросы: INSERT (id — null) заводит строку и отвечает её
+// id, UPDATE пишет в неё; счётчики и `ended` — снимком на миг вызова (настоящая функция собирает параметры до ожидания). Раньше здесь была
+// заглушка, и I10 судил только `/metrics`: две строки одной сессии и запоздавший UPDATE поверх закрытия фаззер видеть не мог.
+vi.mock('../db/telemetry.js', () => {
+  const turns = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) await new Promise<void>((r) => setImmediate(r)); };
+  return {
+    upsertPlaySession: async (id: string | null, _u: string, _c: string, _ip: string | null, t: TmCounts, ended: boolean): Promise<string | null> => {
+      const now = { ended, crafted: t.crafted, melted: t.melted, salvaged: t.salvaged, enchanted: t.enchanted };
+      db.pending++;
+      try {
+        await turns(db.lat());
+        let out = id;
+        if (!id) {
+          out = `ps-${++db.tm.seq}`;
+          db.tm.inserts.set(t, (db.tm.inserts.get(t) ?? 0) + 1);
+          db.tm.rows.set(out, { t, ...now });
+        } else {
+          const row = db.tm.rows.get(id);
+          if (row) Object.assign(row, now);
+        }
+        await turns(db.lat());
+        return out;
+      } finally { db.pending--; }
+    },
+  };
+});
 vi.mock('../cluster/registry.js', () => ({
   releaseChar: () => Promise.resolve(),
   claimForJoin: (_c: string, node: string) => Promise.resolve(node),
@@ -609,6 +650,7 @@ class Run {
     for (const l of Object.values(limits)) for (const m of bucketsOf(l)) m.clear();
     for (const k of [...(known.sessions as unknown as { seen: Map<string, unknown> }).seen.keys()]) known.sessions.delete(k);
     db.sessions.clear(); db.chars.clear(); db.stash.clear(); db.pgRejects.length = 0;
+    db.tm.rows.clear(); db.tm.inserts.clear();
     sched.rooms.clear();
     // Сессии аккаунтов «вошли через этот процесс» (HTTP-вход кладёт их в `known.sessions`, R10-04).
     const gear = new Prng(this.seed ^ 0x9ea5);
@@ -1553,6 +1595,15 @@ class Run {
     }
     for (const [id, room] of rm.graceByChar) if (!rm.rooms.has(room.code) || !room.disconnected.has(id)) this.violate('I6', 'graceByChar указывает на комнату без него', id);
     for (const id of rm.farewellSeq.keys()) if (!rm.graceByChar.has(id)) this.violate('I6', 'номер прощальной записи не подметён', id);
+    // ⭐ E2E 29.09 (шестой прогон), I10: строки телеметрии (`play_sessions`) — одна на сессию, и у закрытой (соединения закрыты, записи легли) —
+    // её итог: закрыта, счётчики кузницы — её. Раньше периодическая и прощальная записи сессии шли наперегонки: снятие посреди первой (INSERT)
+    // заводило вторую строку (её ковки в сумме — дважды), а запоздавший периодический UPDATE ложился поверх закрытия.
+    for (const n of db.tm.inserts.values()) if (n > 1) this.violate('I10', 'у сессии больше одной строки телеметрии', `${n}`);
+    for (const [id, r] of db.tm.rows) {
+      const want = { ended: true, crafted: r.t.crafted, melted: r.t.melted, salvaged: r.t.salvaged, enchanted: r.t.enchanted };
+      const got = { ended: r.ended, crafted: r.crafted, melted: r.melted, salvaged: r.salvaged, enchanted: r.enchanted };
+      if (JSON.stringify(got) !== JSON.stringify(want)) this.violate('I10', 'строка телеметрии закрытой сессии — не её итог', `${id}: ${JSON.stringify(got)}, итог ${JSON.stringify(want)}`);
+    }
     left('комнат на тике', sched.rooms.size);
     left('бакеты wsFrames', limits.wsFrames.size);
     left('бакеты wsInput', limits.wsInput.size);
@@ -1655,7 +1706,9 @@ function errorClass(e: string): string {
  *  • `i7-dupe`    — выброшенная вещь остаётся и в сумке (I7);
  *  • `i8-stuck`   — прощальная запись героя h1 «не легла» навсегда: вход — «сохраняем, повторите» (I8);
  *  • `r1504`      — ввод сверх потолка снова рвёт соединение (4008), а не отбрасывается: хвост обрыва связи (`stall`) — I5;
- *  • `i10-sketch` — эскиз пишется с причиной ковки, как до правки E2E 29.09: `/metrics` считает его ковкой (I10).
+ *  • `i10-sketch` — эскиз пишется с причиной ковки, как до правки E2E 29.09: `/metrics` считает его ковкой (I10);
+ *  • `i10-tmrace` — записи телеметрии сессии наперегонки, как до правки E2E 29.09 (шестой прогон): снятие посреди периодической — вторая
+ *    строка сессии или её закрытие затёрто (I10).
  */
 const SELFTEST = process.env.DM_FUZZ_SELFTEST ?? '';
 function injectBug(name: string, rm: RMIn): () => void {
@@ -1708,6 +1761,16 @@ function injectBug(name: string, rm: RMIn): () => void {
       const orig = R.withAccount!;
       spies.push(vi.spyOn(R, 'withAccount').mockImplementation(function (this: unknown, c: unknown, pid: unknown, why: unknown, ...rest: unknown[]) {
         return orig.call(this, c, pid, why === 'sketch' ? 'craft' : why, ...rest);
+      }));
+      break;
+    }
+    case 'i10-tmrace': {
+      type C = { pid: string; userId: string; ws: { ip: string | null }; tm: TmCounts; tmRow: string | null };
+      spies.push(vi.spyOn(R, 'writeTelemetry').mockImplementation(async function (this: { session: { world: { players: Record<string, { save: { charId: string } }> } } }, c: unknown, ended: unknown) {
+        const cl = c as C;
+        const p = this.session.world.players[cl.pid];
+        if (!p) return;
+        cl.tmRow = await upsertPlaySession(cl.tmRow, cl.userId, p.save.charId, cl.ws.ip, cl.tm as never, ended as boolean);
       }));
       break;
     }
@@ -2074,6 +2137,19 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
     expect(run.stats.get('honest cmd:forgeSketch ok'), 'эскиз удался').toBe(1);
     expect(run.stats.get('honest cmd:craft ok'), 'две ковки и повтор ключа').toBe(3);
   });
+  // ⭐ E2E 29.09 (шестой прогон): живой `poc:craft` в кластере не застал строку телеметрии сразу за выходом, и разбор нашёл, что записи сессии шли
+  // наперегонки. Самопроверка `i10-tmrace` (как до правки), сид 4096, ужато 68 → 4 операции: периодическая запись висит в базе, сессию снимают —
+  // вторая строка сессии, а запоздавший UPDATE затирает закрытие. Под правкой — одна строка на сессию, закрытая, с её итогом.
+  it('E2E 29.09 (шестой прогон): строки телеметрии — одна на сессию, закрытие не затирается (I10)', async () => {
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 900 } },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'craft', pick: 42096 }, race: true },
+      { k: 'wait', ms: 20000 },
+    ], 4096);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    expect(db.tm.rows.size, 'сессия писала телеметрию').toBeGreaterThan(0);
+  });
   it('контроль: те же последовательности на uWS — закрытие окончательно, нарушений нет', async () => {
     const uws = (ops: Op[]): Op[] => ops.map((o) => (o.k === 'open' ? { ...o, mode: 'uws' } : o));
     expect(i9(await runOps(uws(V1_OPS), 7))).toEqual([]);
@@ -2275,9 +2351,13 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер HTTP-руч�
           } else {
             if (honestLogins++ >= 1) continue;
             res = await call('POST', '/api/login', { ip, body: JSON.stringify({ username: 'honest', password: HONEST_PASS, device }) });
-            // R3-07: потолок НИКА — цена защиты от перебора: тролль, бивший в ник честного, запирает его вход на время (документировано).
-            const nickLocked = res.status === 429 && trollHitHonestNick && !limits.loginUser.peek('honest');
-            if (res.status !== 200 && !nickLocked) violate('H3', `честный: вход с устройства ${res.status}`, JSON.stringify(res.json), i);
+            // ⭐ R18-05: потолок НИКА (R3-07) тролль, бивший в ник честного неверными паролями, исчерпывает — но вход честного с ЕГО токеном
+            // устройства платит свой потолок ника (`loginUserDevice`), и заперт он быть не вправе. Раньше здесь стояло исключение «ник заперт
+            // троллем — документировано»: оно и прятало бессрочный запрет входа владельцу (тролль раз в 30 с держал бакет пустым).
+            if (res.status !== 200) {
+              const why = trollHitHonestNick && !limits.loginUser.peek('honest') ? ' (потолок ника без токена исчерпан троллем)' : '';
+              violate('H3', `честный: вход с устройства ${res.status}${why}`, JSON.stringify(res.json), i);
+            }
           }
         } else {
           switch (op.kind) {

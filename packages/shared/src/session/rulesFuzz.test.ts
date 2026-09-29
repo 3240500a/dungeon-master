@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { ConfigRegistry } from '../config/registry.js';
 import { createRng } from '../formulas/rng.js';
+import { abilityCooldown } from '../formulas/combat.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
 import { newCharacterSave, fitToClass } from '../economy/newCharacter.js';
@@ -51,7 +52,7 @@ const LEN = env('DM_FUZZ_LEN', 80);
  * Профили (`DM_FUZZ_PROFILE`): `combat` — тики чаще (бой, [E], пояс, рывки), `world` — команды мира и смены посреди замаха,
  * `pvp` — арены с PvP и пати от двух героев, `floor` — этажи генератора забега почти без арен, `pillars` — арены с колоннами
  * в линии огня (C-10: снаряды и преграды декора, закрывающие обзор), `levelup` — арены, все герои на пороге уровня (R15-10:
- * левелап поверх аур, стоек и баффов).
+ * левелап поверх аур, стоек и баффов), `buffs` — арены, бафф своего класса на высшем ранге (R19-03: отдых баффа).
  */
 const PROFILES: Record<string, { weights?: Partial<Record<OpKind, number>>; world?: import('./fuzz/rulesFuzz.js').FuzzHooks['world'] }> = {
   combat: { weights: { ...OP_WEIGHTS, tick: 80 } },
@@ -60,6 +61,7 @@ const PROFILES: Record<string, { weights?: Partial<Record<OpKind, number>>; worl
   floor: { world: { arena: 0.1 } },
   pillars: { weights: { ...OP_WEIGHTS, tick: 60 }, world: { arena: 1, pillars: 1 } },
   levelup: { weights: { ...OP_WEIGHTS, tick: 60 }, world: { arena: 1, levelup: true } },
+  buffs: { weights: { ...OP_WEIGHTS, tick: 70 }, world: { arena: 1, buffs: true } },
 };
 const PROFILE = PROFILES[process.env.DM_FUZZ_PROFILE ?? ''] ?? {};
 const WEIGHTS = PROFILE.weights ?? OP_WEIGHTS;
@@ -140,6 +142,21 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
   },
   { name: 'откат не держится', want: /^I3:/, hooks: { afterTick: (w) => { for (const p of Object.values(w.s.world.players)) { p.attackCd = 0; p.skillCd = {}; } } } },
   {
+    // R19-03: откат баффа — по рангу, без отдыха (как было: ранг режет откат, а не действие — с какого-то ранга повтор в кадр истечения).
+    name: 'бафф без отдыха', want: /^I4:buff-rest:/,
+    hooks: {
+      world: { buffs: true },
+      install: (w) => patch(w, 'castSkill', (o) => (...a) => {
+        const p = a[0] as PlayerEntity; const id = a[2] as string;
+        const had = (p.skillBuffs[id] ?? 0) > 0;
+        const out = o(...a);
+        const act = w.reg.get('skill-tree').nodes.find((n) => n.id === id)?.effect.active;
+        if (!had && act?.category === 'buff' && (p.skillBuffs[id] ?? 0) > 0) p.skillCd[id] = abilityCooldown(act.cooldown, p.save.skills[id] ?? 1);
+        return out;
+      }),
+    },
+  },
+  {
     name: 'каст невыученного', want: /^I4:unlearned-cast:/,
     hooks: {
       install: (w) => patch(w, 'castSkill', (o) => (...a) => {
@@ -176,6 +193,18 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
   },
   { name: 'опыт без убийства', want: /^I6:(xp|level|points)/, hooks: { afterTick: (w) => { for (const p of Object.values(w.s.world.players)) p.save.xp += 1; } } },
   { name: 'подбор издалека', want: /^I5:pickup-(range|los):/, hooks: { install: (w) => patch(w, 'within', () => () => true) } },
+  {
+    // R20-07: мёртвый поднимает (как подъём, чья запись легла после смерти, — в сумку трупа): герой гибнет у вещи, а правило «мёртвые не
+    // поднимают» (`canInteract`) снято.
+    name: 'мёртвый поднимает', want: /^I6:dead-bag-grew:/,
+    hooks: {
+      install: (w) => patch(w, 'canInteract', () => () => true),
+      afterTick: (w) => {
+        const d = w.s.world.drops.find((x) => x.kind === 'item');
+        for (const p of Object.values(w.s.world.players)) if (p.alive && d) { p.alive = false; p.hp = 0; p.pos = { ...d.pos }; }
+      },
+    },
+  },
   { name: 'дверь открылась сама', want: /^I5:door-open:/, hooks: { afterTick: (w) => { const d = w.s.world.doors[0]; const c = d?.cells[0]; if (c) w.s.world.grid[c.cy]![c.cx] = 0; } } },
 ];
 
@@ -298,6 +327,25 @@ describe('⚠ R15-10: фаззер правил — левелап в бою', (
     const out = runOps(7650274, ops, { resetUids: hooks.resetUids, world: PROFILES.levelup!.world });
     expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
   });
+});
+
+/**
+ * ⚠ R19-03: БАФФ НА ВЫСШЕМ РАНГЕ — свой профиль мира: только арены, бафф своего класса (по уровню) на высшем ранге. Ранг режет откат, а не
+ * действие: с ранга, где откат ≤ действия, повтор в кадр истечения держал бафф 100 % времени. В общем профиле ранги размазаны по дереву,
+ * и высокий ранг баффа с повтором через цикл не встречался; этот — в первых же (зубы — «бафф без отдыха» выше).
+ */
+describe('⚠ R19-03: фаззер правил — бафф на высшем ранге', () => {
+  it('16 цепочек по 80 шагов: ни одного нарушения; баффы кастовались', () => {
+    const hits: string[] = [];
+    const cover: Record<string, number> = {};
+    for (let seed = 1; seed <= 16; seed++) {
+      const out = runOps(seed, genOps(seed, 80, PROFILES.buffs!.weights), { ...hooks, world: PROFILES.buffs!.world }, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      for (const [k, n] of Object.entries(out.cover)) cover[k] = (cover[k] ?? 0) + n;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(cover.buff ?? 0, 'баффы кастовались').toBeGreaterThan(1);
+  }, 120_000);
 });
 
 /**

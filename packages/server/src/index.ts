@@ -101,6 +101,11 @@ async function boot(): Promise<void> {
     const tails = await releaseNodeRuns(nodeId);
     if (tails) console.log(`[dm-server] снято забегов прошлого процесса ноды: ${tails}`);
     setRunLockStore({ claim: (key, room) => claimRun(key, nodeId, room), release: (key, room) => releaseRun(key, nodeId, room) });
+    // ⭐ R18-03: запись строки героя (сессия, дописка, копия ждущего, штраф и снятие забега по строке базы) — только пока героя держит эта нода
+    // (закрепление за ней; с арендой — и реестр видел её удар): после простоя машины она иначе хоронила героя, который уже играл тот же забег на
+    // соседней, и дописывала копии поверх строк, прочитанных там.
+    const { setRowOwner } = await import('./net/room.js');
+    setRowOwner({ node: nodeId, leased: ROLE === 'node' });
   }
 
   // Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы

@@ -62,8 +62,12 @@ export class OnlineScene extends Phaser.Scene {
   /** ⭐ R13-05: окно смерти — `ui/deathWindow.ts` (одно правило с 3D): статус той же смерти окно не строит заново. */
   private readonly deathWin = new DeathWindow({ show: (v) => this.showDeathModal(v), hide: () => this.closeDeathModal(), dock: (v) => this.showDeathDock(v) },
     { wait: 'Ожидайте: пати зачистит этаж и спустится — там вы возродитесь.', spectate: 'Смотреть за пати' });
-  /** R13-14: отписка сцены от снапшотов (их же слушает драйвер — общий `off('snapshot')` снял бы и его). */
-  private offSnap?: () => void;
+  /**
+   * ⭐ R19-02: отписки сцены от сети — её обработчики кадров и поток входа (`EntryFlow.attach`). Снимаются ТОЛЬКО свои: `NetClient` живёт всё
+   * приложение, и на те же кадры подписаны `App` (штамп сборки на `joined` — R18-08, ответы команд) и драйвер (снапшоты — R13-14). Раньше
+   * сцена снимала обработчики кадров оптом (`off(t)`) — и штамп сборки `App` уходил с ними: деплой со сменой кода цен 2D-вкладке не говорили.
+   */
+  private offNet: (() => void)[] = [];
   private codeLabel?: HTMLElement;
   private pingLabel?: HTMLElement;
   private lastPingShown = -2; // чтобы не трогать DOM каждый кадр (RTT меняется ~1/сек)
@@ -79,12 +83,13 @@ export class OnlineScene extends Phaser.Scene {
     this.eKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E, false);
     this.prompt = this.add.text(0, 0, '', { fontSize: '14px', color: '#f0d9a8', backgroundColor: '#000000aa', padding: { x: 6, y: 3 } }).setDepth(100).setVisible(false);
 
-    // Сцена пере-подписывается при каждом входе — снимаем прошлые обработчики (net живёт в App).
-    for (const t of ['joined', 'areaChanged', 'doorOpened', 'died', 'voteStart', 'voteUpdate', 'voteEnd', 'runStatus', 'abandoned', 'error'] as const) this.app.net.off(t);
-    this.app.net.clearLifecycle();
+    // Сцена пере-подписывается при каждом входе — снимаем СВОИ прошлые подписки (net живёт в App; R19-02 — чужие не трогаем).
+    this.unwire();
+    const net = this.app.net;
+    const listen: typeof net.on = (t, cb) => { const off = net.on(t, cb); this.offNet.push(off); return off; };
 
     // Сетевые обработчики области/голосования (экраны входа снимает поток входа — на тот же кадр `joined`).
-    this.app.net.on('joined', (f) => {
+    listen('joined', (f) => {
       this.myId = f.playerId; // ВАЖНО до buildArea: иначе свой игрок рисуется как чужой
       const state = new GameState(f.save); // авторитетный сейв с сервера — истина
       state.restoreFull();
@@ -94,26 +99,26 @@ export class OnlineScene extends Phaser.Scene {
       this.showRoomCode(f.roomCode);
       this.deathWin.reset();   // R13-05: смерть прошлой сессии — не эта
     });
-    this.app.net.on('areaChanged', (f) => { this.deathWin.reset(); this.buildArea(f.floor); }); // возрождение = смена области
-    this.app.net.on('doorOpened', (f) => this.openDoor(f.doorId));
-    this.app.net.on('died', (f) => this.deathWin.onDied(f)); // окно смерти (потери + режим возрождения); R13-05: статус — не новая смерть
+    listen('areaChanged', (f) => { this.deathWin.reset(); this.buildArea(f.floor); }); // возрождение = смена области
+    listen('doorOpened', (f) => this.openDoor(f.doorId));
+    listen('died', (f) => this.deathWin.onDied(f)); // окно смерти (потери + режим возрождения); R13-05: статус — не новая смерть
     // ⭐ R13-14: ожил без смены области (авто-возрождение арены: `respawnPlayer` без `areaChanged`) — окно смерти прочь, как у 3D:
     // иначе «Вы повержены» висело над героем и глотало клики холста. ⚠ По ПРИШЕДШЕМУ снапшоту, не на кадре отрисовки: мир тикает
     // 30 Гц, снапшоты — 20, и на тике без рассылки `died` приходит раньше снапшота со смертью (последний принятый ещё «жив»).
     // Снапшоты и `died` идут одним сокетом по порядку — снапшот, пришедший после `died`, смерть уже видит.
-    this.offSnap?.();
-    this.offSnap = this.app.net.on('snapshot', (f) => {
+    // R13-14: снапшоты слушает и драйвер — снимается только своя подписка (как и все подписки сцены, R19-02).
+    listen('snapshot', (f) => {
       const me = f.snap.players.find((p) => p.id === this.myId);
       if (me?.alive && this.deathWin.state) this.deathWin.reset();
     });
-    this.app.net.on('voteStart', (f) => this.showVote(f));
-    this.app.net.on('voteUpdate', (f) => { if (this.voteBox) this.voteBox.querySelector('.tally')!.textContent = `${f.yes}/${f.total}`; });
-    this.app.net.on('voteEnd', () => this.closeVote());
+    listen('voteStart', (f) => this.showVote(f));
+    listen('voteUpdate', (f) => { if (this.voteBox) this.voteBox.querySelector('.tally')!.textContent = `${f.yes}/${f.total}`; });
+    listen('voteEnd', () => this.closeVote());
 
     // ⭐ ВХОД И ПОТЕРЯ СВЯЗИ — общий с веб-3D поток (`net/entryFlow.ts`, экраны `ui/entryScreens.ts`): открылся сокет —
     // статус забега → лобби или «Продолжить»; сервер закрыл живую сессию (R3-25: 4009, 4001, 4008, обрыв) — окна прошлой
     // области прочь, мир прошлой сессии снесён, плашка с причиной и переподключение без самовхода. Его обработчики
-    // (`runStatus`/`abandoned`/`error`/`joined`, open/close) сняты строками выше и вешаются заново на КАЖДЫЙ вход в сцену.
+    // (`runStatus`/`abandoned`/`error`/`joined`, open/close) — поток на КАЖДЫЙ вход в сцену свой; отписка — в `offNet` (R19-02).
     this.entry = new EntryFlow({
       net: this.app.net,
       who: () => ({ token: this.app.auth!.token, charId: this.app.pendingCharId! }),
@@ -137,9 +142,18 @@ export class OnlineScene extends Phaser.Scene {
         this.scene.start('CharacterSelect');
       },
     });
-    this.entry.attach();
+    this.offNet.push(this.entry.attach());
     this.entry.start();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
+  }
+
+  /**
+   * ⭐ R19-02: снять подписки сцены на сеть — ровно свои (обработчики кадров и поток входа). Поток входа прошлого показа отцеплен: его таймеры
+   * (очередь, повтор статуса) и опоздавший маршрут больше ничего не делают.
+   */
+  private unwire(): void {
+    this.entry?.detach();
+    for (const off of this.offNet.splice(0)) off();
   }
 
   /** Показывает код комнаты (для приглашения друзей) — фикс-плашка справа сверху. */
@@ -428,8 +442,9 @@ export class OnlineScene extends Phaser.Scene {
    * снесённый драйвер жил дальше с мёртвыми клавишами (герой невидим и не двигается до перезагрузки страницы).
    */
   private cleanup(): void {
-    this.entry?.detach();   // закрытие сокета после выхода из сцены её не трогает; экраны входа сняты
-    this.offSnap?.(); this.offSnap = undefined;   // R13-14: `NetClient` живёт всё приложение — снапшоты снесённой сцене не нужны
+    // Закрытие сокета после выхода из сцены её не трогает, экраны входа сняты; ⭐ R19-02: подписки сцены и её потока входа сняты — ровно свои
+    // (`NetClient` живёт всё приложение: кадры снесённой сцене не нужны, а подписки `App` остаются).
+    this.unwire();
     dismissAsk();   // R3-23: вопрос в поле не переживает выход из игры
     this.app.gameLog?.setVisible(false); // выход из игры (в меню) — скрыть чат
     this.driver?.destroy(); this.driver = undefined;   // и его подписки на кадры сети (R5-16)

@@ -25,12 +25,15 @@ const db = vi.hoisted(() => ({
   ledgerFails: 0,
   ledgerCalls: 0,
   ledgerOk: 0,
+  /** ⭐ R20-01: следующая запись свода висит, пока тест не откроет (база медленная, моргнула), — и кончается по `ledgerFails`. */
+  ledgerGate: null as null | Promise<void>,
 }));
 vi.mock('../db/db.js', () => ({
   getRunLedger: async () => [],
   mergeRunLedger: async () => {
     db.ledgerCalls++;
-    await new Promise((res) => setTimeout(res, 1));
+    const g = db.ledgerGate;
+    if (g) { db.ledgerGate = null; await g; } else await new Promise((res) => setTimeout(res, 1));
     if (db.ledgerFails > 0) { db.ledgerFails--; throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' }); }
     db.ledgerOk++;
   },
@@ -105,6 +108,7 @@ type RoomIn = {
   code: string; area: string; movedAt: number; stop(): void; step(): void;
   persist(pid: string): Promise<string>;
   descend(pid: string): void; castVote(pid: string, yes: boolean): void; markLedger(id?: string): void;
+  endRun(): void; enterTown(): void; ledgerPending(): boolean; flushOwed(): Promise<void>;
   lingering: Map<string, unknown>; ledgerOut: Map<string, unknown>;
   session: { world: { drops: Drop[]; monsters: Mon[]; spawn: { x: number; y: number }; players: Record<string, Pl>; grid: Grid } };
 };
@@ -135,7 +139,7 @@ beforeEach(() => {
   for (const l of [limits.roomJoin, limits.roomCreate, limits.lobby, limits.townCmd, limits.cmdResync]) l.reset('user-r14rm');
 });
 afterEach(() => {
-  db.gate.clear(); db.landUnknown.clear(); db.ledgerFails = 0;
+  db.gate.clear(); db.landUnknown.clear(); db.ledgerFails = 0; db.ledgerGate = null;
   for (const rm of managers.splice(0)) for (const r of rm.rooms.values()) r.stop();
   vi.restoreAllMocks();
 });
@@ -303,5 +307,71 @@ describe('⭐ R14-07: слив ноды ждёт и свод записей за
     expect(counters.farewellForgotten - forgot0, 'K2: сейв героя забега без свода не лёг — ИНЦИДЕНТ и на героя').toBe(1);
     expect(db.chars.get('R14E')!.version, 'K2: строка героя не обогнала свод').toBe(v0);
     expect(errors.some((l) => l.includes('ИНЦИДЕНТ') && l.includes(room.code) && l.includes('свод')), errors.join(' | ')).toBe(true);
+  });
+
+  /**
+   * ⭐ R20-01: пати кончила забег (финал, вайп — `endRun`), пачка свода ушла в базу и там висит (`ledgerGate`: база медленная, моргнула при
+   * деплое), а последний вышел из города — комната снята (`stop`). Сейв героя забег больше не несёт — его прощание свод не ждёт (K2). Раньше снятая
+   * комната с пачкой в пути выпадала из учёта недолёгшего (`ledgerOwing` считал только очередь), и слив её не видел: выход за миллисекунды, пачка
+   * падала после — записей узлов в базе нет, ИНЦИДЕНТА нет, а «Продолжить» участника с припаркованной копией собирал узел по неполному своду.
+   */
+  async function tornDown(rm: RMIn, id: string): Promise<{ room: RoomIn; open: () => void }> {
+    const { ledgerOwingRooms } = await import('./room.js');
+    for (const r of ledgerOwingRooms()) await (r as unknown as RoomIn).flushOwed();   // недолёгшее прошлых тестов — не в счёт слива
+    seed(id);
+    const ws = await joinFresh(rm, id);
+    const room = rm.rooms.get(ws.last('joined')!.roomCode)!;
+    room.movedAt = 0;
+    ws.push({ t: 'descend' });
+    await until('подземелье', () => room.area === 'dungeon');
+    await until('записи спуска легли', () => !rm.inflight.size);
+    await until('свод спуска лёг', () => !room.ledgerPending());
+    room.markLedger();   // узел изменился (сундук, убитый)
+    let open!: () => void;
+    db.ledgerGate = new Promise<void>((r) => { open = r; });
+    db.ledgerCalls = 0; db.ledgerOk = 0;
+    room.endRun();   // финал (вайп): свод — в базу
+    room.enterTown();
+    await until('пачка свода в пути', () => db.ledgerCalls >= 1);
+    ws.close();   // последний закрыл вкладку в городе
+    await until('прощание легло', () => !rm.inflight.size);
+    expect(rm.rooms.has(room.code), 'комната снята').toBe(false);
+    expect(room.ledgerPending(), 'её свод — в пути').toBe(true);
+    return { room, open };
+  }
+
+  it('⭐ R20-01: пачка свода снятой комнаты в пути — слив ждёт её (а не выходит за миллисекунды) и выходит, когда она легла', async () => {
+    const rm = manager();
+    const { room, open } = await tornDown(rm, 'R20A');
+    let drained = false;
+    const d = rm.flushAll(30_000).then(() => { drained = true; });
+    for (let i = 0; i < 200; i++) await tick();
+    expect(drained, 'слив не вышел, пока пачка свода в пути').toBe(false);
+    open();
+    await d;
+    expect(db.ledgerOk, 'пачка легла до выхода процесса').toBeGreaterThanOrEqual(1);
+    expect(room.ledgerPending(), 'у снятой комнаты свод в базе').toBe(false);
+  });
+
+  it('⭐ R20-01: …а пачка падает весь бюджет — снятая комната пишет её снова, в конце ИНЦИДЕНТ и +1 к dm_ledger_drain_lost_total', async () => {
+    const rm = manager();
+    const { room, open } = await tornDown(rm, 'R20B');
+    db.ledgerFails = 1_000_000;
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    const { counters } = await import('./metrics.js');
+    const lost0 = counters.ledgerDrainLost;
+    let drained = false;
+    const d = rm.flushAll(3_000).then(() => { drained = true; });
+    for (let i = 0; i < 20; i++) await tick();
+    expect(drained, 'слив не вышел, пока пачка свода в пути').toBe(false);
+    open();
+    await d;
+    expect(db.ledgerCalls, 'пачку снятой комнаты слив пробовал снова').toBeGreaterThanOrEqual(2);
+    expect(counters.ledgerDrainLost - lost0).toBe(1);
+    expect(errors.some((l) => l.includes('ИНЦИДЕНТ') && l.includes(room.code) && l.includes('свод')), errors.join(' | ')).toBe(true);
+    db.ledgerFails = 0;
+    await room.flushOwed();   // база вернулась — снятая комната дописала своё (следующим тестам её свод не мешает)
+    expect(room.ledgerPending()).toBe(false);
   });
 });

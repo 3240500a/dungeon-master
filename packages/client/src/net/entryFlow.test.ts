@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { parseClientFrame, type ClientFrame, type ServerFrame } from '@dm/shared';
-import { EntryFlow, netLostText, QUEUE_POLL_MS, STATUS_RETRY_MS, type EntryDeps } from './entryFlow.js';
+import { EntryFlow, netLostText, QUEUE_POLL_MS, STATUS_RETRY_MS, SOLO_YES, SOLO_RESUME, SOLO_OFFER_MS, type EntryDeps } from './entryFlow.js';
 import { NetClient, routeToNode, type RouteAnswer } from './netClient.js';
 import { entryScreens } from '../ui/entryScreens.js';
-import { askInGame } from '../ui/kit.js';
+import { askInGame, dismissAsk } from '../ui/kit.js';
 
 /**
  * ⭐ ВХОД В МИР И ПОТЕРЯ СВЯЗИ — ОДИН ПОТОК НА ОБА КЛИЕНТА (`EntryFlow` + общие экраны `entryScreens`).
@@ -33,7 +33,16 @@ class El {
   text(): string { return [this.html, this.textContent, ...[...this.sel.values()].map((e) => e.textContent), ...this.children.map((c) => c.text())].join(' | '); }
 }
 
+/** Элемент поддерева по условию (кнопки вопроса в игре). */
+function findEl(e: El, ok: (x: El) => boolean): El | undefined {
+  if (ok(e)) return e;
+  for (const c of e.children) { const f = findEl(c, ok); if (f) return f; }
+  return undefined;
+}
+
 const TOKEN = 'ab'.repeat(32);
+/** ⭐ R20-04: подсказка сервера просившему, чью просьбу продолжить забег пати не приняла (`RUN_ASK_SOLO` в `server/net/room.ts`). */
+const RUN_ASK_SOLO = 'Пати не идёт. Продолжить забег без неё: выйдите на экран входа (в браузере — перезагрузите страницу, F5) и нажмите «Продолжить» — напарники придут по коду комнаты';
 /** Отказы входа `run` без кода комнаты — строки сервера (`RUN_PARKED_JOIN`, `RUN_CLASH_JOIN` в `roomManager.ts`). */
 const RUN_PARKED = 'У вас незавершённый забег — продолжите или завершите его';
 const RUN_CLASH = 'У вас незавершённый забег — продолжите или завершите его, прежде чем идти в чужой';
@@ -53,9 +62,12 @@ function fakeNet() {
     /** Сокет открывается сам сразу после `connect` (синхронно — жёстче, чем в браузере). */
     autoOpen: false,
     server: undefined as ((f: ClientFrame) => void) | undefined,
-    on(t: string, cb: (f: never) => void): void { handlers.set(t, [...(handlers.get(t) ?? []), cb]); },
-    onOpen(cb: () => void): void { opens.push(cb); },
-    onClose(cb: (code?: number) => void): void { closes.push(cb); },
+    on(t: string, cb: (f: never) => void): () => void {
+      handlers.set(t, [...(handlers.get(t) ?? []), cb]);
+      return () => { handlers.set(t, (handlers.get(t) ?? []).filter((h) => h !== cb)); };
+    },
+    onOpen(cb: () => void): () => void { opens.push(cb); return () => { const i = opens.indexOf(cb); if (i >= 0) opens.splice(i, 1); }; },
+    onClose(cb: (code?: number) => void): () => void { closes.push(cb); return () => { const i = closes.indexOf(cb); if (i >= 0) closes.splice(i, 1); }; },
     connect(url?: string): void { net.connects++; net.urls.push(url); if (net.autoOpen) net.open(); },
     resetWorld(): void { net.resets++; },
     send(f: ClientFrame): void {
@@ -104,7 +116,13 @@ describe('⭐ EntryFlow — вход в мир и потеря связи (об�
   const G = globalThis as unknown as { document?: unknown };
   let body: El;
   beforeEach(() => { body = new El('body'); G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body }; });
-  afterEach(() => { delete G.document; });
+  afterEach(() => { dismissAsk(); delete G.document; });
+  /** ⭐ R20-04: вопрос в игре (`askInGame`) с кнопкой «Продолжить без пати», если он на экране. */
+  const asked = (): El | undefined => body.children.find((x) => x.text().includes(SOLO_YES));
+  /** Нажать кнопку вопроса по подписи. */
+  const press = (box: El, label: string): void => { findEl(box, (e) => e.tag === 'button' && e.textContent === label)!.click(); };
+  /** Ответ вопроса — промисом: дать ему дойти. */
+  const settled = async (): Promise<void> => { for (let i = 0; i < 3; i++) await Promise.resolve(); };
 
   it('вход: плашка «Подключение…» → статус забега → лобби → «Соло» шлёт join по открытому сокету → экраны сняты', () => {
     const c = client();
@@ -462,6 +480,84 @@ describe('⭐ EntryFlow — вход в мир и потеря связи (об�
     c.start();
     expect(c.net.connects).toBe(0);
     expect(c.net.sent).toEqual([{ t: 'runStatus', token: TOKEN, charId: 'hero-1' }]);
+  });
+
+  // ⭐ R20-04: пати не приняла просьбу продолжить общий забег («нет» напарника или молчание `RUN_ASK_MS`) — сервер отдаёт забег просившему, и путь
+  // к нему — «Продолжить» на экране входа (R19-04). Но ни в одном веб-клиенте из мира на экран входа не выйти (меню нет, кадр `leave` не слал никто):
+  // строка в логе звала в меню, которого нет, а повтор спуска снова ждал напарника. Теперь подсказка несёт поле `solo`, и игра предлагает кнопку.
+  it('⭐ R20-04: подсказка «пати не идёт» (`solo`) — кнопка «Продолжить без пати»: `leave` по живому сокету, статус забега, «Продолжить» уводит забег', async () => {
+    const flips: string[] = [];
+    const c = client('hero-1', { inWorld: (on) => flips.push(on ? 'in' : 'out'), onLost: () => flips.push('lost') });
+    enterWorld(c);
+    const sent = c.net.sent.length;
+    c.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });
+    expect(c.hooks.log, 'строка — в лог, как прежде').toEqual([RUN_ASK_SOLO]);
+    const box = asked();
+    expect(box, 'было: только строка в логе про меню входа, которого в игре нет').toBeDefined();
+    expect(c.net.sent.slice(sent), 'сам никуда не уходит — только кнопкой').toEqual([]);
+    press(box!, SOLO_YES);
+    await settled();
+    expect(c.net.sent.slice(sent), 'выход из комнаты по ТОМУ ЖЕ сокету и статус забега').toEqual([{ t: 'leave' }, { t: 'runStatus', token: TOKEN, charId: 'hero-1' }]);
+    expect(c.net.connects, 'связь не рвём').toBe(1);
+    expect(flips.slice(-2), 'вне мира — раньше, чем снесён мир прошлой комнаты').toEqual(['out', 'lost']);
+    expect(asked(), 'вопрос снят').toBeUndefined();
+    c.net.fire('runStatus', { hasRun: true, roomCode: 'QWER', depth: 3 });
+    expect(c.text()).toContain('Незавершённое прохождение');
+    expect(c.text(), 'и почему игрок здесь').toContain(SOLO_RESUME);
+    c.click('[data-a="resume"]');
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+    expect(c.net.sent.filter((f) => f.t === 'abandon'), '«Забросить» не понадобилось').toEqual([]);
+    c.net.fire('joined', {} as never);
+    expect(c.root.children).toHaveLength(0);
+    expect(flips.at(-1)).toBe('in');
+  });
+
+  it('R20-04: «Остаться» — ничего не шлёт; прочие отказы `vote` (без `solo`) кнопки не дают; обрыв связи снимает кнопку', async () => {
+    const c = client();
+    enterWorld(c);
+    const sent = c.net.sent.length;
+    c.net.fire('error', { code: 'vote', msg: 'Уже идёт голосование — ответьте на него' });
+    expect(asked(), 'обычный отказ голосования — только строка').toBeUndefined();
+    c.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });
+    press(asked()!, 'Остаться');
+    await settled();
+    expect(asked()).toBeUndefined();
+    expect(c.net.sent.slice(sent), 'остался с пати — в комнате').toEqual([]);
+    expect(c.root.children, 'экранов входа нет').toHaveLength(0);
+
+    const d = client('hero-2');
+    enterWorld(d);
+    d.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });
+    expect(asked()).toBeDefined();
+    d.net.close(1006);
+    await settled();
+    expect(asked(), 'связь потеряна — вопрос снят «нет»').toBeUndefined();
+    expect(d.net.void, 'и `leave` в мёртвый сокет не ушёл').toEqual([]);
+  });
+
+  it('⭐ R20-04: кадры комнаты, посланные ДО выхода, ещё в пути (окно голосования, отказ команды) — ответ на статус забега сносит их следы', async () => {
+    let box = false;
+    const c = client('hero-1', { onLost: () => { box = false; } });
+    c.net.on('voteStart', () => { box = true; });   // как у сцены: окно голосования
+    enterWorld(c);
+    c.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });
+    press(asked()!, SOLO_YES);
+    await settled();
+    // Сервер ещё не разобрал `leave`: напарник позвал голосование, команда получила отказ — оба кадра приходят уже на плашку.
+    c.net.fire('voteStart', {} as never);
+    c.net.fire('error', { code: 'cmd', msg: 'Слишком часто' });
+    expect(c.text(), 'отказ команды — не ответ лобби: плашка, а не лобби с чужой причиной').toContain('Подключение к серверу');
+    c.net.fire('runStatus', { hasRun: true, roomCode: 'QWER', depth: 3 });
+    expect(box, 'было бы: окно голосования прошлой комнаты поверх экрана «Продолжить»').toBe(false);
+    expect(c.text(), 'экран — по ответу на статус').toContain('Незавершённое прохождение');
+    expect(c.text()).toContain(SOLO_RESUME);
+    expect(c.text()).not.toContain('Слишком часто');
+    // После ответа следы больше не сносятся: новая комната — свой мир.
+    c.click('[data-a="resume"]');
+    c.net.fire('joined', {} as never);
+    c.net.fire('voteStart', {} as never);
+    c.net.fire('runStatus', { hasRun: false });
+    expect(box, 'голосование новой комнаты — на месте').toBe(true);
   });
 
   it('⭐ R6-25: «герой в мире» (`inWorld`) — да с кадра `joined`; нет на потере связи (до `onLost`), отказе и выходе', () => {
@@ -940,6 +1036,61 @@ describe('⭐ C-05, C-08: «Продолжить», отказанный из-з
     }
   });
 
+  // ⭐ R20-09: у ноды держателя «Продолжить» ответили «занят» (свод забега ещё не дописан, взятие в пути, слив, нода полна — с R18-02 это
+  // ответ «повторите»). Было: плашка «Подключение…» → `refused` → лобби «Сервер занят» без «Продолжить» и без кода держателя; до «Продолжить» —
+  // только «Соло», отказ `run` и новый статус (две лишние петли).
+  const BUSY = { code: 'busy', msg: 'Сервер занят, попробуйте ещё раз' } as const;
+  it('⭐ R20-09: после перехода к ноде держателя «Продолжить» ответили «занят» — экран «Продолжить» у той же ноды с причиной, а не лобби без кода', async () => {
+    const gw = gateway();
+    const c = client('hero-1', { route: gw.route });
+    await resumeClicked(c);
+    c.net.fire('error', { code: 'run', msg: ELSEWHERE, roomCode: HOLDER });
+    await vi.advanceTimersByTimeAsync(0);
+    c.net.open();
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+    const sent = c.net.sent.length;
+    c.net.fire('error', BUSY);
+    expect(c.text(), 'было: лобби без «Продолжить»').not.toContain('Кооп');
+    expect(c.net.sent.slice(sent), 'статус забега — у той же ноды, сам не входит').toEqual([{ t: 'runStatus', token: TOKEN, charId: 'hero-1' }]);
+    c.net.fire('runStatus', { hasRun: true, roomCode: HOLDER, depth: 3 });
+    expect(c.text()).toContain('Незавершённое прохождение');
+    expect(c.text(), 'и почему').toContain(BUSY.msg);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(c.net.joins(), 'без клика — ни одного входа').toHaveLength(2);
+    c.click('[data-a="resume"]');
+    expect(c.net.joins().at(-1)).toEqual({ t: 'join', token: TOKEN, charId: 'hero-1', resume: true });
+    expect(c.net.urls, 'та же нода — без нового маршрута').toEqual([NODE0, NODE1]);
+    c.net.fire('joined', {} as never);
+    expect(c.root.children).toHaveLength(0);
+  });
+
+  it('R20-09: иной отказ после перехода к держателю (лимит входа) — лобби с кодом держателя в поле; «занят» на вход по коду — лобби, как было', async () => {
+    const gw = gateway();
+    const c = client('hero-1', { route: gw.route });
+    await resumeClicked(c);
+    c.net.fire('error', { code: 'run', msg: ELSEWHERE, roomCode: HOLDER });
+    await vi.advanceTimersByTimeAsync(0);
+    c.net.open();
+    c.net.fire('error', { code: 'rate', msg: 'Слишком часто — подождите немного' });
+    expect(c.text()).toContain('Кооп');
+    expect(c.text()).toContain('Слишком часто');
+    expect(c.screen()!.querySelector('.code').value, 'было: поле пусто — «Войти» к пати не вело').toBe(HOLDER);
+
+    const d = client('hero-1', { route: gateway().route });
+    d.start();
+    await vi.advanceTimersByTimeAsync(0);
+    d.net.open(); d.net.fire('runStatus', { hasRun: false });
+    d.screen()!.querySelector('.code').value = HOLDER;
+    d.click('[data-a="join"]');
+    await vi.advanceTimersByTimeAsync(0);
+    d.net.open();
+    const sent = d.net.sent.length;
+    d.net.fire('error', BUSY);
+    expect(d.text(), 'вход по коду: «занят» — лобби с причиной, как было').toContain('Кооп');
+    expect(d.text()).toContain(BUSY.msg);
+    expect(d.net.sent.slice(sent)).toEqual([]);
+  });
+
   it('в игре отказ `run` (спуск из города) — строкой в лог; лобби поверх мира не рисуем, сами никуда не уходим', async () => {
     const gw = gateway();
     const c = client('hero-1', { route: gw.route });
@@ -951,5 +1102,41 @@ describe('⭐ C-05, C-08: «Продолжить», отказанный из-з
     expect(c.hooks.log).toEqual([ELSEWHERE]);
     expect(c.root.children).toHaveLength(0);
     expect(gw.calls).toHaveLength(1);
+  });
+});
+
+/**
+ * ⭐ R20-04: КНОПКА «ПРОДОЛЖИТЬ БЕЗ ПАТИ» — ПОКА ОТКАЗ ПАТИ В СИЛЕ. Сервер держит его `RUN_ASK_MS` (1 мин) после того, как сказал (R20-02): позже
+ * «Продолжить» садит к пати, и кнопка обещала бы то, чего не будет. Вопрос снимается сам через `SOLO_OFFER_MS` — с запасом на экран «Продолжить».
+ */
+describe('⭐ R20-04: кнопка «Продолжить без пати» живёт, пока отказ пати в силе', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  let body: El;
+  beforeEach(() => { vi.useFakeTimers(); body = new El('body'); G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body }; });
+  afterEach(() => { dismissAsk(); vi.useRealTimers(); delete G.document; });
+  const asked = (): El | undefined => body.children.find((x) => x.text().includes(SOLO_YES));
+
+  it('через `SOLO_OFFER_MS` вопрос снят сам; новая подсказка — новый срок; чужой вопрос срок не трогает', async () => {
+    expect(SOLO_OFFER_MS, 'запас до серверного срока отказа (`RUN_ASK_MS`, 60 с) — на экран «Продолжить» и клик').toBeLessThanOrEqual(45_000);
+    const c = client();
+    enterWorld(c);
+    const sent = c.net.sent.length;
+    c.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });
+    await vi.advanceTimersByTimeAsync(SOLO_OFFER_MS - 1_000);
+    expect(asked()).toBeDefined();
+    c.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });   // спуск позван снова, пати снова отказала
+    await vi.advanceTimersByTimeAsync(SOLO_OFFER_MS - 1_000);
+    expect(asked(), 'срок — от новой подсказки').toBeDefined();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(asked(), 'срок вышел — кнопки нет').toBeUndefined();
+    expect(c.net.sent.slice(sent), 'и никуда не ушли').toEqual([]);
+
+    // Нашу кнопку сменил другой вопрос — срок нашей его не снимает.
+    c.net.fire('error', { code: 'vote', msg: RUN_ASK_SOLO, solo: true });
+    let other: boolean | undefined;
+    void askInGame('Разобрать здесь?').then((v) => { other = v; });
+    await vi.advanceTimersByTimeAsync(SOLO_OFFER_MS);
+    expect(other, 'чужой вопрос висит').toBeUndefined();
+    expect(body.children.some((x) => x.text().includes('Разобрать здесь?'))).toBe(true);
   });
 });

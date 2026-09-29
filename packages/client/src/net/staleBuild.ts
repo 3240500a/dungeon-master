@@ -12,6 +12,10 @@
  * помочь. Кто поймал сбой — зовёт `markStaleBuild`; игрок слышит об этом ОДИН раз на страницу (`App` — строкой
  * `PROTOCOL_STALE` в лог игры), окно ковки показывает кнопку перезагрузки. Сбой, который никто не поймал, ловит
  * `watchChunkErrors`: обёртка Vite вокруг каждого ленивого `import()` сборки шлёт на `window` событие `vite:preloadError`.
+ *
+ * ⭐ R18-08: кусок грузится, а код в нём — старый: деплой сменил формулу цены при том же теле конфига. Это видно по ШТАМПУ сборки
+ * (`clientBuild` — вписан `vite build`, `joined.build` — у сервера): не сошлись (`buildDiffers`) — `App` говорит «перезагрузите» на входе и
+ * на каждый отказ «Цена изменилась», который перечитывание конфига не лечит.
  */
 
 let stale = false;
@@ -49,3 +53,20 @@ export function watchChunkErrors(target: Pick<EventTarget, 'addEventListener'> |
 
 /** Перезагрузить страницу — новый код с сервера (кнопка окна, которому не хватило куска). */
 export function reloadPage(): void { location.reload(); }
+
+/**
+ * ⭐ R18-08: штамп сборки вкладки — хэш исходников shared (`buildStampOf`), вписанный `vite build` (`client/vite.config.ts`). Дев-сервер Vite
+ * вписывает пустой (исходники там меняются под открытой вкладкой, а штамп считается раз на запуск), без сборки — поля нет вовсе (тесты, мост
+ * редактора): сравнивать нечего.
+ */
+declare const __DM_BUILD__: string | undefined;
+export function clientBuild(): string { return typeof __DM_BUILD__ === 'string' ? __DM_BUILD__ : ''; }
+
+/**
+ * ⭐ R18-08: код вкладки не той сборки, что у сервера (`joined.build`): деплой сменил код цен, а вкладка его пережила без перезагрузки. Нет
+ * штампа с любой стороны (сервер старше штампа, вкладка из дев-сервера) — не знаем, не говорим.
+ */
+export function buildDiffers(server: string | undefined): boolean {
+  const mine = clientBuild();
+  return !!server && !!mine && server !== mine;
+}

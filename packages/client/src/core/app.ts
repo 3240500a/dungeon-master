@@ -1,4 +1,4 @@
-import { EventBus, ConfigRegistry, CONFIG_REV_HEADER, debuffLabel, DEFAULT_HP_MANA_SCALING, PRICE_CHANGED, toggleBuffMods, reservedFrac, shopBuyPrice, withConfigRev, type TownCommand, type Item, type QuestDef, type RunPlan, type CraftJournal, type ServerFrame } from '@dm/shared';
+import { EventBus, ConfigRegistry, CONFIG_REV_HEADER, debuffLabel, DEFAULT_HP_MANA_SCALING, PRICE_CHANGED, PROTOCOL_VERSION, toggleBuffMods, reservedFrac, shopBuyPrice, withConfigRev, type TownCommand, type Item, type QuestDef, type RunPlan, type CraftJournal, type ServerFrame } from '@dm/shared';
 import type { GameState } from './gameState.js';
 import { passiveModifiers } from '../modules/skills-passive/passiveStats.js';
 import { activeModifiers } from '../modules/skills-active/activeStats.js';
@@ -8,12 +8,12 @@ import { setRarityMeta } from '../modules/loot/rarity.js';
 import { NetClient } from '../net/netClient.js';
 import { CmdReplies, type CmdReply } from '../net/cmdReplies.js';
 import { PROTOCOL_STALE } from '../net/entryFlow.js';
-import { onStaleBuild, watchChunkErrors } from '../net/staleBuild.js';
+import { buildDiffers, onStaleBuild, watchChunkErrors } from '../net/staleBuild.js';
 import type { AuthSession } from '../modules/auth/authApi.js';
 import type { GameLog } from '../ui/gameLog.js';
 
-/** R4-24: один и тот же отказ команды в лог — не чаще раза за это время, мс. */
-const REFUSAL_REPEAT_MS = 2000;
+/** R4-24: один и тот же отказ команды в лог — не чаще раза за это время, мс (и «перезагрузите» на отказ — R16 C-07, R18-08). */
+export const REFUSAL_REPEAT_MS = 2000;
 
 /** Читает сохранённую сессию аккаунта из localStorage (`dm:auth`). */
 function loadAuth(): AuthSession | null {
@@ -146,6 +146,39 @@ export class App {
     this.bus.emit('log:message', { text: PROTOCOL_STALE, kind: 'system' });
   }
 
+  /** ⭐ R18-08: штамп сборки сервера из последнего кадра `joined` ('' — сервер старше штампа) и тот, о котором игроку уже сказано. */
+  private serverBuild = '';
+  private buildTold = '';
+  /**
+   * ⭐ R18-08: вход в мир — штамп сборки сервера. Не тот, что у вкладки (`buildDiffers`): деплой сменил код (цены, исходы), а вкладка его пережила
+   * без перезагрузки при том же `PROTOCOL_VERSION` — игроку «перезагрузите», один раз на штамп сервера (переподключение к нему же — молча).
+   * Другой протокол — об этом уже сказал поток входа (`EntryFlow`), второй строкой не твердим.
+   */
+  private noteServerBuild(f: Extract<ServerFrame, { t: 'joined' }>): void {
+    this.serverBuild = typeof f.build === 'string' ? f.build : '';
+    if (!buildDiffers(this.serverBuild) || this.serverBuild === this.buildTold) return;
+    this.buildTold = this.serverBuild;
+    if (f.v !== PROTOCOL_VERSION) return;
+    console.warn('[build] сборка сервера другая — код вкладки старше (деплой без перезагрузки)');
+    this.tellStale(true);
+  }
+  /**
+   * ⭐ R18-08: ПЕРЕЧИТЫВАНИЕ КОНФИГА ВКЛАДКЕ НЕ ПОМОЖЕТ — отказ «Цена изменилась» повторится на каждый клик: конфиг сервера она не разбирает (R7-14),
+   * разбирает «не в то же» (R16 C-07: ревизия сервера для легшего тела не равна своей — схема вкладки старше), или её код не той сборки, что у
+   * сервера (штамп, `joined.build`: цену карточке считает старая формула).
+   */
+  private rereadCannotHelp(): boolean {
+    return this.configStale !== null || (this.configRev !== null && this.configRev !== this.config.revision()) || buildDiffers(this.serverBuild);
+  }
+  /**
+   * ⭐ R18-08: «перезагрузите» об этом деплое уже сказано на входе — штамп сервера чужой (`noteServerBuild`). Схема конфига меняется только с
+   * кодом shared, так что негодный конфиг (R7-14) и разобранный «не в то же» (R16 C-07) приходят с тем же деплоем: вторая такая же строка
+   * следом — лента, а не новость.
+   */
+  private toldThisBuild(): boolean {
+    return buildDiffers(this.serverBuild) && this.buildTold === this.serverBuild;
+  }
+
   /** Слепок сундука из кадра `stash` — одно место и для 2D, и для веб-3D, чтобы журнал не терялся. */
   applyStash(f: Extract<ServerFrame, { t: 'stash' }>): void {
     this.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount, materials: f.materials, forgeJournal: f.forgeJournal };
@@ -211,10 +244,15 @@ export class App {
     // перечитываем его — карточки покажут цену, которую сервер возьмёт.
     // ⭐ R16 C-07: а конфиг сервера вкладка не разбирает (R7-14: схема старше) — перечитывание его не догонит: отказ «Цена изменилась»
     // будет на каждый клик, и без подсказки кнопки выглядели мёртвыми. Такой вкладке каждый такой отказ — снова «перезагрузите страницу».
+    // ⭐ R18-08: и вкладке, чью цену перечитывание не лечит по другой причине — схема старше (C-07, раньше сказано лишь на входе), код не той
+    // сборки (деплой сменил формулу цены при том же теле конфига: перечитывание — 304, и игрок кликал в пустоту). Отказ, который перечитывание
+    // вылечило (лёг новый конфиг), — без подсказки: он объяснён правкой, а не старым кодом.
     this.net.on('cmdResult', (f) => {
-      if (!f.ok && f.reason?.startsWith(PRICE_CHANGED)) void this.syncConfig().then(() => { if (this.configStale !== null) this.tellStale(); });
+      if (!f.ok && f.reason?.startsWith(PRICE_CHANGED)) void this.syncConfig().then((fresh) => { if (!fresh && this.rereadCannotHelp()) this.tellStale(); });
       if (!this.replies.settle(f) && !f.ok && f.reason) this.logRefusal(f.reason);
     });
+    // ⭐ R18-08: штамп сборки сервера — на каждом входе в мир.
+    this.net.on('joined', (f) => this.noteServerBuild(f));
     // Структура активного забега (v2): граф узлов + текущий узел — для карты забега и маппинга выходов на рёбра.
     this.net.on('runPlan', (f) => { this.run = { plan: f.plan, currentNodeId: f.currentNodeId }; this.bus.emit('state:changed', {}); });
   }
@@ -293,31 +331,34 @@ export class App {
    * старая), не ложится вовсе (`reload` — всё или ничего): раньше ложилась половина, а ошибка глоталась — карточки считали цену
    * по смеси двух конфигов, сервер отказывал «Цена изменилась», отказ звал сюда же, и игрок застревал на отказах молча. Теперь
    * прежний конфиг цел, а игроку — «перезагрузите страницу» (`PROTOCOL_STALE`), один раз на этот ETag.
+   *
+   * ⭐ R18-08: ИТОГ — принесло ли перечитывание новое: лёг новый конфиг, пришёл новый негодный (игроку уже сказано) или запрос обогнал следующий
+   * (рассудит он) — `true`; тот же конфиг (304), сервер не ответил, мост редактора — `false`: отказ «Цена изменилась» конфигом не объяснён.
    */
-  async syncConfig(): Promise<void> {
-    if (this.offline) return;
+  async syncConfig(): Promise<boolean> {
+    if (this.offline) return false;
     const seq = ++this.configSeq;
     let res: Response;
     let snapshot: Parameters<ConfigRegistry['reload']>[0];
     try {
       const inm = this.configStale ?? this.configEtag;   // R7-14: негодный уже разобран — тот же вернётся 304-м
       res = await fetch('/api/config', { cache: 'no-cache', ...(inm ? { headers: { 'if-none-match': inm } } : {}) });
-      if (seq !== this.configSeq || !res.ok) return;   // 304 — тот же конфиг; обогнал следующий запрос — применит он
+      if (seq !== this.configSeq) return true;   // обогнал следующий запрос — применит он
+      if (!res.ok) return false;                  // 304 — тот же конфиг
       snapshot = (await res.json()) as Parameters<ConfigRegistry['reload']>[0];
     } catch {
-      return;   // сервер недоступен (или прислал не JSON) — остаёмся на том, что есть; следующий вход спросит снова
+      return false;   // сервер недоступен (или прислал не JSON) — остаёмся на том, что есть; следующий вход спросит снова
     }
-    if (seq !== this.configSeq) return;
+    if (seq !== this.configSeq) return true;
     const etag = res.headers.get('etag') ?? '';
     try {
       this.config.reload(snapshot);
     } catch (e) {
-      if (etag !== this.configStale) {
-        this.configStale = etag;
-        console.warn('[config] конфиг сервера не разобран — вкладка старше сервера:', e instanceof Error ? e.message : e);
-        this.tellStale(true);
-      }
-      return;
+      if (etag === this.configStale) return false;
+      this.configStale = etag;
+      console.warn('[config] конфиг сервера не разобран — вкладка старше сервера:', e instanceof Error ? e.message : e);
+      if (!this.toldThisBuild()) this.tellStale(true);
+      return true;
     }
     this.configEtag = etag;
     this.configStale = null;
@@ -328,10 +369,11 @@ export class App {
     if (rev && rev !== this.config.revision() && etag !== this.configDrift) {
       this.configDrift = etag;
       console.warn('[config] конфиг сервера разобран не в то же — схема вкладки старше сервера');
-      this.tellStale(true);
+      if (!this.toldThisBuild()) this.tellStale(true);
     }
     this.refreshLabelResolvers();
     this.bus.emit('state:changed', {});
+    return true;
   }
 
   /** Живой приём изменений из HTML-редактора (BroadcastChannel). */

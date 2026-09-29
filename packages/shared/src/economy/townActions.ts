@@ -1274,38 +1274,86 @@ export function allocAttr(save: SaveState, attr: string, n = 1): ActionResult {
 }
 
 /**
- * Сколько очков вернёт сброс атрибутов: вложенное сверх стартовых атрибутов класса. Одно число для ядра (0 — отказ, R6-11)
+ * ⚠ R18-07: К ЧЕМУ СБРОС СТАВИТ АТРИБУТЫ И СКОЛЬКО ВОЗВРАЩАЕТ — от старта, с которым герой создан (`save.startAttributes`), а не от
+ * нынешней строки класса. Мерили от строки живого конфига: правка хозяина (живьём или деплоем) дарила старым героям очки — воин 10-го,
+ * вложивший 45 в Силу, после «Сила 20→15, Ловкость 15→20» получал 50 и выходил со 115 против 110 у свежего; опущенный старт делал очки
+ * базы свободными. Правка строки класса старых героев не догоняет и при сбросе (как кривая опыта — уровни, R9-05).
+ * Сейв старше правки старта не помнит — старт по `legacyStartAttributes` (R19-01). Возврат целый. Класс неизвестен — `null`.
+ */
+function attrRespecPlan(reg: ConfigRegistry, save: SaveState): { base: Attributes; refund: number } | null {
+  const base = save.startAttributes ? { ...save.startAttributes } : legacyStartAttributes(reg, save);
+  if (!base || !reg.get('classes').some((c) => c.id === save.classId)) return null;
+  let over = 0;
+  for (const a of ATTRIBUTES) over += Math.max(0, save.attributes[a] - base[a]);
+  return { base, refund: Math.floor(over) };
+}
+
+/**
+ * ⚠ R19-01: СТАРТ СЕЙВА СТАРШЕ R18-07 (поля `startAttributes` нет — таких в базе все, кто создан до правки): по атрибуту не выше того, что
+ * у героя есть, и не выше нынешней строки класса. Сброс ставит его и возвращает всё сверх — итог героя (Σ атрибутов + свободные) не меняет
+ * НИКАКАЯ правка. Раньше возврат урезался очками, выданными уровнями по ЖИВОМУ `attributePointsPerLevel`, а сброс ставил саму строку и
+ * записывал её стартом: «очков за уровень 5→4» — воин 10-го терял 9 вложенных, 50-го — 49 (и навсегда: старт записан); поднятая строка
+ * (опечатка «Живучесть 20→80») — очки из воздуха, тоже навсегда. Строка, не менявшаяся с создания героя, — ровно его старт: честный
+ * сброс прежний. Опущенная с тех пор строка отдаёт разницу свободными очками (итог тот же), поднятая оставляет вложенное до неё в базе.
+ * Потому старт такому сейву пишет ещё и вход (`RoomManager.sanitize`) — по строке ДО любой будущей правки. Класс неизвестен — `null`.
+ */
+export function legacyStartAttributes(reg: ConfigRegistry, save: SaveState): Attributes | null {
+  const row = reg.get('classes').find((c) => c.id === save.classId)?.startAttributes;
+  if (!row) return null;
+  const out = { ...row } as Attributes;
+  for (const a of ATTRIBUTES) out[a] = Math.max(0, Math.min(Math.floor(save.attributes[a]), row[a]));
+  return out;
+}
+
+/**
+ * Сколько очков вернёт сброс атрибутов: вложенное сверх старта героя (`attrRespecPlan`, R18-07). Одно число для ядра (0 — отказ, R6-11)
  * и для кнопки («Сбросить» гаснет, когда сбрасывать нечего). Класс неизвестен — 0.
  */
 export function attrRespecRefund(reg: ConfigRegistry, save: SaveState): number {
-  const cls = reg.get('classes').find((c) => c.id === save.classId);
-  if (!cls) return 0;
-  const base = cls.startAttributes as Attributes;
-  let refunded = 0;
-  for (const a of ATTRIBUTES) refunded += Math.max(0, save.attributes[a] - base[a]);
-  return refunded;
+  return attrRespecPlan(reg, save)?.refund ?? 0;
+}
+
+/** Проверки `respec` без записи — причина отказа строкой или то, что сброс запишет (`respecRefusal` спрашивает то же). */
+function respecPlan(reg: ConfigRegistry, save: SaveState, maxGold?: number): string | { base: Attributes; refunded: number; cost: number } {
+  const plan = attrRespecPlan(reg, save);
+  if (!plan) return 'Класс не найден';
+  // ⚠ R6-11: СБРАСЫВАТЬ НЕЧЕГО — ОТКАЗ, как у скилов и мастерств. Раньше `respecCost` списывался всегда: второй клик
+  // двойного клика платил за ничто, свежий герой — за пустое место.
+  const refunded = plan.refund;
+  if (refunded === 0) return 'Атрибуты не вложены';
+  const cost = reg.get('balance').respecCost;
+  const raised = priceRaised(cost, maxGold);   // R5-15
+  if (raised) return raised.reason ?? PRICE_CHANGED;
+  if (save.gold < cost) return 'Недостаточно золота';
+  const base = plan.base;
+  // ⚠ R4-08: надетое, что держится на вложенных очках, после сброса висело бы без опоры (очки ушли бы в другое).
+  const broken = wornBroken(save, base, equippedItems(save));
+  if (broken) return `После сброса не хватит атрибутов на «${broken.name}» — сперва сними её`;
+  return { base, refunded, cost };
+}
+
+/**
+ * ⭐ R19-07: СБРОСИТ ЛИ СЕРВЕР АТРИБУТЫ — причина отказа `respec` строкой или `null`, без записи, в том же порядке (класс, «не вложены», цена,
+ * золото, надетое без опоры). Одно решение для ядра и кнопки «Сбросить атрибуты» мастера (веб, эталон Unity): кнопка смотрела только на возврат
+ * и золото — герой, чьё надетое держится на вложенных очках, подтверждал сброс, а сервер отказывал «сперва сними её».
+ */
+export function respecRefusal(reg: ConfigRegistry, save: SaveState, maxGold?: number): string | null {
+  const plan = respecPlan(reg, save, maxGold);
+  return typeof plan === 'string' ? plan : null;
 }
 
 export function respec(reg: ConfigRegistry, save: SaveState, maxGold?: number): ActionResult {
-  const cls = reg.get('classes').find((c) => c.id === save.classId);
-  if (!cls) return { ok: false, reason: 'Класс не найден' };
-  // ⚠ R6-11: СБРАСЫВАТЬ НЕЧЕГО — ОТКАЗ, как у скилов и мастерств. Раньше `respecCost` списывался всегда: второй клик
-  // двойного клика платил за ничто, свежий герой — за пустое место.
-  const refunded = attrRespecRefund(reg, save);
-  if (refunded === 0) return { ok: false, reason: 'Атрибуты не вложены' };
-  const cost = reg.get('balance').respecCost;
-  const raised = priceRaised(cost, maxGold);   // R5-15
-  if (raised) return raised;
-  if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
-  const base = cls.startAttributes as Attributes;
-  // ⚠ R4-08: надетое, что держится на вложенных очках, после сброса висело бы без опоры (очки ушли бы в другое).
-  const broken = wornBroken(save, base, equippedItems(save));
-  if (broken) return { ok: false, reason: `После сброса не хватит атрибутов на «${broken.name}» — сперва сними её` };
+  const plan = respecPlan(reg, save, maxGold);
+  if (typeof plan === 'string') return { ok: false, reason: plan };
+  const { base, refunded, cost } = plan;
+  // ── Проверки позади (`respecPlan`): дальше только запись ──
   // ⭐ R8-10: мощь узла сверяет требования вещей запаса не ниже атрибутов до сброса — сброс их не прячет (`effectiveLevel`).
   const peak = { ...save.attributes };
   for (const a of ATTRIBUTES) peak[a] = Math.max(peak[a], save.respecPeak?.[a] ?? 0);
   save.respecPeak = peak;
   save.attributes = { ...base };
+  // R18-07: сейв без старта с этой минуты его помнит — следующий сброс меряет от того, к чему сбросили (у прочих — тот же).
+  save.startAttributes = { ...base };
   save.unspentAttributePoints += refunded;
   save.gold -= cost;
   return { ok: true };

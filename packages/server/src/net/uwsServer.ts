@@ -139,6 +139,11 @@ class UwsConn implements GameConn {
   open = true;
   onMsg?: (raw: string) => void;
   onEnd?: () => void;
+  /**
+   * ⭐ R18-01: идёт отправка кадра (или сокет закрыт ею). uWS зовёт обработчик закрытия синхронно — изнутри `end` (и `send`, если закрывает сам,
+   * `closeOnBackpressureLimit`): закрытие ИЗ ОТПРАВКИ снимало сессию поперёк синхронного шага комнаты, который эту отправку делал (см. `ended`).
+   */
+  private sending = false;
   constructor(private readonly ws: UwsSocket, readonly ip: string, readonly routePass?: string) {}
   send(data: string | Uint8Array): void {
     if (!this.open) return;
@@ -150,14 +155,16 @@ class UwsConn implements GameConn {
     const size = typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
     let status: number;
     // uWS бросает, если сокет уже закрыт «под нами» (клиент отвалился между тиком и отправкой).
+    this.sending = true;
     try {
       const queued = this.ws.getBufferedAmount();
       status = queued > 0 && queued + size > MAX_BACKPRESSURE
         ? SEND_DROPPED
         : this.ws.send(typeof data === 'string' ? data : data, typeof data !== 'string');
-    } catch { this.open = false; return; }
+    } catch { this.open = false; return; } finally { this.sending = false; }
     if (status === SEND_DROPPED) {
       counters.slowClientsDropped++;
+      this.sending = true;   // ⭐ R18-01: закрытие из отправки — снятие сессии микрозадачей (`ended`)
       this.close(1013, 'slow-client');
     }
   }
@@ -169,6 +176,19 @@ class UwsConn implements GameConn {
   }
   onMessage(cb: (raw: string) => void): void { this.onMsg = cb; }
   onClose(cb: () => void): void { this.onEnd = cb; }
+  /**
+   * Обработчик закрытия транспорта (событие `close` uWS) — ровно один раз. ⭐ R18-01: закрытие, начатое отправкой (очередь выше потолка), зовёт
+   * его ближайшей микрозадачей, а не изнутри `send`: отправку делает комната посреди синхронного шага (рассылка мира, окна смерти), и снятие
+   * сессии (`RoomManager.onClose` → `removePlayer`) поперёк него снимало копию погибшего в этом тике до штрафа («оплачено» без штрафа), а голос,
+   * проходящий на снятии, переносил пати посреди рассылки. Сокет закрыт сразу (`open` — ложь): кадры не идут ни туда, ни сюда.
+   */
+  ended(): void {
+    this.open = false;
+    const cb = this.onEnd;
+    this.onEnd = undefined;
+    if (!cb) return;
+    if (this.sending) queueMicrotask(cb); else cb();
+  }
 }
 
 /**
@@ -272,7 +292,7 @@ export function gameWsBehavior(uWS: Pick<Uws, 'DISABLED'>, onConn: (conn: GameCo
     close: (ws: UwsSocket) => {
       const conn = conns.get(ws);
       conns.delete(ws);
-      if (conn) { conn.open = false; conn.onEnd?.(); }
+      conn?.ended();   // R18-01: закрытое изнутри отправки — микрозадачей
     },
   };
 }

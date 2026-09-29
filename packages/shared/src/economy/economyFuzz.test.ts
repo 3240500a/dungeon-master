@@ -6,6 +6,7 @@ import { createRng } from '../formulas/rng.js';
 import { unmetWorn } from '../formulas/stats.js';
 import { newCharacterSave } from './newCharacter.js';
 import { equip, moveToBelt, unequip } from './townActions.js';
+import { ATTRIBUTES } from '../types/attributes.js';
 import type { Item } from '../types/items.js';
 
 /**
@@ -114,6 +115,8 @@ const BUGS: { name: string; want: string; bug: (w: World, op: Op, res: Res) => v
     name: 'доска: цель, которую игра не считает', want: 'I2:quest-untracked:restock',
     bug: (w, op, res) => { const o = op.k === 'restock' && res.ok ? w.board[0]?.objectives[0] : undefined; if (o) o.type = 'talk-npc' as typeof o.type; },
   },
+  // R18-07: сброс атрибутов вернул больше, чем было вложено, — ловит книга очков героя (I4 `attr-points`), а не пересчёт того же ядра.
+  { name: 'сброс атрибутов вернул больше вложенного', want: 'I4:attr-points:respec', bug: (w, op, res) => { if (op.k === 'respec' && res.ok) w.heroes[op.h].unspentAttributePoints += 5; } },
   // R17-03: цена формы 3+2 пропала мимо схемы (так было до правки: ✕ в редакторе, оверрайд баланса старше §21.1) — ловит `formPrices`.
   {
     name: 'конфиг: у формы 3+2 пропала цена мимо схемы', want: 'rule:form-price:config',
@@ -123,6 +126,16 @@ const BUGS: { name: string; want: string; bug: (w: World, op: Op, res: Res) => v
       const bal = data.balance as { craft: { formMult: Record<string, number> } };
       const { ['3+2']: _gone, ...rest } = bal.craft.formMult;
       data.balance = { ...bal, craft: { ...bal.craft, formMult: rest } };
+    },
+  },
+  // R20-05: ступенька кривой опыта мимо схемы (так было до правки: схема пускала любой массив чисел) — ловит `xpCurve`.
+  {
+    name: 'конфиг: ступенька кривой опыта мимо схемы', want: 'rule:xp-curve:config',
+    bug: (w, op, res) => {
+      if (op.k !== 'config' || !res.ok) return;
+      const data = (w.reg as unknown as { data: Record<string, unknown> }).data;
+      const bal = data.balance as { xpTable: number[] };
+      data.balance = { ...bal, xpTable: bal.xpTable.map((v, i) => (i >= 11 && i <= 20 ? 100 : v)) };
     },
   },
 ];
@@ -267,6 +280,110 @@ describe('⚠ R17-03: фаззер — правка цен форм ёмкост
 });
 
 /**
+ * ⚠ R18-07: СТАРТ КЛАССОВ И ОЧКИ ЗА УРОВЕНЬ ЖИВЬЁМ — свой профиль весов: конфиг, сброс и вложение атрибутов, опыт и золото чаще прочего.
+ * Хозяин правит старт класса героя (вверх, вниз, с опечатками — дробь и минус обязана отвергнуть схема) и очки за уровень; сброс после
+ * правки обязан вернуть ровно вложенное от старта, с которым герой создан. Книга очков модели (`AttrBook`) меряет так же — прежний сброс
+ * (от нынешней строки класса) она ловит: с опущенной строкой — очки базы свободны (`attr-floor`), с поднятой выше вложенного — очки из
+ * воздуха (`attr-points`). До правки фаззер этого не видел: конфиг не правил ни классы, ни очки за уровень, а I4 мерил от строки живьём.
+ */
+describe('⚠ R18-07: фаззер — правка старта классов и очков за уровень живьём', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  type Attrs = import('../types/save.js').SaveState['attributes'];
+  // R19-01: `classEdit` — правка старта и очков за уровень отдельным шагом (в `config` она редка): сейв без старта ломала правка ДО его
+  // первого сброса.
+  const ATTRS: Partial<Record<OpKind, number>> = {
+    config: 10, classEdit: 6, respec: 6, allocAttr: 6, xp: 3, gold: 3, unequip: 2, equip: 1, clientSync: 1, newHero: 2, loot: 2,
+  };
+  /** Сброс, как он был до R18-07: от нынешней строки класса — поверх настоящего (атрибуты до шага «баг» помнит сам). */
+  const oldRespec = (): ((w: World, op: Op, res: Res) => void) => {
+    const seen = new WeakMap<World, (Attrs | undefined)[]>();
+    return (w, op, res) => {
+      const last = seen.get(w) ?? [];
+      seen.set(w, last);
+      const s = w.heroes[op.h];
+      const was = last[op.h];
+      if (op.k === 'respec' && res.ok && was) {
+        const live = w.reg.get('classes').find((c) => c.id === s.classId)!.startAttributes;
+        const now = ATTRIBUTES.reduce((n, a) => n + was[a] - s.attributes[a], 0);
+        const old = ATTRIBUTES.reduce((n, a) => n + Math.max(0, was[a] - live[a]), 0);
+        s.unspentAttributePoints += old - now;
+        s.attributes = { ...live };
+      }
+      w.heroes.forEach((x, i) => { last[i] = { ...x.attributes }; });
+    };
+  };
+
+  it('24 цепочки по 70 шагов: ни одного нарушения; правки старта и очков за уровень и проходили, и отвергались схемой', () => {
+    const hits: string[] = [];
+    let startEdits = 0, pointEdits = 0, refused = 0, respecs = 0, legacy = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 70, ATTRS), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      for (const l of out.log) {
+        if (!l.includes('конфиг: классы:')) continue;
+        if (l.includes('отказ схемы')) refused++;
+        else if (l.includes('за уровень')) pointEdits++;
+        else startEdits++;
+      }
+      respecs += out.stats.respec?.ok ?? 0;
+      legacy += out.log.filter((l) => l.includes('сейв без старта') && l.endsWith('→ ок')).length;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(startEdits, 'правки старта проходят').toBeGreaterThan(0);
+    expect(pointEdits, 'правки очков за уровень проходят').toBeGreaterThan(0);
+    expect(refused, 'дробь и минус доходят до схемы').toBeGreaterThan(0);
+    expect(respecs, 'сбросы идут').toBeGreaterThan(0);
+    expect(legacy, 'R19-01: сбрасываются и сейвы без старта (иначе `respec-total` стерёг бы пустоту)').toBeGreaterThan(0);
+  });
+
+  it('⭐ у сторожа есть зубы: сброс от нынешней строки класса (как до правки) ловится книгой очков', () => {
+    const got = new Set<string>();
+    for (let seed = 1; seed <= 40 && got.size < 2; seed++) {
+      for (const want of ['I4:attr-points:respec', 'I4:attr-floor:respec']) {
+        if (got.has(want)) continue;
+        const out = runOps(seed, genOps(seed, 70, ATTRS), { ...hooks, afterRun: oldRespec() }, want);
+        if (out.found) got.add(violationKey(out.found));
+      }
+    }
+    expect([...got].sort(), 'опущенная строка — очки базы свободны; поднятая выше вложенного — очки из воздуха').toEqual(['I4:attr-floor:respec', 'I4:attr-points:respec']);
+  });
+
+  /**
+   * ⚠ R19-01: сброс сейва без старта (герой создан до R18-07), как он был после R18-07: к нынешней строке класса, возврат урезан очками
+   * за уровень ЖИВОГО конфига — поверх настоящего (сейв до шага «баг» помнит сам). Правка «очков за уровень» вниз теряла вложенное, поднятая
+   * строка давала очки из воздуха — итог героя двигался; I4 `respec-total` обязан это видеть.
+   */
+  const cappedLegacyRespec = (): ((w: World, op: Op, res: Res) => void) => {
+    type Was = { attrs: Attrs; free: number; start: boolean };
+    const seen = new WeakMap<World, (Was | undefined)[]>();
+    return (w, op, res) => {
+      const last = seen.get(w) ?? [];
+      seen.set(w, last);
+      const s = w.heroes[op.h];
+      const was = last[op.h];
+      if (op.k === 'respec' && res.ok && was && !was.start) {
+        const base = { ...w.reg.get('classes').find((c) => c.id === s.classId)!.startAttributes };
+        const over = ATTRIBUTES.reduce((n, a) => n + Math.max(0, was.attrs[a] - base[a]), 0);
+        const granted = (s.level - 1) * w.reg.get('balance').attributePointsPerLevel - was.free;
+        s.attributes = { ...base };
+        s.startAttributes = { ...base };
+        s.unspentAttributePoints = was.free + Math.floor(Math.max(0, Math.min(over, granted)));
+      }
+      w.heroes.forEach((x, i) => { last[i] = { attrs: { ...x.attributes }, free: x.unspentAttributePoints, start: !!x.startAttributes }; });
+    };
+  };
+
+  it('⭐ R19-01: у сторожа есть зубы — сброс сейва без старта по живым очкам за уровень и строке класса ловит I4 respec-total', () => {
+    let got = '';
+    for (let seed = 1; seed <= 40 && !got; seed++) {
+      const out = runOps(seed, genOps(seed, 70, ATTRS), { ...hooks, afterRun: cappedLegacyRespec() }, 'I4:respec-total:respec');
+      if (out.found) got = violationKey(out.found);
+    }
+    expect(got).toBe('I4:respec-total:respec');
+  });
+});
+
+/**
  * НАЙДЕННОЕ ФАЗЗЕРОМ — МИНИМАЛЬНЫЕ ВОСПРОИЗВЕДЕНИЯ (`it.fails`, пока ядро не поправлено; id — как в `KNOWN` и в отчёте). Каждое
  * утверждает ПРАВИЛЬНОЕ поведение: после правки тест начнёт проходить, `it.fails` его провалит — снять метку и строку `KNOWN`.
  * Поправленные (V-B2-01, V-B2-02, V-B2-03) остаются здесь обычными `it` — сторожами регресса.
@@ -334,5 +451,37 @@ describe('B2: нарушения, найденные фаззером (до пр
       if (sum > cap) over.push(`${b.id} ${it.tier}: ${JSON.stringify(it.requirements)} = ${sum}`);
     }
     expect(over).toEqual([]);
+  });
+});
+
+/**
+ * ⚠ R20-05: КРИВАЯ ОПЫТА ЖИВЬЁМ — свой профиль весов: конфиг и опыт чаще прочего, вложение и сброс очков, задания. Хозяин правит
+ * `balance.xpTable`: годное (медленнее, быстрее, потолок ниже) проходит, опечатку (ступенька, пропущенная цифра, повтор, минус, NaN,
+ * ненулевой порог первого уровня) обязана отвергнуть схема. Без сторожа схемы герой 10-го с одного очка опыта вставал 20-м с очками
+ * всех десяти уровней — книга очков (`AttrBook`) этого не видит (уровни она пишет те, что выдало ядро по той же кривой), видит `xpCurve`.
+ */
+describe('⚠ R20-05: фаззер — правка кривой опыта живьём', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  const XP: Partial<Record<OpKind, number>> = {
+    config: 14, xp: 8, gold: 2, allocAttr: 4, respec: 2, allocSkill: 2, respecSkills: 1, allocPassive: 2, acceptQuest: 3, questProgress: 3, turnIn: 3, restock: 2, clientSync: 1,
+  };
+  const HONEST = /кривая опыта: (медленнее|быстрее|потолок)/;
+  it('24 цепочки по 70 шагов: ни одного нарушения; годные правки кривой проходят, опечатки отвергает схема', () => {
+    const hits: string[] = [];
+    let honest = 0, refused = 0, typoPassed = 0, levels = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 70, XP), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      for (const l of out.log) {
+        if (!l.includes('конфиг: кривая опыта:')) continue;
+        if (HONEST.test(l)) { if (!l.includes('отказ схемы')) honest++; } else if (l.includes('отказ схемы')) refused++; else typoPassed++;
+      }
+      levels += out.stats.xp?.ok ?? 0;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(honest, 'годные правки кривой проходят').toBeGreaterThan(0);
+    expect(refused, 'опечатки доходят до схемы').toBeGreaterThan(0);
+    expect(typoPassed, 'ни одна опечатка кривой не прошла схему').toBe(0);
+    expect(levels, 'опыт идёт').toBeGreaterThan(0);
   });
 });

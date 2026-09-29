@@ -203,17 +203,20 @@ describe('⚠ V-B2-02: стартовый комплект держится на
     }
   });
 
-  it('⭐ правка хозяина живьём не ломает комплект: требования задраны, оружие класса выключено (замена родственной), атрибут дробный', () => {
+  it('⭐ правка хозяина живьём не ломает комплект: требования задраны, оружие класса выключено (замена родственной), старт опущен', () => {
     const r = new ConfigRegistry();
     r.loadAll();
     const starterWeapons = new Set(classes.map((c) => c.startWeaponId));
     const armor = new Set(['leather-cap', 'leather-armor', 'leather-boots', 'leather-belt']);
+    // ⚠ R18-07: дробный старт (было «Ловкость + 0.5») схема больше не пускает — половину очка после сброса не вложить никогда.
+    const halfDex = r.get('classes').map((c) => ({ ...c, startAttributes: { ...c.startAttributes, dexterity: c.startAttributes.dexterity + 0.5 } }));
+    expect(() => r.reload({ classes: halfDex }), 'дробный старт').toThrow(/не прошёл валидацию/);
     r.reload({
       'items.base': r.get('items.base').map((b) => {
         if (b.kind !== 'weapon' && !armor.has(b.id)) return b;
         return { ...b, requirements: { strength: 55, dexterity: 55, intelligence: 55 }, ...(starterWeapons.has(b.id) ? { enabled: false } : {}) };
       }),
-      classes: r.get('classes').map((c) => ({ ...c, startAttributes: { ...c.startAttributes, dexterity: c.startAttributes.dexterity + 0.5 } })),
+      classes: r.get('classes').map((c) => ({ ...c, startAttributes: { ...c.startAttributes, dexterity: Math.max(0, c.startAttributes.dexterity - 3) } })),
     });
     for (const cls of r.get('classes').filter((c) => c.enabled !== false)) {
       const save = newCharacterSave(r, cls.id, 'Альт', `v-b2-02-edit-${cls.id}`);

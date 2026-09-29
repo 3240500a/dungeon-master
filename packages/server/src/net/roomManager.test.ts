@@ -496,6 +496,9 @@ describe('RoomManager — прощальные записи, штрафы и з�
     wsB.push({ t: 'vote', accept: true });
     await settle();
     expect(room.area).toBe('dungeon');
+    // Тик — только шагами теста: под нагрузкой полного прогона планировщик шагал комнату, пока тест ждал оборотов цикла, монстр доходил до A — и
+    // его уход был «посреди боя» (тело в бою, R13-03): смерть B уже не вайп, и штрафа, которого ждёт вход, не было.
+    room.stop();
     wsA.close();
     await settle();
     expect(inner().graceByChar.get(a), 'A отключился в подземелье — грейс').toBe(room);

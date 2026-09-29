@@ -143,13 +143,13 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     entry.attach();
     entry.start();
     const save: SaveState = newBotSave(app.config, app.config.get('classes')[0]!.id);
-    /** Сокет открылся, статус забега, клик «Соло», кадр `joined`. */
-    const enter = async (v = PROTOCOL_VERSION): Promise<void> => {
+    /** Сокет открылся, статус забега, клик «Соло», кадр `joined` (⭐ R18-08: `build` — штамп сборки сервера; нет — сервер старше штампа). */
+    const enter = async (v = PROTOCOL_VERSION, build?: string): Promise<void> => {
       const ws = FakeWs.all.at(-1)!;
       ws.open();
       ws.frame({ t: 'runStatus', hasRun: false });
       entry.join({ fresh: true });
-      ws.frame({ t: 'joined', v, playerId: 'p1', roomCode: 'ABCD', floor: {}, peers: [], save });
+      ws.frame({ t: 'joined', v, playerId: 'p1', roomCode: 'ABCD', floor: {}, peers: [], save, ...(build !== undefined ? { build } : {}) });
       await flush();
     };
     return { app, entry, enter, logs, ws: () => FakeWs.all.at(-1)! };
@@ -348,6 +348,148 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
       expect(staleHints(g)).toBe(4);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Отказ «Цена изменилась» на команду вкладки — как его шлёт сервер (`priceRaised`, `priceDropped`): верстак ждёт ответа (`request`),
+   * продажа — нет (`sendCmd`). Номер — тот, с которым команда ушла.
+   */
+  async function refuse(g: Awaited<ReturnType<typeof game>>, command: TownCommand, reason: string): Promise<void> {
+    const waiting = command.cmd === 'forgeUpgrade';
+    const reply = waiting ? g.app.request(command) : (g.app.sendCmd(command), null);
+    const sent = JSON.parse(g.ws().sent.at(-1)!) as { id: number };
+    g.ws().frame({ t: 'cmdResult', id: sent.id, cmd: command.cmd, ok: false, reason });
+    if (reply) expect((await reply)?.ok).toBe(false);
+    await flush();
+  }
+  const upgrade: TownCommand = { cmd: 'forgeUpgrade', uid: 'x', maxGold: 200 };
+  const sell: TownCommand = { cmd: 'sell', uid: 'y', minGold: 40 };
+
+  // ⭐ R18-08: деплой сменил формулу цены в КОДЕ (`forgeGold`, цена скупки, выход разбора), а тело конфига — нет: ETag и ревизия те же. Вкладка
+  // переподключилась сама (L2 / R3-25) со старым бандлом и тем же `PROTOCOL_VERSION`: её карточки считают цену старой формулой, сервер — новой, и
+  // каждая платная команда — «Цена изменилась»; перечитывание — 304, подсказка «перезагрузите» повторялась только у негодного конфига (R7-14), и
+  // игрок кликал в пустоту, не зная почему. Теперь у сборки есть штамп (`__DM_BUILD__` вкладки, `joined.build` сервера): не сошлись — «перезагрузите»
+  // на входе и на каждый отказ ценой, который перечитывание не вылечило (не чаще раза в 2 с). Отказ, который вылечил новый конфиг (200), — без неё.
+  it('⭐ R18-08: деплой сменил цену в коде, конфиг тот же — «перезагрузите» на входе и на каждый отказ ценой, который перечитывание не лечит', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.stubGlobal('__DM_BUILD__', 'build-1');   // штамп, который сборка вписала в бандл вкладки
+    try {
+      const g = await game();
+      await g.enter(PROTOCOL_VERSION, 'build-1');
+      expect(staleHints(g), 'сборки одни — ни слова').toBe(0);
+      // Та же сборка, тот же конфиг, а отказ ценой (гонка: второй клик ушёл, пока первый поднимал ступень) — перезагрузка тут не поможет, молчим.
+      vi.setSystemTime(Date.now() + 5_000);
+      await refuse(g, upgrade, `${PRICE_CHANGED}: 268 золота`);
+      expect(staleHints(g), 'сборка та же — «перезагрузите» было бы ложью').toBe(0);
+
+      g.ws().drop(4009);                                  // деплой: сервер новой сборки, тело конфига то же
+      await g.enter(PROTOCOL_VERSION, 'build-2');
+      expect(staleHints(g), 'было: вход с новой сборкой сервера — ни слова').toBe(1);
+      const n = server.calls.length;
+      for (let click = 0; click < 3; click++) {
+        vi.setSystemTime(Date.now() + 5_000);
+        await refuse(g, upgrade, `${PRICE_CHANGED}: 268 золота`);
+        await refuse(g, sell, `${PRICE_CHANGED}: лавка даст 31 золота`);   // тот же клик — в пределах 2 с: одна строка, не лента
+        expect(staleHints(g), `клик ${click + 1}: было — только «Не вышло: Цена изменилась», без подсказки`).toBe(2 + click);
+      }
+      expect(server.calls.slice(n).every((x) => x === 'W/"a"'), 'перечитывание — условное и 304: конфиг тот же').toBe(true);
+
+      // Правка живьём после деплоя: отказ, который перечитывание ВЫЛЕЧИЛО (200, новый конфиг лёг), — не повод для «перезагрузите».
+      vi.setSystemTime(Date.now() + 5_000);
+      server.reg = serverReg(2); server.etag = 'W/"b"';
+      await refuse(g, sell, `${PRICE_CHANGED}: условия кузницы и лавки обновлены`);
+      expect(prices(g.app.config)).toEqual(prices(server.reg));
+      expect(staleHints(g), 'отказ объяснён новым конфигом — без подсказки').toBe(4);
+      vi.setSystemTime(Date.now() + 5_000);
+      await refuse(g, sell, `${PRICE_CHANGED}: лавка даст 31 золота`);
+      expect(staleHints(g), 'а следующий снова упёрся в код сборки — снова подсказка').toBe(5);
+
+      // Переподключение к той же новой сборке — на входе ещё раз не твердим (сказано на этот штамп), а отказы ценой — по-прежнему.
+      g.ws().drop(1006);
+      await g.enter(PROTOCOL_VERSION, 'build-2');
+      expect(staleHints(g), 'тот же штамп сервера — на входе второй раз не твердим').toBe(5);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  // ⭐ R18-08: штампа нет с одной из сторон — сервер старше штампа (кадр без `build`), вкладка из дев-сервера Vite (штамп пуст): сравнивать нечего,
+  // и отказ ценой, как прежде, только перечитывает конфиг — ложной подсказки нет.
+  it('⭐ R18-08: штампа нет у сервера или у вкладки — отказ ценой без «перезагрузите»', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (const [client, srv] of [['build-1', undefined], [undefined, 'build-2'], ['', 'build-2']] as const) {
+        if (client !== undefined) vi.stubGlobal('__DM_BUILD__', client);
+        const g = await game();
+        await g.enter(PROTOCOL_VERSION, srv);
+        for (let click = 0; click < 2; click++) {
+          vi.setSystemTime(Date.now() + 5_000);
+          await refuse(g, sell, `${PRICE_CHANGED}: лавка даст 31 золота`);
+        }
+        expect(staleHints(g), `вкладка ${String(client)}, сервер ${String(srv)}`).toBe(0);
+        vi.unstubAllGlobals();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  // ⭐ R18-08 × R16 C-07: схема вкладки старше (деплой добавил поле в таблицу): «перезагрузите» было сказано ОДИН раз — на входе. Карточки считают
+  // по разобранному «не в то же», и отказ ценой (`priceRaised`) перечитывание не лечит (304 тем же ETag) — раньше каждый такой отказ был молча.
+  it('⭐ R18-08: схема вкладки старше сервера (R16 C-07) — отказ ценой, который перечитывание не лечит, снова «перезагрузите»', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const g = await game();
+      await g.enter();
+      const b = structuredClone(server.reg.get('balance')) as unknown as Obj;
+      b.newKnobFromNextRelease = 3;
+      server.reg = drifted('balance', b); server.etag = 'W/"new"';
+      g.ws().drop(4009);
+      await g.enter();
+      expect(staleHints(g), 'R16 C-07: сказано на входе').toBe(1);
+      for (let click = 0; click < 3; click++) {
+        vi.setSystemTime(Date.now() + 5_000);
+        await refuse(g, upgrade, `${PRICE_CHANGED}: 268 золота`);
+        expect(staleHints(g), `клик ${click + 1}: было — молча`).toBe(2 + click);
+      }
+      // Сервер откатили к форме вкладки (новый ETag, разобрано в то же): отказ, который перечитывание вылечило, и следующие — без подсказки.
+      vi.setSystemTime(Date.now() + 5_000);
+      server.reg = serverReg(1); server.etag = 'W/"back"';
+      await refuse(g, upgrade, `${PRICE_CHANGED}: условия кузницы и лавки обновлены`);
+      vi.setSystemTime(Date.now() + 5_000);
+      await refuse(g, upgrade, `${PRICE_CHANGED}: 268 золота`);
+      expect(staleHints(g), 'схемы снова одни — молчим').toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ⭐ R18-08: схема конфига меняется только вместе с кодом shared — деплой со сменой схемы приходит и с чужим штампом сборки. На входе игроку
+  // ОДНА строка «перезагрузите», а не две подряд (штамп + конфиг «не в то же» / негодный); без штампа у сервера — конфиг говорит сам, как прежде.
+  it('⭐ R18-08: чужой штамп и схема конфига старше на одном входе — одна строка «перезагрузите», а не лента', async () => {
+    vi.stubGlobal('__DM_BUILD__', 'build-1');
+    try {
+      const g = await game();
+      await g.enter(PROTOCOL_VERSION, 'build-1');
+      const b = structuredClone(server.reg.get('balance')) as unknown as Obj;
+      b.newKnobFromNextRelease = 3;
+      server.reg = drifted('balance', b); server.etag = 'W/"new"';
+      g.ws().drop(4009);
+      await g.enter(PROTOCOL_VERSION, 'build-2');
+      expect(staleHints(g), 'штамп и C-07 — об одном деплое').toBe(1);
+      expect(g.app.configRevision(), 'согласие — по ревизии сервера, как при C-07').toBe(server.reg.revision());
+
+      const next = serverReg(1);
+      (next as unknown as { data: Record<string, unknown> }).data['craft-new-table'] = [{ id: 'x' }];   // и негодный конфиг (R7-14) того же деплоя
+      server.reg = next; server.etag = 'W/"v3"';
+      g.ws().drop(4009);
+      await g.enter(PROTOCOL_VERSION, 'build-2');
+      expect(staleHints(g), 'тот же штамп сервера, новый негодный конфиг — сказано уже на этот деплой').toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

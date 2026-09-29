@@ -5,6 +5,7 @@ import { q, q1, tx } from './pool.js';
 import { syncItems } from './items.js';
 import { CommitUnknown } from './errors.js';
 import { claimHeldSql, claimHeldParams } from '../cluster/claimRule.js';
+import { LEASE_MS } from '../cluster/lease.js';
 
 /**
  * Хранилище: Postgres (`db/pool.ts`). Аккаунты — `users` (логин+хеш пароля), `sessions`
@@ -232,6 +233,52 @@ export async function putCharacter(
   }
 }
 
+/** ⭐ R18-03: кто пишет строку героя — нода (`char_claims.node_id`) и держит ли она аренду (`lease.ts`: нода кластера — да, одиночный процесс — нет). */
+export interface RowOwner { node: string; leased: boolean }
+/**
+ * ⭐ R18-03: «героя `$2` держит нода `$5`» — закрепление за ней, а у ноды с арендой (`$6`) и её удар в реестре моложе аренды (`$7`, мс). Та же
+ * проверка, что у удара сердца с арендой (R17-01), — в самом запросе записи.
+ */
+const OWN_SQL = `SELECT EXISTS (SELECT 1 FROM char_claims WHERE char_id = $2 AND node_id = $5)
+   AND (NOT $6 OR EXISTS (SELECT 1 FROM cluster_nodes WHERE id = $5 AND beat_at > now() - ($7 || ' milliseconds')::interval)) AS ok`;
+
+/**
+ * ⭐ R18-03: ЗАПИСЬ СТРОКИ ГЕРОЯ — ТОЛЬКО ПОКА ЕГО ДЕРЖИТ ЭТА НОДА, И ПРОВЕРКА — ТЕМ ЖЕ ЗАПРОСОМ, что и запись (как удар сердца, R17-01).
+ * Действие над свежей строкой (штраф брошенного забега, снятие забега: `Room.settleStored`, `RoomManager.abandonStored`) раньше писалось по
+ * одной версии: после простоя машины дольше `NODE_DEAD_SEC` с остановленными часами (аренда по часам процесса цела, сомнения нет — ловит только
+ * следующий удар) нода исполняла кадры и таймеры до своего удара — и штраф ложился на строку героя, который тем временем играл тот же забег на
+ * другой ноде (закрепление уже за ней). И запись копии по её версии в том же окне (дописка, прощание, отложенная запись продажи) — на строку,
+ * которую другая нода уже прочла, а записать не успела: её живая сессия становилась зомби (4009). Теперь запись идёт, только если закрепление
+ * героя за `owner.node`, а у ноды с арендой — и реестр видел её удар не дольше аренды назад. Итог: новая версия; `null` — строку обогнали
+ * (версия); `'foreign'` — героя держит не эта нода: не записано.
+ */
+export async function putCharacterOwned(
+  charId: string, userId: string, data: SaveState, expectedVersion: number, owner: RowOwner, reason = 'autosave',
+  reasons?: ReadonlyMap<string, string>,
+): Promise<number | null | 'foreign'> {
+  const snap = snapshotOf(data);
+  try {
+    return await tx(async (c) => {
+      const r = await c.query<{ ok: boolean; version: number | null }>(
+        `WITH own AS (${OWN_SQL}), upd AS (
+           UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+            WHERE char_id = $2 AND user_id = $3 AND version = $4 AND (SELECT ok FROM own)
+           RETURNING version
+         )
+         SELECT (SELECT ok FROM own) AS ok, (SELECT version FROM upd) AS version`,
+        [snap.json, charId, userId, expectedVersion, owner.node, owner.leased, String(LEASE_MS)]);
+      const row = r.rows[0];
+      if (!row?.ok) return 'foreign';
+      if (row.version == null) return null;
+      await syncItems(c, userId, charId, snap.save, undefined, reason, reasons);   // Ф2: журнал вещей — той же транзакцией
+      return Number(row.version);
+    });
+  } catch (e) {
+    if (e instanceof CommitUnknown) { e.sent = snap.json; return committedAnyway(charId, snap.json, expectedVersion, e); }   // R14-04
+    throw e;
+  }
+}
+
 /**
  * ⭐ R2-09: ОТВЕТ НА COMMIT ПОТЕРЯН — ВЫЯСНИТЬ, ЧЕМ КОНЧИЛОСЬ. Строка персонажа с версией +1 и РОВНО нашими данными
  * (сравнение jsonb — по смыслу, не по порядку ключей) — запись наша: у героя одна живая сессия, и ни у кого больше
@@ -299,16 +346,27 @@ export async function getCharacter(charId: string): Promise<CharacterRow | null>
 export async function putCharacterWithStash(
   charId: string, userId: string, data: SaveState, expectedVersion: number,
   stash: AccountStash, expectedStashVersion: number, reason = 'stash',
-  reasons?: ReadonlyMap<string, string>,
+  reasons?: ReadonlyMap<string, string>, owner?: RowOwner,
 ): Promise<StashWriteResult> {
   const snap = snapshotOf(data), st = snapshotOf(stash);   // R1-16: строка и журнал — из одного снимка
   try {
     return await tx(async (c): Promise<StashWriteResult> => {
-      const r = await c.query<{ version: number }>(
-        `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
-         WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
-        [snap.json, charId, userId, expectedVersion]);
-      const version = r.rows[0]?.version;
+      // ⭐ R18-03: `owner` — запись только пока героя держит эта нода, проверкой тем же запросом (см. `putCharacterOwned`).
+      const r = owner
+        ? await c.query<{ ok: boolean; version: number | null }>(
+          `WITH own AS (${OWN_SQL}), upd AS (
+             UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+              WHERE char_id = $2 AND user_id = $3 AND version = $4 AND (SELECT ok FROM own)
+             RETURNING version
+           )
+           SELECT (SELECT ok FROM own) AS ok, (SELECT version FROM upd) AS version`,
+          [snap.json, charId, userId, expectedVersion, owner.node, owner.leased, String(LEASE_MS)])
+        : await c.query<{ ok?: boolean; version: number | null }>(
+          `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+           WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
+          [snap.json, charId, userId, expectedVersion]);
+      if (owner && !r.rows[0]?.ok) return { ok: false, conflict: 'foreign' };
+      const version = r.rows[0]?.version == null ? null : Number(r.rows[0].version);
       // Версия сейва разошлась — коммитим пустую транзакцию, ничего не изменив.
       if (version == null) return { ok: false, conflict: 'save' };
       const s = expectedStashVersion > 0
@@ -347,7 +405,8 @@ export async function putCharacterWithStash(
 /** Итог записи сейва вместе с сундуком: новые версии обоих либо что именно разошлось. */
 export type StashWriteResult =
   | { ok: true; version: number; stashVersion: number }
-  | { ok: false; conflict: 'save' | 'stash' };
+  /** ⭐ R18-03: `foreign` — героя держит не эта нода (запись с `owner`): не записано ничего. */
+  | { ok: false; conflict: 'save' | 'stash' | 'foreign' };
 
 /** Сундук обогнали — бросается ВНУТРИ транзакции, чтобы `tx` откатил и уже записанный сейв. */
 class StashConflict extends Error {}

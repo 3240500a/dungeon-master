@@ -26,6 +26,9 @@ import {
  *        (R16 C-09, V1);
  *   s7 — два героя одного аккаунта: A выбросил вещь, A и B разом поднимают — поднимает один, вещь ровно в одной строке базы и в леджере
  *        у него (K3, R2-02);
+ *   s8 — (E2E 29.09, шестой прогон) забег пати в городе: F5 — «Продолжить» к действующему напарнику (R18-04); «нет» просьбе — подсказка `vote`
+ *        с `solo`, «Продолжить без пати» уводит забег просившему, спуск оставшегося за его спиной — отказ, потом `run` с кодом (R19-04, R20-04,
+ *        R20-06); «Продолжить», отказанный `run` с кодом держателя, — к его ноде, как `EntryFlow`;
  *   drain — ТОЛЬКО кластер (от двух нод): пати (одно тело в бою) и соло посреди подземелья, слив их ноды; сейвы в базе не
  *         меньше увиденного, «Продолжить» сразу — на живой ноде тот же узел забега, и подъём слитой ноды его не сбрасывает.
  *   drainDead — ТОЛЬКО кластер: A погиб в пати, их ноду сливают; статус через гейтвей — «мёртв, оплачено», B продолжает на живой ноде,
@@ -103,7 +106,17 @@ class Conn {
   /** Когда герою последний раз снесли здоровье (по кадрам мира): бьют — значит, монстр до него точно дошёл. */
   hurtAt = 0;
   readonly errors: string[] = [];
+  /** ⭐ E2E 29.09 (шестой прогон): отказы целиком — с полями `roomCode` и `solo` (s8). */
+  readonly errFrames: Extract<ServerFrame, { t: 'error' }>[] = [];
+  /** Как голосует на `voteStart` (s8: «нет» просьбе напарника); окна голосования — `votes`. */
+  voteYes = true;
+  readonly votes: Extract<ServerFrame, { t: 'voteStart' }>[] = [];
   readonly died: Extract<ServerFrame, { t: 'died' }>[] = [];
+  /**
+   * ⭐ E2E 29.09 (шестой прогон): золото из первого сейва ПОСЛЕ первого окна смерти — со штрафом (сейв с ним сервер шлёт за кадром `died`).
+   * «10 000 − штраф» врал: герой подбирал золото с убитых напарником до своей смерти.
+   */
+  goldAfterDeath?: number;
   /** Ответы на команды по номеру (D3). */
   readonly results = new Map<number, Extract<ServerFrame, { t: 'cmdResult' }>>();
   private seq = 0;
@@ -111,8 +124,9 @@ class Conn {
   private lastHp = Infinity;
   constructor(readonly name: string) {}
 
-  async open(h: Hero, opts: { roomCode?: string; resume?: boolean; fresh?: boolean } = { fresh: true }): Promise<void> {
-    this.ws = new WebSocket(await nodeUrl(h, opts.roomCode));
+  /** `via` — код комнаты, по которому гейтвей выбирает ноду, не входя в комнату (s8: «Продолжить» у держателя забега, как `EntryFlow`). */
+  async open(h: Hero, opts: { roomCode?: string; resume?: boolean; fresh?: boolean } = { fresh: true }, via?: string): Promise<void> {
+    this.ws = new WebSocket(await nodeUrl(h, opts.roomCode ?? via));
     await new Promise<void>((res, rej) => { this.ws.once('open', () => res()); this.ws.once('error', rej); });
     this.ws.on('close', (code) => { this.closeCode = code; });
     this.ws.on('message', (data: Buffer, isBinary: boolean) => this.onMessage(data, isBinary));
@@ -134,10 +148,10 @@ class Conn {
     switch (f.t) {
       case 'joined': this.playerId = f.playerId; this.roomCode = f.roomCode; this.save = f.save; this.floor = f.floor; break;
       case 'areaChanged': this.floor = f.floor; this.world = undefined; break;
-      case 'saveUpdate': this.save = f.save; break;
-      case 'voteStart': this.send({ t: 'vote', accept: true }); break;
+      case 'saveUpdate': this.save = f.save; if (this.died.length && this.goldAfterDeath === undefined) this.goldAfterDeath = f.save.gold; break;
+      case 'voteStart': this.votes.push(f); this.send({ t: 'vote', accept: this.voteYes }); break;
       case 'died': this.died.push(f); break;
-      case 'error': this.errors.push(`${f.code}: ${f.msg}`); break;
+      case 'error': this.errors.push(`${f.code}: ${f.msg}`); this.errFrames.push(f); break;
       case 'cmdResult': if (f.id !== undefined) this.results.set(f.id, f); break;
       default: break;
     }
@@ -440,13 +454,18 @@ async function paidParty(db: pg.Pool, tag: string): Promise<{ A: Conn; B: Conn; 
   }
   return { A, B, ha, hb };
 }
-/** A идёт к монстрам без удара, B отбивается: A погиб, B жив. Золото A после штрафа — или `undefined`, если посылка не сложилась. */
+/**
+ * A идёт к монстрам без удара, B отбивается: A погиб, B жив. Золото A после штрафа — или `undefined`, если посылка не сложилась.
+ * ⭐ E2E 29.09 (шестой прогон): золото — из сейва, пришедшего за окном смерти (`goldAfterDeath`), а не «10 000 − штраф»: A подбирал золото с
+ * убитых B до своей смерти (кластер: у A 10 010, штраф 2 502 — в базе верные 7 508, а стенд ждал 7 498 и читал это вторым штрафом).
+ */
 async function aDies(A: Conn, B: Conn): Promise<number | undefined> {
   const keepB = guard(B);
   try {
     const dead = await approach(A, 120_000, () => !!A.me() && !A.me()!.alive);
     if (!dead || B.died.length > 0 || !B.me()?.alive || !(await until(() => A.died.length > 0, 3000))) return undefined;
-    return 10_000 - A.died[0]!.goldLost;
+    if (!(await until(() => A.goldAfterDeath !== undefined, 3000))) return undefined;
+    return A.goldAfterDeath;
   } finally { clearInterval(keepB); }
 }
 
@@ -587,6 +606,111 @@ async function s7(db: pg.Pool): Promise<Outcome> {
   } finally {
     await A.leave(); await B.leave();
     noKick(A, B);
+  }
+}
+
+/** Действует, как открытая вкладка у живого игрока: ввод с движением (R18-04: кадр ввода без движения действием не считается). */
+const active = (c: Conn): ReturnType<typeof setInterval> => {
+  let k = 0;
+  return setInterval(() => c.input({ move: { x: ++k % 2 ? 0.01 : -0.01, y: 0 } }), 200);
+};
+/**
+ * «Продолжить», как `EntryFlow` (C-05, C-08): отказ `run` с кодом держателя — один раз к ноде держателя (маршрут по коду) и `join { resume }` там.
+ * В кластере «Продолжить» после чистого ухода из города гейтвей ведёт на самую свободную ноду, а забег держит комната другой.
+ */
+async function resumeLikeClient(c: Conn, h: Hero): Promise<void> {
+  try { await c.open(h, { resume: true }); } catch (e) {
+    const held = c.errFrames.find((f) => f.code === 'run' && f.roomCode);
+    if (!held?.roomCode) throw e;
+    c.ws.close();
+    c.errors.length = 0;
+    c.errFrames.length = 0;
+    await c.open(h, { resume: true }, held.roomCode);
+  }
+}
+
+/**
+ * ⭐ s8 — забег пати в городе (E2E 29.09, шестой прогон): R18-04, R19-04, R20-04, R20-06 живьём. A и B прошли узел и вернулись в город (забег
+ * припаркован, держит комната A). B перезагрузил вкладку — «Продолжить» к действующему A (R18-04). B зовёт спуск, A отвечает «нет» — подсказка
+ * `vote` с `solo` (R19-04, R20-04); B «Продолжить без пати» (`leave`, статус, «Продолжить»): пока он не взял забег, спуск A — отказ `vote`
+ * (R20-06), взял — новая комната на узле, спуск A — `run` с её кодом, по коду A — к B.
+ */
+async function s8(): Promise<Outcome> {
+  console.log('\n[s8] забег пати в городе: F5 — к пати (R18-04), «нет» просьбе — забег просившему (R19-04, R20-04), спуск за спиной — отказ (R20-06)');
+  const ha = await hero('s8a'), hb = await hero('s8b');
+  const A = new Conn('A'), B = new Conn('B');
+  await A.open(ha);
+  await B.open(hb, { roomCode: A.roomCode });
+  const conns: Conn[] = [A, B];
+  const keep: ReturnType<typeof setInterval>[] = [active(A), active(B)];
+  try {
+    if (!check(B.roomCode === A.roomCode, `B в комнате A (${B.roomCode})`) || !check(await toDungeon(A, [A, B]), 'пати в подземелье')) return 'done';
+    await sleep(2500);   // голос — не раньше `VOTE_COOLDOWN_MS` после перехода
+    A.send({ t: 'return' });   // у точки входа: пати — в город, забег припаркован
+    if (!(await until(() => A.floor?.area === 'town' && B.floor?.area === 'town', 10_000))) {
+      return retry(`пати не вернулась в город порталом (A ${A.floor?.area}, B ${B.floor?.area}: ${[...A.errors, ...B.errors].join(' | ')})`);
+    }
+    await until(() => !!A.save?.run && !!B.save?.run, 3000);
+    const node = A.save?.run?.currentNodeId;
+    check(!!node && B.save?.run?.currentNodeId === node, `забег припаркован у обоих (узел ${node})`);
+    // R18-04: B перезагрузил вкладку в городе (чистый уход, грейса нет) — «Продолжить» к действующему A, а не один на узел.
+    clearInterval(keep[1]);
+    B.kill();
+    await sleep(1500);
+    const B2 = new Conn('B2');
+    conns.push(B2);
+    await resumeLikeClient(B2, hb);
+    check(B2.roomCode === A.roomCode && B2.floor?.area === 'town', `R18-04: «Продолжить» B после F5 — к пати в город (${B2.roomCode}, ${B2.floor?.area})`);
+    keep.push(active(B2));
+    // R19-04, R20-04: B просит продолжить забег, A отвечает «нет» — подсказка `vote` с `solo`, пати в городе.
+    A.voteYes = false;
+    await sleep(2500);
+    const e0 = B2.errFrames.length;
+    B2.send({ t: 'descend', difficultyId: 'normal' });
+    await until(() => A.votes.length > 0 && B2.errFrames.length > e0, 5000);
+    const hint = B2.errFrames.slice(e0).find((f) => f.code === 'vote');
+    check(!!hint && hint.solo === true && A.floor?.area === 'town' && B2.floor?.area === 'town',
+      `R19-04: «нет» A — подсказка B: vote, solo ${String(hint?.solo)}, пати в городе`);
+    // «Продолжить без пати»: `leave` по живому сокету, статус забега, «Продолжить».
+    B2.send({ t: 'leave' });
+    await sleep(800);
+    const st = await lobby(hb, 'runStatus', 'runStatus');
+    check(st?.t === 'runStatus' && st.hasRun, `статус забега B: ${JSON.stringify(st)}`);
+    // R20-06: пока B не взял забег — спуск A за его спиной не продолжает его.
+    A.voteYes = true;
+    const ea = A.errFrames.length;
+    A.send({ t: 'descend', difficultyId: 'normal' });
+    await until(() => A.errFrames.length > ea || A.floor?.area !== 'town', 4000);
+    const handed = A.errFrames.slice(ea).find((f) => f.code === 'vote');
+    check(!!handed && A.floor?.area === 'town', `R20-06: спуск A за спиной ушедшего — отказ vote («${handed?.msg.slice(0, 40) ?? A.floor?.area}…»)`);
+    const B3 = new Conn('B3');
+    conns.push(B3);
+    await resumeLikeClient(B3, hb);
+    await until(() => !!B3.me(), 5000);
+    check(B3.roomCode !== A.roomCode && B3.floor?.area === 'dungeon' && B3.floor.runNodeId === node,
+      `R19-04: «Продолжить» B — забег ему: новая комната ${B3.roomCode}, ${B3.floor?.area}, узел ${B3.floor?.runNodeId}`);
+    // Спуск A — `run` с кодом комнаты B; по коду A — к B на узел.
+    await sleep(2500);
+    const ea2 = A.errFrames.length;
+    A.send({ t: 'descend', difficultyId: 'normal' });
+    await until(() => A.errFrames.length > ea2, 4000);
+    const run = A.errFrames.slice(ea2).find((f) => f.code === 'run');
+    check(!!run && run.roomCode === B3.roomCode, `спуск A — run с кодом ${run?.roomCode ?? '—'} (комната B ${B3.roomCode})`);
+    clearInterval(keep[0]);
+    await A.leave();
+    const A2 = new Conn('A2');
+    conns.push(A2);
+    await A2.open(ha, { roomCode: B3.roomCode });
+    await until(() => !!A2.me(), 5000);
+    check(A2.roomCode === B3.roomCode && A2.floor?.area === 'dungeon', `A по коду — к B на узел (${A2.roomCode}, ${A2.floor?.area})`);
+    // Ожидаемые отказы: подсказка и отказ за спиной (`vote`), `run` с кодом (A); прочих быть не должно.
+    const extra = conns.flatMap((c) => c.errFrames.filter((f) => f.code !== 'vote' && !(c === A && f.code === 'run')).map((f) => `${c.name} ${f.code}: ${f.msg}`));
+    check(extra.length === 0, `прочих кадров error: ${extra.join(' | ') || 0}`);
+    return 'done';
+  } finally {
+    for (const t of keep) clearInterval(t);
+    for (const c of conns) await c.leave().catch(() => undefined);
+    noKick(...conns);
   }
 }
 
@@ -734,7 +858,7 @@ async function drain(db: pg.Pool): Promise<Outcome> {
 async function main(): Promise<void> {
   const db = new pg.Pool({ connectionString: PG, max: 2 });
   const all: [string, () => Promise<Outcome>][] = [
-    ['s1', s1], ['s2', s2], ['s3a', () => s3(true)], ['s3b', () => s3(false)], ['s4', s4], ['s5', s5], ['s6', () => s6(db)], ['s7', () => s7(db)],
+    ['s1', s1], ['s2', s2], ['s3a', () => s3(true)], ['s3b', () => s3(false)], ['s4', s4], ['s5', s5], ['s6', () => s6(db)], ['s7', () => s7(db)], ['s8', s8],
     ['drain', () => drain(db)], ['drainDead', () => drainDead(db)],
   ];
   try {

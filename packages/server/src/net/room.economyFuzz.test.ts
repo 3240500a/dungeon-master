@@ -26,7 +26,9 @@ vi.setConfig({ testTimeout: Math.max(600_000, (Number(process.env.DM_FUZZ_ROOM_S
  *    сам входит заново из базы;
  *  • ⭐ R16 C-01 `carry` — подъём выброшенного, начатый ТИКОМ ([E], автоподбор: мимо очереди кадров соединения), и действие, кладущее в
  *    сумку, пока его запись в пути (ворота базы): покупка, снятое, разбор, задание, сундук, ковка, добыча. Раньше вещь ложилась поверх
- *    занятой клетки — сетка (наложение, сверх ёмкости) это и видит.
+ *    занятой клетки — сетка (наложение, сверх ёмкости) это и видит. ⭐ R20-07: и смерть поднимающего в окне записи (смертельный яд и шаг
+ *    комнаты: штраф смерти катает сумку без вещи) — сумка мёртвого не растёт (`I6:dead-bag-grew`: легшая запись клала поднятое в сумку трупа,
+ *    мимо броска потери). Самопроверка `DM_FUZZ_SELFTEST=r2007` возвращает корень.
  * Сверх общих инвариантов — ЗАПИСАННОЕ (P1): в базе (сейвы обоих героев + сундук) ни одна вещь не лежит дважды — иначе падение
  * процесса в этот миг раздаёт копию.
  *
@@ -90,16 +92,21 @@ class FakeWs implements GameConn {
 }
 
 type Drop = { id: number; kind: string; item?: Item; owner?: string; heldBy?: string; pos: { x: number; y: number } };
-type P = { save: SaveState; hp: number; alive: boolean; pos: { x: number; y: number }; stunTimer: number };
+type P = { save: SaveState; hp: number; alive: boolean; pos: { x: number; y: number }; stunTimer: number; debuffs: Record<string, unknown> };
 type RoomIn = {
   shop: Item[]; consumables: Item[]; questBoard: import('@dm/shared').QuestDef[]; stock: { at: number } | null;
   /** ⭐ K3: выброшенное, которое сейчас поднимают (запись поднимающего в пути). */
   carrying: Set<unknown>;
   /** ⭐ K3: крючок тика ([E], автоподбор) — подъём выброшенного с записью (`Room.pickFromTick`). */
-  session: { world: { players: Record<string, P>; drops: Drop[] }; pickThrown?: (pid: string, dropId: number) => void };
+  session: {
+    world: { players: Record<string, P>; drops: Drop[]; timeMs: number }; pickThrown?: (pid: string, dropId: number) => void;
+    respawnPlayer(pid: string): void;
+  };
   addPlayer(ws: unknown, userId: string, save: SaveState, version: number): string;
   handleCmd(pid: string, command: unknown, id: unknown): Promise<void>;
   persist(pid: string): Promise<unknown>;
+  /** ⭐ R20-07: шаг комнаты (тик сессии и оплата смертей) — смерть поднимающего в окне записи подъёма. */
+  step(emit?: boolean): void;
   stop(): void;
 };
 let RoomCtor: new (code: string, cfg: unknown, hooks: object) => RoomIn;
@@ -116,6 +123,21 @@ beforeAll(async () => {
       if (at >= 0) drops.splice(at, 1);
       d.item!.pos = { ...p.save.inventory.find((x) => x.pos)!.pos! };
       p.save.inventory.push(d.item!);
+    });
+  }
+  // ⭐ САМОПРОВЕРКА `DM_FUZZ_SELFTEST=r2007`: вернуть корень R20-07 — запись подъёма легла после смерти поднимающего, и вещь ложится в сумку трупа
+  // (а не остаётся на земле за ним): шаг `carry` со смертью обязан найти `I6:dead-bag-grew`.
+  if (process.env.DM_FUZZ_SELFTEST === 'r2007') {
+    const proto = RoomCtor.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const orig = proto.keepThrown!;
+    vi.spyOn(proto, 'keepThrown').mockImplementation(function (this: RoomIn, ...a: unknown[]) {
+      const [, p, d] = a as [unknown, P, Drop];
+      if (p.alive) return orig.apply(this, a);
+      const drops = this.session.world.drops;
+      const at = drops.indexOf(d);
+      if (at >= 0) drops.splice(at, 1);
+      p.save.inventory.push(d.item!);
+      return undefined;
     });
   }
 });
@@ -257,6 +279,8 @@ async function runRoom(seed: number, ops: RoomOp[]): Promise<{ hits: Hit[]; stat
     let p: Plan | undefined;
     let res: Res = { ok: true };
     let aggregateOnly = false;
+    /** ⭐ R20-07: нарушения, которые шаг видит сам (сумка мёртвого — в окне записи подъёма). */
+    const extra: Violation[] = [];
     try {
       if (op.k === 'drop') {
         const inv = live(h).save.inventory.filter((it) => it.kind !== 'material');
@@ -310,6 +334,15 @@ async function runRoom(seed: number, ops: RoomOp[]): Promise<{ hits: Hit[]; stat
           db.gate = new Promise<void>((res) => { open = res; });
           room.session.pickThrown?.(pids[h]!, d.id);   // [E] тика дотянулся
           await settle();
+          // ⭐ R20-07: и погиб, пока запись подъёма в пути (яд и шаг комнаты): штраф смерти катает сумку без поднимаемого.
+          let died = false;
+          if (r.chance(0.3) && live(h).alive) {
+            const ph = live(h);
+            ph.debuffs.poison = { stacks: 1, maxStacks: 1, expiresAt: room.session.world.timeMs + 60_000, mag: 1e9, mag2: 0 };
+            room.step(true);
+            died = !ph.alive;
+            log.push(`#${i} carry/${h}: погиб, пока запись подъёма «${d.item.name}» в пути${died ? '' : ' — не вышло (жив)'}`);
+          }
           refresh();
           const kinds: OpKind[] = ['buy', 'unequip', 'equip', 'fieldSalvage', 'turnIn', 'stashMove', 'forgeSalvage', 'craft', 'loot', 'lootMats'];
           const pc = plan(w, { k: r.pick(kinds), h, s: r.int(1, 2 ** 31 - 1) });
@@ -327,6 +360,15 @@ async function runRoom(seed: number, ops: RoomOp[]): Promise<{ hits: Hit[]; stat
           open();
           await pending;
           await settle(24);
+          if (died) {
+            // I6 (R20-07): поднимаемое, чья запись легла после смерти, — на земле за ним, а не в сумке трупа (мимо броска штрафа).
+            const ph = live(h);
+            const x = d.item;
+            if (!ph.alive && ph.save.inventory.some((it) => it.uid === x.uid)) {
+              extra.push({ inv: 'I6', code: 'dead-bag-grew', id: x.uid, msg: `в сумке мёртвого героя ${h} оказалась поднимаемая «${x.name}» [${x.uid.slice(-6)}] — подъём лёг после смерти, мимо броска штрафа` });
+            }
+            room.session.respawnPlayer(pids[h]!);   // цепочка идёт дальше живым (как спуск пати)
+          }
         } else log.push(`#${i} carry/${h}: бросить нечего`);
         aggregateOnly = true;
       } else if (op.k === 'crash') {
@@ -388,6 +430,7 @@ async function runRoom(seed: number, ops: RoomOp[]): Promise<{ hits: Hit[]; stat
       // Гонка: только сводно — ценность аккаунта от двух шагов города не растёт.
       if (after.value > before.value + 1e-6) vs.push({ inv: 'I5', code: 'ledger', msg: `гонка подняла ценность ${before.value} → ${after.value}` });
     }
+    vs.unshift(...extra);
     const persisted = persistedDupes(charIds, userId);
     for (const x of persisted) if (!prevPersisted.has(x.id!)) vs.push(x);
     prevPersisted = new Set(persisted.map((x) => x.id!));

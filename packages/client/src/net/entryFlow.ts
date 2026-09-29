@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION, type ClientFrame, type ServerFrame } from '@dm/shared';
-import { dismissAsk } from '../ui/kit.js';
+import { askInGame, dismissAsk } from '../ui/kit.js';
 import type { RouteAnswer } from './netClient.js';
 
 /**
@@ -30,6 +30,10 @@ import type { RouteAnswer } from './netClient.js';
  *
  * ⭐ C-05, C-08: «ПРОДОЛЖИТЬ», ОТКАЗАННЫЙ ИЗ-ЗА ЗАБЕГА В ДРУГОЙ КОМНАТЕ (`error{code:'run'|'full', roomCode}`, V2), — не строка на экране без поля
  * кода: к ноде держателя и там снова «Продолжить», а нет мест — лобби с его кодом в поле (`runHeld`). Выход без «Забросить» есть всегда.
+ * ⭐ R20-09: там «занят» (свод забега не дописан, взятие в пути, слив) — экран «Продолжить» у той же ноды с причиной, а не лобби без него.
+ *
+ * ⭐ R20-04: ИЗ МИРА — НА ЭКРАН ВХОДА. Пати не приняла просьбу продолжить общий забег — сервер отдаёт его просившему, и путь — «Продолжить» на
+ * экране входа (R19-04). Меню в мире нет ни у одного клиента: подсказка (`error{solo}`) — вопрос в игре с кнопкой «Продолжить без пати» (`toEntry`).
  *
  * Чистый класс без DOM и сети напрямую — его гоняют node-тесты с поддельным сокетом.
  */
@@ -45,12 +49,12 @@ export function netLostText(code?: number): string {
   return 'Соединение потеряно — входим заново';
 }
 
-/** Что входу нужно от `NetClient` — ровно это, чтобы тест подставил подделку. */
+/** Что входу нужно от `NetClient` — ровно это, чтобы тест подставил подделку. Подписки возвращают свою отписку (R19-02). */
 export interface EntryNet {
   readonly connected: boolean;
-  on<T extends ServerFrame['t']>(t: T, cb: (frame: Extract<ServerFrame, { t: T }>) => void): void;
-  onOpen(cb: () => void): void;
-  onClose(cb: (code?: number) => void): void;
+  on<T extends ServerFrame['t']>(t: T, cb: (frame: Extract<ServerFrame, { t: T }>) => void): () => void;
+  onOpen(cb: () => void): () => void;
+  onClose(cb: (code?: number) => void): () => void;
   /** Подключиться; `url` — адрес ноды от гейтвея (R4-13), нет — адрес по умолчанию. */
   connect(url?: string): void;
   resetWorld(): void;
@@ -128,6 +132,18 @@ export const QUEUE_POLL_MS = 3000;
 /** R4-22: паузы перед повторами статуса забега, на который сервер ответил «занят», мс; кончились — лобби с кнопками. */
 export const STATUS_RETRY_MS = [2000, 4000, 8000] as const;
 
+/** ⭐ R20-04: вопрос в игре на подсказку «пати не идёт» (`error{solo}`) и его кнопки. */
+export const SOLO_ASK = 'Пати не идёт. Продолжить забег без неё? Вы выйдете из комнаты на экран «Продолжить / Забросить» — напарники придут к вам по коду комнаты';
+export const SOLO_YES = 'Продолжить без пати';
+export const SOLO_NO = 'Остаться';
+/** ⭐ R20-04: строка экрана «Продолжить» после выхода кнопкой — почему игрок здесь и что сделает «Продолжить». */
+export const SOLO_RESUME = 'Пати не пошла — «Продолжить» уведёт забег на его этаж без неё; напарники придут по коду комнаты';
+/**
+ * ⭐ R20-04: сколько кнопка «Продолжить без пати» висит, мс. Отказ пати сервер держит `RUN_ASK_MS` (60 с, `server/net/room.ts`) с того мига, как
+ * сказал (R20-02): позже «Продолжить» садит к пати, и кнопка обещала бы то, чего не будет. Запас — на экран «Продолжить» и клик по нему.
+ */
+export const SOLO_OFFER_MS = 45_000;
+
 /** ⭐ C-05: «Продолжить» не пустило — в пати забега (комната `code`) нет мест. Строка лобби, где код уже в поле. */
 export function partyFullText(code: string): string {
   return `В пати забега нет мест (комната ${code}) — забег сохранён: «Войти» по коду, когда место освободится, или «Соло» — в город`;
@@ -162,6 +178,18 @@ export class EntryFlow {
   private lastJoin: JoinOpts | null = null;
   /** ⭐ C-08: к ноде держателя забега уже шли после этого клика — второй отказ подряд ведёт в лобби, а не по кругу. */
   private followed = false;
+  /** ⭐ R20-09: код комнаты держателя, к чьей ноде шли (`runHeld`), — в поле лобби, если и там не пустили. */
+  private heldBy?: string;
+  /**
+   * ⭐ R20-04: вышли из комнаты по ЖИВОМУ сокету (`toEntry`). Кадры комнаты, посланные до того, как сервер разобрал `leave` (снапшоты,
+   * голосование, смерть, смена области), ещё в пути и рисуют следы прошлой сессии поверх экрана входа; ответ на статус забега сервер шлёт после
+   * выхода — с ним (и с любым ответом лобби) следы сносятся ещё раз.
+   */
+  private leaving = false;
+  /** ⭐ R20-04: номер открытого вопроса «Продолжить без пати» (0 — нет) и его срок (`SOLO_OFFER_MS`). */
+  private soloAsk = 0;
+  private soloSeq = 0;
+  private soloTimer?: ReturnType<typeof setTimeout>;
   /** R4-22: сколько раз статус уже переспрошен после «занят». */
   private statusTries = 0;
   /** Отложенный шаг: переспрос очереди (R4-13) или статуса (R4-22). Один на поток, снимается любым переходом. */
@@ -174,32 +202,39 @@ export class EntryFlow {
 
   /**
    * Подписаться на сокет: открылся — спросить статус забега; закрылся — `onClose`; кадры входа. Вешать ОДИН раз на
-   * жизнь обработчиков сокета (2D снимает их на пере-вход в сцену `off`/`clearLifecycle` и вешает заново).
+   * жизнь потока. ⭐ R19-02: возвращает отписку — ровно этих подписок (2D снимает их на выходе из сцены и вешает новый поток
+   * на новый вход). Раньше сцена снимала обработчики кадров оптом (`NetClient.off`) — и подписки `App` вместе с ними.
    */
-  attach(): void {
+  attach(): () => void {
     const { net, view } = this.deps;
-    net.onOpen(() => {
+    const offs: (() => void)[] = [];
+    offs.push(net.onOpen(() => {
       if (!this.live) return;
       // R4-13: к другу по коду поток подключился к ноде его комнаты — вход уходит сразу, статус забега там не нужен.
       const o = this.openJoin;
       this.openJoin = null;
       if (o) this.sendJoin(o); else this.askStatus();
-    });
-    net.onClose((code) => this.onClose(code));
+    }));
+    offs.push(net.onClose((code) => this.onClose(code)));
     // Ответ на СВОЙ запрос. В игре лобби поверх мира не рисуем: его кнопки выселили бы собственную живую сессию.
-    net.on('runStatus', (f) => {
+    offs.push(net.on('runStatus', (f) => {
       if (!this.live || this.phase === 'game') return;
+      this.swept(true);   // ⭐ R20-04: ответ после выхода из комнаты — её кадров в пути больше нет
       this.stopTimer();
       this.statusTries = 0;
       if (f.hasRun) this.toResume(f.roomCode ?? '', f.depth ?? 0, f.dead === true); else this.toLobby();
-    });
+    }));
     // ⭐ R17-05: забег брошен — причина прошлой потери связи устарела: лобби — после броска, а не «после обрыва».
-    net.on('abandoned', () => { if (this.live && this.phase !== 'game') { this.note = ''; this.toLobby(); } });
-    net.on('error', (f) => {
+    offs.push(net.on('abandoned', () => { if (this.live && this.phase !== 'game') { this.note = ''; this.toLobby(); } }));
+    offs.push(net.on('error', (f) => {
       if (!this.live) return;
       // В игре ошибка писалась в строку статуса снятого экрана — её не видел никто («подождите», «подойдите к
       // порталу», «вещь с чужого аккаунта изъята»). Отказ команды (`cmd`) — нет: его ждёт окно, пославшее команду.
-      if (this.phase === 'game') { if (f.code !== 'cmd') this.deps.log?.(f.msg); return; }
+      // ⭐ R20-04: подсказка «пати не идёт» (`solo`) — и кнопка «Продолжить без пати»: из мира на экран входа иначе не выйти.
+      if (this.phase === 'game') { if (f.code !== 'cmd') this.deps.log?.(f.msg); if (f.solo === true) this.offerSolo(); return; }
+      // ⭐ R20-04: отказ команды, посланной до выхода из комнаты, — ответ окну, которого уже нет, а не статусу забега (лобби им не отвечает).
+      if (this.leaving && f.code === 'cmd') return;
+      this.swept(false);   // ⭐ R20-04: отказ комнаты, посланный до выхода, или ответ лобби — следы комнаты прочь (флаг снимает ответ на статус)
       if (f.code === 'no-run') { this.toLobby(); return; }   // забег истёк за время раздумий
       // ⭐ C-05, C-08: «Продолжить» отказан — забег ведёт другая комната (V2): она на другой ноде (`run`) или в её пати нет мест (`full`).
       if ((f.code === 'run' || f.code === 'full') && this.asked === 'join' && this.lastJoin?.resume) { this.runHeld(f.code, f.msg, f.roomCode); return; }
@@ -225,10 +260,11 @@ export class EntryFlow {
       }
       if (this.phase === 'connecting') { this.refused(f.code, f.msg); return; }
       view.setStatus(f.msg);
-    });
-    net.on('joined', (f) => {
+    }));
+    offs.push(net.on('joined', (f) => {
       if (!this.live) return;
       this.phase = 'game';
+      this.leaving = false;   // R20-04: без сноса — мир новой комнаты сцена уже строит (её обработчик `joined` — раньше этого)
       this.deps.inWorld?.(true);
       this.note = '';
       this.hint = '';
@@ -239,7 +275,8 @@ export class EntryFlow {
       // R5-15: вкладку не перезагружали, а сервер уже новый — конфиг перечитать; другой протокол — сказать игроку.
       if (typeof f.v === 'number' && f.v !== PROTOCOL_VERSION) this.deps.log?.(PROTOCOL_STALE);
       this.deps.onJoined?.();
-    });
+    }));
+    return () => { for (const off of offs.splice(0)) off(); };
   }
 
   /** Начать вход: плашка «Подключение…»; сокет уже открыт — статус забега сразу, иначе подключиться. */
@@ -248,6 +285,7 @@ export class EntryFlow {
     this.live = true;
     this.rerouted = false;
     this.followed = false;
+    this.leaving = false;
     this.statusTries = 0;
     this.hint = '';
     this.toConnecting();
@@ -260,6 +298,8 @@ export class EntryFlow {
     this.live = false;
     this.deps.inWorld?.(false);
     this.stopTimer();
+    this.stopSolo();   // R20-04: кнопка «Продолжить без пати» не переживает выход из игры
+    this.leaving = false;
     this.dialSeq++;   // R4-13: опоздавший ответ маршрута сокет уже не откроет
     this.openJoin = null;
     this.deps.view.hide();
@@ -294,6 +334,73 @@ export class EntryFlow {
     this.deps.net.send({ t: 'abandon', ...this.deps.who() });
   }
 
+  /**
+   * ⭐ R20-04: ИЗ МИРА — НА ЭКРАН ВХОДА, НЕ РВЯ СВЯЗИ (кнопка «Продолжить без пати»). Пати не приняла просьбу продолжить общий забег («нет»
+   * напарника или молчание `RUN_ASK_MS`) — забег отдан просившему, и путь к нему — «Продолжить» (R19-04). Подсказка звала «в меню входа», а в
+   * мире меню нет ни у одного клиента и кадр `leave` не слал никто: повтор спуска снова ждал напарника, выходом оставалась перезагрузка.
+   * Теперь — `leave` по живому сокету (комната отпускает героя, как на закрытии), мир и окна прошлой комнаты прочь, как при потере связи, и
+   * статус забега тем же сокетом: экран «Продолжить / Забросить» с причиной, «Продолжить» — забег на его этаж (сервер: `runRefused`).
+   * ⚠ Сокет и нода — те же: переподключение увело бы к гейтвею, а там, может быть, к другой ноде и снова к держателю (C-08).
+   */
+  toEntry(): void {
+    if (!this.live || this.phase !== 'game') return;
+    this.stopSolo();
+    this.deps.inWorld?.(false);   // R6-25: раньше сноса мира — окна и хоткеи прошлой комнаты прочь
+    dismissAsk();
+    this.deps.onLost?.();
+    this.deps.net.resetWorld();
+    this.rerouted = false;
+    this.followed = false;
+    this.statusTries = 0;
+    this.hint = SOLO_RESUME;   // строка ближайшего экрана «Продолжить» — разово (R17-05)
+    if (!this.deps.net.connected) {   // сокет закрывается, а закрытие ещё не пришло: ответов по нему не будет
+      this.deps.replies?.dropAll();
+      this.reconnect();
+      return;
+    }
+    // Ответы на команды, посланные до выхода, придут до него (сервер разбирает кадры соединения по очереди) — ждущих не отпускаем.
+    this.deps.net.send({ t: 'leave' });
+    this.leaving = true;
+    this.toConnecting();
+    this.askStatus();
+  }
+
+  /**
+   * ⭐ R20-04: вопрос в игре «Продолжить без пати» на подсказку `error{solo}`. Сам поток никуда не уходит — только кнопкой. Новая подсказка —
+   * новый вопрос и новый срок; срок `SOLO_OFFER_MS` снимает только СВОЙ вопрос (сменивший его чужой не трогает): позже отказ пати на сервере
+   * истёк, и «Продолжить» посадило бы к пати.
+   */
+  private offerSolo(): void {
+    const id = ++this.soloSeq;
+    this.soloAsk = id;
+    if (this.soloTimer !== undefined) clearTimeout(this.soloTimer);
+    this.soloTimer = setTimeout(() => { this.soloTimer = undefined; if (this.soloAsk === id) dismissAsk(); }, SOLO_OFFER_MS);
+    void askInGame(SOLO_ASK, { yes: SOLO_YES, no: SOLO_NO }).then((yes) => {
+      if (this.soloAsk !== id) return;   // сменён следующей подсказкой
+      this.soloAsk = 0;
+      if (this.soloTimer !== undefined) { clearTimeout(this.soloTimer); this.soloTimer = undefined; }
+      if (yes) this.toEntry();
+    });
+  }
+
+  /** ⭐ R20-04: снять кнопку «Продолжить без пати» (выход из игры, уход на экран входа): срок — прочь, вопрос открыт — «нет». */
+  private stopSolo(): void {
+    if (this.soloTimer !== undefined) { clearTimeout(this.soloTimer); this.soloTimer = undefined; }
+    if (this.soloAsk) { this.soloAsk = 0; dismissAsk(); }
+  }
+
+  /**
+   * ⭐ R20-04: после выхода из комнаты по живому сокету (`leaving`) — ответ лобби: следы кадров комнаты, пришедших до него (окно голосования,
+   * смерти, мир), прочь ещё раз. `done` — это ответ на статус забега (сервер шлёт его после выхода): кадров комнаты за ним нет, флаг снят.
+   */
+  private swept(done: boolean): void {
+    if (!this.leaving) return;
+    if (done) this.leaving = false;
+    dismissAsk();
+    this.deps.net.resetWorld();
+    this.deps.onLost?.();
+  }
+
   private askStatus(): void {
     this.asked = 'status';
     this.deps.net.send({ t: 'runStatus', ...this.deps.who() });
@@ -316,6 +423,7 @@ export class EntryFlow {
   private runHeld(code: 'run' | 'full', msg: string, roomCode?: string): void {
     if (code === 'run' && roomCode && this.deps.route && !this.followed) {
       this.followed = true;
+      this.heldBy = roomCode;
       this.deps.net.resetWorld();
       this.toConnecting();
       this.deps.view.setStatus(`Забег идёт в комнате ${roomCode} — переходим к пати…`);
@@ -385,8 +493,19 @@ export class EntryFlow {
    * ⭐ R4-22: сервер отказал на плашке «Подключение…» — на автоматический статус забега или на вход, ушедший с открытием
    * сокета. Кнопок на плашке нет: «занят» на статус — повтор с паузой (`STATUS_RETRY_MS`), кончились — лобби; любой
    * другой отказ — сразу лобби с причиной. Раньше причина писалась в строку плашки, и игрок оставался на ней навсегда.
+   * ⭐ R20-09: «Продолжить» у ноды держателя забега (переход C-08 — единственный вход `resume`, что уходит с плашки) ответили «занят» (свод забега
+   * не дописан, взятие в пути, слив, нода полна — с R18-02 это «повторите»): статус забега у ТОЙ ЖЕ ноды и экран «Продолжить» с причиной — сам
+   * не входит (вход — только кликом). Раньше — лобби без «Продолжить» и без кода: к забегу вели «Соло», отказ `run` и новый статус. Иной отказ
+   * там — лобби с кодом держателя в поле («Войти» — к пати).
    */
   private refused(code: string, msg: string): void {
+    const resumed = this.asked === 'join' && this.lastJoin?.resume === true;
+    if (resumed && code === 'busy') {
+      this.hint = msg;
+      this.deps.view.setStatus(msg);
+      this.askStatus();
+      return;
+    }
     if (this.asked === 'status' && code === 'busy' && this.statusTries < STATUS_RETRY_MS.length) {
       const ms = STATUS_RETRY_MS[this.statusTries++]!;
       this.deps.view.setStatus(`${msg} · повтор через ${Math.round(ms / 1000)} с`);
@@ -397,7 +516,7 @@ export class EntryFlow {
       }, ms);
       return;
     }
-    this.toLobby();
+    this.toLobby(resumed && this.followed ? this.heldBy : undefined);
     this.deps.view.setStatus(msg);
   }
 
@@ -418,6 +537,7 @@ export class EntryFlow {
   private onClose(code?: number): void {
     if (!this.live) return;
     this.stopTimer();
+    this.swept(true);   // R20-04: вышли из комнаты, а ответа не дождались — следы её кадров прочь
     this.asked = null;
     this.hint = '';   // R17-05: отказ, к которому она, — ответ мёртвого сокета; экран «Продолжить» после — со своей причиной
     if (this.phase === 'connecting') {

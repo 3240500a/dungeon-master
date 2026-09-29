@@ -12,6 +12,10 @@ import { skillWeaponAllowed } from '../formulas/skills.js';
 import { attackWeaponsOf } from '../formulas/playerCombat.js';
 import { oneHandGrip } from '../formulas/versatile.js';
 import { addToInventory } from '../inventory/grid.js';
+import { gainXp } from './progression.js';
+import { newBotSave } from '../sim/playerBot.js';
+import { xpForLevel } from '../formulas/xp.js';
+import { ATTRIBUTES } from '../types/attributes.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -912,6 +916,199 @@ describe('⭐ R8-10: сброс атрибутов не прячет снаря�
     // Второй сброс пик не опускает: покомпонентный максимум.
     expect(respec(reg, s).ok).toBe(true);
     expect(s.respecPeak).toMatchObject({ strength: str0 + 10, intelligence: s.attributes.intelligence + 10 });
+  });
+});
+
+/**
+ * ⚠ R18-07: СБРОС АТРИБУТОВ ВОЗВРАЩАЕТ ВЛОЖЕННОЕ, А НЕ РАЗНИЦУ С НЫНЕШНЕЙ СТРОКОЙ КЛАССА. Возврат считался от `classes.startAttributes`
+ * живого конфига, и сброс ставил их же: правка хозяина (живьём или деплоем) дарила старым героям очки. Воин 10-го уровня, вложивший
+ * 45 в Силу, после «Сила 20→15, Ловкость 15→20» получал 50 и выходил со 115 против 110 у свежего воина того же уровня; опущенный старт
+ * делал очки базы свободными. Дробный старт (Живучесть 20.5) оставлял половину очка, которую не вложить (`allocAttr` берёт целые).
+ */
+describe('⚠ R18-07: сброс атрибутов — по старту, с которым герой создан', () => {
+  const total = (s: SaveState): number => ATTRIBUTES.reduce((n, a) => n + s.attributes[a], 0) + s.unspentAttributePoints;
+  /** Свой реестр на тест: правка класса не течёт в общий. */
+  const fresh = (): ConfigRegistry => { const r = new ConfigRegistry(); r.loadAll(); return r; };
+  const warrior = (r: ConfigRegistry): SaveState['attributes'] => ({ ...r.get('classes').find((c) => c.id === 'warrior')!.startAttributes });
+  /** Правка строки воина — как `/api/dev/config` → `reload`. */
+  const editWarrior = (r: ConfigRegistry, start: Partial<SaveState['attributes']>): void => {
+    r.reload({ classes: r.get('classes').map((c) => (c.id === 'warrior' ? { ...c, startAttributes: { ...c.startAttributes, ...start } } : c)) });
+  };
+  /** Воин 10-го уровня, все очки уровней — в Силу; надетого нет (сброс не упирается в требования). */
+  const tenth = (r: ConfigRegistry, id: string): SaveState => {
+    const s = newCharacterSave(r, 'warrior', 'Силач', id);
+    const bal = r.get('balance');
+    gainXp(s, bal, xpForLevel(10, bal.xpTable));
+    expect(s.level).toBe(10);
+    expect(allocAttr(s, 'strength', s.unspentAttributePoints).ok).toBe(true);
+    s.equipment = {}; s.belt = []; s.gold = 100_000;
+    return s;
+  };
+  /** Сколько у воина 10-го уровня всего: старт + очки девяти уровней. */
+  const want = (r: ConfigRegistry, start: SaveState['attributes']): number =>
+    ATTRIBUTES.reduce((n, a) => n + start[a], 0) + 9 * r.get('balance').attributePointsPerLevel;
+
+  it('⭐ правка старта класса (сумма та же): возврат — вложенные 45, итог = до сброса = у свежего воина 10-го', () => {
+    const r = fresh();
+    const born = warrior(r);
+    const s = tenth(r, 'r1807-a');
+    const invested = 9 * r.get('balance').attributePointsPerLevel;
+    expect(total(s)).toBe(want(r, born));
+    editWarrior(r, { strength: born.strength - 5, dexterity: born.dexterity + 5 });
+    expect(attrRespecRefund(r, s), 'вернёт вложенное, а не разницу с новой строкой').toBe(invested);
+    expect(respec(r, s).ok).toBe(true);
+    expect(s.attributes, 'сброс — к старту, с которым герой создан').toEqual(born);
+    expect(s.unspentAttributePoints).toBe(invested);
+    expect(total(s), 'ни очка из воздуха').toBe(want(r, born));
+    expect(total(tenth(r, 'r1807-a2')), 'свежий воин 10-го по новой строке').toBe(want(r, warrior(r)));
+    // Строку вернули — второй сброс тот же: итог не растёт ни туда, ни обратно.
+    expect(allocAttr(s, 'dexterity', invested).ok).toBe(true);
+    editWarrior(r, born);
+    expect(respec(r, s).ok).toBe(true);
+    expect(total(s)).toBe(want(r, born));
+    expect(Number.isInteger(s.unspentAttributePoints)).toBe(true);
+  });
+
+  it('⭐ опущенный старт не делает очки базы свободными: новичку сбрасывать нечего, отказ без траты', () => {
+    const r = fresh();
+    const s = newCharacterSave(r, 'warrior', 'Новичок', 'r1807-b');
+    s.gold = 100_000;
+    const born = warrior(r);
+    editWarrior(r, { strength: born.strength - 10, vitality: born.vitality - 10 });
+    expect(attrRespecRefund(r, s)).toBe(0);
+    const before = JSON.stringify(s);
+    expect(respec(r, s)).toEqual({ ok: false, reason: 'Атрибуты не вложены' });
+    expect(JSON.stringify(s)).toBe(before);
+  });
+
+  it('⚠ сейв старше R18-07 (старт не записан) и правка строки: старт — не выше строки и не выше своего, итог тот же, старт записан', () => {
+    const r = fresh();
+    const born = warrior(r);
+    const s = tenth(r, 'r1807-c');
+    delete s.startAttributes;
+    const invested = 9 * r.get('balance').attributePointsPerLevel;
+    const t0 = total(s);
+    editWarrior(r, { strength: born.strength - 5, dexterity: born.dexterity + 5 });
+    // R19-01: Сила — к опущенной строке (5 очков базы стали свободными), Ловкость — не выше своей: поднятая строка очков не дарит.
+    expect(attrRespecRefund(r, s)).toBe(invested + 5);
+    expect(respec(r, s).ok).toBe(true);
+    expect(s.attributes).toEqual({ ...born, strength: born.strength - 5 });
+    expect(s.startAttributes, 'дальше сброс меряет от того, к чему сбросили').toEqual(s.attributes);
+    expect(total(s), 'итог тот же: ни очка из воздуха и ни одного потерянного').toBe(t0);
+    expect(Number.isInteger(s.unspentAttributePoints)).toBe(true);
+    // Сейв без старта и без вложенного при поднятой строке — сбрасывать нечего, отказ без траты.
+    const r2 = fresh();
+    const young = newCharacterSave(r2, 'warrior', 'Старый новичок', 'r1807-c3');
+    delete young.startAttributes;
+    young.gold = 100_000;
+    editWarrior(r2, { strength: born.strength + 10 });
+    expect(attrRespecRefund(r2, young)).toBe(0);
+    expect(respec(r2, young).ok).toBe(false);
+  });
+
+  it('сейв старше R18-07, конфиг тот же — честный сброс прежний: возврат = вложенное; дробный атрибут прошлого — возврат целый', () => {
+    const r = fresh();
+    const born = warrior(r);
+    const s = tenth(r, 'r1807-d');
+    delete s.startAttributes;
+    const invested = 9 * r.get('balance').attributePointsPerLevel;
+    expect(attrRespecRefund(r, s)).toBe(invested);
+    expect(respec(r, s).ok).toBe(true);
+    expect(s.attributes).toEqual(born);
+    expect(s.unspentAttributePoints).toBe(invested);
+    // Герой, созданный при дробной Живучести (схема старта её пускала), а очков за уровень с тех пор стало больше.
+    const odd = tenth(r, 'r1807-d2');
+    delete odd.startAttributes;
+    odd.attributes.vitality += 0.5;
+    r.reload({ balance: { ...r.get('balance'), attributePointsPerLevel: r.get('balance').attributePointsPerLevel + 1 } });
+    expect(attrRespecRefund(r, odd)).toBe(invested);
+    expect(respec(r, odd).ok).toBe(true);
+    expect(Number.isInteger(odd.unspentAttributePoints), `свободных ${odd.unspentAttributePoints}`).toBe(true);
+    expect(allocAttr(odd, 'strength', odd.unspentAttributePoints).ok, 'всё возвращённое вкладывается').toBe(true);
+  });
+
+  it('⚠ старт класса — целый и не ниже нуля: дробь и минус отвергает схема, строка прежняя', () => {
+    const r = fresh();
+    const rows = r.get('classes');
+    for (const v of [20.5, -1]) expect(() => editWarrior(r, { vitality: v }), String(v)).toThrow(/не прошёл валидацию/);
+    expect(r.get('classes')).toBe(rows);
+  });
+
+  it('новый герой и бот прогона помнят старт своего класса — копией, не ссылкой на строку конфига', () => {
+    const r = fresh();
+    for (const c of r.get('classes')) {
+      for (const s of [newCharacterSave(r, c.id, 'Н', `r1807-e-${c.id}`), newBotSave(r, c.id)]) {
+        expect(s.startAttributes, c.id).toEqual(c.startAttributes);
+        expect(s.startAttributes, c.id).not.toBe(c.startAttributes);
+        expect(s.startAttributes, c.id).not.toBe(s.attributes);
+      }
+    }
+  });
+
+  /**
+   * ⚠ R19-01: СЕЙВ СТАРШЕ R18-07 — СТАРТА НЕ ПОМНИТ (в базе таких все, кто создан до правки). Возврат у него урезался очками за уровень
+   * ЖИВОГО конфига (`(уровень − 1) × attributePointsPerLevel − свободные`), а сброс ставил нынешнюю строку класса и записывал её стартом:
+   * «очков за уровень 5→4» — воин 10-го терял 9 вложенных, 29-го — 28, 50-го — 49, и навсегда (старт записан, откат не возвращал); поднятая
+   * строка — очки из воздуха (опечатка «Живучесть 20→80» — +60, и после отката тоже). Итог героя (Σ атрибутов + свободные) сброс не меняет.
+   */
+  describe('⚠ R19-01: сейв без старта — сброс не меняет итог ни при какой правке', () => {
+    /** Воин уровня `lvl`, все очки уровней — в Силу, старта сейв не помнит (создан до R18-07). */
+    const legacyAt = (r: ConfigRegistry, lvl: number, id: string): SaveState => {
+      const s = newCharacterSave(r, 'warrior', 'Старожил', id);
+      const bal = r.get('balance');
+      gainXp(s, bal, xpForLevel(lvl, bal.xpTable));
+      expect(s.level).toBe(lvl);
+      expect(allocAttr(s, 'strength', s.unspentAttributePoints).ok).toBe(true);
+      s.equipment = {}; s.belt = []; s.gold = 100_000;
+      delete s.startAttributes;
+      return s;
+    };
+    const edits: [string, (r: ConfigRegistry, born: SaveState['attributes']) => void][] = [
+      ['очков за уровень 5→4', (r) => r.reload({ balance: { ...r.get('balance'), attributePointsPerLevel: r.get('balance').attributePointsPerLevel - 1 } })],
+      ['Живучесть +5', (r, b) => editWarrior(r, { vitality: b.vitality + 5 })],
+      ['Сила −5', (r, b) => editWarrior(r, { strength: b.strength - 5 })],
+      ['Сила ⇄ Ловкость', (r, b) => editWarrior(r, { strength: b.dexterity, dexterity: b.strength })],
+    ];
+    for (const lvl of [10, 29, 50]) {
+      it(`${lvl}-й уровень: правка очков за уровень, строки вверх, вниз и перестановка — итог тот же, и после отката правки тоже`, () => {
+        for (const [what, edit] of edits) {
+          const r = fresh();
+          const born = warrior(r);
+          const s = legacyAt(r, lvl, `r1901-${lvl}`);
+          const t0 = total(s);
+          edit(r, born);
+          expect(respec(r, s).ok, what).toBe(true);
+          expect(total(s), `${what}: ни очка не пропало и не взялось из воздуха`).toBe(t0);
+          expect(Number.isInteger(s.unspentAttributePoints), what).toBe(true);
+          for (const a of ATTRIBUTES) expect(s.startAttributes![a], `${what}: старт ${a} не выше того, что у героя было`).toBeLessThanOrEqual(born[a]);
+          // Правку откатили — второй сброс итог тоже не двигает.
+          expect(allocAttr(s, 'strength', s.unspentAttributePoints).ok, what).toBe(true);
+          r.reload({ balance: fresh().get('balance') });
+          editWarrior(r, born);
+          expect(respec(r, s).ok, what).toBe(true);
+          expect(total(s), `${what}: после отката`).toBe(t0);
+        }
+      });
+
+      it(`${lvl}-й уровень: опечатка «Живучесть 20→80» — сброс в её окне не дарит 60 и не пишет её стартом; после отката итог = у свежего`, () => {
+        const r = fresh();
+        const born = warrior(r);
+        const s = legacyAt(r, lvl, `r1901-typo-${lvl}`);
+        const t0 = total(s);
+        editWarrior(r, { vitality: 80 });
+        expect(respec(r, s).ok).toBe(true);
+        expect(total(s), 'опечатка не дарит очков').toBe(t0);
+        expect(s.startAttributes, 'старт — не строка с опечаткой').not.toEqual(warrior(r));
+        expect(s.startAttributes!.vitality).toBe(born.vitality);
+        editWarrior(r, born);
+        expect(allocAttr(s, 'strength', s.unspentAttributePoints).ok).toBe(true);
+        expect(respec(r, s).ok).toBe(true);
+        expect(total(s)).toBe(t0);
+        const peer = legacyAt(r, lvl, `r1901-peer-${lvl}`);
+        peer.startAttributes = warrior(r);
+        expect(total(s), 'как у героя того же уровня, созданного после правки').toBe(total(peer));
+      });
+    }
   });
 });
 

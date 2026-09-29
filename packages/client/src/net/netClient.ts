@@ -4,8 +4,8 @@ type Handler = (frame: ServerFrame) => void;
 
 /**
  * Тонкая обёртка над WebSocket к авторитетному серверу (`/ws`, dev — через Vite-proxy).
- * Клиент шлёт `ClientFrame`, получает `ServerFrame`. Один обработчик на тип кадра
- * (`on(t, cb)`), плюс `onOpen`/`onClose`. Реконнект — базовый (по желанию позже).
+ * Клиент шлёт `ClientFrame`, получает `ServerFrame`. Обработчики по типу кадра (`on(t, cb)`),
+ * плюс `onOpen`/`onClose`; каждая подписка возвращает свою отписку. Реконнект — базовый (по желанию позже).
  */
 const PING_INTERVAL_MS = 1000;
 /** ⭐ R15-04: неотправленного в сокете больше этого (≈20 кадров ввода) — связь встала: ввод не шлём (`send`). */
@@ -103,6 +103,8 @@ export class NetClient {
   /**
    * Подписаться на кадр типа `t`. Возвращает отписку — ровно этого обработчика (R5-16): владелец, живущий меньше
    * `NetClient` (драйвер сцены), снимает свои подписки сам, а не копит их до перезагрузки страницы.
+   * ⭐ R19-02: ДРУГОГО СНЯТИЯ НЕТ. Был `off(t)` — снять ВСЕ обработчики типа (и `clearLifecycle` — все open/close): 2D-сцена звала его на каждом
+   * входе и снимала заодно подписки `App` (штамп сборки на `joined`, R18-08) — деплой со сменой кода цен шёл молча, как до R18-08.
    */
   on<T extends ServerFrame['t']>(t: T, cb: (frame: Extract<ServerFrame, { t: T }>) => void): () => void {
     const list = this.handlers.get(t) ?? [];
@@ -113,15 +115,18 @@ export class NetClient {
       if (cur) this.handlers.set(t, cur.filter((h) => h !== cb));
     };
   }
-  onOpen(cb: () => void): void { this.openCbs.push(cb); }
-  onClose(cb: (code?: number) => void): void { this.closeCbs.push(cb); }
+  /** Сокет открылся. Отписка — ровно этого колбэка (R19-02), как у `on`. */
+  onOpen(cb: () => void): () => void {
+    this.openCbs.push(cb);
+    return () => { this.openCbs = this.openCbs.filter((c) => c !== cb); };
+  }
+  /** Сокет закрылся (код закрытия — R3-25). Отписка — ровно этого колбэка (R19-02). */
+  onClose(cb: (code?: number) => void): () => void {
+    this.closeCbs.push(cb);
+    return () => { this.closeCbs = this.closeCbs.filter((c) => c !== cb); };
+  }
   /** Сбросить копию мира (смена области/переподключение) — следующий полный кадр задаст новую. */
   resetWorld(): void { this.world = undefined; }
-
-  /** Снять все обработчики типа кадра (сцена пере-подписывается при каждом входе — иначе дубли). */
-  off<T extends ServerFrame['t']>(t: T): void { this.handlers.delete(t); }
-  /** Сбросить onOpen/onClose-колбэки (владелец — сцена; при перезапуске вешаются заново). */
-  clearLifecycle(): void { this.openCbs = []; this.closeCbs = []; }
 
   send(frame: ClientFrame): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;

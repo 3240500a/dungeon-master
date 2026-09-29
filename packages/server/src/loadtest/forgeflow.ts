@@ -419,10 +419,20 @@ async function main(): Promise<void> {
         && (gone ? ev.at(-1)!.startsWith('gone:') && loc === 'world' : !ev.at(-1)!.startsWith('gone:') && !!loc && loc !== 'world');
       check(ok, `леджер …${uid.slice(-8)}: ${ev.join(' → ')} · ${loc}`);
     }
-    const tel = (await db.query<{ crafted: string; melted: string; enchanted: string }>(
-      'SELECT sum(crafted) crafted, sum(melted) melted, sum(enchanted) enchanted FROM play_sessions WHERE char_id = $1', [character.charId])).rows[0];
-    check(Number(tel?.crafted) === crafted && Number(tel?.melted) === melted.size && Number(tel?.enchanted) === enchanted,
-      `телеметрия: сковано ${tel?.crafted} (ждём ${crafted}), переплавлено ${tel?.melted} (${melted.size}), зачаровано ${tel?.enchanted} (${enchanted}) — эскиз и повторы не в счёт`);
+    // ⭐ E2E 29.09 (шестой прогон): строку телеметрии сессия пишет при снятии, рядом с прощальной записью, — одно чтение сразу за сверкой
+    // сейва могло её не застать (в кластере `poc:craft` так и упал: «сковано 0» при верном `/metrics`). Ждём, пока сойдётся и все сессии закрыты.
+    type Tel = { crafted: number; melted: number; enchanted: number; sessions: number; open: number };
+    let tel: Tel | undefined;
+    const telOk = (): boolean => !!tel && tel.open === 0 && tel.crafted === crafted && tel.melted === melted.size && tel.enchanted === enchanted;
+    for (const end = Date.now() + 10_000; ; await sleep(200)) {
+      const r = (await db.query<Record<keyof Tel, string>>(
+        `SELECT sum(crafted) crafted, sum(melted) melted, sum(enchanted) enchanted, count(*) sessions, count(*) FILTER (WHERE ended_at IS NULL) open
+         FROM play_sessions WHERE char_id = $1`, [character.charId])).rows[0];
+      tel = r && { crafted: Number(r.crafted), melted: Number(r.melted), enchanted: Number(r.enchanted), sessions: Number(r.sessions), open: Number(r.open) };
+      if (telOk() || Date.now() > end) break;
+    }
+    check(telOk(), `телеметрия: сковано ${tel?.crafted} (ждём ${crafted}), переплавлено ${tel?.melted} (${melted.size}), зачаровано ${tel?.enchanted} (${enchanted})`
+      + ` — эскиз и повторы не в счёт; сессий ${tel?.sessions}, открытых ${tel?.open}`);
     check(closes.every((x) => x !== 4008 && x !== 4009), `закрытия сокета без 4008/4009: ${closes.join(', ')}`);
   } finally {
     if (!KEEP) {

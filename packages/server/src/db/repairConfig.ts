@@ -1,4 +1,4 @@
-import { ConfigRegistry } from '@dm/shared';
+import { ConfigRegistry, upgradeStoredOverride } from '@dm/shared';
 import { getConfigOverrides, setConfigOverride } from './db.js';
 import { closePool } from './pool.js';
 
@@ -51,11 +51,21 @@ async function main(): Promise<void> {
   const overrides = await getConfigOverrides();
 
   const broken: string[] = [];
-  for (const [key, value] of Object.entries(overrides)) {
+  let upgradedAny = false;
+  for (const [key, stored] of Object.entries(overrides)) {
+    // ⚠ R20-08: сохранённое под прежней схемой сервер приводит при загрузке (`upgradeStoredOverride`: старт класса дробью или минусом) —
+    // такое в игре ПРИМЕНЯЕТСЯ; `--fix` записывает приведённое, и строка лога при каждой пересборке пропадает.
+    const { value, fixes } = upgradeStoredOverride(key, stored);
     try {
       const trial = new ConfigRegistry();
       trial.loadAll();
       trial.reload({ [key]: value });
+      if (fixes.length) {
+        console.log(`\n~ «${key}» сохранён под прежней схемой — сервер приводит при загрузке (${fixes.length}):`);
+        for (const l of fixes.slice(0, 8)) console.log(`  ${l}`);
+        if (fixes.length > 8) console.log(`    … и ещё ${fixes.length - 8}`);
+        if (FIX) { await setConfigOverride(key, value); upgradedAny = true; }
+      }
     } catch (e) {
       broken.push(key);
       console.log(`\n✗ «${key}» не проходит валидацию и НЕ ПРИМЕНЯЕТСЯ в игре`);
@@ -64,6 +74,7 @@ async function main(): Promise<void> {
   }
   if (!broken.length) {
     console.log('Все сохранённые оверрайды конфига проходят валидацию.');
+    if (upgradedAny) console.log('✓ Приведённое записано.');
     await closePool();
     return;
   }
@@ -71,7 +82,7 @@ async function main(): Promise<void> {
   console.log('\nЧто можно исправить однозначно:');
   let fixedAny = false;
   for (const key of broken) {
-    const value = structuredClone(overrides[key]);
+    const value = structuredClone(upgradeStoredOverride(key, overrides[key]).value);   // R20-08: поверх приведённого, как сервер
     const log: string[] = [];
     const n = padColors(value, key, [], log);
     if (!n) { console.log(`  ${key}: автоматически не чинится — нужен редактор`); continue; }
@@ -91,7 +102,7 @@ async function main(): Promise<void> {
   }
 
   console.log(FIX
-    ? (fixedAny ? '\n✓ Записано. Перезапустите сервер, чтобы оверрайды применились.' : '\nНичего не записано.')
+    ? (fixedAny || upgradedAny ? '\n✓ Записано. Перезапустите сервер, чтобы оверрайды применились.' : '\nНичего не записано.')
     : '\nЭто был показ. Чтобы записать: npm run db:repair -- --fix');
   await closePool();
 }

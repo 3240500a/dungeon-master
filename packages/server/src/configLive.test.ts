@@ -113,7 +113,8 @@ describe('⚠ R17-03: старый оверрайд баланса без цен
       readOverrides: async () => structuredClone(overrides),
       deleteOverride: async () => undefined,
       changed: () => undefined,
-      log: () => undefined, warn: (s) => { warned.push(s); },
+      // ⚠ R20-08: пропуск таблицы целиком — инцидент (`incident`), а не предупреждение: говорится вслух так же.
+      log: () => undefined, warn: (s) => { warned.push(s); }, incident: (s) => { warned.push(s); },
     });
     config.loadAll();
     await live.rebuild();
@@ -135,5 +136,74 @@ describe('⚠ R17-03: старый оверрайд баланса без цен
       expect(warned.join('\n'), how).toMatch(/пропущен невалидный оверрайд конфига "balance"[\s\S]*formMult/);
       expect(config.get('rarities')[0]!.priceMult, `${how}: прочие оверрайды ложатся`).toBe(rarities[0]!.priceMult);
     }
+  });
+});
+
+/**
+ * ⚠ R20-08: ОВЕРРАЙД КЛАССОВ СТАРШЕ R18-07 — ПРИВЕСТИ, А НЕ ВЫБРОСИТЬ. До R18-07 старт класса был любым числом (редактор пускал дробь:
+ * «Ловкость + 0.5»), а R18-07 сделал его целым ≥ 0. Оверрайд ложится таблицей целиком: одна дробь в сохранённой строке — и пересборка
+ * (старт, каждая сверка) выбрасывала ВСЕ правки классов хозяина (имена, галки, стартовое оружие, старты прочих), игра жила на файле, а
+ * след — одна строка предупреждения. Теперь сохранённый старт приводится при загрузке (вниз до целого, не ниже нуля) и говорится вслух,
+ * что приведено; новая запись из редактора с дробью — по-прежнему 422. Таблица, которую не привести, — пропуск, но ИНЦИДЕНТОМ.
+ */
+describe('⚠ R20-08: оверрайд классов с дробным стартом (старше R18-07) — приводится, правки хозяина живут', () => {
+  beforeEach(() => { vi.spyOn(console, 'log').mockImplementation(() => undefined); });
+  afterEach(() => { vi.restoreAllMocks(); });
+  type Row = { id: string; name: string; startAttributes: Record<string, number> };
+  const fileClasses = (): Row[] => { const c = new ConfigRegistry(); c.loadAll(); return structuredClone(c.get('classes')) as unknown as Row[]; };
+  const boot = async (overrides: Record<string, unknown>): Promise<{ config: ConfigRegistry; warned: string[]; incidents: string[] }> => {
+    const config = new ConfigRegistry();
+    const warned: string[] = [];
+    const incidents: string[] = [];
+    const live = liveConfig({
+      config,
+      readOverrides: async () => structuredClone(overrides),
+      deleteOverride: async () => undefined,
+      changed: () => undefined,
+      log: () => undefined, warn: (s) => { warned.push(s); }, incident: (s) => { incidents.push(s); },
+    });
+    config.loadAll();
+    await live.rebuild();
+    return { config, warned, incidents };
+  };
+
+  it('переименование и старты хозяина живут; 12.5 → 12, −2 → 0; сказано вслух, что приведено; инцидента нет', async () => {
+    const classes = fileClasses();
+    const row = (id: string): Row => classes.find((c) => c.id === id)!;
+    row('warrior').name = 'Витязь (правка хозяина)';
+    row('warrior').startAttributes.strength = 24;
+    row('archer').startAttributes.vitality = 12.5;
+    row('mage').startAttributes.dexterity = -2;
+    const { config, warned, incidents } = await boot({ classes });
+    const got = (id: string): Row => config.get('classes').find((c) => c.id === id) as unknown as Row;
+    expect(got('warrior').name, 'переименование хозяина живёт').toBe('Витязь (правка хозяина)');
+    expect(got('warrior').startAttributes.strength, 'целый старт хозяина живёт').toBe(24);
+    expect(got('archer').startAttributes.vitality, 'дробный — вниз до целого').toBe(12);
+    expect(got('mage').startAttributes.dexterity, 'минус — ноль').toBe(0);
+    expect(incidents).toEqual([]);
+    const said = warned.join('\n');
+    expect(said).toMatch(/оверрайд конфига "classes" сохранён под прежней схемой — приведён/);
+    expect(said).toContain('archer.startAttributes.vitality: 12.5 → 12');
+    expect(said).toContain('mage.startAttributes.dexterity: -2 → 0');
+    expect(said, 'приведено только негодное').not.toContain('warrior.startAttributes');
+  });
+
+  it('новая запись из редактора с дробным стартом — отказ (та же проверка, что у `/api/dev/config`: реестр-проба)', () => {
+    const classes = fileClasses();
+    classes[0]!.startAttributes.vitality = 20.5;
+    const trial = new ConfigRegistry();
+    trial.loadAll();
+    expect(() => trial.reload({ classes }), 'редактор получает 422').toThrow(/startAttributes/);
+  });
+
+  it('таблицу, которую не привести, пропуск — ИНЦИДЕНТОМ и счётчиком, а не строкой предупреждения', async () => {
+    const { counters } = await import('./net/metrics.js');
+    const was = counters.configOverridesSkipped;
+    const classes = fileClasses();
+    (classes[0]!.startAttributes as Record<string, unknown>).vitality = 'много';
+    const { config, incidents } = await boot({ classes });
+    expect(config.get('classes')[0]!.startAttributes, 'таблица — с файла').toEqual(fileClasses()[0]!.startAttributes);
+    expect(incidents.join('\n')).toMatch(/ИНЦИДЕНТ[\s\S]*пропущен невалидный оверрайд конфига "classes"/);
+    expect(counters.configOverridesSkipped - was, 'метрика `dm_config_override_skipped_total`').toBe(1);
   });
 });

@@ -14,6 +14,8 @@ vi.setConfig({ testTimeout: 60_000 });
  *    выходом оставалось «Забросить» — штраф смерти. Теперь один забег — одна комната только в ПОДЗЕМЕЛЬЕ: «Продолжить» живого участника
  *    забирает забег у комнаты, что держит его в городе или на арене (`Room.yieldRun`), — в новую комнату, прямо на его узел; спуск R потом —
  *    отказ `run` с кодом комнаты A (к пати — по коду). Погибший в забеге (K1: «мёртв, оплачено») по-прежнему входит к пати в город.
+ *    ⭐ R18-04: только если B ОТОШЁЛ (не действовал `RUN_IDLE_MS`): действующий напарник забег не отдаёт — иначе перезагрузка в городе увозила
+ *    вернувшегося одного на узел (`roomManager.r18server.test.ts`).
  */
 const TOK = 'e7'.repeat(32);
 const USER = 'user-r17rm';
@@ -73,7 +75,7 @@ async function until(what: string, ok: () => boolean, turns = 5_000): Promise<vo
 type Pl = { pos: { x: number; y: number }; save: SaveState; alive: boolean };
 type RoomIn = {
   code: string; area: string; movedAt: number; vote: unknown; runConfig: RunConfig | null;
-  clients: Map<string, unknown>;
+  clients: Map<string, { activeAt: number }>;
   stop(): void; descend(pid: string): void; returnTown(pid: string): void; castVote(pid: string, yes: boolean): void;
   holdsRun(key: string): boolean;
   session: { world: { players: Record<string, Pl>; spawn: { x: number; y: number }; monsters: { alive: boolean }[] } };
@@ -81,11 +83,12 @@ type RoomIn = {
 type RMIn = { rooms: Map<string, RoomIn>; inflight: Map<string, unknown>; live: Map<string, unknown>; charOps: Map<string, unknown>; handleConnection(ws: GameConn): void };
 let RoomManagerCtor: typeof import('./roomManager.js').RoomManager;
 let runLedgerKey: (cfg: RunConfig) => string;
+let RUN_IDLE_MS: number;
 let cfg: ConfigRegistry;
 const managers: RMIn[] = [];
 beforeAll(async () => {
   ({ RoomManager: RoomManagerCtor } = await import('./roomManager.js'));
-  ({ runLedgerKey } = await import('./room.js'));
+  ({ runLedgerKey, RUN_IDLE_MS } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
@@ -144,6 +147,9 @@ async function hostage(rm: RMIn, a: string, b: string): Promise<{ room: RoomIn; 
   await until('A вышел из города', () => !rm.live.has(a) && !rm.inflight.has(a) && !rm.charOps.has(a));
   expect(db.chars.get(a)!.data.run, 'у A забег припаркован в строке').toBeTruthy();
   expect(room.holdsRun(key), 'городская комната R держит забег (участник B на месте)').toBe(true);
+  // ⭐ R18-04: заложник — ОТОШЕДШИЙ: B не действовал дольше `RUN_IDLE_MS`. Действующий напарник забег не отдаёт — вернувшийся садится к нему
+  // (перезагрузка в городе, `roomManager.r18server.test.ts`).
+  for (const c of room.clients.values()) c.activeAt -= RUN_IDLE_MS + 1_000;
   return { room, key, wsB, pidB };
 }
 

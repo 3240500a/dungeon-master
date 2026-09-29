@@ -167,20 +167,76 @@ describe('⭐ B3-V1, B3-V2: закрытие сервером — окончат
     expect(ends()).toBe(1);
   });
 
-  it('B3-V2: медленный читатель (очередь выше потолка) закрывается 1013, и обработчик закрытия позван сразу', async () => {
-    const { ws, c, ends } = await conn();
+  it('B3-V2, R18-01: медленный читатель (очередь выше потолка) закрывается 1013 сразу, а обработчик закрытия — ближайшей микрозадачей', async () => {
+    const { ws, c, frames, ends } = await conn();
     ws.bufferedAmount = MAX_BACKPRESSURE + 1;
     c.send('{"t":"pong","id":1}');
     expect(ws.closedWith).toBe(1013);
     expect(ws.sent).toEqual([]);
+    expect(c.open, 'сокет закрыт сразу').toBe(false);
+    // ⭐ R18-01: не изнутри отправки — её делает комната посреди синхронного шага (рассылка мира тика, где герой погиб).
+    expect(ends(), 'снятие сессии — не поперёк отправки').toBe(0);
+    ws.emit('message', Buffer.from('{"t":"vote","accept":true}'));
+    expect(frames, 'кадр клиента после закрытия в игру не идёт').toEqual([]);
+    await Promise.resolve();
+    expect(ends(), 'и сразу за ней — один раз').toBe(1);
+    ws.finish();
     expect(ends()).toBe(1);
-    expect(c.open).toBe(false);
   });
 
   it('закрытие клиентом — обработчик один раз, по событию транспорта', async () => {
     const { ws, ends } = await conn();
     expect(ends()).toBe(0);
     ws.finish();
+    expect(ends()).toBe(1);
+  });
+});
+
+describe('⭐ R18-01: транспорт uWS — закрытие изнутри отправки снимает сессию микрозадачей (`gameWsBehavior` поверх сокета, ведущего себя как uWS)', () => {
+  /** Сокет uWS: `end` зовёт обработчик закрытия поведения синхронно — как сам uWS. */
+  class FakeUwsSocket {
+    closed = false;
+    buffered = 0;
+    sent = 0;
+    closedWith?: number;
+    constructor(readonly behavior: Record<string, unknown>) {}
+    getRemoteAddressAsText(): ArrayBuffer { return new TextEncoder().encode('127.0.0.1').buffer as ArrayBuffer; }
+    getUserData(): { ip?: string } { return { ip: '127.0.0.1' }; }
+    getBufferedAmount(): number { return this.buffered; }
+    send(): number { this.sent++; return 1; }
+    end(code?: number): void {
+      if (this.closed) throw new Error('Invalid access of closed uWS.WebSocket');
+      this.closed = true; this.closedWith = code;
+      (this.behavior.close as (ws: unknown) => void)(this);
+    }
+  }
+  async function uws(): Promise<{ sock: FakeUwsSocket; c: import('./conn.js').GameConn; ends: () => number }> {
+    const { gameWsBehavior } = await import('./uwsServer.js');
+    let c: import('./conn.js').GameConn | undefined;
+    const behavior = gameWsBehavior({ DISABLED: 0 }, (conn) => { c = conn; });
+    const sock = new FakeUwsSocket(behavior);
+    (behavior.open as (ws: unknown) => void)(sock);
+    let n = 0;
+    c!.onClose(() => { n++; });
+    return { sock, c: c!, ends: () => n };
+  }
+
+  it('очередь выше потолка: сокет закрыт 1013 сразу, обработчик закрытия — ближайшей микрозадачей, один раз', async () => {
+    const { sock, c, ends } = await uws();
+    sock.buffered = MAX_BACKPRESSURE;
+    c.send(new Uint8Array(1024));
+    expect(sock.closedWith).toBe(1013);
+    expect(sock.sent).toBe(0);
+    expect(c.open).toBe(false);
+    expect(ends(), 'не изнутри отправки').toBe(0);
+    await Promise.resolve();
+    expect(ends()).toBe(1);
+  });
+
+  it('закрытие сервером (не из отправки) — обработчик сразу, как прежде (B3-V2)', async () => {
+    const { sock, c, ends } = await uws();
+    c.close(4001, 'replaced');
+    expect(sock.closedWith).toBe(4001);
     expect(ends()).toBe(1);
   });
 });

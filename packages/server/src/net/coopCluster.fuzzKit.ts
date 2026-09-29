@@ -106,6 +106,17 @@ export class ClusterModel {
   /** `claimOwner`: только чтение. */
   claimOwner(charId: string): string | null { return this.claims.get(charId)?.node ?? null; }
 
+  /**
+   * ⭐ R18-03: условие `db.putCharacterOwned` (запись по строке базы): закрепление героя за нодой (`EXISTS char_claims … node_id`), а у ноды с
+   * арендой (`leased`) — и её удар в реестре моложе аренды (`beat_at > now() - LEASE_MS`).
+   */
+  ownsRow(charId: string, nodeId: string, leased: boolean): boolean {
+    if (this.claims.get(charId)?.node !== nodeId) return false;
+    if (!leased) return true;
+    const n = this.nodes.get(nodeId);
+    return !!n && n.beatAt > this.now() - LEASE_MS;
+  }
+
   /** `liveClaim`: `live_at` моложе `CLAIM_IDLE_SEC` и нода била сердцем за `NODE_STALE_SEC`. */
   liveClaim(charId: string): string | null {
     const c = this.claims.get(charId);

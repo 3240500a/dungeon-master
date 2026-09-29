@@ -14800,14 +14800,14 @@
       "notable": false,
       "kind": "active",
       "name": "Огненные чары",
-      "description": "Усиление на 12 с. +20% к урону огнём. +400% addFire. Цена: 8 маны, откат 12 с.",
+      "description": "Усиление на 12 с. +20% к урону огнём. +400% addFire. Цена: 8 маны, откат 15 с.",
       "maxRank": 20,
       "effect": {
         "active": {
           "category": "buff",
           "abilityId": "fire-charm",
           "manaCost": 8,
-          "cooldown": 12,
+          "cooldown": 15,
           "durationSec": 12,
           "buffMods": [
             {

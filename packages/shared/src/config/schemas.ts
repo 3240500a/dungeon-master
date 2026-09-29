@@ -17,11 +17,17 @@ const attributeEnum = z.enum([
   'vitality',
 ]);
 
-const attributesSchema = z.object({
-  strength: z.number(),
-  dexterity: z.number(),
-  intelligence: z.number(),
-  vitality: z.number(),
+/**
+ * ⚠ R18-07: СТАРТ КЛАССА — ЦЕЛЫЕ ОЧКИ НЕ НИЖЕ НУЛЯ. Вкладываются только целые (`allocAttr`), и дробный старт (Живучесть 20.5)
+ * оставлял после сброса половину очка, которую не вложить никогда; отрицательный атрибут — не атрибут.
+ * ⚠ R20-08: оверрайд `classes` в базе, сохранённый ДО этой правки дробью или минусом, при сборке живого конфига приводится
+ * (`upgradeStoredOverride`, `storedOverride.ts`), а не выбрасывается целиком; новая запись из редактора — строго по этой схеме.
+ */
+const startAttributesSchema = z.object({
+  strength: z.number().int().min(0),
+  dexterity: z.number().int().min(0),
+  intelligence: z.number().int().min(0),
+  vitality: z.number().int().min(0),
 });
 
 const statModifierSchema = z.object({
@@ -60,10 +66,27 @@ export function affixFormKeys(cap: number): string[] {
   return out;
 }
 
+/**
+ * ⚠ R20-05: КРИВАЯ ОПЫТА — `xpTable[0]` и `[1]` = 0 (первый уровень даром), дальше СТРОГО РАСТЁТ, числа конечные ≥ 0. Схема пускала
+ * любой массив чисел: опечатка хозяина (вставка мимо, пропущенная цифра) делала участок порогов не выше прежних, и `levelForXp` проходил
+ * его одним очком опыта — герой 10-го с одного убийства вставал 20-м с очками атрибутов, скилов и мастерства за все уровни, полным
+ * лечением и новым прилавком. Вернуть таблицу — уровни не отнимаются (R9-05): навсегда. Причина отказа — первый негодный порог.
+ */
+const xpTableSchema = z.array(z.number().finite().min(0)).min(2).superRefine((t, ctx) => {
+  const bad = t.findIndex((v, i) => (i < 2 ? v !== 0 : !(v > t[i - 1]!)));
+  if (bad < 0) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom, path: [bad],
+    message: bad < 2
+      ? `xpTable[${bad}] = ${t[bad]}: первые два порога — 0 (первый уровень даром) (R20-05)`
+      : `xpTable[${bad}] = ${t[bad]} не выше xpTable[${bad - 1}] = ${t[bad - 1]}: кривая опыта обязана строго расти — участок не выше прежних герой проходит одним очком опыта, и уровни не отнимаются (R20-05)`,
+  });
+});
+
 // ── balance ───────────────────────────────────────────────────────────────
 export const balanceSchema = z.object({
-  /** xpTable[level] = требуемый суммарный опыт для достижения уровня. */
-  xpTable: z.array(z.number()).min(2),
+  /** xpTable[level] = требуемый суммарный опыт для достижения уровня: 0, 0, дальше строго растёт (R20-05). */
+  xpTable: xpTableSchema,
   attributePointsPerLevel: z.number().int().min(0),
   skillPointsPerLevel: z.number().int().min(0),
   /** Очки пассивных навыков за уровень (пассивы тратят и золото, и эти очки). */
@@ -940,7 +963,7 @@ export const classesSchema = z.array(
     name: z.string(),
     /** Активен ли класс (выключенный не предлагается при создании персонажа). */
     enabled: z.boolean().default(true),
-    startAttributes: attributesSchema,
+    startAttributes: startAttributesSchema,
     startWeaponId: z.string(),
     sprite: z.string(),
     /** Фракции, против которых класс силён (аффинити: +affinityDamageBonus урона). */

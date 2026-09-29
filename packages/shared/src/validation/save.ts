@@ -86,6 +86,13 @@ export const saveStateSchema = z.object({
     intelligence: z.number(),
     vitality: z.number(),
   }),
+  // R18-07: старт, с которым герой создан, — от него сброс атрибутов считает вложенное (нет — сейв старше правки).
+  startAttributes: z.object({
+    strength: z.number().int().min(0),
+    dexterity: z.number().int().min(0),
+    intelligence: z.number().int().min(0),
+    vitality: z.number().int().min(0),
+  }).optional(),
   unspentAttributePoints: z.number().int().min(0),
   unspentSkillPoints: z.number().int().min(0),
   unspentMasteryPoints: z.number().int().min(0).default(0),

@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { buildStampOf, isBuildStampSource } from '../shared/src/session/buildStamp.ts';
 
 /**
  * АДРЕС СЕРВЕРА И ВЫХОД В ЛОКАЛЬНУЮ СЕТЬ — две переменные, умолчания НЕ МЕНЯЮТСЯ.
@@ -18,11 +20,26 @@ import { resolve } from 'node:path';
  */
 const API = process.env.DM_API ?? 'http://localhost:3001';
 const LAN = !!process.env.DM_LAN;
-export default defineConfig({
+
+/**
+ * ⭐ R18-08: ШТАМП СБОРКИ — хэш исходников shared (`buildStampOf`), тот же, что сервер считает на старте по файлам, с которых работает
+ * (`server/src/buildStamp.ts`) и шлёт в `joined.build`. Вкладка, пережившая деплой со старым бандлом, видит чужой штамп — «перезагрузите»
+ * (`App`). Только `vite build`: дев-сервер считал бы его раз на запуск, а исходники под ним меняются — вкладке пустой штамп, сравнения нет.
+ */
+function buildStamp(): string {
+  const dir = resolve(__dirname, '../shared/src');
+  const files = readdirSync(dir, { recursive: true }).map(String).filter(isBuildStampSource);
+  return buildStampOf(files.map((p) => [p, readFileSync(join(dir, p), 'utf8')] as const));
+}
+
+export default defineConfig(({ command }) => ({
   resolve: {
     alias: {
       '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
     },
+  },
+  define: {
+    __DM_BUILD__: JSON.stringify(command === 'build' ? buildStamp() : ''),
   },
   /**
    * Мультистраничная сборка. Каждая страница — свой entry; иначе `vite build` соберёт только index.html.
@@ -55,4 +72,4 @@ export default defineConfig({
     // с сервера при ручном обновлении (Ctrl+F5) — сервер уже держит его в живом конфиге.
     watch: { ignored: ['**/node_modules/**', '**/config/data/**'] },
   },
-});
+}));

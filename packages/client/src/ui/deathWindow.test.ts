@@ -136,8 +136,9 @@ describe('⭐ R13-05: оба онлайн-клиента ведут окно с�
   for (const rel of ['../render3d/online3d.ts', '../scenes/OnlineScene.ts']) {
     it(rel, () => {
       const code = src(rel);
-      expect(code, 'кадр `died` — в окно смерти').toMatch(/on\('died',\s*\(f\)\s*=>\s*[\w.]*death\w*\.onDied\(f\)\)/i);
-      expect(code, 'смена области — окно смерти сброшено').toMatch(/on\('areaChanged',\s*\(f\)\s*=>\s*\{[^}]*death\w*\.reset\(\)/i);
+      // Подписка — `net.on(…)` или своей обёрткой 2D-сцены `listen(…)` (R19-02: отписки сцены копятся в `offNet`).
+      expect(code, 'кадр `died` — в окно смерти').toMatch(/(?:on|listen)\('died',\s*\(f\)\s*=>\s*[\w.]*death\w*\.onDied\(f\)\)/i);
+      expect(code, 'смена области — окно смерти сброшено').toMatch(/(?:on|listen)\('areaChanged',\s*\(f\)\s*=>\s*\{[^}]*death\w*\.reset\(\)/i);
       // ⭐ R14-03: плашка «В город» вне окна — у обоих клиентов, и её кнопка шлёт `return`.
       expect(code, 'плашка выхода подключена к окну смерти').toMatch(/new DeathWindow\(\{[^}]*dock:\s*\(v\)\s*=>\s*[\w.]*showDeathDock\(v\)/);
       const dockFn = code.slice(code.search(/(function |private )showDeathDock\(/));
