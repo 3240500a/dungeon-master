@@ -1,15 +1,16 @@
 import { vi } from 'vitest';
 import {
-  ATTRIBUTES, CRAFT_SLOT_LIST, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng,
+  ATTRIBUTES, CONFIG_CONSENT_CMDS, CONFIG_REV_HEADER, CRAFT_SLOT_LIST, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng,
   defaultParts, enchantCost, enchantItem, equip, familiesOf, finalAttributes, forgeGold, forgeSalvage, fullJournal, keySlotOf, keyVariantsByBase,
   legacyStartAttributes, materialItem, modifiersFromItems, normalizeJournal, offhandRefusal, parseClientFrame, repairCost, respec, salvageRange, shopBuyPrice,
   shopSellPrice, unequip, upgradeCost, variantsFor,
-  type AccountStash, type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type EquipSlot, type Item, type Rng,
+  ConfigRegistry, defaultConfigData,
+  type AccountStash, type CraftInput, type CraftJournal, type CraftParts, type EquipSlot, type Item, type Rng,
   type SaveState, type ServerFrame, type TownCommand,
 } from '@dm/shared';
 import { foundItem, newWorld, pristineTables, regFrom, reloadTable } from '../../../../shared/src/economy/fuzz/economyFuzz.js';
 import { App, REFUSAL_REPEAT_MS } from '../../core/app.js';
-import { PROTOCOL_STALE } from '../../net/entryFlow.js';
+import { PROTOCOL_STALE } from '../../net/versionGate.js';
 import { GameState } from '../../core/gameState.js';
 import { forgeBench } from './forgeBench.js';
 import { benchActions, diffStrings, type BenchAction } from './forgeActions.js';
@@ -47,6 +48,25 @@ import { respecAttrsButton } from '../progression/respecAttrs.js';
  *      не лечит (`hint:silent-price-loop`: не раньше `REFUSAL_REPEAT_MS` до отказа или сразу за ним), а без деплоя — ни разу (`hint:false-reload`).
  *      ⭐ R19-02: и у 2D-клиента — нечётные сиды идут через настоящую сцену `OnlineScene` (`SceneHook`) с её пере-подпиской на кадры.
  * ⭐ R19-07: (1) — и у кнопки «Сбросить атрибуты» мастера (шаг `respec`): горит ⇒ сервер сбросил, погашена ⇒ отказал, подсказка — его причина.
+ *  (6) ⭐ D3: ПРОФИЛЬ «УСТАРЕВШАЯ СБОРКА / УСТАРЕВШИЙ КОНФИГ» (`RunOpts.profile = 'stale'`): `App` настоящий, с сетью конфига (`/api/config` —
+ *      подделка `fetch` поверх конфига сервера прогона: ETag, ревизия, 304), шаги `deploy` (код цен сервера другой — в обе стороны) и `schema`
+ *      (конфиг сервера с таблицей, которой вкладка не знает, — иногда вместе с новым кодом). Тупика нет: каждый вход к серверу новее вкладки —
+ *      РОВНО одна строка «перезагрузите» (`hint:join-untold` / `hint:join-twice`), каждый отказ ценой, который перечитывание не лечит, — с ней
+ *      (`hint:silent-price-loop`), и ни одной без расхождения (`hint:false-reload`). Списано не иначе, чем показано: вкладка старше сервера не
+ *      проводит ни одной команды согласия (`stale:consent-accepted`), а проведённое — ровно по карточке (`price:stale-charge`).
+ *  (7) ⭐ R21-05: ПАНЕЛЬ БИНДОВ ПОСЛЕ ВХОДА ≡ ОТКАТЫ СЕРВЕРА (шаг `cdElsewhere` — откат, о котором страница не знает: умение применила другая
+ *      вкладка героя, или откаты кончились без неё; затем вход снова; и каждый вход шагов `deploy`/`schema`): слот, чей каст сервер отбросит, не
+ *      нарисован готовым (`cd:slot-ready-refused`), остаток заливки — остаток сервера (`cd:slot-drift`), и заливки без отката сервера нет
+ *      (`cd:slot-ghost`). Окно заливки — `App.actionCooldowns`, им рисует слоты панель биндов (`ui/bindBar.ts`) обоих клиентов.
+ *  (8) ⭐ R22-03: ПРАВКА ЖИВЬЁМ В ОКНЕ КОМАНДЫ. Шаг `config` (треть их, решено от сида шага) кладёт правку не сразу, а в чтение сундука следующей
+ *      команды (`FakeDb.onStashRead`): команда уже прошла сверку согласия до очереди и ждёт базу. Проведённая после такой правки команда согласия
+ *      (`cfgRev` окна = конфиг сервера до правки) — нарушение (`window:consent-accepted`): исполнена по конфигу, которого окно не видело. Снимки
+ *      «клиент видит то же» этого шага правка гасит задним числом — строгие сверки уступают согласию.
+ *  (9) ⭐ R22-01: СБОРКА, ФАЙЛЫ КОТОРОЙ ВМЕСТЕ НАРУШАЮТ ПРАВИЛО ПОВЕРХ ТАБЛИЦ (D4). В профиле `stale` треть цепочек (свой бросок от сида) идёт со
+ *      встроенными файлами, ВМЕСТЕ правило нарушающими (отдых баффа выше, чем держит древо; откат баффа −10 %): сервер собирает их настоящей
+ *      сборкой (`server/configCandidate.ts`: зажим с инцидентом) и работает, а вкладка с тем же бандлом обязана открыться (`boot:bundle-cross` —
+ *      конструктор `App` бросил) и взять конфиг сервера на старте (`harness:no-config`). Самопроверка — `bundleHook.strict` (вкладка, как до правки:
+ *      встроенные файлы — с правилом поверх таблиц).
  * «Строго» проверяется, только когда клиент видит то же, что сервер (конфиг, сейв, сундук); иначе — только согласие на цену.
  *
  * Шаг хранится АБСТРАКТНО (`{k, s}`): что именно он берёт — решается по состоянию в момент исполнения, поэтому сжатие
@@ -159,11 +179,17 @@ export interface FakeDb {
   saves: Map<string, number>;
   data: Map<string, SaveState>;
   stashes: Map<string, { data: AccountStash; version: number }>;
+  /**
+   * ⭐ R22-03: зовётся мокой `getAccountStash` на каждом чтении сундука (команда кузницы ждёт его ВНУТРИ очереди героя): `true` — сработал,
+   * снять. Так правка конфига живьём (шаг `config` с окном) ложится ровно в окно между согласием команды и её исполнением.
+   */
+  onStashRead?: (() => boolean) | null;
 }
 /** Подмена броска сервера (`node:crypto` `randomInt`) — ставит тест своим `vi.mock`. */
 export interface CryptoHook { randomInt?: (a: number, b: number) => number }
 
-type PlayerIn = { save: SaveState; hp: number; alive: boolean };
+/** `skillCd` — откаты умений сущности героя, с. (⭐ R21-05: инвариант (7), шаг `cdElsewhere`). */
+type PlayerIn = { save: SaveState; hp: number; alive: boolean; skillCd: Record<string, number> };
 interface RoomIn {
   shop: Item[];
   consumables: Item[];
@@ -173,7 +199,9 @@ interface RoomIn {
   stop(): void;
 }
 type RoomCtor = new (code: string, cfg: ConfigRegistry, hooks: object) => RoomIn;
-interface ServerApi { Room: RoomCtor; limits: Record<string, { reset(k: string): void }>; serverBuild: () => string }
+/** ⭐ R22-01: сборка живого конфига сервера (`configCandidate.ts`) — то, что нужно прогону. */
+type BuildCandidate = (base: Record<string, unknown>, stored: Record<string, unknown>) => { reg: ConfigRegistry; fileFixes: Record<string, string[]>; crossLeft: unknown[] };
+interface ServerApi { Room: RoomCtor; limits: Record<string, { reset(k: string): void }>; serverBuild: () => string; buildCandidate: BuildCandidate }
 let serverApi: ServerApi | null = null;
 /**
  * Комната — ДИНАМИЧЕСКИМ импортом с путём из переменной: пакет клиента не тянет сервер в свою проверку типов (у сервера — node,
@@ -184,11 +212,39 @@ export async function loadServer(): Promise<ServerApi> {
   const ROOM = '../../../../server/src/net/room.js';
   const LIMITS = '../../../../server/src/net/rateLimit.js';
   const BUILD = '../../../../server/src/buildStamp.js';
+  const CANDIDATE = '../../../../server/src/configCandidate.js';
   const room = (await import(/* @vite-ignore */ ROOM)) as { Room: RoomCtor };
   const rl = (await import(/* @vite-ignore */ LIMITS)) as { limits: ServerApi['limits'] };
   const bs = (await import(/* @vite-ignore */ BUILD)) as { serverBuild: () => string };
-  serverApi = { Room: room.Room, limits: rl.limits, serverBuild: bs.serverBuild };
+  const cand = (await import(/* @vite-ignore */ CANDIDATE)) as { buildCandidate: BuildCandidate };
+  serverApi = { Room: room.Room, limits: rl.limits, serverBuild: bs.serverBuild, buildCandidate: cand.buildCandidate };
   return serverApi;
+}
+
+/**
+ * ⭐ R22-01, самопроверка инварианта (9): `strict` — вкладка, как до правки: конструктор `App` грузит встроенные файлы С правилом поверх таблиц.
+ * Тест «зубов» включает её на своих цепочках; `DM_FUZZ_SELFTEST=r2201` — на весь прогон.
+ */
+export const bundleHook = { strict: process.env.DM_FUZZ_SELFTEST === 'r2201' };
+
+/**
+ * ⭐ R22-01: встроенные файлы сборки, ВМЕСТЕ нарушающие D4 (каждая таблица годна схемой): отдых баффа выше, чем держит древо, или откат баффа
+ * короче (−10 %, у баффа с запасом — глубже, пока правило не нарушено).
+ */
+function crossBrokenBundle(r: Rng): { files: Record<string, unknown>; what: string } {
+  if (r.chance(0.5)) {
+    const rest = r.pick([0.3, 0.5]);
+    return { files: { balance: { ...(defaultConfigData.balance as Record<string, unknown>), buffMinRest: rest } }, what: `отдых баффа ${rest}` };
+  }
+  type Tree = { nodes: { id: string; effect: { active?: { category?: string; cooldown: number } } }[] };
+  const id = r.pick((defaultConfigData['skill-tree'] as Tree).nodes.filter((n) => n.effect.active?.category === 'buff')).id;
+  for (const cut of [0.1, 0.2, 0.3, 0.4]) {
+    const tree = structuredClone(defaultConfigData['skill-tree']) as Tree;
+    const b = tree.nodes.find((n) => n.id === id)!;
+    b.effect.active!.cooldown = Math.round(b.effect.active!.cooldown * (1 - cut) * 100) / 100;
+    try { new ConfigRegistry().loadAll({ ...defaultConfigData, 'skill-tree': tree }); } catch { return { files: { 'skill-tree': tree }, what: `откат ${id} −${cut * 100} %` }; }
+  }
+  return { files: { balance: { ...(defaultConfigData.balance as Record<string, unknown>), buffMinRest: 0.5 } }, what: 'отдых баффа 0.5' };
 }
 
 /**
@@ -197,10 +253,18 @@ export async function loadServer(): Promise<ServerApi> {
  * внутри `townActions.ts`, мимо подмены), `stamp: false` — вкладка без штампа (как до правки: проверка зубов инварианта). Без подмен шаг
  * `deploy` не меняет ничего, и инвариант (5) молчит.
  */
-export interface BuildHook { server: string | null; drift: { forge: number; sell: number } | null; stamp: boolean }
+export interface BuildHook { server: string | null; drift: { forge: number; sell: number } | null; stamp: boolean; consent?: boolean }
 let buildHook: BuildHook = { server: null, drift: null, stamp: true };
 export function setBuildHook(h: BuildHook): void { buildHook = h; }
 const G_BUILD = globalThis as { __DM_BUILD__?: string };
+/** ⭐ D3: штамп «новой сборки» сервера для шага деплоя — того же вида, что настоящий (base36-части через дефис: его пропускает схема команд). */
+const deployStamp = (stamp: string, n: number): string => `${stamp || 'nostamp'}-d${n.toString(36)}`;
+
+/**
+ * ⭐ D3: ПРОФИЛЬ ПРОГОНА. `base` — как прежде: `App` без сети конфига (мост), конфиг клиента кладёт прогон. `stale` — «устаревшая сборка /
+ * устаревший конфиг»: `App` с сетью конфига (подделка `/api/config` над конфигом сервера прогона), деплои кода в обе стороны и смены схемы.
+ */
+export interface RunOpts { profile?: 'base' | 'stale' }
 
 /**
  * ⭐ R19-02: 2D-КЛИЕНТ — настоящая сцена `OnlineScene` поверх `App` прогона (подмены Phaser и спрайтов — у теста, `vi.mock`): её обработчики кадров,
@@ -211,6 +275,12 @@ const G_BUILD = globalThis as { __DM_BUILD__?: string };
 export interface SceneHook { mount: ((app: App) => () => void) | null }
 let sceneHook: SceneHook = { mount: null };
 export function setSceneHook(h: SceneHook): void { sceneHook = h; }
+
+/**
+ * ⭐ R21-05, самопроверка инварианта (7): `blind` — страница, как до правки: откатов кадра входа не читает, и ни вход, ни смена героя заливки слотов
+ * не сбрасывают (`App.applyJoinCooldowns` — пустой). Тест «зубов» включает её на своих цепочках; `DM_FUZZ_SELFTEST=r2105` — на весь прогон.
+ */
+export const cooldownHook = { blind: process.env.DM_FUZZ_SELFTEST === 'r2105' };
 
 class ServerWs {
   open = true;
@@ -231,13 +301,25 @@ export type OpKind =
   | 'loot' | 'lootCrafted' | 'mats' | 'gold' | 'goldEdge' | 'matsEdge' | 'journal' | 'config' | 'clientSync' | 'shopRefresh'
   | 'breakItem' | 'bagFill' | 'equip' | 'unequip' | 'wear' | 'fund' | 'stashDrift'
   // ⭐ R18-08: деплой со сменой кода цен (вкладка переподключается со старым бандлом) — и перезагрузка страницы игроком (следующий такой шаг)
-  | 'deploy';
+  | 'deploy'
+  // ⭐ D3: деплой со сменой СХЕМЫ конфига (таблица, которой вкладка не знает) — и перезагрузка страницы (следующий шаг `deploy`/`schema`)
+  | 'schema'
+  // ⭐ R21-05: откат, о котором страница не знает (умение применила другая вкладка героя; или откаты кончились без неё), — и вход снова
+  | 'cdElsewhere';
 export interface Op { k: OpKind; s: number }
 
 export const OP_WEIGHTS: Record<OpKind, number> = {
   bench: 16, craft: 12, windowEnchant: 5, sketch: 5, buy: 7, sell: 6, field: 6, paperdoll: 6, respec: 4,
   loot: 8, lootCrafted: 6, mats: 6, gold: 3, goldEdge: 7, matsEdge: 6, journal: 5, config: 7, clientSync: 2, shopRefresh: 2,
-  breakItem: 3, bagFill: 2, equip: 2, unequip: 1, wear: 3, fund: 8, stashDrift: 2, deploy: 2,
+  breakItem: 3, bagFill: 2, equip: 2, unequip: 1, wear: 3, fund: 8, stashDrift: 2, deploy: 2, schema: 0, cdElsewhere: 3,
+};
+/**
+ * ⭐ D3: веса профиля «устаревшая сборка / устаревший конфиг» — деплои кода и схемы чаще, платные окна (верстак, лавка, ковка) — основное,
+ * правки конфига живьём — чтобы согласие на конфиг и перечитывание работали вперемешку с деплоями. Откаты (R21-05) — главный профиль: цепочки этого
+ * остаются прежними.
+ */
+export const STALE_WEIGHTS: Record<OpKind, number> = {
+  ...OP_WEIGHTS, deploy: 7, schema: 6, config: 6, clientSync: 3, bench: 18, sell: 9, buy: 6, craft: 8, fund: 8, respec: 2, paperdoll: 2, cdElsewhere: 0,
 };
 export const UI_OPS: ReadonlySet<OpKind> = new Set(['bench', 'craft', 'windowEnchant', 'sketch', 'buy', 'sell', 'field', 'paperdoll', 'respec']);
 
@@ -308,6 +390,15 @@ export class Rig {
   shopFrameVer = -1;
   sent: { id: number; command: TownCommand }[] = [];
   replies = new Map<number, CmdResult>();
+  /** ⭐ R22-03: команды, на которые сервер уже ответил (в миг отправки ответа, до доставки клиенту). */
+  answered = new Set<number>();
+  /**
+   * ⭐ R22-03: правка конфига легла в окно команды `id` (очередь героя, чтение сундука), когда конфиг сервера был ревизии `rev`. Шаг `config`
+   * (`windowEdit`) кладёт её в мок чтения сундука, а не сразу.
+   */
+  windowCmd: { id: number; rev: string; what: string } | null = null;
+  /** ⭐ R22-03: этот шаг `config` правит конфиг в окне следующей команды сундука (решено от сида шага, `runSeq`). */
+  windowEdit = false;
   outbox: string[] = [];
   pending: Promise<unknown>[] = [];
   hits: Hit[] = [];
@@ -331,8 +422,21 @@ export class Rig {
   /** ⭐ R18-08: отказы «Цена изменилась» этого шага, которые перечитывание не лечит (время отказа): за каждым — «перезагрузите». */
   owed: number[] = [];
   deploys = 0;
+  /** ⭐ D3: `App` с сетью конфига (профиль `stale`): конфиг клиента перечитывает сам `App` (`/api/config` — подделка ниже), а не прогон. */
+  readonly online: boolean;
+  /** ⭐ D3: конфиг сервера — с таблицей, которой вкладка не знает (шаг `schema`): вкладка его не разберёт до перезагрузки страницы. */
+  schemaBroken = false;
+  /** ⭐ D3: поколение конфига, отданного последним ответом 200 `/api/config` (лёг — это поколение у клиента). */
+  private served = 0;
+  /** ⭐ D3: `fetch` до прогона (у node он свой) — вернуть на разборе. */
+  private savedFetch: unknown;
   /** ⭐ R19-02: клиент — 2D-сцена `OnlineScene` (`SceneHook`), а не голый `App`; выход из сцены — на разборе прогона. */
   scene2d = false;
+  /**
+   * ⭐ R21-05: миг доставки последнего кадра `joined` клиенту — `performance.now()` до и после (часы, которыми `App` ставит окно заливки слота):
+   * сверка инварианта (7) не зависит от скорости машины.
+   */
+  private joinWin: { before: number; after: number } | null = null;
   private unmount: (() => void) | null = null;
   /** Часы прогона (`Date.now`): +7 мс на каждый вызов, от сида. */
   clock = 0;
@@ -347,7 +451,9 @@ export class Rig {
   private restoreDom: (() => void) | null = null;
   private spies: { mockRestore(): void }[] = [];
 
-  constructor(readonly db: FakeDb, readonly crypto: CryptoHook, readonly seed: number, readonly stopAt?: string) { }
+  constructor(readonly db: FakeDb, readonly crypto: CryptoHook, readonly seed: number, readonly stopAt?: string, opts: RunOpts = {}) {
+    this.online = opts.profile === 'stale';
+  }
 
   // ── Учёт ──
   count(k: string): void { this.stats[k] = (this.stats[k] ?? 0) + 1; }
@@ -389,7 +495,12 @@ export class Rig {
   }
   /** Код вкладки — не той сборки, что у сервера (шаг `deploy`, R18-08): её цены — старые формулы, строгие сверки уступают согласию на цену. */
   get codeDrift(): boolean { return buildHook.drift !== null; }
-  /** Видит ли клиент то же, что сервер: конфиг, сейв, сундук (и тот же код цен — R18-08). */
+  /** ⭐ D3: вкладка СТАРШЕ сервера (истина прогона): код не той сборки или конфиг сервера она не разбирает — поможет только перезагрузка. */
+  get tabStale(): boolean { return this.codeDrift || this.schemaBroken; }
+  /**
+   * Видит ли клиент то же, что сервер: конфиг, сейв, сундук (и тот же код цен — R18-08). ⭐ R22-03: снимок шага живёт до его конца — правка
+   * конфига в окне команды (`windowEdit`) гасит в нём «конфиг тот же» задним числом: окно рисовало с конфига, которого сервер уже не держит.
+   */
   synced(): { cfg: boolean; save: boolean; stash: boolean; all: boolean } {
     const cfg = this.cfgVer === this.clientCfgVer;
     const s = this.srv(), c = this.cli();
@@ -397,8 +508,12 @@ export class Rig {
     const st = this.dbStash(), cs = this.app.stash;
     const stash = !!cs && canonMats(st.materials) === canonMats(cs.materials)
       && canon(normalizeJournal(st.forgeJournal)) === canon(normalizeJournal(cs.forgeJournal));
-    return { cfg, save, stash, all: cfg && save && stash && !this.codeDrift };
+    const out = { cfg, save, stash, all: cfg && save && stash && !this.tabStale };
+    this.snaps.push(out);
+    return out;
   }
+  /** ⭐ R22-03: снимки «видит ли клиент то же» этого шага (`synced`) — правка в окне команды их гасит. */
+  snaps: { cfg: boolean; all: boolean }[] = [];
 
   // ── Провод ──
   /**
@@ -419,19 +534,46 @@ export class Rig {
     }
     if (!parseClientFrame(raw)) this.violate(`wire:client-frame-rejected:${String(json?.t ?? '?')}`, `кадр клиента не прошёл схему сервера: ${raw.slice(0, 300)}`);
   }
-  private fromServer(raw: string): void { this.outbox.push(raw); }
+  private fromServer(raw: string): void {
+    if (raw.includes('"cmdResult"')) { const f = JSON.parse(raw) as { t?: string; id?: unknown }; if (f.t === 'cmdResult' && typeof f.id === 'number') this.answered.add(f.id); }
+    this.outbox.push(raw);
+  }
   private deliver(raw: string): void {
     const f = JSON.parse(raw) as ServerFrame;
     if (f.t === 'cmdResult' && typeof f.id === 'number') this.replies.set(f.id, f);
     if (f.t === 'shop') this.shopFrameVer = this.cfgVer;
     if (f.t === 'stash') this.drift = false;
-    this.cws?.onmessage?.({ data: raw });
-    // Клиент на «Цена изменилась» перечитывает конфиг (`App.syncConfig` → `/api/config`); у `App` без сервера это делает прогон.
-    if (f.t === 'cmdResult' && !f.ok && f.reason?.startsWith(PRICE_CHANGED)) {
-      // ⭐ R18-08: конфиг клиента и так серверный, а код цен — старой сборки: перечитывание не поможет, игроку обязано прозвучать «перезагрузите».
-      if (this.codeDrift && this.cfgVer === this.clientCfgVer) { this.owed.push(Date.now()); this.count('hint:owed'); }
-      this.syncClientConfig();
+    // ⭐ D3: вкладка старше сервера не проводит ни одной команды согласия (её окна считали цену и исход старым кодом или старым конфигом):
+    // проведённая — списано не то, что показано.
+    if (f.t === 'cmdResult' && f.ok && this.tabStale && CONFIG_CONSENT_CMDS.has(f.cmd as TownCommand['cmd'])) {
+      this.violate(`stale:consent-accepted:${String(f.cmd)}`, `вкладка старше сервера (${this.codeDrift ? 'код' : ''}${this.schemaBroken ? ' схема конфига' : ''}), а «${String(f.cmd)}» проведена: окно считало старым кодом или конфигом`);
     }
+    // ⭐ R22-03: правка живьём легла в окно команды согласия (прошла сверку до очереди, ждала сундук) — команда обязана отказать «Цена изменилась»:
+    // проведённая исполнена по конфигу, которого окно не видело (цена та же, вещь другая).
+    if (f.t === 'cmdResult' && this.windowCmd && f.id === this.windowCmd.id) {
+      const w = this.windowCmd;
+      this.windowCmd = null;
+      const sent = this.sent.find((x) => x.id === w.id);
+      const agreed = (sent?.command as { cfgRev?: string } | undefined)?.cfgRev === w.rev;
+      if (agreed) this.count('window:agreed');
+      if (f.ok && agreed && CONFIG_CONSENT_CMDS.has(f.cmd as TownCommand['cmd']) && this.reg.revision() !== w.rev) {
+        this.violate(`window:consent-accepted:${String(f.cmd)}`, `правка живьём (${w.what}) легла, пока «${String(f.cmd)}» ждала очередь и сундук, — а команда проведена по новому конфигу`);
+      }
+    }
+    // Долг подсказки — ДО того, как клиент узнает об отказе (перечитывание могло бы сдвинуть поколение конфига клиента).
+    const price = f.t === 'cmdResult' && !f.ok && !!f.reason?.startsWith(PRICE_CHANGED);
+    // ⭐ R18-08: конфиг клиента и так серверный, а код цен — старой сборки: перечитывание не поможет, игроку обязано прозвучать «перезагрузите».
+    // ⭐ D3: и конфиг сервера, который вкладка не разбирает (шаг `schema`): перечитывание его не догонит.
+    if (price && ((this.codeDrift && this.cfgVer === this.clientCfgVer) || this.schemaBroken)) {
+      this.owed.push(Date.now());
+      this.count('hint:owed');
+      if (this.schemaBroken) this.count('hint:owed:schema');
+    }
+    const before = performance.now();
+    this.cws?.onmessage?.({ data: raw });
+    if (f.t === 'joined') this.joinWin = { before, after: performance.now() };   // R21-05
+    // Клиент на «Цена изменилась» перечитывает конфиг (`App.syncConfig` → `/api/config`); у `App` без сети конфига это делает прогон.
+    if (price && !this.online) this.syncClientConfig();
   }
   /** Дождаться, пока команды исполнятся и все кадры дойдут до клиента. */
   async flush(): Promise<void> {
@@ -456,6 +598,26 @@ export class Rig {
     (this.app.config as unknown as { data: Tables }).data = { ...tablesOf(this.reg) };
     this.clientCfgVer = this.cfgVer;
   }
+  /** Клиент перечитывает конфиг: у `App` с сетью — сам (`syncConfig` → подделка `/api/config`), у моста — прогон кладёт конфиг сервера. */
+  async clientReread(): Promise<void> {
+    if (!this.online) { this.syncClientConfig(); return; }
+    await this.app.syncConfig();
+    await this.flush();
+  }
+  /**
+   * ⭐ D3: `/api/config` сервера прогона — как у `index.ts`: тело (снимок конфига сервера), слабый ETag по поколению, ревизия (`CONFIG_REV_HEADER`),
+   * 304 на совпавший `If-None-Match`. Шаг `schema` — в теле таблица, которой вкладка не знает (сервер новее: её схема старше).
+   */
+  private fakeFetch = async (url: string, init?: { headers?: Record<string, string> }): Promise<unknown> => {
+    if (url !== '/api/config') throw new Error(`прогон не ждал запроса ${url}`);
+    const etag = `W/"fz-${this.cfgVer}-${this.schemaBroken ? 'x' : 'ok'}"`;
+    const headers = { get: (h: string): string | null => (h.toLowerCase() === 'etag' ? etag : h.toLowerCase() === CONFIG_REV_HEADER ? this.reg.revision() : null) };
+    if (init?.headers?.['if-none-match'] === etag) return { ok: false, status: 304, headers, json: () => Promise.reject(new Error('304 без тела')) };
+    const body = JSON.parse(JSON.stringify(tablesOf(this.reg))) as Record<string, unknown>;
+    if (this.schemaBroken) body['craft-next-release'] = [{ id: 'x' }];
+    this.served = this.cfgVer;
+    return { ok: true, status: 200, headers, json: () => Promise.resolve(body) };
+  };
   /** Сервер изменил сейв (добыча, золото) — клиенту кадр `saveUpdate`, как после подбора. */
   async pushSave(): Promise<void> {
     (this.room as unknown as { sendSave(pid: string): void }).sendSave(this.pid);
@@ -483,10 +645,47 @@ export class Rig {
   async reconnect(): Promise<void> {
     await this.flush();
     clearHeld();
+    const hints = this.hints;
     this.pid = this.room.addPlayer(new ServerWs((raw) => this.fromServer(raw)), this.userId, structuredClone(this.srv()), this.db.saves.get(this.charId) ?? 1);
     await this.flush();
     this.room.stop();
     await this.flush();
+    // ⭐ D3: рукопожатие на входе — РОВНО одна строка «перезагрузите», если вкладка старше сервера (и её штамп есть — иначе ей сравнивать нечего,
+    // это проверка зубов R18-08: там молчание — своё нарушение `hint:deploy-untold`), и ни одной, если нет.
+    const told = this.hints - hints;
+    if (this.tabStale) this.count('stale:join');
+    if (this.tabStale && told > 1) this.violate('hint:join-twice', `вход к серверу новее вкладки — «перезагрузите» ${told} раз(а), а не одна строка`);
+    if (this.schemaBroken && told === 0) this.violate('hint:join-untold', 'вход к серверу с конфигом, который вкладка не разбирает, — «перезагрузите» не сказано');
+    this.checkCooldowns();
+  }
+
+  /**
+   * ⭐ R21-05, инвариант (7): ПАНЕЛЬ БИНДОВ ПОСЛЕ ВХОДА ≡ ОТКАТЫ СЕРВЕРА. Окно заливки слота (`App.actionCooldowns`) `App` ставит в миг кадра `joined`
+   * (он — между `joinWin.before` и `.after`), остаток сервера — откат сущности героя (комната стоит: тика нет, остаток не тает). Слот, чей каст сервер
+   * молча отбросит, не нарисован готовым; остаток заливки на миг входа — остаток сервера (округление кадра — до 1 мс; тик, если прошёл, — до шага);
+   * заливки без отката сервера нет (прошлая сессия, прошлый герой).
+   */
+  private checkCooldowns(): void {
+    const p = this.room.session.world.players[this.pid];
+    const win = this.joinWin;
+    if (!p || !win) return;
+    const cds = this.app.actionCooldowns;
+    for (const [k, sec] of Object.entries(p.skillCd)) {
+      if (!(sec > 0)) continue;
+      this.count('cd:server');
+      const c = cds[k];
+      const left = sec * 1000;
+      if (!c || c.until <= win.after) { this.violate(`cd:slot-ready-refused:${k.startsWith('ins:') ? 'ins' : 'node'}`, `после входа слот «${k}» нарисован готовым, а сервер держит откат ${sec.toFixed(2)} с — каст молча отброшен`); continue; }
+      this.count('cd:shown');
+      // Остаток заливки на миг кадра — между `until − after` и `until − before`; у сервера — `left` (±1 мс округления, −шаг тика).
+      if (left > c.until - win.before + 1 || left < c.until - win.after - 1 - 1000 / 30) {
+        this.violate('cd:slot-drift', `после входа остаток заливки «${k}» — ${Math.round(c.until - win.after)}…${Math.round(c.until - win.before)} мс, у сервера ${Math.round(left)} мс`);
+      }
+      if (c.until - c.start < c.until - win.after - 1) this.violate('cd:slot-fraction', `заливка «${k}» больше полной: окно ${Math.round(c.until - c.start)} мс, остаток ${Math.round(c.until - win.after)} мс`);
+    }
+    for (const [k, c] of Object.entries(cds)) {
+      if (c.until > win.after + 1 && !((p.skillCd[k] ?? 0) > 0)) this.violate('cd:slot-ghost', `после входа слот «${k}» залит (ещё ${Math.round(c.until - win.after)} мс), а у сервера отката нет — заливка прошлой сессии`);
+    }
   }
 
   // ── Жизненный цикл ──
@@ -505,6 +704,17 @@ export class Rig {
     const n = ++RUN_NO;
     const w = newWorld(this.seed);
     this.reg = w.reg;
+    // ⭐ R22-01, инвариант (9): сборка, чьи встроенные файлы ВМЕСТЕ нарушают D4 (профиль `stale`, свой бросок от сида — броски цепочки те же):
+    // сервер — настоящая сборка кандидата над этими файлами (зажим с инцидентом), вкладка — с этим бандлом.
+    const bundle = this.online && createRng((this.seed * 0x22010001 + 7) >>> 0 || 3).chance(0.33)
+      ? crossBrokenBundle(createRng((this.seed * 0x2201 + 11) >>> 0 || 5)) : null;
+    if (bundle) {
+      const c = serverApi!.buildCandidate({ ...defaultConfigData, ...bundle.files }, {});
+      if (c.crossLeft.length || !Object.keys(c.fileFixes).length) this.violate('harness:bundle', `сборка «${bundle.what}»: сервер не привёл файлы (прогон ни о чём)`);
+      this.reg = regFrom({ ...tablesOf(c.reg) });
+      this.count('bundle:cross');
+      this.log.push(`сборка: встроенные файлы вместе нарушают D4 (${bundle.what}) — сервер собрал их с зажимом`);
+    }
     const hero = w.heroes[0];
     this.charId = hero.charId = `ui${this.seed}-${n}`;
     this.userId = `u-ui${this.seed}-${n}`;
@@ -519,10 +729,28 @@ export class Rig {
     G_BUILD.__DM_BUILD__ = buildHook.stamp ? this.stamp : '';
 
     // Клиент: настоящий `App` без сервера конфига; конфиг — тот же, что у сервера (как после `/api/config`).
-    const app = new App({ offline: true });
+    // ⭐ D3: профиль `stale` — `App` с сетью конфига: берёт его сам с подделки `/api/config` (на старте, на входе, на отказ ценой).
+    if (this.online) {
+      this.savedFetch = (globalThis as { fetch?: unknown }).fetch;
+      (globalThis as { fetch?: unknown }).fetch = this.fakeFetch;
+      // Таблица новой схемы (шаг `schema`) — часть конфига СЕРВЕРА: его ревизия (согласие команд, `joined.cfgRev`, заголовок `/api/config`) её
+      // учитывает, как у настоящего сервера нового выпуска. Реестр прогона такой таблицы держать не может (схема та же, что у вкладки), поэтому
+      // ревизия помечается сама — того же вида, что настоящая (иначе «конфиг по умолчанию» после смены схемы сводил ревизии, и вкладка, не
+      // разобравшая тело сервера, проходила согласие по конфигу, в котором не было его новой таблицы).
+      const realRev = this.reg.revision.bind(this.reg);
+      this.reg.revision = () => (this.schemaBroken ? `${realRev()}x` : realRev());
+    }
+    const app = this.bootApp(bundle?.files ?? null);
     this.app = app;
+    if (cooldownHook.blind) app.applyJoinCooldowns = () => {};   // R21-05, самопроверка (7): страница, как до правки
     app.bus.on('log:message', (m) => { if (m.text === PROTOCOL_STALE) { this.hints++; this.hintAt = Date.now(); } });
-    this.syncClientConfig();
+    if (this.online) {
+      const read = app.syncConfig.bind(app);
+      app.syncConfig = async () => { const r = await read(); if (r === 'fresh') this.clientCfgVer = this.served; return r; };
+      await this.flush();   // старт страницы: `App` уже спросил конфиг
+      if (app.configRevision() === this.reg.revision()) this.clientCfgVer = this.cfgVer;
+      else this.violate('harness:no-config', 'App с сетью конфига не взял конфиг сервера на старте');
+    } else this.syncClientConfig();
     // Сейв с сервера — как у драйвера сцены (`NetDriver.applySave`); вход в мир — сцена 2D (R19-02) или свой обработчик.
     app.net.on('saveUpdate', (f) => { if (app.state) app.state.save = f.save; app.bus.emit('state:changed', {}); });
     BrowserWs.sink = (raw) => this.fromClient(raw);
@@ -549,8 +777,31 @@ export class Rig {
     this.room.stop();   // тика нет: мир города стоит, автосейв не вмешивается
     await this.flush();
     if (!app.state) this.violate('harness:no-joined', 'клиент не получил кадр joined');
+    if (this.hints) this.violate('hint:false-reload:setup', 'первый вход: вкладка той же сборки и конфига, а игроку «перезагрузите»');
+  }
+  /**
+   * ⭐ R22-01: страница открылась — `App` над встроенными файлами сборки (`files` — таблицы бандла, отличные от встроенных; `null` — встроенные).
+   * Бросок конструктора — нарушение (9) (`boot:bundle-cross`: пустая страница у каждого игрока), и цепочка идёт дальше со встроенными файлами.
+   */
+  private bootApp(files: Record<string, unknown> | null): App {
+    if (!files) return new App({ offline: !this.online });
+    const was = Object.fromEntries(Object.keys(files).map((k) => [k, defaultConfigData[k]]));
+    const load = ConfigRegistry.prototype.loadAll;
+    // Самопроверка: конструктор, как до правки, — встроенные файлы с правилом поверх таблиц (опции загрузки отброшены).
+    if (bundleHook.strict) ConfigRegistry.prototype.loadAll = function (this: ConfigRegistry, raw?: Record<string, unknown>) { load.call(this, raw); };
+    Object.assign(defaultConfigData, files);
+    try {
+      return new App({ offline: !this.online });
+    } catch (e) {
+      this.violate('boot:bundle-cross', `страница не открылась: конструктор App бросил над встроенными файлами, с которыми сервер работает — ${String((e as Error)?.message ?? e).split('\n').slice(0, 2).join(' ')}`);
+    } finally {
+      Object.assign(defaultConfigData, was);
+      ConfigRegistry.prototype.loadAll = load;
+    }
+    return new App({ offline: !this.online });
   }
   teardown(): void {
+    this.db.onStashRead = null;   // ⭐ R22-03: мока базы общая у прогонов
     try { this.unmount?.(); } catch { /* уже */ }   // R19-02: выход из сцены — до закрытия сокета: поток входа не переподключается
     this.unmount = null;
     try { this.room?.stop(); } catch { /* уже */ }
@@ -561,15 +812,16 @@ export class Rig {
     buildHook.server = null;
     buildHook.drift = null;
     delete G_BUILD.__DM_BUILD__;
+    if (this.online) (globalThis as { fetch?: unknown }).fetch = this.savedFetch;
     for (const s of this.spies.splice(0)) s.mockRestore();
     this.restoreDom?.();
   }
 }
 
 /** Прогон одной цепочки. `stopAt` — ключ, на котором остановиться (сжатие). */
-export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: readonly Op[], stopAt?: string): Promise<RunOut> {
+export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: readonly Op[], stopAt?: string, opts: RunOpts = {}): Promise<RunOut> {
   await loadServer();
-  const g = new Rig(db, crypto, seed, stopAt);
+  const g = new Rig(db, crypto, seed, stopAt, opts);
   const errSpy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { g.serverErrors.push(a.map(String).join(' ').slice(0, 400)); });
   const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { g.serverErrors.push(`warn: ${a.map(String).join(' ').slice(0, 400)}`); });
   try {
@@ -578,13 +830,16 @@ export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: 
       const op = ops[i]!;
       g.step = i;
       const r = createRng(op.s);
+      // ⭐ R22-03: шаг `config` иногда правит конфиг В ОКНЕ следующей команды сундука — решено своим броском от сида шага (броски `r` те же).
+      g.windowEdit = op.k === 'config' && createRng((op.s ^ 0x22030000) >>> 0 || 3).chance(0.35);
+      g.snaps = [];
       let desc = '';
       g.serverErrors = [];
       g.stepProbe = false;
       const hints = g.hints;
       // ⭐ R18-08: со старым кодом цен игрок между кликами думает дольше повтора подсказки — каждый отказ ценой обязан сказать «перезагрузите» сам,
-      // а не за счёт строки входа или прошлого клика.
-      if (g.codeDrift) g.clock += REFUSAL_REPEAT_MS;
+      // а не за счёт строки входа или прошлого клика. ⭐ D3: и с конфигом сервера, который вкладка не разбирает.
+      if (g.tabStale) g.clock += REFUSAL_REPEAT_MS;
       try {
         desc = await EXEC[op.k](g, r);
       } catch (e) {
@@ -597,7 +852,7 @@ export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: 
       for (const at of g.owed.splice(0)) {
         if (!(g.hintAt > at - REFUSAL_REPEAT_MS)) g.violate(`hint:silent-price-loop:${op.k}`, `«${desc}»: отказ «Цена изменилась» при серверном конфиге и старом коде цен — «перезагрузите» не сказано (последний раз ${g.hintAt === -Infinity ? 'никогда' : `${at - g.hintAt} мс назад`})`);
       }
-      if (!g.codeDrift && g.hints > hints) g.violate(`hint:false-reload:${op.k}`, `«${desc}»: сборки вкладки и сервера одни, а игроку «перезагрузите страницу»`);
+      if (!g.tabStale && g.hints > hints) g.violate(`hint:false-reload:${op.k}`, `«${desc}»: сборки вкладки и сервера одни, конфиг она разбирает, а игроку «перезагрузите страницу»`);
       g.log.push(`#${i} ${desc}`);
       for (const h of g.hits) if (h.at === i && h.log.at(-1) !== g.log.at(-1)) h.log.push(g.log.at(-1)!);
       g.count(`op:${op.k}`);
@@ -621,9 +876,9 @@ export async function runSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: 
 }
 
 /** Сжатие: выбрасывать шаги (кусками, потом по одному), пока нарушение с тем же ключом воспроизводится. */
-export async function shrinkSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: readonly Op[], key: string, budget = 160): Promise<{ ops: Op[]; out: RunOut }> {
+export async function shrinkSeq(db: FakeDb, crypto: CryptoHook, seed: number, ops: readonly Op[], key: string, budget = 160, opts: RunOpts = {}): Promise<{ ops: Op[]; out: RunOut }> {
   const hits = async (o: readonly Op[]): Promise<RunOut | null> => {
-    const out = await runSeq(db, crypto, seed, o, key);
+    const out = await runSeq(db, crypto, seed, o, key, opts);
     return out.hits.some((h) => h.key === key) ? out : null;
   };
   let cur = [...ops];
@@ -824,6 +1079,8 @@ async function opBench(g: Rig, r: Rng): Promise<string> {
   // Платные: золото — строкой карточки, сырьё — строками карточки.
   const wantGold = shown.gold ?? 0;
   if (strict ? paid !== wantGold : paid > wantGold) g.violate(`${strict ? 'price:gold-mismatch' : 'price:overcharge'}:bench:${tag}`, `${res}: списано ${paid}, на карточке ${wantGold}`);
+  // ⭐ D3: вкладка старше сервера — списано ровно показанное (или отказ); «дешевле показанного» — тоже не то, что обещала карточка.
+  if (!strict && g.tabStale && sy.save && sy.stash && paid !== wantGold) g.violate(`price:stale-charge:bench:${tag}`, `${res}: списано ${paid}, на карточке ${wantGold} (вкладка старше сервера)`);
   const spentPos = Object.fromEntries(Object.entries(dMats).filter(([, n]) => n < 0).map(([id, n]) => [id, -n]));
   if (strict) {
     if (canonMats(spentPos) !== canonMats(shown.mats)) g.violate(`price:mats-mismatch:bench:${tag}`, `${res}: списано ${canon(spentPos)}, на карточке ${canon(shown.mats)}`);
@@ -1280,6 +1537,7 @@ async function opSell(g: Rig, r: Rng): Promise<string> {
   if (rep.ok) {
     const got = g.srv().gold - before.gold;
     if (sy.all ? got !== shown : got < shown) g.violate(`price:${sy.all ? 'gold-mismatch' : 'undergive'}:sell`, `${res}: получено ${got}`);
+    if (!sy.all && g.tabStale && sy.save && sy.stash && got !== shown) g.violate('price:stale-charge:sell', `${res}: получено ${got}, на ценнике ${shown} (вкладка старше сервера)`);
     if (sy.all && shopSellPrice(g.reg, item) !== shown) g.violate('parity:sell-price', `${res}: сервер оценивает ${shopSellPrice(g.reg, item)}`);
   }
   return res;
@@ -1849,6 +2107,22 @@ function editConfig(reg: ConfigRegistry, r: Rng): string {
 }
 
 async function opConfig(g: Rig, r: Rng): Promise<string> {
+  if (g.windowEdit) {
+    // ⭐ R22-03: правка ляжет в окно ОДНОЙ команды, ждущей сундук (очередь героя, чтение из базы): её согласие уже сверено до очереди.
+    g.db.onStashRead = (): boolean => {
+      const open = g.sent.filter((x) => !g.answered.has(x.id));
+      if (open.length !== 1) return false;
+      const rev = g.reg.revision();
+      let what: string;
+      try { what = editConfig(g.reg, r); } catch { return true; }   // схема не пустила — окна нет
+      g.cfgVer++;
+      for (const sy of g.snaps) { sy.cfg = false; sy.all = false; }   // окно шага рисовало со старого конфига — строгие сверки уступают согласию
+      g.windowCmd = { id: open[0]!.id, rev, what };
+      g.count('window:edit');
+      return true;
+    };
+    return 'конфиг: правка — в окне следующей команды сундука (клиент не перечитал)';
+  }
   let d: string;
   try { d = editConfig(g.reg, r); } catch (e) {
     const msg = String((e as Error)?.message ?? e);
@@ -1857,7 +2131,7 @@ async function opConfig(g: Rig, r: Rng): Promise<string> {
   }
   g.cfgVer++;
   const sync = r.chance(0.6);
-  if (sync) g.syncClientConfig();
+  if (sync) await g.clientReread();
   return `конфиг: ${d}${sync ? ' (клиент перечитал)' : ' (клиент НЕ перечитал)'}`;
 }
 
@@ -1881,7 +2155,7 @@ async function opStashDrift(g: Rig, r: Rng): Promise<string> {
   return `сундук: другой герой положил ${m.id} — кадра нет`;
 }
 
-async function opClientSync(g: Rig): Promise<string> { g.syncClientConfig(); return 'клиент перечитал конфиг'; }
+async function opClientSync(g: Rig): Promise<string> { await g.clientReread(); return 'клиент перечитал конфиг'; }
 async function opShopRefresh(g: Rig): Promise<string> {
   (g.room as unknown as { showShop(): void }).showShop();
   await g.flush();
@@ -1960,28 +2234,86 @@ async function opUnequip(g: Rig, r: Rng): Promise<string> {
  * скупки по-новому, вкладка переподключилась САМА (L2 / R3-25) со старым бандлом: её карточки считают старой формулой (дешевле ковку, щедрее
  * скупку — такую сервер отказывает «Цена изменилась»). Инвариант (5): игроку «перезагрузите» на входе и на каждый такой отказ. Следующий шаг
  * `deploy` — игрок перезагрузил страницу: бандл новой сборки, формулы те же, что у сервера.
+ * ⭐ D3: в профиле `stale` код цен сдвигается в ОБЕ стороны (карточка вкладки может показать и дороже, и дешевле, чем возьмёт сервер) — согласие
+ * на цену одностороннее, и «не иначе, чем показано» держит только согласие на сборку (`buildChanged`, инвариант (6)).
  */
 async function opDeploy(g: Rig, r: Rng): Promise<string> {
-  if (!g.codeDrift) {
-    buildHook.server = `${g.stamp}+deploy${++g.deploys}`;
-    buildHook.drift = { forge: 0.5 + r.next() * 0.4, sell: 1.15 + r.next() * 0.85 };
-    const hints = g.hints;
-    await g.reconnect();
-    if (buildHook.stamp && g.hints === hints) g.violate('hint:deploy-untold', 'деплой сменил код цен, вкладка переподключилась со старым бандлом — «перезагрузите» не сказано');
-    if (!buildHook.stamp && g.hints === hints) g.violate('hint:deploy-untold', 'вкладка без штампа (до правки R18-08): деплой, сменивший код цен, прошёл молча');
-    return `деплой: код цен сервера другой (кузница ×${(1 / buildHook.drift.forge).toFixed(2)}, скупка ×${(1 / buildHook.drift.sell).toFixed(2)}), конфиг тот же; вкладка переподключилась со старым бандлом`;
+  // ⭐ D3: в профиле `stale` вкладка, ещё не перезагруженная, переживает и следующий деплой (вход к ещё более новому серверу).
+  if (g.tabStale && !(g.online && r.chance(0.55))) return reloadPage(g);
+  const again = g.tabStale;
+  buildHook.server = deployStamp(g.stamp, ++g.deploys);
+  buildHook.drift = g.online
+    ? { forge: r.pick([0.5 + r.next() * 0.4, 1.2 + r.next() * 0.8]), sell: r.pick([0.4 + r.next() * 0.4, 1.15 + r.next() * 0.85]) }
+    : { forge: 0.5 + r.next() * 0.4, sell: 1.15 + r.next() * 0.85 };
+  const hints = g.hints;
+  await g.reconnect();
+  if (buildHook.stamp && g.hints === hints) g.violate('hint:deploy-untold', 'деплой сменил код цен, вкладка переподключилась со старым бандлом — «перезагрузите» не сказано');
+  if (!buildHook.stamp && g.hints === hints) g.violate('hint:deploy-untold', 'вкладка без штампа (до правки R18-08): деплой, сменивший код цен, прошёл молча');
+  return `${again ? 'ещё деплой, страница не перезагружена' : 'деплой'}: код цен сервера другой (кузница ×${(1 / buildHook.drift.forge).toFixed(2)}, скупка ×${(1 / buildHook.drift.sell).toFixed(2)}), конфиг тот же; вкладка переподключилась со старым бандлом`;
+}
+
+/**
+ * ⭐ D3: ДЕПЛОЙ СО СМЕНОЙ СХЕМЫ КОНФИГА — новый выпуск сервера: в теле `/api/config` таблица, которой схема вкладки не знает (вкладка его не
+ * разберёт — R7-14: прежний конфиг цел), и правка значения (ревизия конфига сервера другая: согласие на конфиг команд вкладки не сойдётся).
+ * Иногда — и новый код цен (схема меняется вместе с кодом shared). Вкладка переподключилась сама. Инвариант (6): на входе — ровно одна строка
+ * «перезагрузите», на каждый отказ ценой — она же (перечитывание — 304 негодного), ни одной проведённой команды согласия. Следующий шаг
+ * `deploy`/`schema` — игрок перезагрузил страницу: схема вкладки новая, конфиг ложится.
+ */
+async function opSchema(g: Rig, r: Rng): Promise<string> {
+  if (!g.online) return 'схема: только в профиле «устаревшая сборка / устаревший конфиг»';
+  if (g.tabStale && !r.chance(0.55)) return reloadPage(g);
+  const again = g.tabStale;
+  const bump = r.int(1, 9);
+  reloadTable(g.reg, 'balance', (b) => { b.respecCost += bump; });
+  g.cfgVer++;
+  g.schemaBroken = true;
+  const code = r.chance(0.5);
+  if (code) {
+    buildHook.server = deployStamp(g.stamp, ++g.deploys);
+    buildHook.drift = { forge: r.pick([0.6, 1.4]), sell: r.pick([0.6, 1.4]) };
   }
+  await g.reconnect();
+  return `${again ? 'ещё деплой, страница не перезагружена' : 'деплой'}: схема конфига новее вкладки (таблица, которой она не знает; сброс атрибутов +${bump})${code ? ' и код цен другой' : ''}; вкладка переподключилась`;
+}
+
+/** Игрок перезагрузил страницу: бандл той же сборки, что сервер, и схема конфига новая — конфиг сервера ложится (рукопожатие на входе). */
+async function reloadPage(g: Rig): Promise<string> {
   buildHook.drift = null;
+  g.schemaBroken = false;
   G_BUILD.__DM_BUILD__ = buildHook.stamp ? buildHook.server ?? g.stamp : '';
   await g.reconnect();
-  return 'игрок перезагрузил страницу: бандл той же сборки, что сервер';
+  // По СОДЕРЖИМОМУ, а не по поколению: правка живьём, не сменившая значения (ёмкость 5 → 5), поколение двигает, а ревизию — нет, и вход
+  // законно не перечитывает конфиг той же ревизии.
+  if (g.online && g.app.configRevision() !== g.reg.revision()) g.violate('hint:reload-no-config', 'после перезагрузки страницы вход не взял конфиг сервера');
+  return 'игрок перезагрузил страницу: бандл той же сборки, что сервер, схема конфига — его';
+}
+
+/**
+ * ⭐ R21-05: ОТКАТ, О КОТОРОМ СТРАНИЦА НЕ ЗНАЕТ. Другая вкладка (устройство) того же героя применила умение — событие каста ушло ей — и закрылась
+ * (или откаты героя кончились, пока этой страницы не было); страница входит снова (F5, «Продолжить»): сервер сажает героя с откатами его сущности
+ * (R4-06; из сейва другой комнаты — D4, тем же кадром). Сущность героя здесь и есть «та вкладка»: откат ставится ей, вход — `reconnect`, сверка —
+ * инвариант (7) в нём. Ключи — узлы с откатом (удар, каст, проклятие, бафф) и печать вставки (`ins:`).
+ */
+async function opCdElsewhere(g: Rig, r: Rng): Promise<string> {
+  const p = g.room.session.world.players[g.pid]!;
+  if (r.chance(0.25)) {
+    for (const k of Object.keys(p.skillCd)) delete p.skillCd[k];
+    await g.reconnect();
+    return 'откаты героя кончились, пока страницы не было; вход снова';
+  }
+  const nodes = g.reg.get('skill-tree').nodes.filter((n) => n.effect.active && n.effect.active.category !== 'aura' && n.effect.active.category !== 'stance');
+  const key = r.chance(0.15) ? `ins:${r.pick(g.reg.get('skill-inserts')).id}` : r.pick(nodes).id;
+  const sec = r.pick([0.4, 1.5, 6, 13.5, 40]);
+  p.skillCd[key] = sec;
+  await g.reconnect();
+  return `откат «${key}» ${sec} с — применён другой вкладкой героя (события каста страница не видела); вход снова`;
 }
 
 const EXEC: Record<OpKind, (g: Rig, r: Rng) => Promise<string>> = {
   bench: opBench, craft: opCraft, windowEnchant: opWindowEnchant, sketch: opSketch, buy: opBuy, sell: opSell, field: opField, paperdoll: opPaperdoll, respec: opRespec,
   loot: opLoot, lootCrafted: opLootCrafted, mats: opMats, gold: opGold, goldEdge: opGoldEdge, matsEdge: opMatsEdge, journal: opJournal,
   config: opConfig, clientSync: opClientSync, shopRefresh: opShopRefresh, breakItem: opBreak, bagFill: opBagFill, equip: opEquip, unequip: opUnequip, fund: opFund,
-  wear: opWear, stashDrift: opStashDrift, deploy: opDeploy,
+  wear: opWear, stashDrift: opStashDrift, deploy: opDeploy, schema: opSchema, cdElsewhere: opCdElsewhere,
 };
 
 /** Для отчёта: подписи шагов сжатой цепочки (прогон с журналом). */

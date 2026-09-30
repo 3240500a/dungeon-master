@@ -1,10 +1,9 @@
 import { z } from 'zod';
-import { levelForXp } from '../formulas/xp.js';
 
 /**
  * zod-схема SaveState для валидации на сервере (базовый анти-чит). Вложенные
  * предметы валидируются структурно; критичные величины сервер дополнительно
- * пересчитывает (см. sanitizeSave).
+ * нормализует (см. sanitizeSave).
  *
  * ⭐ РАЗБОР НЕ РАЗРУШАЕТ: сейв, предмет и аффикс — `.passthrough()`. zod по умолчанию молча СРЕЗАЕТ
  * незнакомые ключи, а схема знает только то, что проверяет: без сквозного пропуска скованная вещь
@@ -93,6 +92,12 @@ export const saveStateSchema = z.object({
     intelligence: z.number().int().min(0),
     vitality: z.number().int().min(0),
   }).optional(),
+  // D2: книга заработанного — очки, выданные за всё время (нет — сейв старше правила; вход выводит её один раз).
+  earned: z.object({
+    attributePoints: z.number().int().min(0),
+    skillPoints: z.number().int().min(0),
+    masteryPoints: z.number().int().min(0),
+  }).optional(),
   unspentAttributePoints: z.number().int().min(0),
   unspentSkillPoints: z.number().int().min(0),
   unspentMasteryPoints: z.number().int().min(0).default(0),
@@ -129,7 +134,12 @@ export const saveStateSchema = z.object({
     board: z.number().int().optional(),
   }).optional(),
   // R11-04: здоровье, мана, выносливость на момент последней записи — вход в новую комнату не лечит (пишет только сервер).
-  vitals: z.object({ hp: z.number().min(0), mana: z.number().min(0), stamina: z.number().min(0), at: z.number().optional() }).optional(),
+  vitals: z.object({
+    // ⭐ R22-04: у погибшего пулов нет (оживёт полным) — только откаты и метка.
+    hp: z.number().min(0).optional(), mana: z.number().min(0).optional(), stamina: z.number().min(0).optional(), at: z.number().optional(),
+    // ⭐ D4: откаты умений героя на миг `at` (пишет только сервер) — вход в другую комнату не делает их готовыми даром.
+    cd: z.record(z.string().max(128), z.number().finite().min(0).max(86_400)).optional(),
+  }).optional(),
   maxDepth: z.number().int().min(0),
   difficultyProgress: z.record(z.string(), z.number()).default({}),
   lastDifficulty: z.string().default('normal'),
@@ -170,17 +180,17 @@ export const saveStateSchema = z.object({
 export type ValidatedSave = z.infer<typeof saveStateSchema>;
 
 /**
- * Базовый анти-чит: пересчитывает уровень из опыта по таблице (не даёт завысить
- * уровень) и отсекает отрицательные величины. Возвращает нормализованный объект.
+ * Базовый анти-чит: уровень — целый и не ниже первого, золото — целое не ниже нуля. Возвращает нормализованный объект.
+ *
+ * ⚠ D2 (R9-05): УРОВЕНЬ ПО ОПЫТУ ВНИЗ НЕ ПЕРЕСЧИТЫВАЕТСЯ. Раньше здесь `min(уровень, levelForXp(опыт, xpTable))` — против сейва, который
+ * писал клиент (до Ф0). Сейв пишет только сервер, уровень растёт только в `gainXp` — с очками за каждый уровень, — а пересчёт по ЖИВОЙ кривой
+ * опускал героя после правки баланса (медленнее или потолок ниже), и добор опыта платил очки тех же уровней второй раз. Правка конфига
+ * уровней не отнимает (как вход, `RoomManager.sanitize`).
  */
-export function sanitizeSave(
-  save: ValidatedSave,
-  xpTable: number[],
-): ValidatedSave {
-  const level = levelForXp(save.xp, xpTable);
+export function sanitizeSave(save: ValidatedSave): ValidatedSave {
   return {
     ...save,
-    level: Math.min(save.level, level || 1),
+    level: Math.max(1, Math.floor(save.level) || 1),
     gold: Math.max(0, Math.floor(save.gold)),
   };
 }

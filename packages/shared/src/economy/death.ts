@@ -38,7 +38,10 @@ function byChance(raw: number, rng?: DeathRng): number {
  */
 export function applyDeathPenalty(save: SaveState, penalty: DeathPenaltyBalance, rng?: DeathRng): DeathSummary {
   // ⭐ R11-04: смерть — следующая жизнь с полными пулами: записанные здоровье и мана (`vitals`) к ней не относятся (штраф взят).
-  delete save.vitals;
+  // ⭐ R22-04: а откаты умений — время героя, не тела (D4): смерть их не обнуляет, иначе «погиб — и клич готов» в новой комнате.
+  const cd = save.vitals?.cd;
+  if (cd && Object.keys(cd).length) save.vitals = { cd, ...(save.vitals?.at !== undefined ? { at: save.vitals.at } : {}) };
+  else delete save.vitals;
   const goldLost = Math.floor(save.gold * penalty.goldPercent);
   save.gold = Math.max(0, save.gold - goldLost);
 

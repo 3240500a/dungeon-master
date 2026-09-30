@@ -6,7 +6,7 @@ import { xpForLevel } from '../formulas/xp.js';
 import { baseInGame, itemFromBaseId } from '../formulas/itemgen.js';
 import { isSafeKey, shapeFoundWeapon } from '../formulas/craft.js';
 import { addToInventory, hasSpace } from '../inventory/grid.js';
-import { gainXp } from './progression.js';
+import { creditEarned, gainXp } from './progression.js';
 import type { ActionResult } from './townActions.js';
 
 /**
@@ -298,7 +298,7 @@ export function turnInQuest(reg: ConfigRegistry, save: SaveState, questId: strin
   // своей наградой (`activeQuestDefs`): «−450 золота» с доски или «0.5 очка» цепочки ушли бы в золото и очки как есть.
   const gold = rewardCount(r.gold), sp = rewardCount(r.skillPoints), xp = rewardCount(r.xp);
   if (gold) save.gold += gold;
-  if (sp) save.unspentSkillPoints += sp;
+  if (sp) { save.unspentSkillPoints += sp; creditEarned(save, { skillPoints: sp }); }   // D2: награда — тоже заработанное
   if (item) addToInventory(save.inventory, item, dims);
   const leveled = xp
     ? gainXp(save, reg.get('balance'), questXp(save.level, reg.get('balance').xpTable, xp)).leveled

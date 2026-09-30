@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ConfigRegistry, newBotSave, PRICE_CHANGED, PROTOCOL_VERSION, TILE, type FloorInit, type ServerFrame } from '@dm/shared';
+import { CONFIG_REV_HEADER, ConfigRegistry, newBotSave, PRICE_CHANGED, PROTOCOL_VERSION, TILE, type FloorInit, type ServerFrame } from '@dm/shared';
 import { OnlineScene } from './OnlineScene.js';
 import { App } from '../core/app.js';
 import { NetClient } from '../net/netClient.js';
-import { PROTOCOL_STALE } from '../net/entryFlow.js';
+import { EntryFlow } from '../net/entryFlow.js';
+import { PROTOCOL_STALE } from '../net/versionGate.js';
 import { askInGame } from '../ui/kit.js';
 import { KeyNode, phaserKeyboard } from '../net/phaserKeyboardHarness.js';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -297,12 +298,14 @@ describe('OnlineScene — проводка 2D-клиента к серверу',
     expect(s.events).toContain('ui:closeAll');
   });
 
-  it('⭐ R5-15: каждый вход (и новый — после потери связи) сверяет конфиг с сервером', () => {
+  it('⭐ D3: сцена в сверку версий не вмешивается — конфиг на входе перечитывает рукопожатие `App`, а не обработчик сцены', () => {
     const s = setup();
     s.net.open(); s.join('town');
-    expect(s.app.syncConfig, 'было: конфиг брался один раз на страницу — деплой без перезагрузки оставлял цены до деплоя').toHaveBeenCalledTimes(1);
     s.net.close(4009); s.net.open(); s.net.fire('runStatus', { hasRun: false }); s.join('town', 'p2');
-    expect(s.app.syncConfig).toHaveBeenCalledTimes(2);
+    // R5-15 держит `App` (`net/versionGate.ts`, `core/app.config.test.ts`); у сцены своего перечитывания больше нет — раньше их было два пути.
+    expect(s.app.syncConfig, 'сцена сама конфиг не трогает').not.toHaveBeenCalled();
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'OnlineScene.ts'), 'utf8');
+    expect(src, '⚠ свой обработчик версий у сцены вернулся').not.toMatch(/onJoined|syncConfig|PROTOCOL_VERSION|buildDiffers|PROTOCOL_STALE/);
   });
 
   it('R4-13: адрес ноды поток спрашивает у гейтвея (`routeToNode`) — проводка 2D', () => {
@@ -552,12 +555,12 @@ describe('⭐ R19-02: 2D-сцена и подписки App — штамп сб�
     p.shutdown();
     p.scene.create();
     await p.enter('build-2', 'p2');
-    expect(p.hints.length, 'тот же штамп сервера — на входе второй раз не твердим').toBe(2);
+    expect(p.hints.length, '⭐ D3: новый вход к чужой сборке — одна строка (было: тот же штамп — молча)').toBe(3);
     await p.refuse();
-    expect(p.hints.length, 'отказ ценой после пере-входа в сцену — снова сказано').toBe(3);
+    expect(p.hints.length, 'отказ ценой после пере-входа в сцену — снова сказано').toBe(4);
     FakeWs.all.at(-1)!.drop(4009);                     // следующий деплой
     await p.enter('build-3', 'p3');
-    expect(p.hints.length, 'новая сборка сервера после пере-входа в сцену — сказано на входе').toBe(4);
+    expect(p.hints.length, 'новая сборка сервера после пере-входа в сцену — сказано на входе').toBe(5);
   });
 
   it('пере-вход в сцену не копит подписок и не снимает подписок App: выход оставляет ровно подписки App', async () => {
@@ -585,5 +588,151 @@ describe('⭐ R19-02: 2D-сцена и подписки App — штамп сб�
       .flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : /\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name) ? [join(dir, e.name)] : []));
     const calls = files(root).filter((f) => /\bnet\??\.(off|clearLifecycle)\(/.test(readFileSync(f, 'utf8')));
     expect(calls, 'снятие подписок оптом').toEqual([]);
+  });
+});
+
+/**
+ * ⭐ D3: ОДНО РУКОПОЖАТИЕ ВЕРСИЙ — 2D И ВЕБ-3D ОДНИМ ПУТЁМ. Сверка версий (протокол, штамп сборки, ревизия конфига) и «перезагрузите» живут в `App`
+ * (`net/versionGate.ts`); клиенты отличаются только проводкой входа: 2D — настоящая сцена `OnlineScene` со своим потоком входа, веб-3D — поток входа
+ * с теми же зависимостями, что в `render3d/online3d.ts` (сам `online3d` в node не собирается, его проводку сторожит `online3dNet.test.ts`). Один и
+ * тот же сценарий деплоев и отказов обязан дать обоим клиентам ОДНУ И ТУ ЖЕ ленту подсказок и те же перечитывания конфига. Раньше путей было три
+ * (протокол — поток входа, штамп — подписка `App`, конфиг — `onJoined` каждого клиента), и 2D-сцена одну из подписок снимала (R19-02).
+ */
+describe('⭐ D3: рукопожатие версий — 2D-сцена и веб-3D одним путём', () => {
+  const G = globalThis as unknown as { document?: unknown; WebSocket?: unknown; fetch?: unknown; location?: unknown };
+  /** Сервер `/api/config`: тело, ETag, ревизия (`CONFIG_REV_HEADER`) и счёт запросов. */
+  const srv = { body: {} as Record<string, unknown>, etag: '', rev: '', calls: 0 };
+  const good = (tweak = 0): void => {
+    const r = new ConfigRegistry(); r.loadAll();
+    if (tweak) { const b = structuredClone(r.get('balance')); b.respecCost += tweak; r.reload({ balance: b }); }
+    Object.assign(srv, { body: JSON.parse(JSON.stringify(r.snapshot())) as Record<string, unknown>, etag: `W/"ok-${tweak}"`, rev: r.revision() });
+  };
+  /** Деплой со сменой схемы: таблица, которой вкладка не знает, — конфиг она не разберёт (R7-14). */
+  const broken = (): void => {
+    good(3);
+    Object.assign(srv, { body: { ...srv.body, 'craft-new-table': [{ id: 'x' }] }, etag: 'W/"broken"', rev: 'br0ken-1' });
+  };
+  let saved: { ws: unknown; fetch: unknown; location: unknown; warn: { mockRestore(): void } };
+  beforeEach(() => {
+    saved = { ws: G.WebSocket, fetch: G.fetch, location: G.location, warn: vi.spyOn(console, 'warn').mockImplementation(() => { }) };
+    G.document = { createElement: (t: string) => new El(t), getElementById: () => null, body: new El('body') };
+    G.WebSocket = FakeWs; FakeWs.all = [];
+    good();
+    srv.calls = 0;
+    G.fetch = (url: string, init?: { headers?: Record<string, string> }) => {
+      if (url !== '/api/config') return Promise.reject(new Error(`не ждали ${url}`));
+      srv.calls++;
+      const headers = { get: (h: string) => (h.toLowerCase() === 'etag' ? srv.etag : h.toLowerCase() === CONFIG_REV_HEADER ? srv.rev : null) };
+      if (init?.headers?.['if-none-match'] === srv.etag) return Promise.resolve({ ok: false, status: 304, headers, json: () => Promise.reject(new Error('304')) });
+      const body = JSON.parse(JSON.stringify(srv.body)) as unknown;
+      return Promise.resolve({ ok: true, status: 200, headers, json: () => Promise.resolve(body) });
+    };
+    G.location = { protocol: 'http:', host: 'game.test', hostname: 'game.test' };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.stubGlobal('__DM_BUILD__', 'build-1');
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    G.WebSocket = saved.ws; G.fetch = saved.fetch; G.location = saved.location;
+    saved.warn.mockRestore();
+    delete G.document;
+  });
+  const flush = async (): Promise<void> => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+
+  /** Страница клиента: `App` из `main.ts`, вход героем; 2D — сцена «Online», 3D — поток входа с проводкой `online3d`. */
+  async function client(kind: '2d' | '3d') {
+    const app = new App();
+    await flush();
+    app.auth = { token: 'ab'.repeat(32), userId: 'u1', username: 'hero' };
+    app.pendingCharId = 'hero-1';
+    const hints: number[] = [];
+    app.bus.on('log:message', (m) => { if (m.text === PROTOCOL_STALE) hints.push(Date.now()); });
+    if (kind === '2d') {
+      stage(app).scene.create();
+    } else {
+      const view = { showConnecting() { }, showLobby() { }, showResume() { }, hide() { }, setStatus() { } };
+      const entry = new EntryFlow({
+        net: app.net, who: () => ({ token: app.auth!.token, charId: app.pendingCharId! }), view, onLost: () => { }, replies: app.replies,
+        log: (text) => app.bus.emit('log:message', { text, kind: 'system' }), inWorld: (on) => app.setInWorld(on),
+      });
+      entry.attach();
+      entry.start();
+    }
+    const save = newBotSave(app.config, app.config.get('classes')[0]!.id);
+    const ws = (): FakeWs => FakeWs.all.at(-1)!;
+    return {
+      hints,
+      /** Вход: кадр `joined` — рукопожатие `v`, `build`, `cfgRev`. */
+      enter: async (h: { v?: number; build: string; cfgRev: string }): Promise<void> => {
+        if (ws().readyState !== FakeWs.OPEN) ws().open();
+        ws().frame({ t: 'runStatus', hasRun: false });
+        ws().frame({ t: 'joined', v: h.v ?? PROTOCOL_VERSION, build: h.build, cfgRev: h.cfgRev, playerId: 'p1', save, floor: floor('town'), peers: [], roomCode: 'ABCD' });
+        await flush();
+      },
+      drop: (): void => { ws().drop(4009); },
+      /** Отказ ценой; `ms` — сколько игрок думал до клика. */
+      refuse: async (ms = 5_000): Promise<void> => {
+        vi.setSystemTime(Date.now() + ms);
+        ws().frame({ t: 'cmdResult', id: 900 + srv.calls, cmd: 'sell', ok: false, reason: `${PRICE_CHANGED}: лавка даст 31 золота` });
+        await flush();
+      },
+    };
+  }
+
+  /** Сценарий деплоев — лента: после каждого шага [что, подсказок, запросов конфига]. */
+  async function script(kind: '2d' | '3d'): Promise<[string, number, number][]> {
+    good();
+    srv.calls = 0;
+    const c = await client(kind);
+    const out: [string, number, number][] = [];
+    const mark = (what: string): void => { out.push([what, c.hints.length, srv.calls]); };
+    await c.enter({ build: 'build-1', cfgRev: srv.rev }); mark('вход: всё сходится');
+    c.drop(); await c.enter({ build: 'build-2', cfgRev: srv.rev }); mark('деплой кода');
+    await c.refuse(); mark('отказ ценой');
+    await c.refuse(500); mark('зажатый клик');
+    c.drop(); await c.enter({ build: 'build-2', cfgRev: srv.rev }); mark('тот же сервер, новый вход');
+    broken(); c.drop(); await c.enter({ build: 'build-1', cfgRev: srv.rev }); mark('схема конфига новее вкладки');
+    await c.refuse(); mark('отказ: конфиг не разобран');
+    good(5); await c.refuse(); mark('отказ: конфиг починили — лёг');
+    await c.refuse(); mark('отказ: гонка той же сборки');
+    c.drop(); await c.enter({ build: 'build-1', cfgRev: srv.rev }); mark('вход: снова всё сходится');
+    broken(); c.drop(); await c.enter({ v: PROTOCOL_VERSION + 1, build: 'build-2', cfgRev: srv.rev }); mark('протокол, штамп и схема разом');
+    return out;
+  }
+
+  it('один сценарий — одна лента подсказок у 2D и веб-3D: одна строка на вход, отказ — после одного перечитывания, без ложных', async () => {
+    const d2 = await script('2d');
+    FakeWs.all = [];
+    const d3 = await script('3d');
+    expect(d3, 'веб-3D — тем же путём, что 2D').toEqual(d2);
+    expect(d2.map(([what, hints]) => [what, hints])).toEqual([
+      ['вход: всё сходится', 0],
+      ['деплой кода', 1],
+      ['отказ ценой', 2],
+      ['зажатый клик', 2],
+      ['тот же сервер, новый вход', 3],
+      ['схема конфига новее вкладки', 4],
+      ['отказ: конфиг не разобран', 5],
+      ['отказ: конфиг починили — лёг', 5],
+      ['отказ: гонка той же сборки', 5],
+      ['вход: снова всё сходится', 5],
+      ['протокол, штамп и схема разом', 6],
+    ]);
+    // Перечитывания: вход с той же ревизией — без запроса; вход с другой и каждый отказ ценой — ровно одно.
+    const calls = Object.fromEntries(d2.map(([what, , n], i) => [what, n - (i ? d2[i - 1]![2] : 1)]));
+    expect(calls, 'старт страницы — одно чтение конфига, дальше — только по делу').toEqual({
+      'вход: всё сходится': 0,
+      'деплой кода': 0,
+      'отказ ценой': 1,
+      'зажатый клик': 1,
+      'тот же сервер, новый вход': 0,
+      'схема конфига новее вкладки': 1,
+      'отказ: конфиг не разобран': 1,
+      'отказ: конфиг починили — лёг': 1,
+      'отказ: гонка той же сборки': 1,
+      'вход: снова всё сходится': 0,
+      'протокол, штамп и схема разом': 1,
+    });
   });
 });

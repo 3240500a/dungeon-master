@@ -15,7 +15,7 @@ import { skillsPanel } from '@dm/client/modules/skills/skillsPanel.js';
  * Мост/панели ПЕРСИСТЕНТНЫ (пересобираются только при смене класса/уровня), чтобы панели держали
  * своё состояние (буфер атрибутов и т.п.).
  */
-function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg = new ConfigRegistry(); reg.loadAll(data); return reg; }
+function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg = new ConfigRegistry(); reg.loadAll(data, { cross: false }); return reg; }   // ⭐ R22-01: читатель рабочей копии (правило D4 — у записи)
 
 let classId = '';
 let level = 30;

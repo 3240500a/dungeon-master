@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, carriedGear, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, statusChance, STATUS_CHANCE_CAP, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, carriedGear, finalAttributes, xpProgress, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, statusChance, STATUS_CHANCE_CAP, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -193,10 +193,9 @@ export const characterPanel: PanelFactory = (app, ui) => {
         return wrap;
       };
 
-      const xpTable = app.config.get('balance').xpTable;
-      const cur = xpForLevel(state.save.level, xpTable);
-      const next = xpForLevel(state.save.level + 1, xpTable);
-      const pct = next > cur ? (state.save.xp - cur) / (next - cur) : 1;
+      // ⭐ D2: полоса терпит сейв, которого кривая «не узнаёт» (уровень выше потолка, опыт ниже порога после правки) — `xpProgress`.
+      const xpBar = xpProgress(state.save.level, state.save.xp, app.config.get('balance').xpTable);
+      const pct = xpBar.frac;
 
       const bars = mk('div', 'margin:6px 0 14px');
       bars.append(barLine('Здоровье', state.hp, d.maxHp, '#cf4b4b', true, delta(d.maxHp, pd.maxHp)));
@@ -206,9 +205,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const stamReserved = Math.round(d.maxStamina * state.reservedStaminaFracProvider());
       bars.append(barLine('Выносливость', state.stamina, d.maxStamina, '#9aa63c', true, delta(d.maxStamina, pd.maxStamina),
         stamReserved > 0 ? `${Math.round(state.stamina)} / ${Math.round(d.maxStamina)} · резерв ${stamReserved}` : undefined));
-      const xpInto = state.save.xp - cur;
-      const xpNeed = next - cur;
-      const xpText = next > cur ? `${xpInto} / ${xpNeed} · ${Math.round(pct * 100)}%` : 'макс. уровень';
+      const xpText = xpBar.max ? 'макс. уровень' : `${xpBar.into} / ${xpBar.need} · ${Math.round(pct * 100)}%`;
       bars.append(barLine('Опыт', pct * 100, 100, '#639922', false, undefined, xpText));
       body.append(bars);
 

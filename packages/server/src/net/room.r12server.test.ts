@@ -182,6 +182,9 @@ describe('⭐ R12-02: «больница» — вход по коду в ком�
     const rp = rest.addPlayer(new FakeWs(), `user-${h.charId}`, s1, v1);
     await settle();
     P(rest, rp).hp = max;
+    // ⭐ D4: откаты героя идут с ним через сейв (`vitals.cd`), как пулы: «отдохнул» — там они и кончились (час отдыха — шаги мира той комнаты).
+    expect(P(rest, rp).skillCd['probe-skill'] ?? 0, 'D4: в другую комнату откат пришёл с ним').toBeGreaterThan(29);
+    P(rest, rp).skillCd = {};
     await rest.removePlayer(rp);
     await settle();
     const [save, v] = fromDb(h.charId);

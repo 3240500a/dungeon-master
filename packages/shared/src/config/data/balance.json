@@ -214,6 +214,7 @@
     6,
     12
   ],
+  "buffMinRest": 0.25,
   "inventory": {
     "cols": 10,
     "rows": 6,

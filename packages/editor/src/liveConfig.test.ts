@@ -65,17 +65,21 @@ describe('⭐ C-09: рабочая копия редактора — тольк�
     expect(staleConfigKeys(b2.__baseRev, ['balance'], cur)).toEqual([]);
   });
 
-  it('проводка `main.ts`: загрузка — через `loadLiveConfig`, каждая запись (Применить, в файл, инструменты, уборка ассетов) — телом `live.body`', () => {
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'main.ts'), 'utf8');
+  it('проводка `main.ts`: загрузка — через `loadLiveConfig`, каждая запись (Применить, в файл, инструменты, уборка ассетов, сброс) — каналом `ConfigChannel` (тело `live.body`)', () => {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, 'main.ts'), 'utf8');
+    const chan = readFileSync(join(dir, 'configChannel.ts'), 'utf8');
     expect(src).toMatch(/loadLiveConfig\(/);
     expect(src, '⚠ одна загрузка на старте без повтора вернулась').not.toMatch(/function loadFromServer\(\): void \{\s*fetch\('\/api\/config'\)/);
-    for (const route of ["'/api/dev/config'", "'/api/dev/config-file'"]) {
-      const at = src.indexOf(`devFetch(${route}`);
-      expect(at, route).toBeGreaterThan(0);
-      expect(src.slice(at, at + 200), `${route}: тело — с базой (live.body), а не голые значения`).toMatch(/body: JSON\.stringify\(body\)/);
-    }
-    expect(src, 'тело записи — `live.body` (не загружен — null)').toMatch(/const body = live\.body\(values\);/);
-    expect(src.match(/const body = liveBody\(/g)?.length, 'тело с базой — в обеих записях (оверрайд и файл)').toBe(2);
-    expect(src, 'ответ 409 — отказ со строкой, без повтора').toMatch(/r\.status === 409/);
+    // ⭐ R22-08: запись — только каналом (рабочая копия, база и вкладки игры двигаются с ответом сервера), и канал ходит через `devFetch` (роль admin).
+    expect(src, 'запрос к ручкам записи конфига мимо канала').not.toMatch(/devFetch\(\s*[`'"]\/api\/dev\/config/);
+    expect(src).toMatch(/send: \(url, init\) => devFetch\(url, init\)/);
+    expect(src.match(/bc\?\.postMessage\(/g)?.length, 'вкладкам игры — только из канала (после ответа сервера)').toBe(1);
+    expect(src, '⭐ R22-08: сброс — каналом, без правки рабочей копии до ответа').toMatch(/function resetConfig\(\): void \{\s*const key = current;\s*void channel\.reset\(key/);
+    expect(src, '⭐ R22-01: рабочая копия до ответа сервера — встроенные файлы читателем').toMatch(/const data: Record<string, unknown> = bundledWorkingCopy\(\);/);
+    for (const route of ["'/api/dev/config'", "'/api/dev/config-file'"]) expect(chan, route).toContain(`this.write(${route}`);
+    expect(chan, 'тело записи — `live.body` (не загружен — null)').toMatch(/const body = this\.live\.body\(values\);/);
+    expect(chan, 'тело с базой — в обеих записях (оверрайд и файл)').toMatch(/const body = this\.body\(values\);[\s\S]*body: JSON\.stringify\(body\)/);
+    expect(chan, 'ответ 409 — отказ со строкой, без повтора').toMatch(/status === 409/);
   });
 });

@@ -58,9 +58,10 @@ function registry(): ConfigRegistry {
   const r = new ConfigRegistry();
   try {
     const raw = localStorage.getItem('pe_config');
-    if (raw) { r.loadAll(JSON.parse(raw) as Record<string, unknown>); return r; }
+    // ⭐ R22-01: и кэш редактора, и встроенные файлы — читателем: правило поверх таблиц (D4) судит сервер, а не сцена.
+    if (raw) { r.loadAll(JSON.parse(raw) as Record<string, unknown>, { cross: false }); return r; }
   } catch { /* битый кэш — не повод остаться без сцены */ }
-  r.loadAll();
+  r.loadAll(undefined, { cross: false });
   return r;
 }
 

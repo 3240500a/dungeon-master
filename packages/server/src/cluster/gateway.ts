@@ -9,7 +9,8 @@ import { cachedJson } from '../net/cachedJson.js';
 import { logThrottle } from '../net/logThrottle.js';
 import { queryText } from '../net/asyncRoute.js';
 import { sessionUser, routePass } from '../net/authSession.js';
-import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow } from './registry.js';
+import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow, type NodeCounters } from './registry.js';
+import { COUNTER_METRICS } from '../net/metrics.js';
 
 /**
  * Гейтвей (Ф4.1, Ф4.4): раздаёт клиенту адрес игровой ноды и держит очередь на вход.
@@ -409,9 +410,13 @@ async function dropTicket(ticket: string, userId: string): Promise<void> {
  *
  * Имена намеренно те же, что у одиночного процесса (`dm_cpu_*`, `dm_tick_hz`, `dm_rss_bytes`),
  * поэтому стенд и дашборд работают с кластером без единой правки.
+ *
+ * ⭐ E2E 30.09 (седьмой прогон): И СЧЁТЧИКИ НОД (`COUNTER_METRICS`: инциденты, кузница, медленные клиенты…) — суммой по кластеру
+ * (`foldNodeCounters`). Раньше здесь были только показатели ёмкости: на гейтвее боевого кластера не было ни одного счётчика инцидентов.
  */
 export async function clusterMetrics(): Promise<string> {
   const nodes = await liveNodes();
+  foldNodeCounters(nodes);
   const sum = (f: (n: NodeRow) => number): number => nodes.reduce((a, n) => a + f(n), 0);
   const players = sum((n) => n.players);
   const rooms = sum((n) => n.rooms);
@@ -434,5 +439,35 @@ export async function clusterMetrics(): Promise<string> {
   g('dm_cpu_system_seconds_total', 'Учтено в dm_cpu_user_seconds_total', 0, 'counter');
   const queued = await q1<{ n: string }>('SELECT COUNT(*) n FROM login_queue');
   g('dm_login_queue', 'Игроков в очереди на вход', Number(queued?.n ?? 0));
+  for (const [name, help] of COUNTER_METRICS) g(name, `${help} — сумма по нодам кластера`, nodeCounterSum.get(name) ?? 0, 'counter');
   return `${out.join('\n')}\n`;
+}
+
+/** ⭐ E2E 30.09: сумма счётчиков нод (имя метрики → значение) — монотонная, см. `foldNodeCounters`. */
+const nodeCounterSum = new Map<string, number>();
+/** Последний учтённый снимок каждой ноды (по id): метка её запуска и значения. Нод не больше 26 (R5-14) — не растёт. */
+const nodeCounterSeen = new Map<string, NodeCounters>();
+
+/**
+ * ⭐ E2E 30.09 (седьмой прогон): СЛОЖИТЬ СЧЁТЧИКИ НОД В СУММУ КЛАСТЕРА. Нода кладёт снимок своих счётчиков в строку реестра с каждым ударом
+ * сердца (`counterSnapshot`); сумма — по ПРИРОСТАМ, чтобы оставаться счётчиком: рестарт ноды (новая метка `boot`, счёт с нуля) и её уход из
+ * живых сумму не уменьшают — для Prometheus убывание счётчика — сброс, и `increase()` засчитал бы весь остаток суммы заново (ложная тревога
+ * по инцидентам соседних нод). Нода, вернувшаяся тем же процессом (пропускала удары), прежнее второй раз не приносит. Впервые увиденная
+ * гейтвеем нода приносит весь свой счёт — с первой сборки сумма равна сумме по живым нодам. Прирост ноды между её последним ударом и выходом
+ * (до 2 с) сюда не доходит — инциденты слива пишутся ещё и строкой «ИНЦИДЕНТ» в лог ноды.
+ */
+function foldNodeCounters(nodes: readonly NodeRow[]): void {
+  for (const n of nodes) {
+    const c = n.counters;
+    if (!c || typeof c !== 'object' || typeof c.boot !== 'string' || !c.values || typeof c.values !== 'object') continue;
+    const prev = nodeCounterSeen.get(n.id);
+    const same = prev?.boot === c.boot;
+    for (const [name, v] of Object.entries(c.values)) {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) continue;
+      const was = same ? prev!.values[name] ?? 0 : 0;
+      // Убыль у того же процесса счётчику не свойственна — считаем её сбросом (как Prometheus), а не отрицательным приростом.
+      nodeCounterSum.set(name, (nodeCounterSum.get(name) ?? 0) + (v >= was ? v - was : v));
+    }
+    nodeCounterSeen.set(n.id, c);
+  }
 }

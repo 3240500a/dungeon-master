@@ -59,7 +59,7 @@ function configData(): { classes: Record<string, unknown>[]; monsters: Record<st
       if (Array.isArray(c.classes)) return { classes: c.classes as Record<string, unknown>[], monsters: (Array.isArray(c.monsters) ? c.monsters : []) as Record<string, unknown>[] };
     }
   } catch { /* нет кэша — фолбэк ниже */ }
-  const reg = new ConfigRegistry(); reg.loadAll();
+  const reg = new ConfigRegistry(); reg.loadAll(undefined, { cross: false });   // ⭐ R22-01: читатель — правило поверх таблиц судит сервер
   return { classes: reg.get('classes') as unknown as Record<string, unknown>[], monsters: reg.get('monsters') as unknown as Record<string, unknown>[] };
 }
 

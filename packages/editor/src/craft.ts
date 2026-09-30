@@ -220,7 +220,7 @@ export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>
   if (sb.tab === 'blades') { renderCraftBlades(page, data, { rerender, changed: () => { dataRev++; }, io }); return; }
 
   const baseReg = new ConfigRegistry();
-  try { baseReg.loadAll(data); } catch (e) {
+  try { baseReg.loadAll(data, { cross: false }); } catch (e) {   // ⭐ R22-01: читатель рабочей копии — ошибка схемы таблицы, правило D4 — у записи
     const err = h('div', 'background:#2a1616;border:1px solid #6b2a2a;border-radius:8px;padding:10px;font-size:12px;color:#f0b0a8;white-space:pre-wrap;max-height:320px;overflow:auto');
     err.textContent = `Конфиг не проходит схему — ковка не соберётся. Поправь ручку во вкладке «🗡 Клинки» или на странице конфига.\n\n${e instanceof Error ? e.message : String(e)}`;
     page.append(err);
@@ -232,7 +232,7 @@ export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>
   const sdata = sandboxData(data, sb);
   const key = JSON.stringify([dataRev, sb.heroClass, sb.level, sb.preset, sb.bonusDmg, sb.bonusSpd, sb.blockLadder, sb.rangedEdge]);
   if (!harness || key !== hkey) {
-    const reg0 = new ConfigRegistry(); reg0.loadAll(sdata);
+    const reg0 = new ConfigRegistry(); reg0.loadAll(sdata, { cross: false });
     const keepWeapon = heroSave?.equipment.weapon;
     heroSave = sandboxHero(reg0, sb);
     // Надетое скованное переживает смену пресета — иначе сравнение «в руках» сбрасывалось бы на старт.

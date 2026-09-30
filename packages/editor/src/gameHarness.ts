@@ -24,7 +24,7 @@ import { setRarityMeta } from '@dm/client/modules/loot/rarity.js';
  */
 export function makeHarness(data: Record<string, unknown>, save: SaveState, onChange: () => void, stash?: AccountStash): App {
   const app = new App({ offline: true });
-  app.config.loadAll(data);
+  app.config.loadAll(data, { cross: false });   // ⭐ R22-01: читатель данных инструмента (правило D4 — у записи)
   harnessData.set(app, JSON.stringify(data));
   refreshResolvers(app);
   save.gold = 9_999_999; // калькулятор не гейтит по золоту (комиссии респеков/аллокаций покрыты)
@@ -59,7 +59,7 @@ const harnessData = new WeakMap<App, string>();
 export function followHarness(app: App, data: Record<string, unknown>): boolean {
   const json = JSON.stringify(data);
   if (harnessData.get(app) === json) return false;
-  app.config.loadAll(data);
+  app.config.loadAll(data, { cross: false });   // ⭐ R22-01: читатель данных инструмента (правило D4 — у записи)
   harnessData.set(app, json);
   refreshResolvers(app);
   return true;

@@ -116,10 +116,11 @@ export interface BladesCtx {
 export function renderCraftBlades(page: HTMLElement, data: Record<string, unknown>, ctx: BladesCtx): void {
   st.rerender = ctx.rerender;
   const touch = (key: string): void => { st.dirty.add(key); ctx.changed(); ctx.rerender(); };
-  // Один реестр на перерисовку — он же проверка схемы: неверная ручка показывает ошибку, а не роняет вкладку.
+  // Один реестр на перерисовку — он же проверка схемы: неверная ручка показывает ошибку, а не роняет вкладку. ⭐ R22-01: схемы таблиц — читателем;
+  // правило поверх таблиц (D4) судит запись (`validated` канала редактора, проба сервера), к клинкам оно отношения не имеет.
   let reg: ConfigRegistry | null = null;
   let regErr = '';
-  try { const r = new ConfigRegistry(); r.loadAll(data); reg = r; } catch (e) { regErr = e instanceof Error ? e.message : String(e); }
+  try { const r = new ConfigRegistry(); r.loadAll(data, { cross: false }); reg = r; } catch (e) { regErr = e instanceof Error ? e.message : String(e); }
   const craft = (data.balance as { craft?: RawCraft } | undefined)?.craft;
 
   page.append(legend(craft));
@@ -158,7 +159,7 @@ function noBrackets(data: Record<string, unknown>, touch: (key: string) => void)
   box.append(h('span', '', '⚠ В рабочей копии нет вилок клинка — длина и ширина ничего не значат. Скорее всего, на сервере лежит старый оверрайд <code>balance</code> (снят до §26): сбрось его или верни вилки и сохрани.'));
   const b = h('button', `${BTN};border-color:#e39a3c`, 'Вернуть вилки по умолчанию');
   b.addEventListener('click', () => {
-    const def = new ConfigRegistry(); def.loadAll();
+    const def = new ConfigRegistry(); def.loadAll(undefined, { cross: false });   // ⭐ R22-01: встроенные файлы — читателем (правило D4 — у записи)
     const bal = data.balance as { craft?: Record<string, unknown> } | undefined;
     if (!bal) return;
     bal.craft = { ...(bal.craft ?? {}), blade: structuredClone(def.get('balance').craft.blade) };

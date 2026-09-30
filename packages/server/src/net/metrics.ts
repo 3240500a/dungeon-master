@@ -153,6 +153,58 @@ export function readGauges(): Gauges { return gaugeProvider?.() ?? { rooms: 0, t
 const loop = monitorEventLoopDelay({ resolution: 5 });
 loop.enable();
 
+/**
+ * ⭐ E2E 30.09 (седьмой прогон): СЧЁТЧИКИ ПРОЦЕССА — ОДНОЙ ТАБЛИЦЕЙ. По ней их печатает `/metrics` процесса (`renderMetrics`) и по ней же снимает
+ * `counterSnapshot` для удара сердца ноды (`cluster/node.ts` → строка реестра `cluster_nodes.counters`), из которого гейтвей складывает метрики
+ * кластера под ТЕМИ ЖЕ именами (`cluster/gateway.ts`, `clusterMetrics`). Раньше гейтвей отдавал только показатели ёмкости, и ни одного счётчика нод
+ * (инциденты, кузница, медленные клиенты) на нём не было, хотя docs/DEPLOY.md обещал «сумму по кластеру, имена те же»: мониторинг боевого кластера
+ * по документу не видел ни одного инцидента целостности. Новый счётчик — строкой сюда: так он сразу и в `/metrics`, и в сумме кластера
+ * (сторож — `cluster/gateway.metrics.test.ts`). Процессорное время — не здесь: гейтвей складывает его из `cpu_seconds` строки реестра.
+ */
+export const COUNTER_METRICS: readonly (readonly [name: string, help: string, key: keyof typeof counters])[] = [
+  ['dm_slow_clients_dropped_total', 'Отключено клиентов из-за переполнения исходящей очереди', 'slowClientsDropped'],
+  ['dm_ticks_total', 'Шагов симуляции выполнено', 'ticks'],
+  ['dm_dropped_ticks_total', 'Шагов выброшено из-за перегрузки', 'droppedTicks'],
+  ['dm_snapshot_frames_total', 'Снапшотов разослано', 'snapshotFrames'],
+  ['dm_snapshot_bytes_total', 'Байт снапшотов разослано', 'snapshotBytes'],
+  ['dm_frames_in_total', 'Кадров принято от клиентов', 'framesIn'],
+  ['dm_frames_invalid_total', 'Кадров отброшено валидацией', 'framesInvalid'],
+  ['dm_input_throttled_total', 'Кадров ввода отброшено троттлингом', 'inputThrottled'],
+  ['dm_rate_limited_total', 'Отказов лимитеров частоты', 'rateLimited'],
+  ['dm_save_conflicts_total', 'Записей сейва отклонено по версии (ИНЦИДЕНТ, если растёт)', 'saveConflicts'],
+  ['dm_sessions_evicted_total', 'Живых сессий выселено при повторном входе', 'sessionsEvicted'],
+  ['dm_sessions_stale_total', 'Сессий снято за устаревший сейв (R1-01)', 'sessionsStale'],
+  ['dm_cmd_out_of_place_total', 'Городских команд прислано не из города (Ф3.1)', 'cmdOutOfPlace'],
+  ['dm_cmd_duplicate_total', 'Команд отброшено как повтор по номеру (Ф2.5)', 'cmdDuplicate'],
+  ['dm_cmd_invalid_total', 'Команд отброшено схемой (D11)', 'cmdInvalid'],
+  ['dm_cmd_failed_total', 'Команд, чей обработчик бросил исключение (ОШИБКА, если растёт)', 'cmdFailed'],
+  ['dm_cmd_rate_limited_total', 'Команд кузницы отклонено лимитом частоты (D12)', 'cmdRateLimited'],
+  ['dm_cmd_town_rate_limited_total', 'Команд города отклонено общим лимитом частоты (R1-11)', 'cmdTownRateLimited'],
+  ['dm_cmd_stash_rate_limited_total', 'Команд сундука отклонено лимитом чтений сундука (R12-13)', 'cmdStashRateLimited'],
+  ['dm_ledger_confiscated_total', 'Вещей чужого аккаунта или отозванных изъято из сейва на записи (R2-02)', 'ledgerConfiscated'],
+  ['dm_frame_errors_total', 'Кадров, погашенных из-за исключения в обработчике (R2-01; ОШИБКА, если растёт)', 'frameErrors'],
+  ['dm_frame_queue_overflow_total', 'Соединений закрыто за переполненную очередь кадров (C-06)', 'frameQueueOverflow'],
+  ['dm_stash_conflicts_total', 'Записей сундука отклонено по версии (D8)', 'stashConflicts'],
+  ['dm_save_errors_total', 'Записей сейва, упавших с ошибкой базы', 'saveErrors'],
+  ['dm_farewell_retry_failed_total', 'Фоновых попыток дописать недописанную копию героя, снова упавших (R3-19)', 'farewellRetryFailed'],
+  ['dm_farewell_forgotten_total', 'Недописанных копий героя, забытых из-за закрепления у другой ноды (R7-09) или не дописанных сливом ноды за бюджет (R12-04), — инцидент', 'farewellForgotten'],
+  ['dm_ledger_drain_lost_total', 'Сводов записей забега, не дописанных сливом ноды за бюджет (R14-07), — инцидент', 'ledgerDrainLost'],
+  ['dm_write_foreign_total', 'Записей строки героя, отказанных проверкой владения: героя держит другая нода (R18-03), — инцидент', 'writeForeign'],
+  ['dm_config_override_skipped_total', 'Оверрайдов конфига, пропущенных пересборкой целиком: таблица живёт на файле без правок хозяина (R20-08), — инцидент', 'configOverridesSkipped'],
+  ['dm_forge_crafted_total', 'Вещей скованно (K7)', 'forgeCrafted'],
+  ['dm_forge_melted_total', 'Скованных вещей переплавлено (K7)', 'forgeMelted'],
+  ['dm_forge_salvaged_total', 'Найденных вещей разобрано — у кузнеца и на месте (K7)', 'forgeSalvaged'],
+  ['dm_forge_enchanted_total', 'Скованных вещей зачаровано (K7)', 'forgeEnchanted'],
+];
+
+/** Метка запуска процесса: по ней гейтвей отличает рестарт ноды (счёт с нуля) от убыли, которой у счётчика не бывает. */
+const BOOT = `${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** ⭐ E2E 30.09: снимок счётчиков процесса для удара сердца ноды — имена метрик (`COUNTER_METRICS`) и метка запуска. */
+export function counterSnapshot(): { boot: string; values: Record<string, number> } {
+  return { boot: BOOT, values: Object.fromEntries(COUNTER_METRICS.map(([name, , key]) => [name, counters[key]])) };
+}
+
 // Частоту мира считаем как приращение `ticks` за интервал между сборками метрик:
 // это фактическая частота, а не заданная.
 // Считается ТОЛЬКО между двумя сборками. Первый запрос отдаёт 0, а не «среднее от старта
@@ -189,7 +241,6 @@ export function renderMetrics(): string {
 
   g('dm_rooms', 'Комнат в процессе (включая паузу грейса)', gauges.rooms);
   g('dm_rooms_ticking', 'Комнат под планировщиком тиков', gauges.ticking);
-  g('dm_slow_clients_dropped_total', 'Отключено клиентов из-за переполнения исходящей очереди', counters.slowClientsDropped, 'counter');
   g('dm_players', 'Игроков в мире', gauges.players);
   g('dm_connections', 'Открытых WebSocket-соединений', gauges.connections);
   g('dm_tick_hz', 'Фактическая частота мира на комнату, Гц', Number(tickHz.toFixed(2)));
@@ -201,38 +252,7 @@ export function renderMetrics(): string {
   g('dm_cpu_user_seconds_total', 'Процессорное время в пользовательском режиме', cpu.user / 1e6, 'counter');
   g('dm_cpu_system_seconds_total', 'Процессорное время в системном режиме', cpu.system / 1e6, 'counter');
 
-  g('dm_ticks_total', 'Шагов симуляции выполнено', counters.ticks, 'counter');
-  g('dm_dropped_ticks_total', 'Шагов выброшено из-за перегрузки', counters.droppedTicks, 'counter');
-  g('dm_snapshot_frames_total', 'Снапшотов разослано', counters.snapshotFrames, 'counter');
-  g('dm_snapshot_bytes_total', 'Байт снапшотов разослано', counters.snapshotBytes, 'counter');
-  g('dm_frames_in_total', 'Кадров принято от клиентов', counters.framesIn, 'counter');
-  g('dm_frames_invalid_total', 'Кадров отброшено валидацией', counters.framesInvalid, 'counter');
-  g('dm_input_throttled_total', 'Кадров ввода отброшено троттлингом', counters.inputThrottled, 'counter');
-  g('dm_rate_limited_total', 'Отказов лимитеров частоты', counters.rateLimited, 'counter');
-  g('dm_save_conflicts_total', 'Записей сейва отклонено по версии (ИНЦИДЕНТ, если растёт)', counters.saveConflicts, 'counter');
-  g('dm_sessions_evicted_total', 'Живых сессий выселено при повторном входе', counters.sessionsEvicted, 'counter');
-  g('dm_sessions_stale_total', 'Сессий снято за устаревший сейв (R1-01)', counters.sessionsStale, 'counter');
-  g('dm_cmd_out_of_place_total', 'Городских команд прислано не из города (Ф3.1)', counters.cmdOutOfPlace, 'counter');
-  g('dm_cmd_duplicate_total', 'Команд отброшено как повтор по номеру (Ф2.5)', counters.cmdDuplicate, 'counter');
-  g('dm_cmd_invalid_total', 'Команд отброшено схемой (D11)', counters.cmdInvalid, 'counter');
-  g('dm_cmd_failed_total', 'Команд, чей обработчик бросил исключение (ОШИБКА, если растёт)', counters.cmdFailed, 'counter');
-  g('dm_cmd_rate_limited_total', 'Команд кузницы отклонено лимитом частоты (D12)', counters.cmdRateLimited, 'counter');
-  g('dm_cmd_town_rate_limited_total', 'Команд города отклонено общим лимитом частоты (R1-11)', counters.cmdTownRateLimited, 'counter');
-  g('dm_cmd_stash_rate_limited_total', 'Команд сундука отклонено лимитом чтений сундука (R12-13)', counters.cmdStashRateLimited, 'counter');
-  g('dm_ledger_confiscated_total', 'Вещей чужого аккаунта или отозванных изъято из сейва на записи (R2-02)', counters.ledgerConfiscated, 'counter');
-  g('dm_frame_errors_total', 'Кадров, погашенных из-за исключения в обработчике (R2-01; ОШИБКА, если растёт)', counters.frameErrors, 'counter');
-  g('dm_frame_queue_overflow_total', 'Соединений закрыто за переполненную очередь кадров (C-06)', counters.frameQueueOverflow, 'counter');
-  g('dm_stash_conflicts_total', 'Записей сундука отклонено по версии (D8)', counters.stashConflicts, 'counter');
-  g('dm_save_errors_total', 'Записей сейва, упавших с ошибкой базы', counters.saveErrors, 'counter');
-  g('dm_farewell_retry_failed_total', 'Фоновых попыток дописать недописанную копию героя, снова упавших (R3-19)', counters.farewellRetryFailed, 'counter');
-  g('dm_farewell_forgotten_total', 'Недописанных копий героя, забытых из-за закрепления у другой ноды (R7-09) или не дописанных сливом ноды за бюджет (R12-04), — инцидент', counters.farewellForgotten, 'counter');
-  g('dm_ledger_drain_lost_total', 'Сводов записей забега, не дописанных сливом ноды за бюджет (R14-07), — инцидент', counters.ledgerDrainLost, 'counter');
-  g('dm_write_foreign_total', 'Записей строки героя, отказанных проверкой владения: героя держит другая нода (R18-03), — инцидент', counters.writeForeign, 'counter');
-  g('dm_config_override_skipped_total', 'Оверрайдов конфига, пропущенных пересборкой целиком: таблица живёт на файле без правок хозяина (R20-08), — инцидент', counters.configOverridesSkipped, 'counter');
-  g('dm_forge_crafted_total', 'Вещей скованно (K7)', counters.forgeCrafted, 'counter');
-  g('dm_forge_melted_total', 'Скованных вещей переплавлено (K7)', counters.forgeMelted, 'counter');
-  g('dm_forge_salvaged_total', 'Найденных вещей разобрано — у кузнеца и на месте (K7)', counters.forgeSalvaged, 'counter');
-  g('dm_forge_enchanted_total', 'Скованных вещей зачаровано (K7)', counters.forgeEnchanted, 'counter');
+  for (const [name, help, key] of COUNTER_METRICS) g(name, help, counters[key], 'counter');
 
   loop.reset();
   return lines.join('\n') + '\n';

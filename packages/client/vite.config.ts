@@ -25,12 +25,14 @@ const LAN = !!process.env.DM_LAN;
  * ⭐ R18-08: ШТАМП СБОРКИ — хэш исходников shared (`buildStampOf`), тот же, что сервер считает на старте по файлам, с которых работает
  * (`server/src/buildStamp.ts`) и шлёт в `joined.build`. Вкладка, пережившая деплой со старым бандлом, видит чужой штамп — «перезагрузите»
  * (`App`). Только `vite build`: дев-сервер считал бы его раз на запуск, а исходники под ним меняются — вкладке пустой штамп, сравнения нет.
+ * ⭐ D3: папку читает `buildStampOfDir` — тем же отбором, что сервер (`server/src/buildStamp.ts` `stampOfDir`); концы строк не в счёт (R19-06):
+ * бандл из выгрузки Windows (CRLF) и сервер из выгрузки Linux (LF) — один штамп (сторож — `server/src/buildStamp.test.ts`).
  */
-function buildStamp(): string {
-  const dir = resolve(__dirname, '../shared/src');
+export function buildStampOfDir(dir: string): string {
   const files = readdirSync(dir, { recursive: true }).map(String).filter(isBuildStampSource);
   return buildStampOf(files.map((p) => [p, readFileSync(join(dir, p), 'utf8')] as const));
 }
+function buildStamp(): string { return buildStampOfDir(resolve(__dirname, '../shared/src')); }
 
 export default defineConfig(({ command }) => ({
   resolve: {

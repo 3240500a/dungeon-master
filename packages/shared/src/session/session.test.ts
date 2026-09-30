@@ -13,11 +13,13 @@ import { serializeWorld } from './serialize.js';
 import { respecSkills, equip, unequip, allocAttr, respec, socketInsert, socketClear } from '../economy/townActions.js';
 import { addDebuffStack } from '../world/debuffs.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
-import { BUFF_MIN_REST, buffCooldown } from '../formulas/combat.js';
+import { buffNodeCooldown, buffRestFloor, buffTimingIssues, buffUptimeBound, clampBuffCooldown, setBuffTimingWarn } from '../formulas/buffTiming.js';
 import { xpForLevel } from '../formulas/xp.js';
 import { addToInventory } from '../inventory/grid.js';
 import { playerSnapshot } from './derive.js';
 import { effectivePool, reservedFrac, toggleBuffMods } from './toggles.js';
+import { behaviorFor } from './behavior.js';
+import { monstersSchema } from '../config/schemas.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -1928,13 +1930,15 @@ describe('⚠ R6-15: бафф держит свой откат', () => {
   });
 
   /**
-   * ⚠ R19-03: РАНГ РЕЖЕТ ОТКАТ, А НЕ ДЕЙСТВИЕ. `abilityCooldown` снимает 3 % за ранг (до 35 % базы), `durationSec` не меняется: с ранга,
-   * где откат ≤ действия, повтор в кадр истечения держал бафф 100 % времени — ровно то, что закрывал R6-15. «Огненные чары» (откат 12 с
-   * на 12 с действия) — с первого ранга (99.8 %), клич воина и щит бури — с 13-го, мантия — с 11-го, прицельный выстрел — с 15-го.
+   * ⭐ D4: ОДНО ПРАВИЛО ВРЕМЕНИ БАФФА (`formulas/buffTiming.ts`). Откат на КАЖДОМ ранге не короче действия с отдыхом баланса
+   * (`buffMinRest`): под баффом не больше 1 / (1 + buffMinRest) времени. История — R6-15 (отката не было), R19-03 (ранг режет откат, а не
+   * действие: «Огненные чары» 12 с на 12 с — 99.8 % с первого ранга, клич воина и щит бури — с 13-го; зажим был только в ядре). Данные теперь
+   * держат правило сами (схема не пускает иначе), и ядро меряется им на КАЖДОМ ранге каждого баффа: повтор каждый кадр, ресурс бесконечен.
    */
-  it('⭐ каждый бафф игры на каждом ранге: под баффом меньше 90 % времени (повтор каждый кадр, ресурс бесконечен)', () => {
+  it('⭐ D4: каждый бафф игры на каждом ранге — под баффом не больше правила, первый ранг кастуется ровно по откату из данных', () => {
     const r = reg();
     const tree = r.get('skill-tree');
+    const bound = buffUptimeBound(r.get('balance').buffMinRest);
     const buffs = tree.nodes.filter((n) => n.effect.active?.category === 'buff');
     expect(buffs.length, 'баффы в игре есть').toBeGreaterThan(0);
     const dt = 1 / 30;
@@ -1953,7 +1957,7 @@ describe('⚠ R6-15: бафф держит свой откат', () => {
         // Два полных цикла «каст → каст → каст»: доля времени под баффом между первым и третьим кастом — без хвоста окна.
         const casts: number[] = [];
         let up = 0;
-        for (let i = 0; i < 60 * 30; i++) {
+        for (let i = 0; i < 90 * 30; i++) {
           p.stamina = 1e6; p.mana = 1e6;
           const had = (p.skillBuffs[node.id] ?? 0) > 0;
           s.tick(dt, { p1: { ...idle, cast: node.id } });
@@ -1962,26 +1966,118 @@ describe('⚠ R6-15: бафф держит свой откат', () => {
           if (casts.length && has) up++;
         }
         const span = casts.length === 3 ? casts[2]! - casts[0]! : 0;
-        if (!span || up / span >= 0.9) over.push(`${node.id} ранг ${rank}: ${span ? `${(100 * up / span).toFixed(1)} %` : `кастов за минуту ${casts.length}`}`);
-        // Честная игра прежняя: на первом ранге бафф с откатом длиннее действия (с запасом) кастуется ровно по своему откату.
-        if (rank === 1 && a.cooldown >= a.durationSec * 1.25 && span && Math.abs((casts[1]! - casts[0]!) * dt - a.cooldown) > dt + 1e-6) {
+        if (!span || up / span > bound + 1e-9) over.push(`${node.id} ранг ${rank}: ${span ? `${(100 * up / span).toFixed(1)} % > ${(100 * bound).toFixed(1)} %` : `кастов за полторы минуты ${casts.length}`}`);
+        // Честная игра: на первом ранге бафф кастуется ровно по своему откату из данных (он и в описании).
+        if (rank === 1 && span && Math.abs((casts[1]! - casts[0]!) * dt - a.cooldown) > dt + 1e-6) {
           honest.push(`${node.id}: каст раз в ${((casts[1]! - casts[0]!) * dt).toFixed(2)} с при откате ${a.cooldown}`);
         }
       }
     }
-    expect(over, 'бафф висит (почти) всё время — или не встал вовсе').toEqual([]);
+    expect(over, 'бафф висит дольше правила — или не встал вовсе').toEqual([]);
     expect(honest, 'первый ранг — по откату из данных').toEqual([]);
-  }, 60_000);   // ~100 сессий по два цикла баффа: работа, а не ожидание
+  }, 60_000);   // ~40 сессий по два цикла баффа: работа, а не ожидание
 
-  it('R19-03: у каждого баффа в данных откат не короче действия с отдыхом — откат из описания и есть настоящий на первом ранге', () => {
-    const bad = reg().get('skill-tree').nodes.flatMap((n) => {
+  it('⭐ D4: данные игры держат правило сами — ни одного нарушения на любом ранге (зажим ядра на них не срабатывает)', () => {
+    const r = reg();
+    const bal = r.get('balance');
+    expect(buffTimingIssues({ balance: bal, 'skill-tree': r.get('skill-tree'), 'skill-inserts': r.get('skill-inserts') })).toEqual([]);
+    for (const n of r.get('skill-tree').nodes) {
       const a = n.effect.active;
-      return a?.category === 'buff' && buffCooldown(a.cooldown, a.durationSec, 1) !== a.cooldown ? [`${n.id}: откат ${a.cooldown} с на ${a.durationSec} с действия`] : [];
-    });
-    expect(bad).toEqual([]);
-    expect(buffCooldown(12, 12, 1), '«Огненные чары» до правки данных: 12 с на 12 с').toBe(12 * (1 + BUFF_MIN_REST));
-    expect(buffCooldown(12, 8, 20), 'ранг режет откат не ниже действия с отдыхом').toBe(8 * (1 + BUFF_MIN_REST));
-    expect(buffCooldown(12, 8, 1)).toBe(12);
+      if (a?.category !== 'buff') continue;
+      for (let rank = 1; rank <= n.maxRank; rank++) {
+        const cd = buffNodeCooldown(a.cooldown, rank, n.maxRank);
+        expect(clampBuffCooldown(cd, a.durationSec, bal.buffMinRest, n.id), `${n.id} ранг ${rank}`).toBe(cd);
+      }
+    }
+  });
+
+  it('⭐ D4: ранг выше потолка узла (вложен до того, как потолок снизили) откат дальше не режет', () => {
+    const r = reg();
+    const node = r.get('skill-tree').nodes.find((n) => n.id === 'b-class-warrior-a5')!;
+    const a = node.effect.active!;
+    if (a.category !== 'buff') throw new Error('клич — бафф');
+    const s = new GameSession(r, 7, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    p.save.level = 99;
+    p.save.skills[node.id] = node.maxRank + 12;
+    s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+    p.stamina = 50;
+    s.tick(1 / 30, { p1: { ...idle, cast: node.id } });
+    expect(p.skillBuffs[node.id], 'бафф встал').toBeGreaterThan(0);
+    expect(p.skillCd[node.id], 'откат — как на потолке ранга').toBeCloseTo(buffNodeCooldown(a.cooldown, node.maxRank, node.maxRank) - 1 / 30, 6);
+  });
+
+  it('⭐ D4: конфиг мимо схемы (правка таблицы на лету) — ядро зажимает откат до правила и говорит об этом раз, а не на каждый каст', () => {
+    const r = reg();
+    const node = r.get('skill-tree').nodes.find((n) => n.id === 'b-class-warrior-a5')!;
+    const a = node.effect.active as { cooldown: number; durationSec: number };
+    a.cooldown = 1;   // мимо реестра: объект таблицы правится прямо
+    const lines: string[] = [];
+    const was = setBuffTimingWarn((l) => lines.push(l));
+    try {
+      const s = new GameSession(r, 7, 'normal');
+      const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+      p.save.skills[node.id] = 1;
+      s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+      const casts: number[] = [];
+      for (let i = 0; i < 30 * 30; i++) {
+        p.stamina = 50;
+        const had = (p.skillBuffs[node.id] ?? 0) > 0;
+        s.tick(1 / 30, { p1: { ...idle, cast: node.id } });
+        if (!had && (p.skillBuffs[node.id] ?? 0) > 0) casts.push(i);
+      }
+      const floor = buffRestFloor(a.durationSec, r.get('balance').buffMinRest);
+      expect(casts.length, 'касты были').toBeGreaterThan(1);
+      for (let k = 1; k < casts.length; k++) expect((casts[k]! - casts[k - 1]!) / 30, `промежуток ${k}`).toBeGreaterThanOrEqual(floor - 1e-6);
+      expect(lines.length, 'сказано один раз').toBe(1);
+      expect(lines[0]).toMatch(/b-class-warrior-a5/);
+    } finally { setBuffTimingWarn(was); }
+  });
+});
+
+/**
+ * ⭐ D4: У ПЕЧАТИ СВОЙ ОТКАТ. Прок-бафф вставки «Печать» (`ins:<вставка>`) освежался каждым применением носителя: на спамном ударе (откат 0)
+ * — 100 % времени под бронёй/ускорением, мимо правила времени баффа. Теперь у печати откат (`proc.ability.cooldown`, общий на все скилы с
+ * этой вставкой), и данные держат правило на высшем ранге донора (действие растёт с его рангом).
+ */
+describe('⭐ D4: печать держит свой откат', () => {
+  /** Воин с двумя спамными ударами (откат 0) на мане; в обоих «Оберег» на высшем ранге донора. */
+  function sigilRig() {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_spam_a', activeFx({ category: 'attack', resource: 'mana', manaCost: 0 }));
+    injectSkill(r, 'warrior', 't_spam_b', activeFx({ category: 'attack', resource: 'mana', manaCost: 0 }));
+    const s = new GameSession(r, 31, 'normal');
+    const save = newBotSave(r, 'warrior');
+    const donor = r.get('skill-tree').nodes.find((n) => n.effect.grantsInsert === 'ins-ward')!;
+    save.skills[donor.id] = donor.maxRank;
+    save.skills.t_spam_a = 1; save.skills.t_spam_b = 1;
+    save.sockets = { t_spam_a: ['ins-ward'], t_spam_b: ['ins-ward'] };
+    const p = s.addPlayer('p1', save);
+    s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+    return { r, s, p };
+  }
+
+  it('⭐ два спамных носителя по очереди минуту: печать — не чаще её отката, под ней не больше правила', () => {
+    const { r, s, p } = sigilRig();
+    const ab = insertById(r, 'ins-ward')!.proc!.ability;
+    if (ab.category !== 'buff') throw new Error('печать — бафф');
+    const bound = buffUptimeBound(r.get('balance').buffMinRest);
+    const rises: number[] = [];
+    let up = 0;
+    const T = 60 * 30;
+    for (let i = 0; i < T; i++) {
+      p.mana = 1e6; p.stamina = 1e6;
+      const had = p.skillBuffs['ins:ins-ward'] ?? 0;
+      s.tick(1 / 30, { p1: { ...idle, cast: i % 2 ? 't_spam_a' : 't_spam_b' } });
+      const has = p.skillBuffs['ins:ins-ward'] ?? 0;
+      if (has > had + 1e-9) rises.push(i);
+      if (has > 0) up++;
+    }
+    expect(rises.length, 'печать срабатывала').toBeGreaterThan(2);
+    for (let k = 1; k < rises.length; k++) expect((rises[k]! - rises[k - 1]!) / 30, `промежуток ${k}: не чаще отката печати`).toBeGreaterThanOrEqual(ab.cooldown - 1e-6);
+    const span = rises[rises.length - 1]! - rises[0]!;
+    const upInSpan = up - (T - rises[rises.length - 1]!);   // хвост после последнего срабатывания — не в счёт
+    expect(Math.max(0, upInSpan) / span, 'доля времени под печатью').toBeLessThanOrEqual(bound + 0.01);
   });
 });
 
@@ -2384,5 +2480,127 @@ describe('⚠ R15-10: левелап — полный максимум с аур
     expect(p.maxHp).toBe(want.derived.maxHp);
     expect(p.hp, 'и на следующем тике — полон').toBe(p.maxHp);
     expect(p.stamina, 'выносливость — до резерва стойки').toBeCloseTo(effectivePool(want.derived.maxStamina, reservedFrac(r, p.toggles, 'stamina')), 6);
+  });
+});
+
+/**
+ * ⚠ R21-06: ВЗРЫВ КОНСТРУКТА ПРИ СМЕРТИ — ТОЛЬКО ПО ВИДИМОМУ. Сигнатура `overload` (профиль фракции конструктов `monster` в
+ * `monster-behaviors`) била каждого героя в радиусе по одному расстоянию: сквозь стену в клетку, закрытую дверь рычага и колонну —
+ * полным броском урона (мог и убить: полный штраф смерти подземелья). Любой другой урон монстра по герою видимость держит — ближний
+ * удар (M2) и снаряд (C-10); урон героев по площади — тоже (R5-05). Теперь и взрыв: та же видимость от монстра до героя (сетка, шов,
+ * преграды декора, закрывающие обзор). Скрытое, пока все монстры поставки — нежить: путь открывает первый же конструкт.
+ */
+describe('⚠ R21-06: взрыв конструкта при смерти не проходит сквозь стену, закрытую дверь и колонну', () => {
+  type Obst = NonNullable<FloorLayout['obstacles']>;
+  /**
+   * Поле 12×9, столбец 5 — из `cell` (null — пол). Конструкт вплотную к столбцу слева, герой вплотную справа: между центрами
+   * клетка + два радиуса (~61 px) — внутри взрыва (радиус монстра + 48 + радиус героя). `pull` — рычаг двери дёрнут до смерти.
+   */
+  function blast(cell: Cell | null, opts: { obstacles?: Obst; pull?: boolean } = {}) {
+    const r = reg();
+    const s = new GameSession(r, 1, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'mage'));
+    const g = openField(12, 9);
+    const cells = Array.from({ length: 7 }, (_, i) => ({ cx: 5, cy: i + 1 }));
+    if (cell !== null) for (const c of cells) g[c.cy]![c.cx] = cell;
+    const lever = cellToWorld(7, 2);
+    const door = cell === Cell.Door ? { doors: [{ id: 1, cells }], levers: [{ id: 7, x: lever.x, y: lever.y, doorId: 1 }] } : {};
+    const con = tankMon(r, cellToWorld(4, 4).x, cellToWorld(4, 4).y, 'monster');
+    con.def.ai = 'stationary'; con.def.accuracy = 1e6; con.def.minDamage = 30; con.def.maxDamage = 30;
+    s.enterFloor(1, { grid: g, spawn: cellToWorld(7, 4), monsters: [con], obstacles: opts.obstacles ?? [], ...door });
+    s.tick(1 / 30, { p1: idle });   // снимок героя: удар по нему — по снимку тика
+    if (opts.pull) { p.pos = cellToWorld(7, 3); expect(s.openLever('p1', 7), 'рычаг открыл дверь').toBe(1); }
+    const m = s.world.monsters[0]!;
+    m.pos = { x: 5 * TILE - m.radius - 0.5, y: cellToWorld(4, 4).y }; m.vel = { x: 0, y: 0 };
+    p.pos = { x: 6 * TILE + p.radius + 0.5, y: m.pos.y };
+    expect(Math.hypot(p.pos.x - m.pos.x, p.pos.y - m.pos.y), 'герой внутри радиуса взрыва').toBeLessThan(m.radius + 48 + p.radius);
+    const hp0 = p.hp;
+    const ev = s.collectEvents(() => (s as unknown as { killMonster(m: unknown, k: unknown): void }).killMonster(m, undefined));
+    expect(ev.some((e) => e.type === 'monster-died'), 'конструкт погиб').toBe(true);
+    return { hits: ev.filter((e) => e.type === 'hit' && e.target === 'player').length, hp0, hp: p.hp, m, p };
+  }
+  const pillar = (blocksSight: boolean): Obst => [{ x: 5.5 * TILE, y: cellToWorld(4, 4).y, shape: 'circle', r: 8, blocksSight }];
+
+  it('⭐ стена в клетку между конструктом и героем: взрыва по герою нет, здоровье цело', () => {
+    const b = blast(Cell.Wall);
+    expect(b.hits, 'сквозь стену — ни одного удара').toBe(0);
+    expect(b.hp).toBe(b.hp0);
+  });
+
+  it('⭐ закрытая дверь рычага держит взрыв; рычаг дёрнут — тот же взрыв достаёт', () => {
+    const shut = blast(Cell.Door);
+    expect(shut.hits, 'сквозь закрытую дверь — ничего').toBe(0);
+    expect(shut.hp).toBe(shut.hp0);
+    const open = blast(Cell.Door, { pull: true });
+    expect(open.hits, 'дверь открыта — взрыв по герою').toBe(1);
+    expect(open.hp).toBeLessThan(open.hp0);
+  });
+
+  it('⭐ колонна, закрывающая обзор, держит взрыв; низкий декор — нет', () => {
+    const high = blast(null, { obstacles: pillar(true) });
+    expect(high.hits, 'сквозь колонну — ничего').toBe(0);
+    expect(high.hp).toBe(high.hp0);
+    const low = blast(null, { obstacles: pillar(false) });
+    expect(low.hits, 'над низким декором — достаёт').toBe(1);
+    expect(low.hp).toBeLessThan(low.hp0);
+  });
+
+  it('контроль: то же расстояние на открытом полу — взрыв бьёт героя', () => {
+    const b = blast(null);
+    expect(b.hits).toBe(1);
+    expect(b.hp).toBeLessThan(b.hp0);
+  });
+
+  /**
+   * ⚠ R21-06 (нашёл фаззер правил в профиле `constructs`: I6 `dead-hp`, «левелап трупа»). Награда убийцы решалась ДО взрыва (`reward` —
+   * живой убийца), а выдавалась ПОСЛЕ: взрыв убивал убийцу, и лечение за убийство и левелап (полное здоровье) доставались трупу —
+   * `alive = false` при здоровье выше нуля (V-RF-04: награды убийцы — только живому). Теперь награды — в миг убийства живому, взрыв — после.
+   */
+  function killerInBlast(opts: { lifeOnKill?: number; nearLevel?: boolean; blastDmg: number }) {
+    const r = reg();
+    const s = new GameSession(r, 1, 'normal');
+    const save = newBotSave(r, 'mage');
+    if (opts.lifeOnKill) save.equipment.weapon!.affixes.push({ affixId: 'test', kind: 'suffix', modifier: { stat: 'lifeOnKill', kind: 'flat', value: opts.lifeOnKill } });
+    if (opts.nearLevel) save.xp = xpForLevel(save.level + 1, r.get('balance').xpTable) - 1;
+    const p = s.addPlayer('p1', save);
+    const at = cellToWorld(5, 4);
+    const con = tankMon(r, at.x + 30, at.y, 'monster');
+    con.def.ai = 'stationary'; con.def.accuracy = 1e6; con.def.minDamage = opts.blastDmg; con.def.maxDamage = opts.blastDmg; con.def.xp = 50;
+    s.enterFloor(1, { grid: openField(12, 9), spawn: at, monsters: [con] });
+    s.tick(1 / 30, { p1: idle });
+    const m = s.world.monsters[0]!;
+    m.pos = { x: at.x + 30, y: at.y }; p.pos = { ...at };
+    p.hp = 1;
+    const level0 = save.level, xp0 = save.xp;
+    const ev = s.collectEvents(() => (s as unknown as { killMonster(m: unknown, k: unknown): void }).killMonster(m, p));
+    return { p, save, ev, level0, xp0 };
+  }
+
+  it('⭐ взрыв убил убийцу с «жизнью за убийство» — павший не лечится; награда была живому', () => {
+    const { p, save, ev, xp0 } = killerInBlast({ lifeOnKill: 5, blastDmg: 400 });
+    expect(ev.some((e) => e.type === 'player-died' && e.playerId === 'p1'), 'взрыв смертелен').toBe(true);
+    expect(p.alive).toBe(false);
+    expect(p.hp, 'труп не лечится').toBe(0);
+    expect(save.xp, 'опыт — живому убийце в миг убийства').toBe(xp0 + 50);
+    expect(ev.find((e) => e.type === 'monster-died')?.by, '«Уничтожить N» — ему же').toBe('p1');
+  });
+
+  it('⭐ взрыв убил убийцу на пороге уровня — левелап был живому, труп на нуле', () => {
+    const { p, save, ev, level0 } = killerInBlast({ nearLevel: true, blastDmg: 1e5 });
+    expect(ev.some((e) => e.type === 'levelup' && e.playerId === 'p1'), 'левелап за убийство').toBe(true);
+    expect(save.level).toBe(level0 + 1);
+    expect(ev.some((e) => e.type === 'player-died' && e.playerId === 'p1'), 'и всё же взрыв смертелен').toBe(true);
+    expect(p.alive).toBe(false);
+    expect(p.hp, 'левелап не поднял труп').toBe(0);
+    const iLevel = ev.findIndex((e) => e.type === 'levelup'), iDied = ev.findIndex((e) => e.type === 'player-died');
+    expect(iLevel, 'левелап — до взрыва').toBeLessThan(iDied);
+  });
+
+  it('⭐ новый монстр без фракции — не конструкт: фракция по умолчанию без сигнатуры смерти', () => {
+    const r = reg();
+    const [fresh] = monstersSchema.parse([{ id: 'r21-new', name: 'Новый', sprite: 'skeleton' }]);
+    expect(behaviorFor(fresh!.faction, r.get('monster-behaviors')).signature, `фракция по умолчанию «${fresh!.faction}»`).toBe('none');
+    // Сам взрыв — сигнатура фракции конструктов: на неё путь выше и открыт.
+    expect(behaviorFor('monster', r.get('monster-behaviors')).signature).toBe('overload');
   });
 });

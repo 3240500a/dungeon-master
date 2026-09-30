@@ -6,11 +6,10 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
-import { CONFIG_REV_HEADER, ConfigRegistry, configSchemas, configRevs, type ConfigKey } from '@dm/shared';
-import { configKeyForFile } from './configFiles.js';
+import { CONFIG_REV_HEADER, ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
+import { configWatcher } from './configWatch.js';
 import { startConfigSync } from './configSync.js';
 import { liveConfig } from './configLive.js';
-import { configWriter } from './configWrites.js';
 import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
 import {
   listAllCharacters, getCharacter,
@@ -33,6 +32,7 @@ import { sessionUser, primeKnown, setRoutePassKey } from './net/authSession.js';
 import { setDeviceKey } from './net/deviceToken.js';
 import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
+import { installConfigWrites } from './net/configRoutes.js';
 import { ah, httpErrors, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
@@ -296,80 +296,26 @@ const devGate: RequestHandler = (req, res, next) => {
  * (ровно тот довод, по которому общий `express.json` отсюда убрали).
  */
 const devJson = express.json({ limit: '24mb' });
-/**
- * ⭐ C-09: запись таблиц конфига — только поверх того, что редактор загрузил (`__baseRev`, ревизии загруженного): таблица на сервере уже
- * другая (сохранили в другой вкладке, инструментом, с другой машины; вкладка открыта при лежащем сервере — с дефолтами) — 409, ничего не
- * записано. Сверка и запись — одним шагом (`configWriter`); ответ несёт новые ревизии (`rev`) — база следующей записи редактора.
- */
-const writeConfig = configWriter((key) => config.get(key as ConfigKey));
-/** 409 записи конфига поверх чужой правки. */
-function staleConfig(res: Response, conflicts: string[], rev: Record<string, string>): void {
-  console.log(`[dm-server] запись конфига отклонена (на сервере новее): ${conflicts.join(', ')}`);
-  res.status(409).json({ error: 'На сервере более новая версия', conflicts, rev });
-}
-app.post('/api/dev/config', devGate, devJson, ah(async (req, res) => {
-  const { __baseRev, ...overrides } = (req.body ?? {}) as Record<string, unknown>;
-  try {
-    const trial = new ConfigRegistry(); // валидация ДО записи в БД (на временном реестре)
-    trial.loadAll();
-    trial.reload(overrides); // бросит при мусоре/неизвестном ключе
-  } catch (e) {
-    return res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
-  }
-  const r = await writeConfig(__baseRev, Object.keys(overrides), async () => {
-    for (const [key, value] of Object.entries(overrides)) await setConfigOverride(key, value);
-    await rebuildConfig();
-  });
-  if (!r.ok) return staleConfig(res, r.conflicts, r.rev);
-  console.log(`[dm-server] конфиг сохранён из редактора: ${Object.keys(overrides).join(', ') || '—'}`);
-  res.json({ ok: true, applied: Object.keys(overrides), rev: r.rev });
-}));
-
-// «Применить везде»: пишет правку прямо в ФАЙЛ-источник (data/*.json) → попадёт в git и на деплой.
-// Дополнительно ставит оверрайд в БД, чтобы живой конфиг остался верным (не откатился на дефолт,
-// импортированный в память при старте). ⭐ R15-05: и сам файл — основа следующих пересборок (`live.noteFile`): наблюдатель снимет
-// оверрайд («файл главнее»), и сверка, пересобрав конфиг, возьмёт таблицу из файла, а не из импорта старта. DEV-only.
+// «Применить на сервере», «Применить везде» (файл `data/*.json` + оверрайд) и «Сбросить к дефолту» — `net/configRoutes.ts`. ⭐ R21-02:
+// проба записи — над тем, что соберёт пересборка (файлы + все оверрайды базы, `live.trial`), а не над файлами старта.
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
-app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
-  const { __baseRev, ...overrides } = (req.body ?? {}) as Record<string, unknown>;   // C-09: база — как у `/api/dev/config`
-  try {
-    const trial = new ConfigRegistry(); // валидация ДО записи в файл
-    trial.loadAll();
-    trial.reload(overrides);
-  } catch (e) {
-    return res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
-  }
-  const written: string[] = [];
-  const failed: { msg?: string } = {};   // запись файла упала — 500, как было (пересборки нет)
-  const r = await writeConfig(__baseRev, Object.keys(overrides), async () => {
-    try {
-      for (const [key, value] of Object.entries(overrides)) {
-        // Файл «строка на запись» (weapon-parts) пишем в его же формате и без умолчаний zod — иначе одна правка
-        // детали давала diff на весь файл (`configFileFormat.ts`).
-        const path = configFileFor(key);
-        writeFileSync(path, formatConfigFile(value, existsSync(path) ? readFileSync(path, 'utf8') : null, arrayElementSchema(key)));
-        live.noteFile(key, value);   // ⭐ R15-05: файл теперь такой — основа пересборок (наблюдатель снимет оверрайд, сверка пересоберёт)
-        await setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
-        written.push(key);
-      }
-    } catch (e) {
-      failed.msg = `Не удалось записать файл: ${e instanceof Error ? e.message : String(e)}`;
-      return;
-    }
-    // ⚠ `await`. Здесь стоял голый вызов АСИНХРОННОЙ `rebuildConfig()`, и это два дефекта разом:
-    //  • сервер отвечал «ок» ДО пересборки — редактор тут же перечитывал `/api/config` и получал СТАРОЕ
-    //    тело, то есть «сохранил, а не применилось» на ровном месте;
-    //  • отказ внутри (валидация, база) становился НЕОБРАБОТАННЫМ reject, а он в Node роняет процесс.
-    await rebuildConfig();
-  });
-  if (!r.ok) return staleConfig(res, r.conflicts, r.rev);
-  if (failed.msg) return res.status(500).json({ error: failed.msg });
-  console.log(`[dm-server] конфиг записан в ФАЙЛ (+БД): ${written.join(', ') || '—'}`);
-  res.json({ ok: true, written, rev: r.rev });
-}));
+installConfigWrites(app, {
+  config, live, gate: devGate, json: devJson, guard: devGuard,
+  setOverride: setConfigOverride, deleteOverride: deleteConfigOverride,
+  // Файл «строка на запись» (weapon-parts) пишем в его же формате и без умолчаний zod — иначе одна правка
+  // детали давала diff на весь файл (`configFileFormat.ts`).
+  writeFile: (key, value) => {
+    const path = configFileFor(key);
+    writeFileSync(path, formatConfigFile(value, existsSync(path) ? readFileSync(path, 'utf8') : null, arrayElementSchema(key)));
+  },
+  // ⭐ R22-02: файл на диске — тот ли, что принят сервером: иначе запись «в файл» затёрла бы его живой таблицей (409).
+  readFile: (key) => {
+    const path = configFileFor(key);
+    return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) as unknown : undefined;
+  },
+});
 
-// Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).
 /**
  * ЖИВОЕ ПЕРЕЧИТЫВАНИЕ `data/*.json` С ДИСКА.
  *
@@ -388,49 +334,30 @@ app.post('/api/dev/config-file', devGate, devJson, ah(async (req, res) => {
  * и оба клиента показывают старое. Правка файла — осознанное авторское действие (генератор, руки,
  * `git pull`), она и должна побеждать; «Применить и записать в файл» пишет оба места разом, так что
  * согласованность не страдает.
+ *
+ * ⭐ R22-02: и решает наблюдатель то же, что старт процесса (`configWatch.ts`, `live.applyFiles`): файлы одного окна дребезга — одной пачкой,
+ * годный схемой файл — в основу (правило поверх таблиц — над итоговым кандидатом, как на старте), негодный — перечитывается при каждом
+ * следующем применении, упавшее на базе применение — повтором.
+ * ⭐ R23-06: и файл, записанный ДО взведения (импорт `data/*.json` — при загрузке модуля, а сюда `boot()` доходит через секунды: схема базы,
+ * ревизия, сборка конфига), не теряется: взведённый наблюдатель сверяет диск с основой (`watcher.sweep`) — разошедшийся файл применяется, как
+ * увиденная правка. Раньше его не брал никто до рестарта, а «Применить везде» его таблицы отвечало 409 навсегда.
  */
 function watchConfigFiles(): void {
   if (process.env.NODE_ENV === 'production' || process.env.DM_WATCH_CONFIG === '0') return;
-  const pending = new Map<string, NodeJS.Timeout>();
+  const watcher = configWatcher({
+    live, keys: Object.keys(configSchemas),
+    // Файл могли поймать на середине записи — бросок разбора, наблюдатель перечитает его следующим применением.
+    read: (file) => JSON.parse(readFileSync(join(DATA_DIR, file), 'utf8')) as unknown,
+  });
   try {
-    watch(DATA_DIR, (_ev, file) => {
-      if (!file || !file.endsWith('.json')) return;
-      clearTimeout(pending.get(file));
-      // Дребезг: запись файла редактором/генератором прилетает несколькими событиями подряд.
-      pending.set(file, setTimeout(() => { pending.delete(file); void applyFileChange('', file); }, 200));
-    });
+    watch(DATA_DIR, (_ev, file) => { if (file) watcher.touched(file); });
+    watcher.sweep();   // ⭐ R23-06: ПОСЛЕ взведения — запись, идущая сейчас, придёт ещё и событием
     console.log(`[dm-server] слежу за ${DATA_DIR} — правки data/*.json подхватываются на лету`);
   } catch (e) {
+    watcher.stop();
     console.warn(`[dm-server] не удалось следить за конфигами: ${e instanceof Error ? e.message : e}`);
   }
 }
-
-async function applyFileChange(_key: string, file: string): Promise<void> {
-  const real = configKeyForFile(file, Object.keys(configSchemas));
-  if (!real) return;
-  try {
-    const value = JSON.parse(readFileSync(join(DATA_DIR, file), 'utf8'));
-    // Проверка, живой реестр, основа пересборок (R15-05), снятие устаревшего оверрайда, тело `/api/config` — `configLive.ts`.
-    await live.applyFile(real, value);
-    console.log(`[dm-server] конфиг перечитан с диска: ${real}`);
-  } catch (e) {
-    // Файл могли поймать на середине записи или он реально невалиден — живой конфиг не трогаем.
-    console.warn(`[dm-server] ${file} не применён: ${e instanceof Error ? e.message : e}`);
-  }
-}
-
-app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
-  if (!await devGuard(req, res)) return;
-  const key = req.params.key;
-  // ⭐ C-09: сброс — в той же очереди записей конфига (без базы: «сбросить» — осознанно поверх любого); ответ несёт ревизию сброшенной
-  // таблицы — база следующей записи редактора.
-  await writeConfig(undefined, [], async () => {
-    await deleteConfigOverride(key);
-    await rebuildConfig();
-  });
-  console.log(`[dm-server] конфиг сброшен к дефолту: ${key}`);
-  res.json({ ok: true, reset: key, ...(Object.prototype.hasOwnProperty.call(configSchemas, key) ? { rev: configRevs([key], (k) => config.get(k as ConfigKey)) } : {}) });
-}));
 
 // ── Контент 3D поз-редактора (единая истина: сервер) ─────────────────────────────
 // GET — весь авторский контент (pe_gait/clips/sway/phys/ragdoll/chars); грузят и редактор, и игра

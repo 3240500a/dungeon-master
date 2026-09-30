@@ -70,7 +70,10 @@ class FakeWs {
   close(): void { this.open = false; }
   onMessage(): void {} onClose(): void {}
 }
-const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0)); };
+// Мок базы отвечает готовыми промисами (задвижка — тоже промис): хватает оборотов `setImmediate`. На Windows `setTimeout(0)` — шаг системного
+// таймера (~15,6 мс): 20 таких оборотов на `settle`, семь `settle` на тест — ~2 с чистого ожидания, и под нагрузкой полного прогона тест
+// переходил умолчание 5 с (падал временем, поодиночке — зелёный).
+const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
 const hooks = { onEmpty: () => {}, onGrace: () => {}, onUngrace: () => {} };
 let seq = 0;
 

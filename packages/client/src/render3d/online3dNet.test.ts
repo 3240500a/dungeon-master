@@ -59,8 +59,10 @@ describe('веб-3D: кадры, которые принимает сам App', 
     expect(SRC, '⚠ свой обработчик кадра shop вернулся').not.toMatch(/app\.net\.on\('shop'/);
   });
 
-  it('⭐ R5-15: каждый вход сверяет конфиг с сервером (деплой не перезагружает вкладку)', () => {
-    expect(SRC, 'было: конфиг — один раз на страницу').toMatch(/onJoined: \(\) => void app\.syncConfig\(\),/);
+  it('⭐ D3 (R5-15): версии и конфиг на входе сверяет рукопожатие `App` — у веб-3D своего пути нет (он был: `onJoined` → `syncConfig`)', () => {
+    // Поведение — общее с 2D: `net/versionGate.test.ts`, `core/app.config.test.ts`, `scenes/OnlineScene.test.ts` (одна лента подсказок у 2D и 3D).
+    expect(SRC, '⚠ свой обработчик версий у веб-3D вернулся').not.toMatch(/onJoined|syncConfig|PROTOCOL_VERSION|buildDiffers|PROTOCOL_STALE|f\.build|\.cfgRev/);
+    expect(SRC, 'поток входа — тот же, что у 2D').toMatch(/new EntryFlow\(\{/);
   });
 
   it('⭐ R6-25: «герой в мире» ведёт поток входа — вне мира хоткеи окон (I/K/C/J/M) молчат, смена закрывает окна', () => {

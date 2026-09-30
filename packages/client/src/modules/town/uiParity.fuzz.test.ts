@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import type { AccountStash, Item, SaveState } from '@dm/shared';
-import { genOps, runSeq, setBuildHook, setSceneHook, shrinkSeq, type Hit, type Op } from './uiParity.fuzzKit.js';
+import { STALE_WEIGHTS, bundleHook, cooldownHook, genOps, runSeq, setBuildHook, setSceneHook, shrinkSeq, type Hit, type Op, type RunOpts } from './uiParity.fuzzKit.js';
 import { OnlineScene } from '../../scenes/OnlineScene.js';
 
 /**
@@ -17,6 +17,10 @@ import { OnlineScene } from '../../scenes/OnlineScene.js';
  * сжимать и известные — `DM_FUZZ_SHRINK_KNOWN=1`, повтор одной цепочки — `DM_FUZZ_REPLAY='{"seed":N,"ops":[…]}'`, счётчики исходов
  * (горело/серое × исполнено/отказ, род отказа, строго/устаревший конфиг) — `DM_FUZZ_VERBOSE=1`. Найденное и не исправленное — в
  * `KNOWN` (главный прогон на нём не краснеет) и своим `it.fails` с минимальной цепочкой.
+ *
+ * ⭐ D3: второй прогон — профиль «устаревшая сборка / устаревший конфиг» (`RunOpts.profile = 'stale'`, инвариант (6) в `uiParity.fuzzKit.ts`):
+ * `App` с сетью конфига, деплои кода цен в обе стороны и смены схемы конфига. Умолчание — 16 цепочек по 24 шага; больше — `DM_FUZZ_STALE_SEEDS=N`
+ * (с `DM_FUZZ_FROM`, `DM_FUZZ_OPS`), повтор одной цепочки этого профиля — `DM_FUZZ_REPLAY='{"seed":N,"ops":[…],"profile":"stale"}'`.
  */
 const env = (k: string, d: number): number => { const v = Number(process.env[k]); return Number.isFinite(v) && v > 0 ? Math.floor(v) : d; };
 const BIG = !!process.env.DM_FUZZ_SEEDS;
@@ -25,14 +29,21 @@ const FROM = env('DM_FUZZ_FROM', 1);
 const LEN = env('DM_FUZZ_OPS', 30);
 const SHRINK = process.env.DM_FUZZ_SHRINK !== '0';
 const SHRINK_KNOWN = process.env.DM_FUZZ_SHRINK_KNOWN === '1';
+/** ⭐ D3: профиль «устаревшая сборка / устаревший конфиг» — своё число цепочек (большой прогон — только им, `DM_FUZZ_STALE_SEEDS`). */
+const STALE_BIG = !!process.env.DM_FUZZ_STALE_SEEDS;
+const STALE_SEEDS = env('DM_FUZZ_STALE_SEEDS', 16);
+const STALE_LEN = env('DM_FUZZ_OPS', 24);
+const STALE: RunOpts = { profile: 'stale' };
 
 // Большой прогон — потолок по числу цепочек (до ~1 с на цепочку под нагрузкой, сжатие — ещё до сотни прогонов на нарушение).
-vi.setConfig({ testTimeout: Math.max(300_000, SEEDS * LEN * 60 + 600_000) });
+vi.setConfig({ testTimeout: Math.max(300_000, SEEDS * LEN * 60 + 600_000, STALE_SEEDS * STALE_LEN * 120 + 600_000) });
 
 const db = vi.hoisted(() => ({
   saves: new Map<string, number>(),
   data: new Map<string, SaveState>(),
   stashes: new Map<string, { data: AccountStash; version: number }>(),
+  /** ⭐ R22-03: правка конфига в окне команды сундука (`FakeDb.onStashRead`). */
+  onStashRead: null as (() => boolean) | null,
 }));
 /** Бросок сервера (`townRng` сеется `randomInt`) — от сида цепочки: иначе сжатие не воспроизводило бы выход разбора и бросок ковки. */
 const cryptoHook = vi.hoisted(() => ({ randomInt: undefined as undefined | ((a: number, b: number) => number) }));
@@ -60,6 +71,7 @@ vi.mock('../../../../server/src/db/db.js', () => ({
   createCharacter: () => Promise.resolve(1),
   getCharacter: () => Promise.resolve(null),
   getAccountStash: (userId: string) => {
+    if (db.onStashRead?.()) db.onStashRead = null;   // ⭐ R22-03: окно между согласием команды и её исполнением
     const row = db.stashes.get(userId);
     return Promise.resolve(row ? { data: structuredClone(row.data), version: row.version } : null);
   },
@@ -79,7 +91,26 @@ const buildHook = vi.hoisted(() => ({
   server: null as string | null,
   drift: null as null | { forge: number; sell: number },
   stamp: process.env.DM_FUZZ_SELFTEST !== 'r1808',
+  /**
+   * ⭐ D3, самопроверка инварианта (6) «списано не иначе, чем показано»: `consent: false` — вкладка не кладёт штамп сборки в команды согласия
+   * (как до D3: `withConfigRev` без `build`), и сервер проводит команды старого кода, показавшего цену выше новой. `DM_FUZZ_SELFTEST=d3consent`.
+   */
+  consent: process.env.DM_FUZZ_SELFTEST !== 'd3consent',
 }));
+/**
+ * ⭐ D3, самопроверка инварианта (6) «тупика нет»: `gateHook.blind` — правило версий не видит, что конфиг сервера вкладка не разбирает (как если бы
+ * «негодный конфиг» снова говорил сам лишь раз на ETag, а отказы ценой о нём не знали). `DM_FUZZ_SELFTEST=d3blind` — на весь прогон.
+ */
+const gateHook = vi.hoisted(() => ({ blind: process.env.DM_FUZZ_SELFTEST === 'd3blind' }));
+vi.mock('../../net/versionGate.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../net/versionGate.js')>();
+  class VersionGate extends real.VersionGate {
+    constructor(deps: ConstructorParameters<typeof real.VersionGate>[0]) {
+      super({ ...deps, configUnreadable: () => !gateHook.blind && deps.configUnreadable() });
+    }
+  }
+  return { ...real, VersionGate };
+});
 /**
  * ⭐ R19-07, самопроверка сторожа сброса атрибутов: `respecHook.old` возвращает прежнее гашение кнопки мастера (только «нечего сбрасывать» и
  * золото — без надетого, что держится на вложенных очках). Подмена `respecRefusal` индекса видна кнопке, а ядро `respec` сервера зовёт свои
@@ -101,7 +132,8 @@ vi.mock('@dm/shared', async (importOriginal) => {
     if (real.attrRespecRefund(reg, save) === 0) return 'Атрибуты не вложены';
     return save.gold < reg.get('balance').respecCost ? 'Недостаточно золота' : null;
   };
-  return { ...real, forgeGold, shopSellPrice, respecRefusal };
+  const withConfigRev: typeof real.withConfigRev = (rev, command, build) => real.withConfigRev(rev, command, buildHook.consent ? build : '');
+  return { ...real, forgeGold, shopSellPrice, respecRefusal, withConfigRev };
 });
 vi.mock('../../../../server/src/buildStamp.js', async (importOriginal) => {
   const real = await importOriginal<{ serverBuild: () => string }>();
@@ -268,8 +300,8 @@ const FIXED: Known[] = [
     repro: [{ seed: 9100067, ops: [op('config', 49817727), op('buy', 1421943494), op('buy', 648701762)], key: /^parity:enabled-refused:buy:rule$/ }],
   },
   {
-    // Шов: штамп сборки (`buildStampOf` исходников shared: `__DM_BUILD__` бандла ↔ `joined.build` сервера) и `App.rereadCannotHelp` у отказа
-    // «Цена изменилась». Нашёл обзор (R18-08), цепочки — фаззер с вкладкой без штампа (`buildHook.stamp`, тест «зубов» ниже).
+    // Шов: штамп сборки (`buildStampOf` исходников shared: `__DM_BUILD__` бандла ↔ `joined.build` сервера) и правило версий у отказа
+    // «Цена изменилась» (`VersionGate.refused`, D3; было `App.rereadCannotHelp`). Нашёл обзор (R18-08), цепочки — фаззер с вкладкой без штампа (`buildHook.stamp`, тест «зубов» ниже).
     id: 'R18-08', key: /^hint:/,
     what: 'деплой сменил код цен при том же конфиге: старая вкладка переподключилась сама и кликала в «Цена изменилась» (перечитывание — 304), ни разу не услышав «перезагрузите»',
     repro: [
@@ -303,11 +335,22 @@ const FIXED: Known[] = [
       { seed: 1, ops: [op('bench', 1043863146), op('craft', 419498659), op('goldEdge', 501493848), op('respec', 1035640358)], key: /^parity:enabled-refused:respec:После сброса/ },
     ],
   },
+  {
+    // Шов: `joined.cooldowns` — откаты, с которыми сервер посадил героя (`GameSession.cooldownsOf`), → `App.applyJoinCooldowns` (одно место на оба
+    // клиента; смена героя — `forgetSession`). Нашёл обзор (R21-05), цепочки — фаззер со страницей до правки (`cooldownHook.blind`, тест «зубов» ниже).
+    id: 'R21-05', key: /^cd:/,
+    what: 'откат, который сервер вернул на входе (другая вкладка героя, реконнект, другая комната), страница не знала: слот нарисован готовым, а каст сервер молча отбрасывал',
+    repro: [
+      { seed: 7, ops: [op('cdElsewhere', 2107497127)], key: /^cd:slot-ready-refused:node$/ },
+      { seed: 8, ops: [op('cdElsewhere', 2107497127)], key: /^cd:slot-ready-refused:node$/ },
+      { seed: 5, ops: [op('cdElsewhere', 223633339)], key: /^cd:slot-ready-refused:ins$/ },
+    ],
+  },
 ];
 
 interface Found { seed: number; ops: Op[]; hit: Hit }
 
-async function report(found: Map<string, Found>): Promise<string[]> {
+async function report(found: Map<string, Found>, opts: RunOpts = {}): Promise<string[]> {
   const lines: string[] = [];
   for (const [key, f] of found) {
     const known = knownOf(key);
@@ -315,7 +358,7 @@ async function report(found: Map<string, Found>): Promise<string[]> {
     let log = f.hit.log;
     let msg = f.hit.msg;
     if (SHRINK && (!known || SHRINK_KNOWN)) {
-      const s = await shrinkSeq(db, cryptoHook, f.seed, f.ops, key);
+      const s = await shrinkSeq(db, cryptoHook, f.seed, f.ops, key, 160, opts);
       if (s.out.hits.length) {
         ops = s.ops;
         const h = s.out.hits.find((x) => x.key === key)!;
@@ -326,14 +369,14 @@ async function report(found: Map<string, Found>): Promise<string[]> {
     lines.push([
       `✗ ${key}${known ? ` (известное ${known})` : ''} — сид ${f.seed}, шагов в сжатой цепочке ${ops.length}`,
       `  ${msg}`,
-      `  повтор: DM_FUZZ_REPLAY='${JSON.stringify({ seed: f.seed, ops })}'`,
+      `  повтор: DM_FUZZ_REPLAY='${JSON.stringify({ seed: f.seed, ops, ...(opts.profile ? { profile: opts.profile } : {}) })}'`,
       ...log.map((l) => `    ${l}`),
     ].join('\n'));
   }
   return lines;
 }
 
-describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: паритет «окно ≡ сервер» — верстак, ковка, эскизы, лавка, разбор в поле', () => {
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || (STALE_BIG && !BIG))('⭐ B3: паритет «окно ≡ сервер» — верстак, ковка, эскизы, лавка, разбор в поле', () => {
   it(`${SEEDS} цепочек по ${LEN} шагов (сиды ${FROM}…${FROM + SEEDS - 1})`, async () => {
     const found = new Map<string, Found>();
     const stats: Record<string, number> = {};
@@ -355,7 +398,10 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: паритет «окно
     }
     // Свойство не пустое: окна не только гаснут — сервер реально исполняет горящее.
     const sum = (re: RegExp): number => Object.entries(stats).filter(([k]) => re.test(k)).reduce((n, [, v]) => n + v, 0);
-    expect(sum(/^bench:.*:on:ok$/), 'верстак: исполненные карточки').toBeGreaterThan(SEEDS);
+    // ⭐ Перепрогон Z2: порог — половина наблюдаемого, как у лавки. «Больше одной на цепочку» стоял у самого среднего: с шагом R21-05
+    // (`cdElsewhere`) доля верстака в 30 шагах упала, и 1000 цепочек (сиды 56 100 001…) дали 954 исполненные карточки — большой прогон падал
+    // на покрытии, а не на нарушении.
+    expect(sum(/^bench:.*:on:ok$/), 'верстак: исполненные карточки').toBeGreaterThan(SEEDS / 2);
     expect(sum(/^craft:on:ok$/), 'ковка: скованные вещи').toBeGreaterThan(0);
     expect(sum(/^(buy|sell):on:ok$/), 'лавка: сделки').toBeGreaterThan(SEEDS / 2);
     // ⭐ R18-08: инвариант (5) не холостой — были отказы ценой, которые перечитывание не лечит (деплой со сменой кода цен).
@@ -363,6 +409,8 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: паритет «окно
     // ⭐ R19-02: цепочки шли и через настоящую 2D-сцену; ⭐ R19-07: кнопка сброса атрибутов и горела, и сервер по ней сбрасывал.
     expect(sum(/^client:2d$/), '2D-сцена OnlineScene').toBeGreaterThan(0);
     expect(sum(/^respec:on:ok$/), 'сброс атрибутов: исполненные').toBeGreaterThan(0);
+    // ⭐ R21-05: инвариант (7) не холостой — после входов были откаты сервера, и панель биндов их показала.
+    if (!cooldownHook.blind) expect(sum(/^cd:shown$/), 'откаты сервера после входа — на слотах').toBeGreaterThan(0);
     const unknown = [...found.keys()].filter((k) => !knownOf(k));
     expect(unknown, shown.join('\n\n')).toEqual([]);
   });
@@ -372,7 +420,7 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: паритет «окно
  * Известные нарушения — минимальные цепочки фаззера. `it.fails`: зелёный, пока нарушение воспроизводится (см. `KNOWN`).
  * Список пуст (всё поправлено) — блока нет: пустой `describe` vitest считает ошибкой («No test found in suite»).
  */
-if (KNOWN.length) describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG)('B3: известные нарушения воспроизводятся (ждут правки)', () => {
+if (KNOWN.length) describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || STALE_BIG)('B3: известные нарушения воспроизводятся (ждут правки)', () => {
   for (const k of KNOWN) {
     for (const [i, r] of k.repro.entries()) {
       it.fails(`${k.id}${k.repro.length > 1 ? `.${i + 1}` : ''}: ${k.what}`, async () => {
@@ -384,7 +432,7 @@ if (KNOWN.length) describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG)('B3: из
 });
 
 /** Поправленные нарушения — их минимальные цепочки больше не воспроизводят нарушение (см. `FIXED`). */
-describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG)('B3: поправленные нарушения не возвращаются', () => {
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || STALE_BIG)('B3: поправленные нарушения не возвращаются', () => {
   for (const k of FIXED) {
     for (const [i, r] of k.repro.entries()) {
       it(`${k.id}${k.repro.length > 1 ? `.${i + 1}` : ''}: ${k.what}`, async () => {
@@ -468,10 +516,115 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || respecHook.old)('R19-07: 
   }
 });
 
+/**
+ * ⭐ R21-05: У ИНВАРИАНТА (7) ЕСТЬ ЗУБЫ. Те же цепочки со страницей до правки (`cooldownHook.blind`: откатов кадра входа не читает, вход и смена героя
+ * заливки не сбрасывают) дают своё нарушение: откат, который другая вкладка героя взяла и сервер вернул на входе, — слот нарисован готовым.
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || cooldownHook.blind)('R21-05: страница, не знающая откатов кадра входа, ловится своим ключом', () => {
+  for (const [i, r] of FIXED.find((k) => k.id === 'R21-05')!.repro.entries()) {
+    it(`R21-05.${i + 1}: ${r.key.source}`, async () => {
+      cooldownHook.blind = true;
+      try {
+        const out = await runSeq(db, cryptoHook, r.seed, r.ops);
+        expect(out.hits.map((h) => h.key), out.log.join(' ⏎ ')).toContainEqual(expect.stringMatching(r.key));
+      } finally {
+        cooldownHook.blind = false;
+      }
+    });
+  }
+});
+
+/**
+ * ⭐ D3: ПРОФИЛЬ «УСТАРЕВШАЯ СБОРКА / УСТАРЕВШИЙ КОНФИГ». Настоящий `App` с сетью конфига (подделка `/api/config` над конфигом сервера прогона),
+ * деплои кода цен в обе стороны (`deploy`) и смены схемы конфига (`schema`, иногда с новым кодом); нечётные сиды — через 2D-сцену, чётные — голым
+ * `App` (как веб-3D). Инвариант (6): тупика нет — на вход к серверу новее вкладки ровно одна строка «перезагрузите», на каждый отказ ценой, который
+ * перечитывание не лечит, — она же, без расхождения версий — ни одной; и списано не иначе, чем показано — вкладка старше сервера не проводит ни одной
+ * команды согласия, а проведённое — ровно по карточке. ⭐ R22-01, инвариант (9): треть цепочек — со сборкой, чьи встроенные файлы вместе нарушают
+ * правило поверх таблиц (сервер их приводит и работает): страница обязана открыться и взять конфиг сервера.
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || (BIG && !STALE_BIG))('⭐ D3: профиль «устаревшая сборка / устаревший конфиг» — тупика нет, списано не иначе, чем показано', () => {
+  it(`${STALE_SEEDS} цепочек по ${STALE_LEN} шагов (сиды ${FROM}…${FROM + STALE_SEEDS - 1})`, async () => {
+    const found = new Map<string, Found>();
+    const stats: Record<string, number> = {};
+    const t0 = Date.now();
+    for (let seed = FROM; seed < FROM + STALE_SEEDS; seed++) {
+      const ops = genOps(seed, STALE_LEN, STALE_WEIGHTS);
+      const out = await runSeq(db, cryptoHook, seed, ops, undefined, STALE);
+      for (const [k, v] of Object.entries(out.stats)) stats[k] = (stats[k] ?? 0) + v;
+      for (const h of out.hits) if (!found.has(h.key)) found.set(h.key, { seed, ops, hit: h });
+      if (STALE_BIG && (seed - FROM + 1) % 50 === 0) console.log(`[D3] ${seed - FROM + 1}/${STALE_SEEDS} цепочек, ${Math.round((Date.now() - t0) / 1000)} с, нарушений ${found.size}`);
+    }
+    const lines = await report(found, STALE);
+    if (lines.length) console.log(lines.join('\n\n'));
+    if (process.env.DM_FUZZ_VERBOSE) console.log(Object.entries(stats).sort().map(([k, v]) => `${k.padEnd(34)} ${v}`).join('\n'));
+    if (process.env.DM_FUZZ_OUT) {
+      writeFileSync(process.env.DM_FUZZ_OUT, JSON.stringify({ profile: 'stale', from: FROM, seeds: STALE_SEEDS, len: STALE_LEN, stats, found: [...found.entries()].map(([k, f]) => ({ key: k, seed: f.seed, at: f.hit.at, msg: f.hit.msg, log: f.hit.log })) }, null, 1));
+    }
+    // Свойство не пустое: деплои кода и схемы были, входы к серверу новее вкладки — тоже, отказы, за которыми обязано «перезагрузите», — из обоих
+    // источников; и после перезагрузки страницы сделки снова идут (профиль не сводится к «всё отказано»).
+    const sum = (re: RegExp): number => Object.entries(stats).filter(([k]) => re.test(k)).reduce((n, [, v]) => n + v, 0);
+    expect(sum(/^op:schema$/), 'деплои со сменой схемы конфига').toBeGreaterThan(0);
+    expect(sum(/^op:deploy$/), 'деплои кода цен').toBeGreaterThan(0);
+    expect(sum(/^stale:join$/), 'входы к серверу новее вкладки').toBeGreaterThan(STALE_SEEDS / 2);
+    if (buildHook.stamp && !gateHook.blind) {
+      expect(sum(/^hint:owed$/), 'отказы ценой, которые перечитывание не лечит').toBeGreaterThan(STALE_SEEDS / 2);
+      expect(sum(/^hint:owed:schema$/), '…и из-за конфига, который вкладка не разбирает').toBeGreaterThan(0);
+    }
+    expect(sum(/^(bench:.*|sell|craft):on:ok$/), 'сделки согласия проходят, когда вкладка не старше').toBeGreaterThan(STALE_SEEDS);
+    expect(sum(/^client:2d$/), '2D-сцена OnlineScene').toBeGreaterThan(0);
+    expect(sum(/^bundle:cross$/), '⭐ R22-01: сборки, чьи файлы вместе нарушают D4 (сервер их приводит)').toBeGreaterThan(0);
+    const unknown = [...found.keys()].filter((k) => !knownOf(k));
+    expect(unknown, lines.join('\n\n')).toEqual([]);
+  });
+});
+
+/**
+ * ⭐ D3: У ИНВАРИАНТА (6) ЕСТЬ ЗУБЫ. Те же цепочки профиля с прежними правилами дают свои нарушения:
+ *  • вкладка не кладёт штамп сборки в команды согласия (`buildHook.consent = false`, как до D3) — сервер проводит ковку и скупку старого кода, чья
+ *    цена разошлась с новой в «выгодную» сторону: списано не то, что показано (`stale:consent-accepted`, `price:stale-charge`);
+ *  • правило версий не видит негодного конфига (`gateHook.blind`) — вход и отказы ценой у вкладки, не разбирающей конфиг сервера, — молча (тупик);
+ *  • ⭐ R22-01: конструктор `App` судит правило поверх таблиц над встроенными файлами (`bundleHook.strict`, как до правки) — сборка, чьи файлы
+ *    вместе нарушают D4, а сервер их приводит и работает, не открывается (`boot:bundle-cross`, инвариант (9)).
+ */
+describe.skipIf(!!process.env.DM_FUZZ_REPLAY || BIG || STALE_BIG || !buildHook.consent || gateHook.blind || bundleHook.strict)('D3: прежние правила ловятся своими ключами', () => {
+  const scan = async (key: RegExp): Promise<string[]> => {
+    const keys: string[] = [];
+    for (let seed = 1; seed <= STALE_SEEDS && !keys.some((k) => key.test(k)); seed++) {
+      const out = await runSeq(db, cryptoHook, seed, genOps(seed, STALE_LEN, STALE_WEIGHTS), undefined, STALE);
+      keys.push(...out.hits.map((h) => h.key));
+    }
+    return keys;
+  };
+  it('без согласия на сборку — вкладка старого кода платит не показанное', async () => {
+    buildHook.consent = false;
+    try {
+      expect(await scan(/^(stale:consent-accepted|price:stale-charge):/)).toContainEqual(expect.stringMatching(/^(stale:consent-accepted|price:stale-charge):/));
+    } finally {
+      buildHook.consent = true;
+    }
+  });
+  it('правило версий, слепое к негодному конфигу, — отказы ценой и вход без «перезагрузите»', async () => {
+    gateHook.blind = true;
+    try {
+      expect(await scan(/^hint:(silent-price-loop|join-untold)/)).toContainEqual(expect.stringMatching(/^hint:(silent-price-loop|join-untold)/));
+    } finally {
+      gateHook.blind = false;
+    }
+  });
+  it('⭐ R22-01: вкладка, судящая правило поверх таблиц над встроенными файлами, — не открывается над сборкой, с которой сервер работает', async () => {
+    bundleHook.strict = true;
+    try {
+      expect(await scan(/^boot:bundle-cross$/)).toContain('boot:bundle-cross');
+    } finally {
+      bundleHook.strict = false;
+    }
+  });
+});
+
 describe.runIf(!!process.env.DM_FUZZ_REPLAY)('B3: повтор цепочки', () => {
   it('DM_FUZZ_REPLAY', async () => {
-    const { seed, ops } = JSON.parse(process.env.DM_FUZZ_REPLAY!) as { seed: number; ops: Op[] };
-    const out = await runSeq(db, cryptoHook, seed, ops);
+    const { seed, ops, profile } = JSON.parse(process.env.DM_FUZZ_REPLAY!) as { seed: number; ops: Op[]; profile?: RunOpts['profile'] };
+    const out = await runSeq(db, cryptoHook, seed, ops, undefined, { profile });
     console.log(out.log.join('\n'));
     for (const h of out.hits) console.log(`✗ ${h.key} на шаге ${h.at}: ${h.msg}`);
   });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import {
-  ConfigRegistry, newCharacterSave, itemFromBaseId, findFree, hasLineOfSight, isWalkableWorld,
+  ConfigRegistry, newCharacterSave, itemFromBaseId, findFree, hasLineOfSight, isWalkableWorld, playerSnapshot,
   type ServerFrame, type SaveState, type PlayerInput,
 } from '@dm/shared';
 
@@ -287,16 +287,19 @@ describe('⭐ R15-09: выход с арены — не по снимку аре
     const p = P(room, pid);
     p.hp = p.maxHp * 0.5;
     arenaTrip(room, pid, 600);
+    // ⭐ D4: снимок сразу после конца арены — героя города (со стойкой, `refreshSnapshot`), а не арены.
     const d = room.session.snapshotOf(pid)!.derived;
+    const bare = playerSnapshot(p.save, cfg).derived;   // без стойки — как снимок арены
     expect(p.stamina, 'резерв стойки (20 %) соблюдён').toBeLessThanOrEqual(d.maxStamina * 0.8 + 1e-6);
-    expect(p.hp, 'здоровье — с регеном за арену, до максимума со стойкой').toBeGreaterThan(d.maxHp);
+    expect(p.hp, 'здоровье — с регеном за арену, до максимума со стойкой').toBeGreaterThan(bare.maxHp);
+    expect(p.hp, 'и ровно до него').toBeCloseTo(d.maxHp, 1);
     room.step();
     expect(p.hp, 'тик: максимум со стойкой').toBeCloseTo(p.maxHp, 1);
   });
 });
 
 describe('⭐ R16-07: арена — время города и для временных баффов', () => {
-  const BUFF = 'b-class-warrior-a5';   // «Боевой клич»: 8 с баффа, откат 12 с
+  const BUFF = 'b-class-warrior-a5';   // «Боевой клич»: 8 с баффа, откат 13.5 с (⭐ D4: правило времени баффа)
   const idle: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
   type Timers = { skillBuffs: Record<string, number>; skillCd: Record<string, number> };
   /** Воин 40-го уровня в городе только что прокричал клич: бафф и откат — полные. */
@@ -316,13 +319,14 @@ describe('⭐ R16-07: арена — время города и для врем�
     expect(cd0, 'откат идёт').toBeGreaterThan(11.5);
     return { room, pid, t, buff0, cd0 };
   }
-  /** Арена и назад; `arenaSec` — сколько шла арена (часы мира комнаты). */
+  /**
+   * Арена и назад; `arenaSec` — сколько шла арена (часы мира комнаты). ⭐ D4: арена идёт по-настоящему (шаги комнаты), а не сдвигом метки
+   * входа: откаты — героя, и на арене они шли тоже (конец арены берёт более поздний из города и арены).
+   */
   function arenaTrip(room: RoomIn, pid: string, arenaSec: number): Timers {
     room.movedAt = 0; room.enterArena(pid);
     expect(room.area).toBe('arena');
-    room.step();
-    const homes = (room as unknown as { arenaHome: Map<string, { at: number }> }).arenaHome;
-    for (const h of homes.values()) h.at -= arenaSec * 1000;
+    for (let i = 0; i < Math.round(arenaSec * 30); i++) room.step();
     room.movedAt = 0; room.returnTown(pid);
     expect(room.area).toBe('town');
     return P(room, pid) as unknown as Timers;

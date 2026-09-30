@@ -19,6 +19,12 @@ import {
  *
  * 3D-стенд сборки в node не рисуется (WebGL) — подменён; DOM — заглушка ровно тех свойств, которыми пользуются окна.
  */
+// ⚠ ПОТОЛКИ — ПОД ЗАГРУЗКУ МОДУЛЕЙ, А НЕ ПОД ГОНКИ. Каждый тест — свежий граф клиента (`vi.resetModules`: `App`, окна, а по клику «Ковка» —
+// ленивая вкладка ковки со всем, что она тянет), и каждый его модуль воркер заново просит у главного процесса vitest. Поодиночке это доли
+// секунды, а под нагрузкой полного прогона (главный процесс разбирает модули всех файлов) — секунды: тест падал временем (умолчание 5 с,
+// ожидание окна 3 с), не утверждением. Проверки от этого не зависят: `until` ждёт состояние окна и выходит, как только оно есть.
+vi.setConfig({ testTimeout: 60_000 });
+
 vi.mock('./craftPreview3d.js', () => ({
   weaponPreview3d: () => (globalThis as unknown as { document: { createElement: (t: string) => unknown } }).document.createElement('div'),
   resumePreview3d: () => { },
@@ -142,7 +148,8 @@ function mountForge(c: Awaited<ReturnType<typeof client>>) {
   render();
   return body;
 }
-const until = (f: () => void): Promise<void> => vi.waitFor(f, { timeout: 3000, interval: 5 });
+/** Ждать состояние окна (ответ «сервера», догрузку вкладки ковки); потолок щедрый — см. шапку файла про загрузку модулей под нагрузкой. */
+const until = (f: () => void): Promise<void> => vi.waitFor(f, { timeout: 30_000, interval: 5 });
 
 describe('⭐ L2: кузница с открытой ковкой — клик → провод → сервер → окно', () => {
   const G = globalThis as unknown as { document?: unknown; WebSocket?: unknown };

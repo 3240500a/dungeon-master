@@ -15,10 +15,18 @@ import { buildStampOf, isBuildStampSource } from '@dm/shared';
  */
 const SHARED_SRC = join(dirname(fileURLToPath(import.meta.url)), '../../shared/src');
 
+/**
+ * Штамп исходников в папке `dir` (как `packages/shared/src`): тот же отбор и хэш, что у сборки клиента (`client/vite.config.ts`
+ * `buildStampOfDir`). ⚠ R19-06: концы строк файла (CRLF выгрузки Windows, LF Linux) и BOM в начале штамп не двигают (`buildStampOf`).
+ */
+export function stampOfDir(dir: string): string {
+  const files = readdirSync(dir, { recursive: true }).map(String).filter(isBuildStampSource);
+  return buildStampOf(files.map((p) => [p, readFileSync(join(dir, p), 'utf8')] as const));
+}
+
 function stampOfSources(): string {
   try {
-    const files = readdirSync(SHARED_SRC, { recursive: true }).map(String).filter(isBuildStampSource);
-    return buildStampOf(files.map((p) => [p, readFileSync(join(SHARED_SRC, p), 'utf8')] as const));
+    return stampOfDir(SHARED_SRC);
   } catch (e) {
     console.warn(`[build] штамп сборки не посчитан (${SHARED_SRC}) — вкладкам не с чем сравнить свой:`, e instanceof Error ? e.message : e);
     return '';

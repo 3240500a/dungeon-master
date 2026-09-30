@@ -8,7 +8,7 @@ import type { Grid } from '../world/grid.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { RunPlan } from '../dungeon/run/types.js';
 import type { CraftInput, CraftJournal } from '../formulas/craft.js';
-import type { PlayerInput, SessionEvent } from './session.js';
+import type { HeroCooldowns, PlayerInput, SessionEvent } from './session.js';
 import type { WorldDelta } from './delta.js';
 
 /**
@@ -179,33 +179,34 @@ export interface WorldSnapshot {
 // R9-04: у разборов ещё `avgYield` — средний выход карточки (`salvageMean`): низ дробной доли — 0 при любой правке выхода.
 // ⭐ V-B3-07: у команд кузницы, скупки и разбора (`CONFIG_CONSENT_CMDS`) — `cfgRev`, ревизия конфига, с которого нарисовано окно
 // (`ConfigRegistry.revision`): у сервера другая — отказ «Цена изменилась» до исполнения, клиент перечитывает конфиг. Нет поля — как раньше.
+// ⭐ D3: и `build` — штамп сборки вкладки (согласие на КОД, `buildChanged`): у сервера другой — тот же отказ до исполнения. Нет поля — как раньше.
 export type TownCommand =
   | { cmd: 'buy'; uid: string; maxGold?: number }
-  | { cmd: 'sell'; uid: string; minGold?: number; cfgRev?: string }
-  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string }
-  | { cmd: 'forgeReroll'; uid: string; maxGold?: number; cfgRev?: string }
+  | { cmd: 'sell'; uid: string; minGold?: number; cfgRev?: string; build?: string }
+  | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
+  | { cmd: 'forgeReroll'; uid: string; maxGold?: number; cfgRev?: string; build?: string }
   /** Починка сломанного трофея: снимает флаг за золото и материалы. */
-  | { cmd: 'forgeRepair'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string }
+  | { cmd: 'forgeRepair'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
   /** Сдать всё сырьё из сумки в общий сундук аккаунта. */
   | { cmd: 'depositMaterials' }
   /** Разбор у кузнеца: полный выход материалов; найденное оружие открывает журнал кузнеца (§12). */
-  | { cmd: 'forgeSalvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string }
+  | { cmd: 'forgeSalvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string; build?: string }
   /**
    * ⭐ Сковать оружие из деталей (docs/CRAFT_WEAPONS.md). `nonce` — ключ идемпотентности заявки (D4):
    * придумывает клиент, сервер помнит его на АККАУНТЕ вместе с вещью. Повтор того же ключа — даже
    * после реконнекта или на другой ноде — отвечает прежней вещью, а не кует вторую. Заявка — только
    * `{id, step}` четырёх гнёзд, хват и доводка: базу, имя, ступень и цену сервер выводит сам.
    */
-  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string }
+  | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
   /** Зачаровать СКОВАННУЮ обычную вещь из сумки до магической или редкой — за золото (§13). */
-  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number; cfgRev?: string }
+  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number; cfgRev?: string; build?: string }
   /**
    * Потратить эскиз (жалость разбора, §12): открыть в журнале аккаунта выбранную деталь `variantId`. Ключевую форму
    * НЕОТКРЫТОГО типа эскиз не открывает (`sketchable`). R3-11: раньше эскизы копились, а потратить их было нечем.
    */
-  | { cmd: 'forgeSketch'; variantId: string; cfgRev?: string }
+  | { cmd: 'forgeSketch'; variantId: string; cfgRev?: string; build?: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
-  | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string }
+  | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string; build?: string }
   /**
    * Надеть вещь из сумки. `slot` нет — в родной слот вещи; `'offhand'` — во вторую руку (R11-02: пупсик, брошено на ячейку
    * «Левая рука»; так одноручное оружие встаёт вторым — дуал-вилд). Можно ли — решает ядро (`equip`, `offhandRefusal`).
@@ -242,7 +243,9 @@ export type ClientFrame =
   // грузит его сейв из БД (создание персонажа — по HTTP, см. `/api/characters`). Анти-чит.
   // fresh — осознанно новая комната (соло/хост); resume — вернуться в незавершённый забег
   // (грейс-комната из подземелья); roomCode — вход к другу. Реконнект — только явным resume.
-  | { t: 'join'; roomCode?: string; token: string; charId: string; fresh?: boolean; resume?: boolean }
+  // ⭐ D1: solo (с resume) — «Продолжить без пати»: голос за продолжение забега в комнате, что его держит вне подземелья, не прошёл (кадр
+  // `error{code:'vote', solo:true}`) — держатель забег отпускает, герой продолжает его в своей комнате (docs/MULTIPLAYER.md, правило общего забега).
+  | { t: 'join'; roomCode?: string; token: string; charId: string; fresh?: boolean; resume?: boolean; solo?: boolean }
   // Есть ли у персонажа незавершённый забег (грейс-комната)? Ответ решает: модалка «Продолжить/
   // Забросить» или обычное лобби. Комнату не создаёт.
   | { t: 'runStatus'; token: string; charId: string }
@@ -269,9 +272,13 @@ export type ClientFrame =
 
 // ── Кадры сервер → клиент ───────────────────────────────────────────────────
 export type ServerFrame =
-  // ⭐ R18-08: `build` — штамп сборки сервера (`buildStampOf` исходников shared): у вкладки другой — её код старше сервера (деплой без перезагрузки),
-  // игроку «перезагрузите». Нет поля — сервер старше штампа (или не нашёл исходников): сравнивать нечего.
-  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState; build?: string }
+  // ⭐ D3: РУКОПОЖАТИЕ ВЕРСИЙ — на каждом входе: `v` — версия протокола, `build` — штамп сборки сервера (`buildStampOf` исходников shared, концы
+  // строк не в счёт), `cfgRev` — ревизия конфига комнаты (с ней сверяется согласие команд кузницы и лавки). Веб-клиент сверяет их ОДИН раз на вход
+  // в одном месте (`client/net/versionGate.ts`): код не тот — «перезагрузите», ревизия не та — перечитать конфиг. Нет поля — сервер старше его.
+  // ⭐ R21-05: `cooldowns` — откаты умений, с которыми сервер посадил героя (реконнект R4-06, другая комната D4 — из `vitals.cd`, вторая вкладка):
+  // ключ — как у события `cooldown`/`swing` (узел скила; `ins:<вставка>` — печать), `leftMs` — остаток, `fullMs` — полный откат (заливка слота).
+  // Событие каста о них не придёт — без поля новая страница рисовала слот готовым, а каст сервер молча отбрасывал. Нет откатов — поля нет.
+  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState; build?: string; cfgRev?: string; cooldowns?: HeroCooldowns }
   // Ответ на runStatus: есть ли незавершённый забег (+ код комнаты и этаж для модалки).
   // ⭐ R16 C-09: `dead` — герой в этом забеге погиб и штраф за смерть взят: «Завершить» — без штрафа (V1), «Продолжить» — мёртвым ждать пати
   // (K1). Нет поля — сервер старше его: экран говорит, как раньше.
@@ -354,8 +361,11 @@ export type ServerFrame =
   /**
    * Отказ. ⭐ C-05, C-08: `roomCode` — у отказа «Продолжить», чей забег ведёт другая комната (V2): `run` — она на другой ноде кластера, `full` —
    * в её пати нет мест. Клиент идёт по нему к ноде держателя (`join { resume }` там) или показывает лобби с этим кодом, а не только строку.
-   * ⭐ R20-04: `solo` — у подсказки «пати не идёт» (`vote`, R19-04: просьбу продолжить общий забег пати не приняла, забег — просившему): клиент
-   * предлагает кнопку «Продолжить без пати» — `leave` по живому сокету, статус забега, «Продолжить». Нет поля — только строка.
+   * ⭐ D1: `solo` — у подсказки «пати не идёт» (`vote`: голос за продолжение своего забега не прошёл — «нет» другого или срок голосования; у героя
+   * право «Соло»): клиент предлагает кнопку «Продолжить без пати» — `leave` по живому сокету и `join{resume, solo}`. Нет поля — только строка.
+   * Отказ `run` в игре (спуск: забег ведёт другая комната — с `roomCode`; у героя свой забег — без него) — клиент предлагает «Продолжить»
+   * (`leave` и `join{resume}`): к держателю его забега. ⭐ R21-04: отказ с `roomCode` получает и герой БЕЗ своего забега (гость в городе хозяина) —
+   * ему после `leave` и статуса «забега нет» вход по коду (`join{roomCode}`): «Продолжить» не участника к пати не ведёт.
    */
   | { t: 'error'; code: string; msg: string; roomCode?: string; solo?: boolean }
   // Эхо на ping (тот же id) — клиент замеряет RTT.

@@ -91,6 +91,11 @@ const avgYield = z.record(cfgId, z.number().finite().min(0))
  * дефис). Сервер сверяет со своей (`configChanged`); другая — отказ «Цена изменилась». Необязательная: Unity и старые вкладки её не шлют.
  */
 const cfgRev = z.string().regex(/^[0-9a-z]{1,13}-[0-9a-z]{1,13}$/).optional();
+/**
+ * ⭐ D3: штамп сборки вкладки (`buildStampOf`: три части base36 через дефис) — согласие на КОД у тех же команд (`buildChanged`): у сервера
+ * другой — отказ «Цена изменилась: сервер обновился». Рамка — base36-части через дефис, не длиннее 64. Необязательный: Unity, дев-сервер Vite.
+ */
+const build = z.string().max(64).regex(/^[0-9a-z]+(?:-[0-9a-z]+)*$/).optional();
 
 /**
  * ⭐ ЗАЯВКА НА КОВКУ (D2). Строгая на КАЖДОМ уровне вложенности: лишний ключ в заявке, в наборе деталей
@@ -112,18 +117,18 @@ export const craftInputSchema = z.object({
 
 export const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('buy'), uid, maxGold }).strict(),
-  z.object({ cmd: z.literal('sell'), uid, minGold, cfgRev }).strict(),
-  z.object({ cmd: z.literal('forgeUpgrade'), uid, maxGold, maxMaterials, cfgRev }).strict(),
-  z.object({ cmd: z.literal('forgeReroll'), uid, maxGold, cfgRev }).strict(),
-  z.object({ cmd: z.literal('forgeSalvage'), uid, minYield, avgYield, cfgRev }).strict(),
-  z.object({ cmd: z.literal('forgeRepair'), uid, maxGold, maxMaterials, cfgRev }).strict(),
+  z.object({ cmd: z.literal('sell'), uid, minGold, cfgRev, build }).strict(),
+  z.object({ cmd: z.literal('forgeUpgrade'), uid, maxGold, maxMaterials, cfgRev, build }).strict(),
+  z.object({ cmd: z.literal('forgeReroll'), uid, maxGold, cfgRev, build }).strict(),
+  z.object({ cmd: z.literal('forgeSalvage'), uid, minYield, avgYield, cfgRev, build }).strict(),
+  z.object({ cmd: z.literal('forgeRepair'), uid, maxGold, maxMaterials, cfgRev, build }).strict(),
   // Ключ заявки — тот же алфавит и длина, что проверяет ядро (`CRAFT_NONCE_RE`): 8–64 символа [A-Za-z0-9_-].
-  z.object({ cmd: z.literal('craft'), nonce: z.string().regex(CRAFT_NONCE_RE), input: craftInputSchema, maxGold, maxMaterials, cfgRev }).strict(),
-  z.object({ cmd: z.literal('forgeEnchant'), uid, rarity: z.enum(['magic', 'rare']), maxGold, cfgRev }).strict(),
+  z.object({ cmd: z.literal('craft'), nonce: z.string().regex(CRAFT_NONCE_RE), input: craftInputSchema, maxGold, maxMaterials, cfgRev, build }).strict(),
+  z.object({ cmd: z.literal('forgeEnchant'), uid, rarity: z.enum(['magic', 'rare']), maxGold, cfgRev, build }).strict(),
   // R3-11: эскиз — на деталь по id конфига; можно ли, решает ядро (`sketchAction`).
-  z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId, cfgRev }).strict(),
+  z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId, cfgRev, build }).strict(),
   z.object({ cmd: z.literal('depositMaterials') }).strict(),
-  z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield, cfgRev }).strict(),
+  z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield, cfgRev, build }).strict(),
   // R11-02: цель — только вторая рука (дуал-вилд, щит); без неё — родной слот вещи. Встанет ли — решает ядро (`equip`).
   z.object({ cmd: z.literal('equip'), uid, slot: z.literal('offhand').optional() }).strict(),
   z.object({ cmd: z.literal('unequip'), slot: wireText(1, 32) }).strict(),
@@ -190,7 +195,10 @@ const frameText = (max: number) => wireText(0, max);
 
 /** Схемы всех кадров, КРОМЕ `input` (он проверяется вручную — см. заголовок файла). */
 export const clientFrameSchema = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('join'), token, charId, roomCode: frameText(ROOM_CODE_LEN).optional(), fresh: z.boolean().optional(), resume: z.boolean().optional() }),
+  z.object({
+    t: z.literal('join'), token, charId, roomCode: frameText(ROOM_CODE_LEN).optional(), fresh: z.boolean().optional(), resume: z.boolean().optional(),
+    solo: z.boolean().optional(),   // ⭐ D1: «Продолжить без пати» (с `resume`)
+  }),
   z.object({ t: z.literal('runStatus'), token, charId }),
   z.object({ t: z.literal('abandon'), token, charId }),
   z.object({ t: z.literal('cmd'), command: townCommandSchema, id: z.number().int().nonnegative().optional() }),

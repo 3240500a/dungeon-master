@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRng } from './rng.js';
-import { levelForXp, xpForLevel } from './xp.js';
+import { levelForXp, xpForLevel, xpProgress } from './xp.js';
 import { deriveStats, meetsRequirements } from './stats.js';
 import { generateItem, rollRarity } from './itemgen.js';
 import { ConfigRegistry } from '../config/registry.js';
@@ -40,6 +40,17 @@ describe('xp', () => {
       for (let i = 2; i < t.length && xp >= t[i]!; i++) want = i;
       expect(levelForXp(xp, t), `годная кривая, опыт ${xp}`).toBe(want);
     }
+  });
+  // ⭐ D2: правка конфига уровней не отнимает (R9-05) — полоса опыта терпит сейв, которого кривая «не узнаёт»: без минусов, NaN и деления на ноль.
+  it('D2: xpProgress — уровень выше потолка, опыт ниже своего порога и выше следующего', () => {
+    expect(xpProgress(10, t[10]! + 1, t)).toEqual({ into: 1, need: t[11]! - t[10]!, frac: 1 / (t[11]! - t[10]!), max: false });
+    const cap = t.length - 1;
+    for (const lvl of [cap, cap + 5]) expect(xpProgress(lvl, 0, t), `уровень ${lvl}, потолок ${cap}`).toEqual({ into: 0, need: 0, frac: 1, max: true });
+    const slow = t.map((v) => Math.round(v * 1.25));
+    expect(xpProgress(30, t[30]!, slow), 'кривая медленнее — с нуля, а не минусом').toMatchObject({ into: 0, frac: 0, max: false });
+    const fast = t.map((v) => Math.round(v * 0.8));
+    expect(xpProgress(30, t[31]!, fast), 'кривая быстрее — полная (уровень придёт со следующим опытом)').toMatchObject({ frac: 1, max: false });
+    expect(xpProgress(5, Number.NaN, t).frac).toBe(0);
   });
 });
 

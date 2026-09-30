@@ -182,3 +182,22 @@ describe('⚠ R13-13: стек сырья теряет в среднем нас�
     expect(spared).toBeLessThan(200);
   });
 });
+
+/**
+ * ⭐ R22-04: СМЕРТЬ СНИМАЕТ ПУЛЫ, А НЕ ОТКАТЫ. Штраф смерти снимал `vitals` целиком (следующая жизнь — с полными пулами), а с ними — и откаты
+ * умений (`vitals.cd`, D4): погибший, ушедший в новую комнату (оборвался и вернулся после смены этажа, «Завершить» в город), входил с готовым
+ * кличем. Откат — время героя, не тела.
+ */
+describe('⭐ R22-04: штраф смерти — пулы долой, откаты героя остаются', () => {
+  it('в записи пулы и откаты: после штрафа — только откаты с их меткой; без откатов — записи нет', () => {
+    const r = reg();
+    const save = newBotSave(r, 'warrior');
+    save.vitals = { hp: 12, mana: 3, stamina: 40, at: 1_000, cd: { 'b-class-warrior-a5': 11.5 } };
+    applyDeathPenalty(save, PENALTY, createRng(1));
+    expect(save.vitals, 'было — undefined: клич готов в новой комнате').toEqual({ at: 1_000, cd: { 'b-class-warrior-a5': 11.5 } });
+    const bare = newBotSave(r, 'warrior');
+    bare.vitals = { hp: 12, mana: 3, stamina: 40, at: 1_000 };
+    applyDeathPenalty(bare, PENALTY, createRng(1));
+    expect(bare.vitals).toBeUndefined();
+  });
+});

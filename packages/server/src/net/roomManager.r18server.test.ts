@@ -10,13 +10,12 @@ vi.setConfig({ testTimeout: 60_000 });
  * ⭐ РАУНД 18 (сервер), менеджер комнат. Менеджер и комнаты — настоящие; база — маленькая честная (версии строк, свод забега объединением).
  *  • R18-04: ПЕРЕЗАГРУЗКА В ГОРОДЕ НЕ ОТРЫВАЕТ ОТ ПАТИ. После R17-02 любое «Продолжить» живого участника из города (F5, вылет, обрыв сети) забирало
  *    забег у городской комнаты, где его ждал подключённый напарник, и высаживало вернувшегося одного на узел; напарнику — отказ `run` на каждый
- *    спуск. Сервер не отличал честную перезагрузку от заложника (R17-02: напарник отошёл от компьютера). Теперь держатель в городе забег
- *    отдаёт, только если никто из его подключённых участников забега не действовал `RUN_IDLE_MS` (заложник — отошедший); иначе «Продолжить» —
- *    к пати, как V2. Отказ спуска в городе — с кодом держателя полем кадра (`roomCode`).
+ *    спуск. ⭐ D1 (правило общего забега, `roomManager.d1server.test.ts`): «Продолжить» ведёт к держателю ВСЕГДА, а забег его город отдаёт только
+ *    «Соло» — голос за продолжение там не прошёл («нет», срок голосования). Отказ спуска в городе — с кодом держателя полем кадра (`roomCode`).
  *  • R18-02: СВОД ЗАБЕГА, НЕ ЛЁГШИЙ В БАЗУ, НЕ ОБХОДИТСЯ «ПРОДОЛЖИТЬ». Запись свода упала (блокировка, таймаут), пачка ждала повтора в очереди
  *    комнаты (`ledgerOut`) — а вход ждал только записей в полёте (`runLedgerSettled`) и собирал узел по базе: открытый сундук закрыт снова,
  *    убитые живы — добыча и опыт ещё раз. Теперь вход и продолжение сперва дописывают недолёгшее любой комнаты процесса (и ушедшей), и если
- *    оно так и не легло — «занято», а не узел по базе; держатель с недолёгшим сводом забег не отдаёт.
+ *    оно так и не легло — «занято», а не узел по базе; держатель с недолёгшим сводом забег не отдаёт (и «Соло» — «занято»).
  */
 const TOK = 'f1'.repeat(32);
 const USER = 'user-r18rm';
@@ -102,11 +101,11 @@ async function until(what: string, ok: () => boolean, turns = 5_000): Promise<vo
 }
 
 type Pl = { pos: { x: number; y: number }; save: SaveState; alive: boolean };
-type ClientIn = { activeAt: number };
 type RoomIn = {
-  code: string; area: string; movedAt: number; runConfig: RunConfig | null;
-  clients: Map<string, ClientIn>;
-  stop(): void; descend(pid: string): void; returnTown(pid: string): void; castVote(pid: string, yes: boolean): void; openChest(pid: string, id: number): void;
+  code: string; area: string; movedAt: number; runConfig: RunConfig | null; vote: unknown;
+  clients: Map<string, unknown>;
+  stop(): void; step(emit?: boolean): void; descend(pid: string): void; returnTown(pid: string): void; castVote(pid: string, yes: boolean): void;
+  openChest(pid: string, id: number): void;
   holdsRun(key: string): boolean; ledgerPending(): boolean;
   session: {
     world: {
@@ -118,12 +117,12 @@ type RoomIn = {
 type RMIn = { rooms: Map<string, RoomIn>; inflight: Map<string, unknown>; live: Map<string, unknown>; charOps: Map<string, unknown>; handleConnection(ws: GameConn): void };
 let RoomManagerCtor: typeof import('./roomManager.js').RoomManager;
 let runLedgerKey: (cfg: RunConfig) => string;
-let RUN_IDLE_MS: number;
+let VOTE_TIMEOUT_MS: number;
 let cfg: ConfigRegistry;
 const managers: RMIn[] = [];
 beforeAll(async () => {
   ({ RoomManager: RoomManagerCtor } = await import('./roomManager.js'));
-  ({ runLedgerKey, RUN_IDLE_MS } = await import('./room.js') as unknown as { runLedgerKey: typeof runLedgerKey; RUN_IDLE_MS: number });
+  ({ runLedgerKey, VOTE_TIMEOUT_MS } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
@@ -153,16 +152,30 @@ function seed(id: string): void {
   db.chars.set(id, { data: s, version: 1 });
 }
 let ipSeq = 0;
-async function join(rm: RMIn, charId: string, how: { roomCode?: string; resume?: boolean } = {}): Promise<FakeConn> {
+async function join(rm: RMIn, charId: string, how: { roomCode?: string; resume?: boolean; solo?: boolean } = {}): Promise<FakeConn> {
+  for (const l of [limits.roomJoin, limits.roomCreate, limits.lobby]) l.reset(USER);   // лимиты входа — не предмет теста
   const ws = new FakeConn(`198.51.100.${++ipSeq % 250}`);
   rm.handleConnection(ws);
-  ws.push({ t: 'join', token: TOK, charId, ...(how.roomCode ? { roomCode: how.roomCode } : how.resume ? { resume: true } : { fresh: true }) });
+  ws.push({ t: 'join', token: TOK, charId, ...(how.roomCode ? { roomCode: how.roomCode } : how.resume ? { resume: true, ...(how.solo ? { solo: true } : {}) } : { fresh: true }) });
   await until(`${charId}: ответ на вход`, () => !!ws.last('joined') || !!ws.last('error'));
   return ws;
 }
-/** Отошёл от компьютера: подключённые комнаты не действовали дольше `RUN_IDLE_MS`. */
-function afk(room: RoomIn): void {
-  for (const c of room.clients.values()) c.activeAt -= RUN_IDLE_MS + 1_000;
+/**
+ * ⭐ D1: A стоит в городе и спускаться не хочет — B «Продолжить» садится к нему (правило 1), зовёт спуск, A отвечает «нет» (срок голосования
+ * `VOTE_TIMEOUT_MS` — то же, `roomManager.d1server.test.ts`): у B право «Соло». B выходит (`leave`) — дальше его «Продолжить без пати».
+ */
+async function refused(rm: RMIn, room: RoomIn, charId: string, wsA: FakeConn): Promise<void> {
+  expect(VOTE_TIMEOUT_MS).toBeGreaterThan(0);
+  const ws = await join(rm, charId, { resume: true });
+  expect(ws.last('joined')?.roomCode, JSON.stringify(ws.last('error'))).toBe(room.code);
+  room.movedAt = 0;
+  const n0 = ws.frames.length;
+  ws.push({ t: 'descend' });
+  await until('окно голосования', () => ws.frames.slice(n0).some((f) => f.t === 'voteStart'));
+  wsA.push({ t: 'vote', accept: false });
+  await until('подсказка «Соло»', () => ws.frames.slice(n0).some((f) => f.t === 'error' && f.code === 'vote' && f.solo === true));
+  ws.push({ t: 'leave' });
+  await until(`${charId} вышел`, () => !rm.live.has(charId) && !rm.inflight.has(charId) && !rm.charOps.has(charId));
 }
 
 /** A и B прошли узел вместе (сундук узла — `chestId`) и вернулись в город: забег K припаркован у обоих, городская комната держит его. */
@@ -211,13 +224,13 @@ describe('⭐ R18-04: перезагрузка в городе — «Продо�
     expect(wsA.frames.slice(n0).some((f) => f.t === 'error' && f.code === 'run'), 'A не получал отказа `run`').toBe(false);
   });
 
-  it('контроль R17-02: напарник в городе отошёл (не действовал дольше срока) — «Продолжить» уводит в новую комнату; спуск A — отказ с кодом полем кадра', async () => {
+  it('⭐ D1: напарник в городе не отвечает — голос B по сроку не прошёл, «Соло» уводит в новую комнату; спуск A — отказ с кодом полем кадра', async () => {
     const rm = manager();
     const { room, key, wsA, wsB, pidA } = await party(rm, 'R18AFA', 'R18AFB');
     wsB.close();
     await until('B снят', () => !rm.live.has('R18AFB') && !rm.inflight.has('R18AFB') && !rm.charOps.has('R18AFB'));
-    afk(room);
-    const wsB2 = await join(rm, 'R18AFB', { resume: true });
+    await refused(rm, room, 'R18AFB', wsA);
+    const wsB2 = await join(rm, 'R18AFB', { resume: true, solo: true });
     const j = wsB2.last('joined');
     expect(j, JSON.stringify(wsB2.last('error'))).toBeDefined();
     expect(j!.roomCode, 'новая комната').not.toBe(room.code);
@@ -232,7 +245,10 @@ describe('⭐ R18-04: перезагрузка в городе — «Продо�
   });
 });
 
-/** A продолжает забег один (B вышел из города), открывает сундук узла и возвращается в город; свод этой записи в базу не ложится. */
+/**
+ * A продолжает забег один (B вышел из города), открывает сундук узла и возвращается в город; свод этой записи в базу не ложится. A стоит в городе
+ * (`aLeaves: false`) — у B право «Соло» (его голос в городе A не прошёл по сроку, `refused`), и дальше — «Продолжить без пати».
+ */
 async function lootAlone(rm: RMIn, tag: string, opts: { aLeaves: boolean }): Promise<{ room: RoomIn; key: string; chestId: number; wsA: FakeConn }> {
   const { room, key, wsA, wsB, pidA, chestId } = await party(rm, `${tag}A`, `${tag}B`);
   wsB.push({ t: 'leave' });
@@ -253,12 +269,12 @@ async function lootAlone(rm: RMIn, tag: string, opts: { aLeaves: boolean }): Pro
   if (opts.aLeaves) {
     wsA.push({ t: 'leave' });
     await until('A ушёл', () => !rm.live.has(`${tag}A`), 20_000);
-  } else afk(room);   // A стоит в городе, отошёл: держатель забег отдал бы (R17-02)
+  } else await refused(rm, room, `${tag}B`, wsA);   // A стоит в городе и не идёт: у B право «Соло» (D1)
   return { room, key, chestId, wsA };
 }
-/** Что увидел бы B: «Продолжить» — вошёл (и открыт ли сундук на узле его комнаты) или отказ. */
+/** Что увидел бы B: «Продолжить» («Соло», если A в городе) — вошёл (и открыт ли сундук на узле его комнаты) или отказ. */
 async function resumeB(rm: RMIn, tag: string, room: RoomIn, chestId: number): Promise<{ code?: string; opened?: boolean; err?: string }> {
-  const ws = await join(rm, `${tag}B`, { resume: true });
+  const ws = await join(rm, `${tag}B`, { resume: true, solo: true });
   const j = ws.last('joined');
   if (!j) return { err: ws.last('error')!.code };
   const mine = rm.rooms.get(j.roomCode)!;
@@ -284,19 +300,21 @@ describe('⭐ R18-02: недолёгший свод забега — «Прод�
       w.players[r.pidA]!.pos = { ...w.spawn };
       r.room.movedAt = 0; r.room.returnTown(r.pidA);
       await until('свод лёг', () => !r.room.ledgerPending());
-      afk(r.room);
+      await refused(rm, r.room, 'R18L0B', r.wsA);
       return r;
     })();
     expect(await resumeB(rm, 'R18L0', room, chestId)).toMatchObject({ opened: true });
   });
 
-  it('свод не лёг, A стоит в городе (отошёл) — B не получает узел с закрытым сундуком: «занято» или сундук открыт', async () => {
+  it('свод не лёг, A стоит в городе (голос B там не прошёл) — «Соло» B не получает узел с закрытым сундуком: «занято» или сундук открыт', async () => {
     const rm = manager();
     const { room, chestId } = await lootAlone(rm, 'R18L1', { aLeaves: false });
     const r = await resumeB(rm, 'R18L1', room, chestId);
     expect(r.opened === true || r.err === 'busy', JSON.stringify(r)).toBe(true);
-    // База вернулась — «Продолжить» сам дописывает недолёгшее (не ждёт повтора по таймеру) и идёт, со взятым сундуком.
+    // База вернулась — «Продолжить» сам дописывает недолёгшее (не ждёт повтора по таймеру) и идёт, со взятым сундуком. ⭐ D1: прощальная запись B
+    // (он входил к A за голосом, пока свод не ложился) ждёт свод (K2) — его повтор по таймеру комнаты (`LEDGER_RETRY_MS`) здесь — сразу.
     db.ledgerDown = false;
+    await (room as unknown as { flushOwed(): Promise<void> }).flushOwed();
     if (r.err) expect(await resumeB(rm, 'R18L1', room, chestId)).toMatchObject({ opened: true });
   });
 

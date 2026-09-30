@@ -22,7 +22,7 @@ vi.mock('./env3d.js', () => ({ WALL_H: 96 }));
 
 import { applyCraftLooks, loadCraftMeshLib } from './craftWeapon3d.js';
 import { App } from '../core/app.js';
-import { PROTOCOL_STALE } from '../net/entryFlow.js';
+import { PROTOCOL_STALE } from '../net/versionGate.js';
 
 describe('⭐ R10-12: модель ковки не загрузилась — «перезагрузите» один раз, рука процедурная', () => {
   const G = globalThis as unknown as { fetch?: unknown };

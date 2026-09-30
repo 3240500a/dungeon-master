@@ -17,7 +17,7 @@ let cells: SweepCell[] | null = null;     // результат последне
 
 const h = (tag: string, css: string, txt = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (txt) e.textContent = txt; return e; };
 const INP = 'padding:4px 6px;background:#0f0f16;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;font-size:12px';
-function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg = new ConfigRegistry(); reg.loadAll(data); return reg; }
+function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg = new ConfigRegistry(); reg.loadAll(data, { cross: false }); return reg; }   // ⭐ R22-01: читатель рабочей копии (правило D4 — у записи)
 
 function num(val: number, on: (n: number) => void, w = 58): HTMLInputElement {
   const i = document.createElement('input'); i.type = 'number'; i.value = String(val); i.style.cssText = INP + `;width:${w}px`;

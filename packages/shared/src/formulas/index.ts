@@ -2,6 +2,8 @@ export * from './rng.js';
 export * from './uuid.js';
 export * from './stats.js';
 export * from './combat.js';
+// ⭐ D4: одно правило времени баффа — схема, редактор, ядро и фаззер спрашивают его отсюда.
+export * from './buffTiming.js';
 export * from './xp.js';
 export * from './itemgen.js';
 // ⚠ Разбор и трофеи нужны НЕ только сессии: редактор строит по ним таблицы дропа, и считать

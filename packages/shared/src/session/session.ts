@@ -8,7 +8,8 @@ import type { StatModifier } from '../types/attributes.js';
 import { emptyPacket, packetTotal } from '../types/combat.js';
 import type { Difficulty } from '../formulas/power.js';
 import { createRng, type Rng } from '../formulas/rng.js';
-import { resolveAttack, abilityCooldown, abilityRankMult, buffCooldown, swingHalfWidth } from '../formulas/combat.js';
+import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
+import { buffNodeCooldown, clampBuffCooldown } from '../formulas/buffTiming.js';
 import { hitMaterialOf, type HitMaterial } from '../formulas/hitMaterial.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
@@ -184,6 +185,12 @@ export type SessionEvent =
   // Уклонение игрока (dodge-рывок) — клиент проигрывает VFX/SFX рывка в сторону dir.
   | { type: 'dodge'; playerId: string; x: number; y: number; dir: number }
   | { type: 'floor-cleared' };
+
+/**
+ * ⭐ R21-05: откаты героя для кадра входа (`joined.cooldowns`) — ключ как у события `cooldown`/`swing` (узел скила; `ins:<вставка>` — печать):
+ * `leftMs` — остаток, `fullMs` — полный откат (доля заливки слота). Событие каста о них клиенту не придёт: их вернул сервер (`GameSession.cooldownsOf`).
+ */
+export type HeroCooldowns = Record<string, { leftMs: number; fullMs: number }>;
 
 /** AoE-способность (бьёт по площади вокруг игрока), по abilityId — как в боевом контроллере. */
 export function isAoeAbility(id: string): boolean {
@@ -389,6 +396,54 @@ export class GameSession {
   /** Боевой снимок игрока за текущий тик (для HUD/тестов); undefined до первого тика. */
   snapshotOf(id: string): PlayerSnapshot | undefined {
     return this.snaps.get(id);
+  }
+
+  /**
+   * ⭐ D4: СНИМОК ГЕРОЯ ЗАНОВО — как в начале тика (с тоглами и баффами), после смены тела между тиками (конец арены — `arenaReturn`). Без
+   * этого до следующего тика жил снимок арены (без стоек, аур и баффов тела города), и команда в этом окне (зелье: потолок здоровья и маны)
+   * мерилась им — R15-09 («по герою города, а не по снимку арены») держал это только для самого возврата. Здоровье здесь не подрезается —
+   * это делает тик (R5-02), как у любого снятия бонуса.
+   */
+  refreshSnapshot(id: string): void {
+    const p = this.world.players[id];
+    if (!p?.alive) return;
+    this.dropUnlearned(p);
+    const s = playerSnapshot(p.save, this.cfg, this.runtimeMods(p));
+    this.snaps.set(id, s);
+    p.maxHp = s.derived.maxHp;
+  }
+
+  /**
+   * ⭐ R21-05: ОТКАТЫ ГЕРОЯ ДЛЯ КАДРА ВХОДА (`joined.cooldowns`). Реконнект (запись ухода, R4-06), вход в другую комнату (D4: `vitals.cd`) и вторая
+   * вкладка ставят герою откаты, о которых событие каста клиенту не придёт: раньше новая страница рисовала слот готовым, а каст сервер молча
+   * отбрасывал до конца скрытого отката. Остаток — как держит сервер; полный — откат узла на его ранге сейчас, по тому же правилу, что кладёт каст
+   * (`nodeCooldown`), и не короче остатка (ранг или вставки могли смениться с каста; у печати вставки `ins:` — остаток). Откатов нет — `undefined`.
+   */
+  cooldownsOf(id: string): HeroCooldowns | undefined {
+    const p = this.world.players[id];
+    if (!p) return undefined;
+    let out: HeroCooldowns | undefined;
+    for (const [key, left] of Object.entries(p.skillCd)) {
+      if (!(left > 0)) continue;
+      const leftMs = Math.round(left * 1000);
+      const rank = p.save.skills[key] ?? 0;
+      const res = rank > 0 ? resolveActive(this.cfg, p.save, key) : undefined;
+      const fullMs = res ? Math.round(this.nodeCooldown(res.active, key, rank) * 1000) : 0;
+      (out ??= {})[key] = { leftMs, fullMs: Math.max(leftMs, fullMs) };
+    }
+    return out;
+  }
+
+  /**
+   * Полный откат узла на ранге — ровно то, что каст кладёт в `skillCd`: бафф — по правилу времени баффа (D4: ранг выше потолка узла откат не режет,
+   * не короче действия с отдыхом `buffMinRest`), прочие — `abilityCooldown`. ⭐ R21-05: одно место для каста и кадра входа (`cooldownsOf`).
+   */
+  private nodeCooldown(active: ActiveAbility, nodeId: string, rank: number): number {
+    if (active.category === 'buff') {
+      const maxRank = this.cfg.get('skill-tree').nodes.find((n) => n.id === nodeId)?.maxRank ?? rank;
+      return clampBuffCooldown(buffNodeCooldown(active.cooldown, rank, maxRank), active.durationSec, this.cfg.get('balance').buffMinRest, nodeId);
+    }
+    return active.cooldown > 0 ? abilityCooldown(active.cooldown, rank) : 0;
   }
 
   // ── Главный тик ───────────────────────────────────────────
@@ -872,16 +927,17 @@ export class GameSession {
         this.toggleStance(p, snap, nodeId, active);
         return;
       // Временный бафф: стат-моды за ресурс на durationSec; не рефрешим, пока активен.
-      // ⚠ R6-15: и свой ОТКАТ, как у прочих активок: без него повтор в кадр истечения держал бафф 100 % времени. ⚠ R19-03: откат
-      // не короче действия с отдыхом (`buffCooldown`) — ранг режет откат, а не действие, и с какого-то ранга (у «Огненных чар» — с
-      // первого) откат ≤ действия снова давал 100 %. ⚠ R8-15: клиенту — событие отката (залить слот), НЕ свинг: свинг — удар.
+      // ⚠ R6-15: и свой ОТКАТ, как у прочих активок: без него повтор в кадр истечения держал бафф 100 % времени. ⭐ D4: откат — по
+      // ОДНОМУ правилу (`buffTiming.ts`): по рангу (ранг выше потолка узла откат не режет), не короче действия с отдыхом баланса
+      // (`buffMinRest`) — годные данные это держат сами (схема), зажим с предупреждением — для конфига мимо схемы. ⚠ R8-15: клиенту —
+      // событие отката (залить слот), НЕ свинг: свинг — удар.
       case 'buff': {
         if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
         if ((p.skillCd[nodeId] ?? 0) > 0) return;
         if (!this.canSpend(p, active, res.extraCost)) return;
         this.spend(p, active, res.extraCost);
         p.skillBuffs[nodeId] = active.durationSec;
-        const cd = buffCooldown(active.cooldown, active.durationSec, rank);
+        const cd = this.nodeCooldown(active, nodeId, rank);   // R21-05: то же правило — у кадра входа
         if (cd > 0) p.skillCd[nodeId] = cd;
         this.events.push({ type: 'cooldown', playerId: p.id, ability: nodeId, cooldownMs: (p.skillCd[nodeId] ?? 0) * 1000 });
         return;
@@ -900,7 +956,8 @@ export class GameSession {
         const stepSec = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
         const hits = Math.max(1, active.hits);
         p.attackCd = stepSec * hits;                 // общий attack-лок держит ВСЮ серию
-        if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
+        const cd = this.nodeCooldown(active, nodeId, rank);   // R21-05: то же правило — у кадра входа
+        if (cd > 0) p.skillCd[nodeId] = cd;
         // ⚠ Замах считается от ОДНОГО взмаха (`stepSec`), а не от всей серии: иначе у трёхударного
         // скилла первый удар пришёлся бы на треть позже, чем у такого же одноударного.
         const windup = this.windupSec(stepSec, active.windupSec);
@@ -919,7 +976,8 @@ export class GameSession {
         if (!this.weaponAllowed(p, active)) return;
         if (!this.canSpend(p, active, res.extraCost)) return;
         this.spend(p, active, res.extraCost);
-        if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
+        const cd = this.nodeCooldown(active, nodeId, rank);   // R21-05: то же правило — у кадра входа
+        if (cd > 0) p.skillCd[nodeId] = cd;
         const castTime = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
         this.emitSwing(p, nodeId, castTime, Math.max(castTime, p.skillCd[nodeId] ?? 0), 0);
         if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime, res, loadout: loadoutSig(p) }; return; }
@@ -1141,7 +1199,16 @@ export class GameSession {
         // и прока в списке уже нет.
         // Печать (бафф на себя) не проходит через `executeAbility`: тот бьёт по миру, а бафф —
         // состояние игрока. Ключ с префиксом `ins:` — чтобы не столкнуться с id узлов дерева.
-        if (pr.ability.category === 'buff') { p.skillBuffs['ins:' + pr.insertId] = pr.ability.durationSec; continue; }
+        // ⭐ D4: и у печати СВОЙ ОТКАТ (`skillCd['ins:<вставка>']`, один на все скилы с этой вставкой) — по правилу баффа: не короче её
+        // действия на ранге донора с отдыхом. Раньше печать освежалась каждым применением носителя: на спамном ударе — 100 % времени.
+        // Бросок шанса — выше, до отката: поток бросков мира тот же.
+        if (pr.ability.category === 'buff') {
+          const key = 'ins:' + pr.insertId;
+          if ((p.skillCd[key] ?? 0) > 0) continue;
+          p.skillBuffs[key] = pr.ability.durationSec;
+          p.skillCd[key] = clampBuffCooldown(pr.ability.cooldown, pr.ability.durationSec, this.cfg.get('balance').buffMinRest, key);
+          continue;
+        }
         this.executeAbility(p, snap, pr.ability, rank);
       }
     } finally { this.procActive = false; }
@@ -1796,7 +1863,15 @@ export class GameSession {
     // падает, как и без убийцы (R9-06). Воскрешение и так наполняет пулы.
     const reward = killer?.alive ? killer : undefined;
     this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: reward?.id });
-    this.overloadOnDeath(m); // сигнатура конструктов: взрыв при смерти
+    this.killRewards(m, killer, reward);
+    // ⚠ R21-06: сигнатура конструктов (взрыв при смерти) — ПОСЛЕ наград убийцы. Награда решалась до взрыва (живой убийца), а выдавалась
+    // после: взрыв убивал убийцу, и лечение за убийство и левелап (полное здоровье) доставались трупу — `alive = false` при здоровье
+    // выше нуля (V-RF-04). Награды — в миг убийства, живому; взрыв — следом, по тому, кто рядом и виден.
+    this.overloadOnDeath(m);
+  }
+
+  /** Награды смерти монстра: убийце (`reward` — живой убийца или никто, V-RF-04) — лечение и мана за убийство, опыт; добыча — всегда (R9-06). */
+  private killRewards(m: MonsterEntity, killer: PlayerEntity | undefined, reward: PlayerEntity | undefined): void {
     // Восстановление за убийство (лич-за-килл): плоско HP/мана убийце — боевой сустейн, ДО наград. Мана — по резерву аур (V-RF-01).
     if (this.sustain && reward) {
       const kd = this.snaps.get(reward.id)?.derived;
@@ -2371,7 +2446,11 @@ export class GameSession {
     }
   }
 
-  /** Сигнатура конструктов (signature=overload): при смерти — AoE-урон по игрокам рядом (наказывает мили). */
+  /**
+   * Сигнатура конструктов (signature=overload): при смерти — AoE-урон по игрокам рядом (наказывает мили).
+   * ⚠ R21-06: только по ВИДИМЫМ от монстра — та же видимость, что у его ближнего удара и снаряда (сетка, шов, преграды декора,
+   * закрывающие обзор), и у площади героев (R5-05). По одному расстоянию взрыв бил сквозь стену в клетку и закрытую дверь рычага.
+   */
   private overloadOnDeath(m: MonsterEntity): void {
     if (!this.sustain) return; // боевой эффект (угроза моба) — только когда сустейн включён
     if (behaviorFor(m.def.faction, this.cfg.get('monster-behaviors')).signature !== 'overload') return;
@@ -2380,7 +2459,7 @@ export class GameSession {
     for (const id of Object.keys(this.world.players)) {
       const p = this.world.players[id]!;
       if (!p.alive) continue;
-      if (vecLen(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius + p.radius) {
+      if (vecLen(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius + p.radius && this.hasLos(m.pos, p.pos)) {
         this.hitPlayer(p, a.packet, a.attacker, a.debuffs, `${m.def.name} (взрыв)`, m);
       }
     }

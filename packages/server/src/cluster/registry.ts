@@ -38,7 +38,15 @@ export interface NodeRow {
    * запасной срок.
    */
   beat_ms?: number;
+  /**
+   * ⭐ E2E 30.09 (седьмой прогон): снимок счётчиков процесса ноды с последнего удара (`counterSnapshot`, net/metrics.ts) — из него гейтвей
+   * складывает метрики кластера под именами одиночного процесса (`clusterMetrics`). Нет (нода старше правки, мок) — счётчиков ноды не видно.
+   */
+  counters?: NodeCounters | null;
 }
+
+/** ⭐ E2E 30.09: снимок счётчиков процесса ноды — метка запуска (`boot`: рестарт — счёт с нуля) и значения по именам метрик. */
+export interface NodeCounters { boot: string; values: Record<string, number> }
 
 /** Сколько нода может молчать, прежде чем её перестанут считать живой. */
 const NODE_STALE_SEC = 10;
@@ -110,6 +118,10 @@ const SCHEMA_CLUSTER = `
       live_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS run_locks_node ON run_locks (node_id);
+
+    -- ⭐ E2E 30.09 (седьмой прогон): снимок счётчиков процесса ноды (метка запуска и значения по именам метрик) — с каждым ударом сердца;
+    -- гейтвей складывает из него метрики кластера (инциденты, кузница…) под именами одиночного процесса.
+    ALTER TABLE cluster_nodes ADD COLUMN IF NOT EXISTS counters jsonb;
   `;
 
 /**
@@ -124,28 +136,32 @@ const SCHEMA_CLUSTER = `
  */
 export async function heartbeat(
   id: string, url: string,
-  s: { players: number; rooms: number; cpuSeconds: number; rssBytes: number; loopP99: number; tickHz: number; draining: boolean },
+  s: {
+    players: number; rooms: number; cpuSeconds: number; rssBytes: number; loopP99: number; tickHz: number; draining: boolean;
+    /** ⭐ E2E 30.09: снимок счётчиков процесса (`counterSnapshot`). Нет — прежний снимок строки не трогается (нода старше правки). */
+    counters?: NodeCounters;
+  },
   leased = false,
 ): Promise<boolean> {
-  const params = [id, url, s.players, s.rooms, s.draining, s.cpuSeconds, s.rssBytes, s.loopP99, s.tickHz];
+  const params = [id, url, s.players, s.rooms, s.draining, s.cpuSeconds, s.rssBytes, s.loopP99, s.tickHz, s.counters ? JSON.stringify(s.counters) : null];
   if (leased) {
     const r = await q1<{ id: string }>(
       `UPDATE cluster_nodes SET
          url = $2, players = $3, rooms = $4, draining = $5, cpu_seconds = $6,
-         rss_bytes = $7, loop_p99_ms = $8, tick_hz = $9, beat_at = now()
-       WHERE id = $1 AND beat_at > now() - ($10 || ' milliseconds')::interval
+         rss_bytes = $7, loop_p99_ms = $8, tick_hz = $9, counters = COALESCE($10::jsonb, counters), beat_at = now()
+       WHERE id = $1 AND beat_at > now() - ($11 || ' milliseconds')::interval
        RETURNING id`,
       [...params, String(LEASE_MS)]);
     return !!r;
   }
   await q(
-    `INSERT INTO cluster_nodes (id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz, beat_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+    `INSERT INTO cluster_nodes (id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz, counters, beat_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb, now())
      ON CONFLICT (id) DO UPDATE SET
        url = excluded.url, players = excluded.players, rooms = excluded.rooms,
        draining = excluded.draining, cpu_seconds = excluded.cpu_seconds,
        rss_bytes = excluded.rss_bytes, loop_p99_ms = excluded.loop_p99_ms,
-       tick_hz = excluded.tick_hz, beat_at = now()`,
+       tick_hz = excluded.tick_hz, counters = COALESCE(excluded.counters, cluster_nodes.counters), beat_at = now()`,
     params);
   return true;
 }
@@ -163,7 +179,7 @@ export async function nodeBeatAge(id: string): Promise<number | null> {
 /** Живые узлы (те, что подавали признаки жизни недавно). */
 export async function liveNodes(): Promise<NodeRow[]> {
   return q<NodeRow>(
-    `SELECT id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz,
+    `SELECT id, url, players, rooms, draining, cpu_seconds, rss_bytes, loop_p99_ms, tick_hz, counters,
             (extract(epoch FROM beat_at) * 1000)::float8 AS beat_ms
      FROM cluster_nodes WHERE beat_at > now() - ($1 || ' seconds')::interval
      ORDER BY id`, [String(NODE_STALE_SEC)]);

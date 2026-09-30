@@ -102,6 +102,8 @@ export function newCharacterSave(reg: ConfigRegistry, classId: string, name: str
     attributes: { ...cls.startAttributes },
     // ⚠ R18-07: старт, с которым создан, — сброс атрибутов меряет вложенное от него, а не от нынешней строки класса.
     startAttributes: { ...cls.startAttributes },
+    // ⭐ D2: книга заработанного — с нуля; дальше её пишет только выдача (`gainXp`, награда задания).
+    earned: { attributePoints: 0, skillPoints: 0, masteryPoints: 0 },
     unspentAttributePoints: 0, unspentSkillPoints: 0, unspentMasteryPoints: 0,
     skills: {}, masteries: {},
     equipment, inventory, stash: [], belt: [],

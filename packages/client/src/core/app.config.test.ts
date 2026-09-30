@@ -4,7 +4,8 @@ import {
   type SaveState, type TownCommand,
 } from '@dm/shared';
 import { App } from './app.js';
-import { EntryFlow, PROTOCOL_STALE, type EntryView } from '../net/entryFlow.js';
+import { EntryFlow, type EntryView } from '../net/entryFlow.js';
+import { PROTOCOL_STALE } from '../net/versionGate.js';
 
 /**
  * ⭐ R5-15: КОНФИГ КЛИЕНТА ДОГОНЯЕТ СЕРВЕРНЫЙ НА КАЖДОМ ВХОДЕ В МИР.
@@ -15,6 +16,8 @@ import { EntryFlow, PROTOCOL_STALE, type EntryView } from '../net/entryFlow.js';
  * же брал новую цену. Теперь кадр `joined` (вход и КАЖДЫЙ новый вход после потери связи) перечитывает конфиг
  * условным запросом (`If-None-Match`): не изменился — 304 и ничего; изменился — новый конфиг, метки и перерисовка.
  * Отказ «Цена изменилась» (сервер не взял больше показанного, `priceRaised`) — тоже повод перечитать.
+ * ⭐ D3: перечитывание на входе и «перезагрузите» — рукопожатие версий `App` (`net/versionGate.ts`), а не обработчик клиента: поток входа
+ * здесь — как у обоих клиентов, без своего `onJoined`.
  *
  * Сокет — `NetClient` с подделкой WebSocket; `/api/config` — подделка `fetch` с ETag, как у сервера (`configEtag.ts`).
  */
@@ -65,7 +68,14 @@ async function fakeFetch(url: string, init?: { headers?: Record<string, string> 
   const body = JSON.parse(JSON.stringify(server.reg.snapshot())) as unknown;
   return { ok: true, status: 200, headers, json: async () => body };
 }
-const flush = async (): Promise<void> => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)); };
+/**
+ * Дождаться ответа «сервера». Сокет и `/api/config` — подделки, отвечающие готовыми промисами: всё, чего ждёт `App` (перечитывание конфига, отказ
+ * «Цена изменилась»), — микрозадачи, и их вычерпывает ЛЮБОЙ оборот цикла. Обороты — `setImmediate`, а не `setTimeout(0)`: на Windows тот —
+ * шаг системного таймера (~15,6 мс), и 10 оборотов на каждый `flush` давали ~2 с чистого ожидания на тест R18-08. Под нагрузкой полного прогона
+ * это переходило умолчание 5 с — а тест, упавший по времени, доигрывал в фоне СЛЕДУЮЩИЙ: снимал его поддельные часы («setSystemTime was called
+ * already»), штамп `__DM_BUILD__` и писал в его `server` и `FakeWs.all` («expected 2 to be 1»). Отсюда «четыре R18-08 подряд, поодиночке — зелёные».
+ */
+const flush = async (): Promise<void> => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
 
 /**
  * ⭐ R16 C-07: реестр сервера НОВОГО выпуска — таблица `key` разобрана его схемой (`table` — её разобранное значение), которой у старой
@@ -138,18 +148,21 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     app.bus.on('log:message', (m) => { logs.push(m.text); });
     const entry = new EntryFlow({
       net: app.net, view, who: () => ({ token: 'ab'.repeat(32), charId: 'hero-1' }), replies: app.replies,
-      log: (text) => logs.push(text), onJoined: () => void app.syncConfig(),
+      log: (text) => logs.push(text),
     });
     entry.attach();
     entry.start();
     const save: SaveState = newBotSave(app.config, app.config.get('classes')[0]!.id);
-    /** Сокет открылся, статус забега, клик «Соло», кадр `joined` (⭐ R18-08: `build` — штамп сборки сервера; нет — сервер старше штампа). */
-    const enter = async (v = PROTOCOL_VERSION, build?: string): Promise<void> => {
+    /**
+     * Сокет открылся, статус забега, клик «Соло», кадр `joined` (⭐ R18-08: `build` — штамп сборки сервера; нет — сервер старше штампа;
+     * ⭐ D3: `cfgRev` — ревизия конфига комнаты; нет — сервер старше рукопожатия, конфиг перечитывается всегда).
+     */
+    const enter = async (v = PROTOCOL_VERSION, build?: string, cfgRev?: string): Promise<void> => {
       const ws = FakeWs.all.at(-1)!;
       ws.open();
       ws.frame({ t: 'runStatus', hasRun: false });
       entry.join({ fresh: true });
-      ws.frame({ t: 'joined', v, playerId: 'p1', roomCode: 'ABCD', floor: {}, peers: [], save, ...(build !== undefined ? { build } : {}) });
+      ws.frame({ t: 'joined', v, playerId: 'p1', roomCode: 'ABCD', floor: {}, peers: [], save, ...(build !== undefined ? { build } : {}), ...(cfgRev !== undefined ? { cfgRev } : {}) });
       await flush();
     };
     return { app, entry, enter, logs, ws: () => FakeWs.all.at(-1)! };
@@ -259,7 +272,7 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     g.ws().drop(1006);
     await g.enter();
     expect(server.calls.at(-1), 'тот же конфиг — 304').toBe('W/"new"');
-    expect(staleHints(g), 'тот же ETag — второй раз не твердим').toBe(1);
+    expect(staleHints(g), '⭐ D3: каждый вход в вкладку старше сервера — ровно одна строка (было: второй вход молча)').toBe(2);
 
     // Правка живьём после деплоя — согласие по-прежнему её ловит: отказ, перечитывание, дальше — согласие.
     const b2 = structuredClone(b);
@@ -276,7 +289,7 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
   // ⭐ R16 C-07 — весь класс: ЛЮБЫЕ таблицы и любые виды смены их формы новым выпуском (набор — из сидового потока: каждая таблица с долей
   // вероятности меняется одним из видов, первый раунд — без смен). Инвариант после перечитывания: согласие на конфиг проходит (команды не
   // отказываются без конца), а расхождение схем вкладки и сервера игроку не молчит — «перезагрузите» ровно тогда, когда оно есть (и не при
-  // конфиге, разобранном в то же). Раунд — полный путь `syncConfig` (тело ~0,6 МБ): раундов немного, таблиц в каждом — много.
+  // конфиге, разобранном в то же). Раунд — полный путь входа (рукопожатие `App` → `syncConfig`, тело ~0,6 МБ): раундов немного, таблиц — много.
   it('⭐ R16 C-07: любые таблицы, любые виды смены формы — согласие проходит, «перезагрузите» ровно при расхождении схем', async () => {
     const g = await game();
     await g.enter();
@@ -300,7 +313,8 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
       }
       server.reg = server0; server.etag = `W/"round-${round}"`;
       const before = staleHints(g);
-      await g.app.syncConfig();
+      g.ws().drop(4009);   // деплой: вкладка переподключается сама, рукопожатие на входе перечитывает конфиг
+      await g.enter();
       const drift = g.app.config.revision() !== server.reg.revision();
       if (drift) drifts++; else calm++;
       const what = `раунд ${round} (${changed.join(', ') || 'без смен'})`;
@@ -312,7 +326,8 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     for (const [kind] of kinds) expect(shapedBy.get(kind) ?? 0, `вид «${kind}» не выпал ни разу`).toBeGreaterThan(20);
     // Сервер старше заголовка ревизии: согласие — по ревизии конфига вкладки, как было (а разобранный в то же конфиг — согласие).
     server.noRev = true; server.reg = serverReg(2); server.etag = 'W/"old-server"';
-    await g.app.syncConfig();
+    g.ws().drop(4009);
+    await g.enter();
     expect(configChanged(server.reg, stampOf(g))).toBeNull();
   });
 
@@ -405,10 +420,12 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
       await refuse(g, sell, `${PRICE_CHANGED}: лавка даст 31 золота`);
       expect(staleHints(g), 'а следующий снова упёрся в код сборки — снова подсказка').toBe(5);
 
-      // Переподключение к той же новой сборке — на входе ещё раз не твердим (сказано на этот штамп), а отказы ценой — по-прежнему.
+      // ⭐ D3: переподключение к той же новой сборке — новый вход, новое рукопожатие: ровно одна строка (было: молча — игрок, не заметивший
+      // первую, после обрыва не слышал ничего, а кнопки отказывали).
+      vi.setSystemTime(Date.now() + 5_000);
       g.ws().drop(1006);
       await g.enter(PROTOCOL_VERSION, 'build-2');
-      expect(staleHints(g), 'тот же штамп сервера — на входе второй раз не твердим').toBe(5);
+      expect(staleHints(g), 'новый вход к чужой сборке — одна строка').toBe(6);
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();
@@ -487,7 +504,7 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
       server.reg = next; server.etag = 'W/"v3"';
       g.ws().drop(4009);
       await g.enter(PROTOCOL_VERSION, 'build-2');
-      expect(staleHints(g), 'тот же штамп сервера, новый негодный конфиг — сказано уже на этот деплой').toBe(1);
+      expect(staleHints(g), '⭐ D3: новый вход — одна строка на обе причины (чужой штамп и негодный конфиг)').toBe(2);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -501,6 +518,66 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
     await h.enter();
     expect(h.logs.some((t) => /перезагрузите/i.test(t))).toBe(false);
   });
+
+  // ⭐ D3: рукопожатие несёт ревизию конфига комнаты (`joined.cfgRev`) — вкладка с той же ревизией конфиг не перечитывает (вход без лишнего
+  // запроса), с другой — перечитывает ОДИН раз, и согласие команд кузницы и лавки после входа уже сходится.
+  it('⭐ D3: ревизия конфига в рукопожатии — та же: без запроса; другая: одно перечитывание, и согласие сходится', async () => {
+    const g = await game();
+    await g.enter(PROTOCOL_VERSION, undefined, server.reg.revision());
+    const n = server.calls.length;
+    g.ws().drop(4009);
+    await g.enter(PROTOCOL_VERSION, undefined, server.reg.revision());
+    expect(server.calls.length, 'ревизия та же — конфиг не перечитывается').toBe(n);
+    server.reg = serverReg(1.5); server.etag = 'W/"b"';   // деплой с правкой баланса
+    g.ws().drop(4009);
+    await g.enter(PROTOCOL_VERSION, undefined, server.reg.revision());
+    expect(server.calls.length, 'ревизия другая — ровно одно перечитывание').toBe(n + 1);
+    expect(configChanged(server.reg, stampOf(g)), 'после входа — согласие').toBeNull();
+    expect(staleHints(g), 'конфиг лёг — вкладка не старше сервера').toBe(0);
+  });
+
+  // ⭐ D3: на один вход — ровно ОДНА строка «перезагрузите», сколько бы причин ни сошлось. Было: другой протокол говорил поток входа, негодный
+  // конфиг — `syncConfig`, и на один вход звучали две строки подряд; а вход без причин — ни одной.
+  it('⭐ D3: другой протокол, чужой штамп и негодный конфиг на одном входе — одна строка', async () => {
+    vi.stubGlobal('__DM_BUILD__', 'build-1');
+    try {
+      const g = await game();
+      await g.enter(PROTOCOL_VERSION, 'build-1', server.reg.revision());
+      expect(staleHints(g)).toBe(0);
+      const next = serverReg(1);
+      (next as unknown as { data: Record<string, unknown> }).data['craft-new-table'] = [{ id: 'x' }];
+      server.reg = next; server.etag = 'W/"v9"';
+      g.ws().drop(4009);
+      await g.enter(PROTOCOL_VERSION + 1, 'build-2', 'zz-zz');
+      expect(staleHints(g), g.logs.join(' | ')).toBe(1);
+      expect(g.logs.filter((t) => /перезагрузите/i.test(t)), 'и никакой второй строки о том же').toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // ⭐ D3: СОГЛАСИЕ НА СБОРКУ — команды кузницы, лавки и разбора несут штамп сборки вкладки; прочие и вкладка без штампа (дев-сервер) — нет.
+  it('⭐ D3: команды согласия несут штамп сборки вкладки (`build`), схема сервера их принимает', async () => {
+    vi.stubGlobal('__DM_BUILD__', 'b1-2k-9x');
+    try {
+      const g = await game();
+      await g.enter();
+      const last = (): TownCommand & { build?: string } => {
+        const f = g.ws().sent.map((x) => JSON.parse(x) as { t: string; command?: TownCommand }).filter((x) => x.t === 'cmd').at(-1)!;
+        expect(parseTownCommand(f.command).ok, 'схема сервера принимает').toBe(true);
+        return f.command!;
+      };
+      g.app.sendCmd({ cmd: 'sell', uid: 'x', minGold: 3 });
+      expect(last().build).toBe('b1-2k-9x');
+      g.app.sendCmd({ cmd: 'buy', uid: 'x', maxGold: 3 });
+      expect('build' in last(), 'покупка — цену прислал сервер').toBe(false);
+      vi.stubGlobal('__DM_BUILD__', '');
+      g.app.sendCmd({ cmd: 'sell', uid: 'x', minGold: 3 });
+      expect('build' in last(), 'дев-сервер Vite — штампа нет').toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 /**
@@ -508,8 +585,8 @@ describe('⭐ R5-15: конфиг клиента — на каждом вход�
  * таблица, переименованное поле — и старая вкладка не может разобрать ОДНУ таблицу. Реестр клал таблицы по одной: те, что
  * до негодной, уже новые, она и дальше — старые; ошибку `syncConfig` глотал молча. Карточки кузницы и лавки считали цену
  * по смеси двух конфигов, сервер отказывал «Цена изменилась», отказ снова звал `syncConfig` — та же смесь, тишина, и
- * игрок застревал на отказах, не зная, что нужна перезагрузка. Теперь: негодный — прежний конфиг цел, и игроку ОДИН раз
- * (на этот ETag) «перезагрузите страницу».
+ * игрок застревал на отказах, не зная, что нужна перезагрузка. Теперь: негодный — прежний конфиг цел, и игроку «перезагрузите
+ * страницу» — ⭐ D3: не из `syncConfig` (раньше — на старте страницы, под экраном входа, раз на ETag), а рукопожатием на входе в мир: одна строка.
  */
 describe('⭐ R7-14: серверный конфиг, который старая вкладка не разбирает', () => {
   const G = globalThis as unknown as { fetch?: unknown };
@@ -543,7 +620,7 @@ describe('⭐ R7-14: серверный конфиг, который стара�
     return out;
   }
 
-  it('⭐ ни одной таблицы нового конфига (было: `balance` новый, `rarities` старый); игроку — «перезагрузите», один раз на ETag', async () => {
+  it('⭐ ни одной таблицы нового конфига (было: `balance` новый, `rarities` старый); игроку — «перезагрузите» на входе, одна строка', async () => {
     reply = { body: newServer(), etag: 'W/"v2"' };
     const app = new App();
     const logs: string[] = [];
@@ -552,19 +629,23 @@ describe('⭐ R7-14: серверный конфиг, который стара�
     const def = new ConfigRegistry(); def.loadAll();
     expect(app.config.get('balance').respecCost, 'было: 777 — половина нового конфига').toBe(def.get('balance').respecCost);
     expect(app.config.get('rarities')[0]!.name).toBe(def.get('rarities')[0]!.name);
-    expect(logs.filter((t) => /перезагрузите страницу/i.test(t)), logs.join(' | ')).toHaveLength(1);
+    expect(logs, '⭐ D3: на старте страницы (экран входа, лога не видно) — молча').toEqual([]);
 
-    await app.syncConfig();                           // отказ «Цена изменилась» / новый вход — тот же сервер
+    await app.version.joined({ v: PROTOCOL_VERSION });   // вход в мир — рукопожатие: негодный конфиг — одна строка
+    expect(logs.filter((t) => /перезагрузите страницу/i.test(t)), logs.join(' | ')).toHaveLength(1);
+    expect(await app.syncConfig(), 'тот же негодный — 304').toBe('same');
     await app.syncConfig();
-    expect(calls).toBe(3);
-    expect(logs.filter((t) => /перезагрузите/i.test(t)), 'тот же ETag — второй раз не твердим').toHaveLength(1);
+    expect(calls).toBe(4);
+    expect(logs.filter((t) => /перезагрузите/i.test(t)), 'перечитывание само игроку ничего не говорит').toHaveLength(1);
     expect(app.config.get('balance').respecCost).toBe(def.get('balance').respecCost);
 
     // Сервер откатили (или вкладка того же выпуска): годный конфиг ложится, как раньше.
     const ok = structuredClone(defaultConfigData) as unknown as { balance: { respecCost: number } };
     ok.balance.respecCost = 555;
     reply = { body: ok, etag: 'W/"v3"' };
-    await app.syncConfig();
+    expect(await app.syncConfig()).toBe('fresh');
     expect(app.config.get('balance').respecCost).toBe(555);
+    await app.version.joined({ v: PROTOCOL_VERSION });
+    expect(logs.filter((t) => /перезагрузите/i.test(t)), 'годный конфиг — на входе молчим').toHaveLength(1);
   });
 });

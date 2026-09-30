@@ -2,6 +2,7 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { SaveState } from '../types/save.js';
 import { activeAbilityOf } from './toggles.js';
+import { insertCooldownMult, insertGain } from '../formulas/buffTiming.js';
 
 /**
  * МОДУЛЬНЫЕ АКТИВНЫЕ СКИЛЫ: гнёзда и вставки.
@@ -185,7 +186,7 @@ function mergeAilment<T extends { kind?: string; chance: number; mag: number; ma
  * Прибавка вставки на её ранге. Масштаб ОДИН на все поля, но применяется по-разному — см. ниже.
  * Ранг 1 обязан давать РОВНО исходные числа (`k = 1`), иначе поедет весь существующий контент.
  */
-const gainAt = (ins: SkillInsert, rank: number): number => 1 + ins.perRank.gain * (Math.max(1, rank) - 1);
+const gainAt = (ins: SkillInsert, rank: number): number => insertGain(ins.perRank.gain, rank);   // ⭐ D4: та же формула, что у правила баффа
 
 /**
  * МАСШТАБ ПО РОДУ ПОЛЯ. Множитель растёт своим отклонением от единицы, добавка — просто умножением.
@@ -221,7 +222,7 @@ function applyInserts(
     const price = ins.cost * (1 + ins.perRank.cost * r);
     if (insertPool(ins, carrier) === carrier) cost += price;
     else extra += price;
-    cd *= 1 + (ins.cooldownMult - 1) * Math.max(0, 1 - ins.perRank.cooldownDecay * r);
+    cd *= insertCooldownMult(ins.cooldownMult, ins.perRank.cooldownDecay, rank);   // ⭐ D4: та же формула, что у правила баффа
     const t = ins.tune;
     if (!t) continue;
     // Поля контроля и охвата есть у attack/cast, но не у aura/stance/buff — сужаем тип один раз.

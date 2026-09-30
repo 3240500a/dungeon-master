@@ -1,6 +1,7 @@
 import { ConfigRegistry } from '../../config/registry.js';
 import { createRng, type Rng } from '../../formulas/rng.js';
-import { abilityCooldown, BUFF_MIN_REST, swingHalfWidth } from '../../formulas/combat.js';
+import { abilityCooldown, swingHalfWidth } from '../../formulas/combat.js';
+import { buffRestFloor, buffUptimeBound, insertGain } from '../../formulas/buffTiming.js';
 import { skillWeaponAllowed } from '../../formulas/skills.js';
 import { attackWeaponsOf } from '../../formulas/playerCombat.js';
 import { asHeld, gripOf } from '../../formulas/versatile.js';
@@ -25,7 +26,7 @@ import { townLayout } from '../../dungeon/town.js';
 import { Cell, TILE, isBlockedCell, makeGrid, cellToWorld, type Grid } from '../../world/grid.js';
 import { hasLineOfSight, sightBlockedByObstacles } from '../../world/lineOfSight.js';
 import { moveWithCollision, pushOutObstacle, type Vec2 } from '../../world/movement.js';
-import { debuffMods } from '../../world/debuffs.js';
+import { addDebuffStack, debuffMods } from '../../world/debuffs.js';
 import { findPath } from '../../world/pathfind.js';
 import { wrapAngle } from '../../world/fastMath.js';
 import type { PlayerEntity, MonsterEntity, ProjectileEntity, Obstacle, DropEntity } from '../../world/state.js';
@@ -33,7 +34,9 @@ import { GameSession, type PlayerInput, type SessionEvent, type FloorLayout } fr
 import { playerSnapshot, type PlayerSnapshot } from '../derive.js';
 import { activeAbilityOf, effectivePool, reservedFrac, toggleBuffMods } from '../toggles.js';
 import { resolveActive, socketsOpen, insertUnlocked, type ResolvedActive } from '../inserts.js';
+import { bodyOf, putBody, arenaReturn, arenaAwayBody, keepLaterCooldowns, savedCooldowns, vitalsForSave, type ArenaHome, type HeroBody } from '../heroBody.js';
 import { validateInput } from '../netSchemas.js';
+import { behaviorFor } from '../behavior.js';
 
 /**
  * ⭐ B2: ФАЗЗЕР ПРАВИЛ ИГРЫ — модель и инварианты (тест: `rulesFuzz.test.ts`).
@@ -59,11 +62,19 @@ import { validateInput } from '../netSchemas.js';
  *       не в другую связную область (сквозь стену/закрытую дверь), не через диагональный шов; мёртвый не двигается.
  *  I2 — урон: только в дальности/дуге/видимости удара (мили — по `balance.melee` × оружие × скил; нова, прыжок, рывок, снаряд,
  *       проклятие — своей геометрией), только надетым оружием и с тем снаряжением, с которым начат замах (R6-02); PvP — только на арене;
- *       снаряд (героя и монстра) не пролетает стену, шов и колонну, закрывающую обзор, и бьёт только видимое с места полёта (C-10).
- *  I3 — темп: удар/атака-скил не чаще общего лока по формуле скорости, скил — не чаще своего отката; серия — не больше `hits`.
+ *       снаряд (героя и монстра) не пролетает стену, шов и колонну, закрывающую обзор, и бьёт только видимое с места полёта (C-10);
+ *       мёртвый доставку не начинает (`dead-attacker`), а погибший внутри своей (прок цели «при получении удара» в PvP) доносит её до
+ *       остальных целей — как стрелу в полёте (V-RF-04, ⭐ Z).
+ *  I3 — темп: удар/атака-скил не чаще общего лока по формуле скорости, скил — не чаще своего отката; серия — не больше `hits`;
+ *       ⚠ R23-05: и откат не длиннее часов героя (`skill-cd-long`: конец — от того тика, где он встал) — в теле после любого перехода, в
+ *       сейве ухода (`vitalsForSave`) и в теле входа по коду (`arenaAwayBody`): тело города на время арены стареет временем арены.
  *  I4 — скилы и ресурсы: невыученное (ранг 0), чужого класса и не тем оружием не срабатывает; цена списана и была по карману;
- *       ресурсы не отрицательны; тоглы — только выученные; бафф — не дольше длительности, не поверх отката и с отдыхом после
- *       истечения (R19-03: не раньше «действие × (1 + BUFF_MIN_REST)» от прошлого каста).
+ *       ресурсы не отрицательны; тоглы — только выученные; бафф — не дольше длительности и не поверх отката. ⭐ D4: ОДНО ПРАВИЛО ВРЕМЕНИ
+ *       БАФФА (`formulas/buffTiming.ts`) по ЧАСАМ ГЕРОЯ (время, пока он в мире и жив: у ушедшего и павшего время стоит, R4-06) — у узлов древа и у печатей
+ *       вставок (`ins:`; зелья `pot:` — расходник, не правило): срабатывание не поверх идущего (`buff-refresh`), не раньше «действие ×
+ *       (1 + buffMinRest)» от прошлого (`buff-rest`), и под каждым баффом за весь прогон — не больше «одно действие + 1 / (1 + buffMinRest)
+ *       часов героя с первого срабатывания» (`buff-uptime`), через круги на арену (шаг `arena`: тела `session/heroBody.ts`, как у комнаты) и
+ *       переподключения (шаг `reconnect`: тело ухода, мир без него, вход по коду).
  *  I5 — взаимодействие и добыча: подбор/сундук/рычаг — в радиусе и видимости, живым, не оглушённым (кроме автоподбора), чужое
  *       не берётся; дверь открывает только её рычаг; добыча не пропадает и не двоится (uid уникальны); золото — ровно поднятое;
  *       сейв под транзакцией тиком не трогается; зелье без эффекта не тратится.
@@ -72,14 +83,16 @@ import { validateInput } from '../netSchemas.js';
  *       до максимума С аурами/стойками/баффами, и снимок тика до его конца их держит (R15-10); ⭐ R20-07: сумка мёртвого не растёт
  *       (`dead-bag-grew`: ни тиком, ни командой подбора — поднятое мимо броска штрафа смерти).
  *  I7 — ничего не бросает, числа конечны.
- *  M1/M2 — монстры: не сквозь стены/закрытые двери, ближний удар монстра — в досягаемости и видимости.
+ *  M1/M2 — монстры: не сквозь стены/закрытые двери, ближний удар монстра — в досягаемости и видимости; ⚠ R21-06: взрыв конструкта
+ *       при смерти — в радиусе (монстр + 48 + герой) и в видимости от монстра (`blast-range`, `blast-los`; профиль мира `constructs` —
+ *       вариант конфига, где все монстры — конструкты: в поставке путь скрытый).
  */
 
 // ── Шаги ──────────────────────────────────────────────────────────────────────────────────────────
 
 export type OpKind =
   | 'tick' | 'chest' | 'lever' | 'pickup' | 'drink' | 'drop' | 'equip' | 'unequip' | 'socket' | 'allocSkill'
-  | 'respecSkills' | 'allocAttr' | 'hold' | 'revive' | 'descend' | 'stun';
+  | 'respecSkills' | 'allocAttr' | 'hold' | 'revive' | 'descend' | 'stun' | 'arena' | 'reconnect' | 'dot';
 
 /** Шаг цепочки: вид, чей герой (берётся по модулю числа героев), сид его бросков. */
 export interface Op { k: OpKind; h: number; s: number }
@@ -87,11 +100,12 @@ export interface Op { k: OpKind; h: number; s: number }
 /**
  * Веса видов шагов. Тик — основной (в нём ввод, бой, [E], пояс, рывки); команды — реже. `stun` — модель оглушения героя: сегодня
  * его не ставит ни один путь игры (только тесты), но правила «оглушённый не…» в ядре есть — вес маленький, нарушение с ним
- * отмечается как скрытое (латентное).
+ * отмечается как скрытое (латентное). ⚠ R21-06: `dot` — модель «статус героя добивает монстра, а герой тем временем отошёл за укрытие
+ * рядом с ним» (путь взрыва конструкта за стену); вес — только в профиле `constructs` (ноль здесь не меняет поток шагов других профилей).
  */
 export const OP_WEIGHTS: Record<OpKind, number> = {
   tick: 40, chest: 4, lever: 3, pickup: 5, drink: 3, drop: 2, equip: 5, unequip: 2, socket: 3, allocSkill: 2,
-  respecSkills: 2, allocAttr: 1, hold: 2, revive: 1, descend: 2, stun: 1,
+  respecSkills: 2, allocAttr: 1, hold: 2, revive: 1, descend: 2, stun: 1, arena: 2, reconnect: 2, dot: 0,
 };
 
 /** Цепочка шагов из сида: виды по весам, от состояния не зависит (сжатие это и требует). */
@@ -113,11 +127,15 @@ export function genOps(seed: number, len: number, weights: Partial<Record<OpKind
 
 /** Шаг сервера (`Room.TICK_DT`): мир всегда идёт 1/30 с. */
 export const TICK_DT = 1 / 30;
-/** Константы ядра, которые не конфиг (session.ts): радиус [E] и клика по дропу, сундука/рычага, снаряда, новы по умолчанию. */
+/**
+ * Константы ядра, которые не конфиг (session.ts): радиус [E] и клика по дропу, сундука/рычага, снаряда, новы по умолчанию, запас
+ * взрыва конструкта сверх радиуса монстра (R21-06).
+ */
 const PICK_R = 48;
 const USE_R = 56;
 const PROJ_R = 16;
 const NOVA_R = 130;
+const BLAST_R = 48;
 const EPS = 1e-6;
 
 let REG: ConfigRegistry | undefined;
@@ -130,23 +148,40 @@ let REG: ConfigRegistry | undefined;
 export const BUFF_POTIONS = ['fuzz-haste-potion', 'fuzz-vigor-potion'] as const;
 /** Реестр один на процесс: фаззер конфиг не правит (правки живьём — у фаззера экономики); свои только бафф-колбы (C-11). */
 export function fuzzReg(): ConfigRegistry {
-  if (!REG) {
-    REG = new ConfigRegistry();
-    REG.loadAll();
-    const tpl = REG.get('items.base').find((b) => b.id === 'healing-potion')!;
-    const pot = (id: string, use: Record<string, unknown>) => ({
-      ...structuredClone(tpl), id, name: id, enabled: false, dropWeight: 0,
-      use: { heal: 0, healPct: 0, mana: 0, manaPct: 0, cure: false, ...use },
-    });
-    REG.reload({
-      'items.base': [
-        ...REG.get('items.base'),
-        pot(BUFF_POTIONS[0], { buffMods: [{ stat: 'attackSpeed', kind: 'increased', value: 0.3 }, { stat: 'moveSpeed', kind: 'increased', value: 0.25 }], buffDurationSec: 6 }),
-        pot(BUFF_POTIONS[1], { heal: 40, buffMods: [{ stat: 'maxHp', kind: 'flat', value: 60 }, { stat: 'maxMana', kind: 'flat', value: 30 }], buffDurationSec: 4 }),
-      ],
-    });
-  }
+  if (!REG) REG = buildReg();
   return REG;
+}
+
+let REG_CONSTRUCTS: ConfigRegistry | undefined;
+/**
+ * ⚠ R21-06: ВАРИАНТ КОНФИГА «КОНСТРУКТЫ» (профиль мира `constructs`) — все монстры фракции `monster`: её профиль в `monster-behaviors`
+ * (поставка) — сигнатура `overload`, взрыв при смерти по героям рядом. В поставке все монстры — нежить, и путь взрыва скрытый: его
+ * откроет первый же конструкт редактора. Реестр свой — поток бросков общего профиля прежний (сиды стендов те же).
+ */
+export function fuzzRegConstructs(): ConfigRegistry {
+  if (!REG_CONSTRUCTS) {
+    REG_CONSTRUCTS = buildReg();
+    REG_CONSTRUCTS.reload({ monsters: REG_CONSTRUCTS.get('monsters').map((m) => ({ ...m, faction: 'monster' })) });
+  }
+  return REG_CONSTRUCTS;
+}
+
+function buildReg(): ConfigRegistry {
+  const reg = new ConfigRegistry();
+  reg.loadAll();
+  const tpl = reg.get('items.base').find((b) => b.id === 'healing-potion')!;
+  const pot = (id: string, use: Record<string, unknown>) => ({
+    ...structuredClone(tpl), id, name: id, enabled: false, dropWeight: 0,
+    use: { heal: 0, healPct: 0, mana: 0, manaPct: 0, cure: false, ...use },
+  });
+  reg.reload({
+    'items.base': [
+      ...reg.get('items.base'),
+      pot(BUFF_POTIONS[0], { buffMods: [{ stat: 'attackSpeed', kind: 'increased', value: 0.3 }, { stat: 'moveSpeed', kind: 'increased', value: 0.25 }], buffDurationSec: 6 }),
+      pot(BUFF_POTIONS[1], { heal: 40, buffMods: [{ stat: 'maxHp', kind: 'flat', value: 60 }, { stat: 'maxMana', kind: 'flat', value: 30 }], buffDurationSec: 4 }),
+    ],
+  });
+  return reg;
 }
 
 /** Бафф зелья по определению базы в конфиге (C-11) — независимо от ядра: моды и длительность; нет — `undefined`. */
@@ -227,6 +262,11 @@ function obstacleDepth(obstacles: readonly Obstacle[], p: Vec2, r: number): numb
   for (const ob of obstacles) { const q = pushOutObstacle(p.x, p.y, r, ob); if (q) worst = Math.max(worst, dist(p, q)); }
   return worst;
 }
+/**
+ * ⭐ Перепрогон Z2 (сид 55190320): проходов выталкивания из декора за подшаг (`stepOnce` в `world/movement.ts` — две релаксации). Стена гасит часть
+ * толчка поперёк (V-RF-05), круг остаётся внутри, и второй проход толкает снова — не дальше глубины: за тик сдвиг до двух глубин.
+ */
+const OBSTACLE_PASSES = 2;
 
 /** Была ли преграда декора у пути a→b (круг выталкивается до грани раздутой формы: у бокса — угол (hw+r)×(hh+r)). */
 function obstacleNear(obstacles: readonly Obstacle[], a: Vec2, b: Vec2, r: number): boolean {
@@ -261,6 +301,8 @@ export interface FuzzWorld {
   about: string;
   /** Профиль мира (`FuzzHooks.world`). */
   opts: NonNullable<FuzzHooks['world']>;
+  /** ⭐ D4: идёт круг «город → арена → город» (шаг `arena`): тела города героев на входе (как `Room.arenaHome`) и время мира входа. */
+  trip?: { at: number; home: Map<string, HeroBody> };
 }
 
 const enabledBase = (b: { enabled?: boolean }): boolean => b.enabled !== false;
@@ -356,6 +398,8 @@ function makeHero(reg: ConfigRegistry, r: Rng, i: number): { save: SaveState; ki
   save.unspentAttributePoints = (L - 1) * bal.attributePointsPerLevel;
   save.unspentSkillPoints = (L - 1) * bal.skillPointsPerLevel;
   save.unspentMasteryPoints = (L - 1) * bal.masteryPointsPerLevel;
+  // ⭐ D2: книга заработанного — та же история (очки уровней выданы при этом конфиге).
+  save.earned = { attributePoints: save.unspentAttributePoints, skillPoints: save.unspentSkillPoints, masteryPoints: save.unspentMasteryPoints };
   save.gold = r.int(0, 30000);
   while (save.unspentAttributePoints > 0) allocAttr(save, r.pick(ATTRIBUTES), Math.min(save.unspentAttributePoints, r.int(1, 12)));
   const kit = r.pick(KITS);
@@ -403,7 +447,7 @@ function makeHero(reg: ConfigRegistry, r: Rng, i: number): { save: SaveState; ki
 
 /** Мир из сида: этаж забега (как `Room.enterNode`) или компактная арена; 1–3 героя. */
 export function newWorld(seed: number, hooks: FuzzHooks = {}): FuzzWorld {
-  const reg = fuzzReg();
+  const reg = hooks.world?.constructs ? fuzzRegConstructs() : fuzzReg();
   const r = createRng((seed ^ 0x5eed5) >>> 0 || 1);
   const s = new GameSession(reg, seed, r.pick(['normal', 'normal', 'hard']));
   const n = Math.max(hooks.world?.minHeroes ?? 1, r.pick([1, 1, 2, 2, 3]));
@@ -413,11 +457,25 @@ export function newWorld(seed: number, hooks: FuzzHooks = {}): FuzzWorld {
     const { save, kit } = makeHero(reg, r, i);
     // Профиль `levelup` (R15-10): до уровня — одно очко опыта, первое же убийство его поднимает. Без бросков: поток мира прежний.
     if (hooks.world?.levelup) save.xp = Math.max(save.xp, xpForLevel(save.level + 1, reg.get('balance').xpTable) - 1);
-    // Профиль `buffs` (R19-03): бафф своего класса (по уровню) — на высшем ранге. Без бросков: поток мира прежний.
+    // Профиль `buffs` (R19-03, ⭐ D4): бафф своего класса (по уровню) — на высшем ранге, и печати вставок на высшем ранге донора — в гнёздах
+    // выученных ударов и кастов (у печати свой откат, действие растёт с рангом донора). Без бросков: поток мира прежний.
     if (hooks.world?.buffs) {
       const tree = reg.get('skill-tree');
       const own = tree.nodes.find((nd) => nd.effect.active?.category === 'buff' && save.level >= nd.levelReq && tree.branches.find((b) => b.id === nd.branchId)?.classId === save.classId);
       if (own) save.skills[own.id] = own.maxRank;
+      for (const ins of reg.get('skill-inserts')) {
+        if (ins.enabled === false || ins.proc?.ability.category !== 'buff') continue;
+        const donor = tree.nodes.find((nd) => nd.effect.grantsInsert === ins.id);
+        if (!donor) continue;
+        save.skills[donor.id] = donor.maxRank;
+        for (const [id, rk] of Object.entries(save.skills)) {
+          const a = activeAbilityOf(reg, id);
+          if (a?.category !== 'attack' && a?.category !== 'cast') continue;
+          let put = false;
+          for (let slot = 0; slot < socketsOpen(reg, rk) && !put; slot++) put = socketInsert(reg, save, id, slot, ins.id).ok;
+          if (put) break;
+        }
+      }
     }
     // Два первых — один аккаунт (альты), третий — другой: выброшенное чужим аккаунтом не поднять (R2-02).
     const account = i < 2 ? 'acc-a' : 'acc-b';
@@ -588,14 +646,19 @@ type NewDrop = { pos: Vec2; owner?: string } & DropPayload;
 
 export interface Violation { inv: string; code: string; msg: string }
 
-/** Контекст доставки урона: откуда и какой геометрией бьют. Стек: проки вызывают доставку изнутри доставки. */
+/**
+ * Контекст доставки урона: откуда и какой геометрией бьют. Стек: проки вызывают доставку изнутри доставки. `alive0` — жив ли бьющий в миг
+ * начала доставки (⭐ Z: погибший ВНУТРИ своей доставки — от прока цели «при получении удара» в PvP — доносит её, как стрелу в полёте).
+ */
 type Ctx =
-  | { kind: 'melee'; hero: PlayerEntity; origin: Vec2; facing: number; range: number; arc: number; hit: Set<unknown> }
-  | { kind: 'nova'; hero: PlayerEntity; origin: Vec2; radius: number; hit: Set<unknown> }
-  | { kind: 'leap'; hero: PlayerEntity; to: Vec2; radius: number }
-  | { kind: 'dash'; hero: PlayerEntity; from: Vec2; to: Vec2; halfW: number }
+  | { kind: 'melee'; hero: PlayerEntity; alive0: boolean; origin: Vec2; facing: number; range: number; arc: number; hit: Set<unknown> }
+  | { kind: 'nova'; hero: PlayerEntity; alive0: boolean; origin: Vec2; radius: number; hit: Set<unknown> }
+  | { kind: 'leap'; hero: PlayerEntity; alive0: boolean; to: Vec2; radius: number }
+  | { kind: 'dash'; hero: PlayerEntity; alive0: boolean; from: Vec2; to: Vec2; halfW: number }
   | { kind: 'proj'; hero: PlayerEntity | undefined; pos: Vec2; projId: number }
-  | { kind: 'struck'; hero: PlayerEntity; source?: MonsterEntity };
+  | { kind: 'struck'; hero: PlayerEntity; source?: MonsterEntity }
+  /** ⚠ R21-06: взрыв конструкта при смерти (`overloadOnDeath`) — доставка МОНСТРА: откуда и каким радиусом. */
+  | { kind: 'blast'; m: MonsterEntity; origin: Vec2; radius: number };
 /** Что исполняется: базовый удар (ожидаемая рука), скил (оплаченная способность), прок. */
 type Exec =
   | { kind: 'basic'; hero: PlayerEntity; hand?: string; fromWindup: boolean }
@@ -607,8 +670,6 @@ interface Track {
   lockUntil: number;
   /** Не раньше (мс мира) — следующее применение узла. */
   cdUntil: Record<string, number>;
-  /** ⚠ R19-03: не раньше (мс мира) — следующий каст баффа: его действие и отдых (`BUFF_MIN_REST` доли действия). */
-  buffNext?: Record<string, number>;
   /** Подпись снаряжения и тоглов на старте замаха (R6-02). */
   castSig?: string;
   castNode?: string;
@@ -616,9 +677,18 @@ interface Track {
   series?: { node: string; hits: number; chains: number };
 }
 
+/** ⭐ D4: учёт одного баффа героя по его часам: с какого мига (с), сколько под ним, длиннейшее и кратчайшее действие, прошлое срабатывание. */
+interface BuffTrack { t0: number; up: number; dmax: number; dmin: number; last?: number; lastDur?: number }
+
 export interface Probe {
   v: Violation[];
   track: Map<string, Track>;
+  /** ⭐ D4: часы героя (с) — время, пока он в мире и жив: у ушедшего (шаг `reconnect`) и павшего время стоит, как его откаты и баффы (R4-06). */
+  clock: Map<string, number>;
+  /** ⭐ D4: учёт баффов героя (узлы древа, печати `ins:`) — правило времени баффа по часам героя (`buffClock`). */
+  buffs: Map<string, Map<string, BuffTrack>>;
+  /** ⚠ R23-05: конец каждого отката героя по его часам (с) — с последнего раза, как откат встал в тике (`cdClock`). */
+  cdEnd: Map<string, Record<string, number>>;
   /** Кто что поднял (takeDrop) за шаг: id дропа → поднявший. */
   taken: Map<number, string>;
   /** Сундуки, открытые за шаг (id → кто). */
@@ -694,6 +764,9 @@ function instrument(w: FuzzWorld): Probe {
   const probe: Probe = {
     v: [],
     track: new Map(),
+    clock: new Map(),
+    buffs: new Map(),
+    cdEnd: new Map(),
     taken: new Map(),
     chests: new Map(),
     tainted: new Set(),
@@ -730,8 +803,16 @@ function instrument(w: FuzzWorld): Probe {
     const c = ctx[ctx.length - 1];
     if (!target.alive) V('I2', 'dead-target', `${heroName(hero)} бьёт мёртвую цель ${what}`);
     if (!c) { V('I2', 'no-context', `${heroName(hero)} ударил ${what} вне известной доставки (не взмах, не нова, не снаряд…)`); return; }
+    // Взрыв конструкта — доставка монстра: удар героя прямо из него (не из прока полученного удара) — вне известной доставки.
+    if (c.kind === 'blast') { V('I2', 'no-context', `${heroName(hero)} ударил ${what} изнутри взрыва монстра ${c.m.id}`); return; }
     if (c.kind !== 'proj' && c.hero !== hero) V('I2', 'wrong-hero', `урон ${what} записан на ${heroName(hero)}, а бьёт ${heroName(c.hero)}`);
-    if (c.kind !== 'proj' && c.kind !== 'struck' && !c.hero.alive) V('I2', 'dead-attacker', `мёртвый ${heroName(c.hero)} бьёт ${what} (${c.kind})`);
+    // ⭐ Z: мёртвый не НАЧИНАЕТ доставку (замах, нова, прыжок, рывок трупа — нарушение). Погибший внутри своей — прок цели «при получении
+    // удара» (PvP) убил его посреди взмаха — доносит её до остальных целей, как стрелу в полёте и шипы павшего (V-RF-04): взмах начат живым,
+    // и кого он заденет, не решает порядок героев в комнате. Награды трупу нет — это держат I6 (`dead-hp`, `xp-dead`).
+    if (c.kind !== 'proj' && c.kind !== 'struck' && !c.hero.alive) {
+      if (!c.alive0) V('I2', 'dead-attacker', `мёртвый ${heroName(c.hero)} бьёт ${what} (${c.kind})`);
+      else w.cover['hit-after-own-death'] = (w.cover['hit-after-own-death'] ?? 0) + 1;
+    }
     const t = target.pos;
     w.cover[`hit-${c.kind}`] = (w.cover[`hit-${c.kind}`] ?? 0) + 1;
     // Один взмах/одна нова — по каждой цели не больше одного удара (серия — это разные взмахи, у каждого свой контекст).
@@ -835,17 +916,17 @@ function instrument(w: FuzzWorld): Probe {
       if (rangeMult > a.rangeMult + EPS || arcMult > a.arcMult + EPS) V('I2', 'melee-mult', `${heroName(p)}: взмах скила шире оплаченного ×${rangeMult}/×${arcMult} против ×${a.rangeMult}/×${a.arcMult}`);
       if (weapon && weapon.uid !== p.save.equipment.weapon?.uid) V('I2', 'melee-weapon', `${heroName(p)}: скил бьёт не основным оружием`);
     }
-    ctx.push({ kind: 'melee', hero: p, origin: { ...p.pos }, facing: p.facing, range: mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult, arc: mel.baseArc * (weapon?.arcMult ?? 1) * arcMult, hit: new Set() });
+    ctx.push({ kind: 'melee', hero: p, alive0: p.alive, origin: { ...p.pos }, facing: p.facing, range: mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult, arc: mel.baseArc * (weapon?.arcMult ?? 1) * arcMult, hit: new Set() });
     try { return orig(p, packet, attacker, weapon, opts, rangeMult, arcMult); } finally { ctx.pop(); }
   });
   wrap('skillNova', (orig) => (p: PlayerEntity, packet: unknown, attacker: unknown, active: { radius: number }, opts: unknown) => {
-    ctx.push({ kind: 'nova', hero: p, origin: { ...p.pos }, radius: active.radius || NOVA_R, hit: new Set() });
+    ctx.push({ kind: 'nova', hero: p, alive0: p.alive, origin: { ...p.pos }, radius: active.radius || NOVA_R, hit: new Set() });
     try { return orig(p, packet, attacker, active, opts); } finally { ctx.pop(); }
   });
   wrap('doLeap', (orig) => (p: PlayerEntity, packet: unknown, attacker: unknown, active: { dashDist: number; radius: number }, rank: number, opts: unknown) => {
     const d = active.dashDist > 0 ? active.dashDist : 150;
     const to = moveWithCollision(p.pos, { x: Math.cos(p.facing) * d, y: Math.sin(p.facing) * d }, p.radius, world.grid, 1, world.obstacles);
-    ctx.push({ kind: 'leap', hero: p, to, radius: active.radius > 0 ? active.radius : 60 });
+    ctx.push({ kind: 'leap', hero: p, alive0: p.alive, to, radius: active.radius > 0 ? active.radius : 60 });
     try { return orig(p, packet, attacker, active, rank, opts); } finally { ctx.pop(); }
   });
   wrap('doDashAttack', (orig) => (p: PlayerEntity, packet: unknown, attacker: unknown, active: { dashDist: number }, rank: number, opts: unknown) => {
@@ -854,7 +935,7 @@ function instrument(w: FuzzWorld): Probe {
     const to = moveWithCollision(p.pos, { x: Math.cos(p.facing) * d, y: Math.sin(p.facing) * d }, p.radius, world.grid, 1, world.obstacles);
     const wpn = asHeld(p.save.equipment.weapon, p.save, grip);
     const halfW = swingHalfWidth(bal.melee.baseRange * (wpn?.reachMult ?? 1), bal.melee.baseArc * (wpn?.arcMult ?? 1));
-    ctx.push({ kind: 'dash', hero: p, from, to, halfW });
+    ctx.push({ kind: 'dash', hero: p, alive0: p.alive, from, to, halfW });
     try { return orig(p, packet, attacker, active, rank, opts); } finally { ctx.pop(); }
   });
   wrap('projectileHit', (orig) => (proj: ProjectileEntity) => {
@@ -933,9 +1014,33 @@ function instrument(w: FuzzWorld): Probe {
       // C-10: снаряд монстра — тоже только по видимому с места полёта (сетка, шов, колонна).
       const c = ctx[ctx.length - 1];
       if (c?.kind === 'proj' && !hasLineOfSight(world.grid, c.pos.x, c.pos.y, t.pos.x, t.pos.y, sight)) V('M2', 'proj-los', `снаряд ${c.projId} монстра попал в героя ${t.id} сквозь стену/колонну ${fmt(c.pos)}→${fmt(t.pos)}`);
+      // ⚠ R21-06: взрыв конструкта — в радиусе (монстр + 48 + герой) и в видимости от монстра, как его ближний удар (M2) и снаряд.
+      if (c?.kind === 'blast') {
+        w.cover['hit-blast'] = (w.cover['hit-blast'] ?? 0) + 1;
+        const d = dist(c.origin, t.pos);
+        if (d > c.radius + t.radius + EPS) V('M2', 'blast-range', `взрыв монстра ${c.m.id} (${c.m.def.id}) задел героя ${t.id} с ${d.toFixed(1)} px > ${(c.radius + t.radius).toFixed(1)}`);
+        if (!los(c.origin, t.pos)) V('M2', 'blast-los', `взрыв монстра ${c.m.id} (${c.m.def.id}) задел героя ${t.id} сквозь стену/дверь/колонну ${fmt(c.origin)}→${fmt(t.pos)}`);
+      }
     }
     ctx.push({ kind: 'struck', hero: t, source });
     try { return orig(t, packet, attacker, onHit, by, source); } finally { ctx.pop(); }
+  });
+  // ⚠ R21-06: взрыв конструкта при смерти — контекст доставки монстра; покрытие — герои в радиусе, но вне видимости (правило держит их).
+  wrap('overloadOnDeath', (orig) => (m: MonsterEntity) => {
+    const radius = m.radius + BLAST_R;
+    if (behaviorFor(m.def.faction, reg.get('monster-behaviors')).signature === 'overload') {
+      w.cover.blast = (w.cover.blast ?? 0) + 1;
+      for (const t of Object.values(world.players)) {
+        if (t.alive && dist(m.pos, t.pos) <= radius + t.radius && !los(m.pos, t.pos)) w.cover['blast-behind-wall'] = (w.cover['blast-behind-wall'] ?? 0) + 1;
+      }
+    }
+    const up = Object.values(world.players).filter((t) => t.alive);
+    ctx.push({ kind: 'blast', m, origin: { ...m.pos }, radius });
+    try { return orig(m); } finally {
+      ctx.pop();
+      // Взрыв убил героя (бывает и того, кто добил): награды убийцы — до взрыва, живому (I6 `dead-hp`, `xp-dead` это держат).
+      for (const t of up) if (!t.alive) w.cover['blast-kill'] = (w.cover['blast-kill'] ?? 0) + 1;
+    }
   });
   wrap('reflectToMonster', (orig) => (p: PlayerEntity, m: MonsterEntity, amount: number, element: unknown) => {
     const c = ctx[ctx.length - 1];
@@ -975,7 +1080,7 @@ function instrument(w: FuzzWorld): Probe {
     // Преграды декора выталкивают круг по нормали: к шагу добавляется проникновение (не больше самого шага) — и глубина, на которой круг
     // начал тик внутри преграды (V-RF-05: её выносит и толчок без шага; раньше допуск оглушённому у преграды был ровно ноль).
     const nearObst = obstacleNear(world.obstacles, pos0, p.pos, p.radius);
-    const allow = cap * dt * (nearObst ? 2 : 1) + (nearObst ? obstacleDepth(world.obstacles, pos0, p.radius) : 0) + 1e-6;
+    const allow = cap * dt * (nearObst ? 2 : 1) + (nearObst ? OBSTACLE_PASSES * obstacleDepth(world.obstacles, pos0, p.radius) : 0) + 1e-6;
     if (d > allow) {
       const code = wallOverlap(world.grid, pos0, p.radius) > 1e-9 ? 'speed-wallsnap' : 'speed';
       const dd = dash0 ? ` рывок{dir ${Math.atan2(dash0.dy, dash0.dx).toFixed(2)} v ${dash0.speed} ост ${dash0.remaining.toFixed(3)}}` : '';
@@ -1067,11 +1172,8 @@ function instrument(w: FuzzWorld): Probe {
       w.cover.buff = (w.cover.buff ?? 0) + 1;
       if (before.buff > 0) V('I4', 'buff-refresh', `${heroName(p)}: бафф «${nodeId}» обновлён, пока действует (${before.buff.toFixed(2)} с)`);
       if ((p.skillBuffs[nodeId] ?? 0) > a.durationSec + EPS) V('I4', 'buff-duration', `${heroName(p)}: бафф «${nodeId}» ${p.skillBuffs[nodeId]} с > ${a.durationSec}`);
-      // ⚠ R19-03: после истечения — отдых: ранг режет откат, а не действие, и откат ≤ действия держал бафф 100 % времени (повтор в кадр
-      // истечения). Не от формулы отката ядра — от действия: каст не раньше «действие × (1 + BUFF_MIN_REST)» от прошлого (допуск — сотые).
-      const next = (t.buffNext ??= {})[nodeId];
-      if (next !== undefined && world.timeMs < next - 10) V('I4', 'buff-rest', `${heroName(p)}: бафф «${nodeId}» (ранг ${rank}) снова на ${(next - world.timeMs).toFixed(0)} мс раньше отдыха — после ${a.durationSec} с действия отдых не короче ${(a.durationSec * BUFF_MIN_REST).toFixed(2)} с`);
-      t.buffNext![nodeId] = world.timeMs + a.durationSec * (1 + BUFF_MIN_REST) * 1000;
+      // ⭐ D4: отдых после действия и доля времени под баффом — в тике, по часам героя (`buffClock`): и у узлов, и у печатей, через арены
+      // и переподключения (R19-03 мерил здесь, по часам мира и только каст узла).
     }
     if (a.category === 'attack') {
       if (before.attackCd > 0 || before.windup) V('I3', 'attack-lock', `${heroName(p)}: атака-скил «${nodeId}» при идущем локе/замахе`);
@@ -1287,11 +1389,15 @@ function frame(w: FuzzWorld, p: PlayerEntity, it: Intent, r: Rng, tick: number, 
 interface HeroPre {
   pos: Vec2; region: number; alive: boolean; hp: number; mana: number; stamina: number;
   xp: number; level: number; ua: number; us: number; um: number; gold: number;
+  /** ⭐ D2: книга заработанного (`save.earned`) до шага. */
+  earned?: { a: number; s: number; m: number };
   attrs: string; skills: string; masteries: string; equip: string;
   inv: Set<string>; belt: (string | null)[]; held: boolean; heldJson?: string;
   maxHp: number; maxMana: number; maxStam: number; effMana: number; effStam: number;
   /** Таймеры баффов и базы колб пояса (C-11: бафф зелья — только выпитой колбой). */
   buffs: Record<string, number>; beltBase: (string | null)[];
+  /** ⚠ R23-05: откаты умений до тика (после перехода, если он был между тиками). */
+  cds: Record<string, number>;
 }
 interface Pre { heroes: Map<string, HeroPre>; monsters: Map<number, { pos: Vec2; region: number; alive: boolean }>; drops: Map<number, DropEntity> }
 
@@ -1306,10 +1412,11 @@ function capture(w: FuzzWorld): Pre {
     heroes.set(p.id, {
       pos: { ...p.pos }, region: w.regions.at(p.pos), alive: p.alive, hp: p.hp, mana: p.mana, stamina: p.stamina,
       xp: p.save.xp, level: p.save.level, ua: p.save.unspentAttributePoints, us: p.save.unspentSkillPoints, um: p.save.unspentMasteryPoints,
+      ...(p.save.earned ? { earned: { a: p.save.earned.attributePoints, s: p.save.earned.skillPoints, m: p.save.earned.masteryPoints } } : {}),
       gold: p.save.gold, attrs: JSON.stringify(p.save.attributes), skills: JSON.stringify(p.save.skills), masteries: JSON.stringify(p.save.masteries),
       equip: JSON.stringify(Object.entries(p.save.equipment).map(([k, it]) => [k, it?.uid])),
       inv: new Set(p.save.inventory.map((i) => i.uid)), belt: p.save.belt.map((b) => b?.uid ?? null), held,
-      buffs: { ...p.skillBuffs }, beltBase: p.save.belt.map((b) => b?.baseId ?? null),
+      buffs: { ...p.skillBuffs }, beltBase: p.save.belt.map((b) => b?.baseId ?? null), cds: { ...p.skillCd },
       ...(held ? { heldJson: heldView(p.save) } : {}),
       maxHp: o?.maxHp ?? 0, maxMana: o?.maxMana ?? 0, maxStam: o?.maxStamina ?? 0,
       effMana: o ? effectivePool(o.maxMana, reservedFrac(w.reg, p.toggles, 'mana')) : 0,
@@ -1322,6 +1429,89 @@ function capture(w: FuzzWorld): Pre {
 }
 
 // ── Инварианты после тика ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⭐ D4: ПРАВИЛО ВРЕМЕНИ БАФФА ПО ЧАСАМ ГЕРОЯ (после тика; герой был в мире и до, и после). Часы идут только, пока он в мире: у ушедшего
+ * (шаг `reconnect`) время стоит — и его откаты, и баффы (R4-06), — так что круг «ушёл — вернулся» не прячет повтор раньше отдыха. Срабатывание
+ * (остаток вырос: каст узла, прок печати) — не поверх идущего, не раньше «прошлое действие × (1 + buffMinRest)» от прошлого; под баффом с первого
+ * срабатывания — не больше «длиннейшее действие + шаг + 1 / (1 + buffMinRest) × часы (с поправкой на квант тика)». Зелья — не правило.
+ * ⚠ R21-06: и у ПАВШЕГО время стоит — тик мёртвому не ведёт ни откатов, ни баффов (`tick`: мёртвых пропускает), и бафф, застывший на
+ * трупе до возрождения (оно баффы снимает), — не «время под баффом». Часы идут в тике, начатом живым (профиль `constructs`: взрыв и шаг
+ * `dot` с героем на последнем издыхании кладут героев с баффом часто — часы трупа копили долю под баффом до ложного `buff-uptime`).
+ */
+function buffClock(w: FuzzWorld, p: PlayerEntity, b: HeroPre, dt: number, name: string, V: (inv: string, code: string, msg: string) => void): void {
+  if (!b.alive) return;
+  const m = w.reg.get('balance').buffMinRest;
+  const bound = buffUptimeBound(m);
+  const t0 = w.probe.clock.get(p.id) ?? 0;
+  const t1 = t0 + dt;
+  w.probe.clock.set(p.id, t1);
+  let mine = w.probe.buffs.get(p.id);
+  if (!mine) { mine = new Map(); w.probe.buffs.set(p.id, mine); }
+  for (const k of new Set([...Object.keys(b.buffs), ...Object.keys(p.skillBuffs)])) {
+    if (k.startsWith('pot:')) continue;
+    const before = b.buffs[k] ?? 0, after = p.skillBuffs[k] ?? 0;
+    let tr = mine.get(k);
+    if (after > before + 1e-6) {
+      // Срабатывание: встало на `after + dt` (тик уже снял с него свой шаг).
+      const dur = after + dt;
+      w.cover[k.startsWith('ins:') ? 'buff-rise-ins' : 'buff-rise'] = (w.cover[k.startsWith('ins:') ? 'buff-rise-ins' : 'buff-rise'] ?? 0) + 1;
+      if (before > 1e-9) V('I4', 'buff-refresh', `${name}: бафф «${k}» освежён поверх идущего (${before.toFixed(3)} → ${dur.toFixed(3)} с)`);
+      if (tr?.last !== undefined && tr.lastDur !== undefined) {
+        const need = buffRestFloor(tr.lastDur, m);
+        if (t0 - tr.last < need - 1e-3) V('I4', 'buff-rest', `${name}: бафф «${k}» снова через ${(t0 - tr.last).toFixed(3)} с часов героя — после ${tr.lastDur.toFixed(2)} с действия откат не короче ${need} с`);
+      }
+      if (!tr) { tr = { t0, up: 0, dmax: dur, dmin: dur }; mine.set(k, tr); }
+      tr.last = t0; tr.lastDur = dur; tr.dmax = Math.max(tr.dmax, dur); tr.dmin = Math.min(tr.dmin, dur);
+    } else if (!tr && before > 0) {
+      // Остаток с прошлого (тело, возвращённое переходом, или бафф до первого тика): не больше одного действия — в запас `dmax`.
+      tr = { t0, up: 0, dmax: before, dmin: Math.max(before, dt) };
+      mine.set(k, tr);
+    }
+    if (!tr) continue;
+    tr.up += after > 0 ? dt : Math.min(dt, before);
+    const T = t1 - tr.t0;
+    const allowed = tr.dmax + dt + bound * T * (1 + dt / Math.max(tr.dmin, dt)) + 1e-6;
+    if (tr.up > allowed) V('I4', 'buff-uptime', `${name}: под баффом «${k}» ${tr.up.toFixed(2)} с из ${T.toFixed(2)} с часов героя — больше правила (${(100 * bound).toFixed(0)} % + одно действие ${tr.dmax.toFixed(2)} с = ${allowed.toFixed(2)} с)`);
+  }
+}
+
+/**
+ * ⚠ R23-05: ОТКАТ НЕ ДЛИННЕЕ ЧАСОВ ГЕРОЯ (перед `buffClock`: часы — ещё до этого тика). Откат встаёт в тике (каст узла, прок печати) — его конец
+ * по часам героя запоминается; дальше в любом теле (арена, город, тело ухода, свежая сущность из сейва) остаток не больше «конец − часы». Короче
+ * отката стерегут `skill-cd` и `buff-rest` (D4), а длиннее — этот: тело города на время арены стоит, и сейв с арены (`vitalsForSave`) и запись
+ * ушедшего (`arenaAwayBody`) несли его откаты, застывшие на входе, — клич, по времени героя давно готовый, в новой комнате снова в откате.
+ * Тело, пришедшее переходом между тиками, меряется остатком ДО тика (`b.cds`); часы идут в тике, начатом живым (мёртвому тик откатов не ведёт).
+ */
+function cdClock(w: FuzzWorld, p: PlayerEntity, b: HeroPre, dt: number, name: string, V: (inv: string, code: string, msg: string) => void): void {
+  const t0 = w.probe.clock.get(p.id) ?? 0;
+  const t1 = b.alive ? t0 + dt : t0;
+  for (const v of cdLonger(w, p.id, b.cds, name)) V(v.inv, v.code, v.msg);
+  let ends = w.probe.cdEnd.get(p.id);
+  if (!ends) { ends = {}; w.probe.cdEnd.set(p.id, ends); }
+  for (const [k, after] of Object.entries(p.skillCd)) {
+    const before = b.cds[k] ?? 0;
+    if (after > (b.alive ? before - dt : before) + 1e-6) {
+      ends[k] = t1 + after;
+      w.cover['cd-rise'] = (w.cover['cd-rise'] ?? 0) + 1;
+    }
+  }
+}
+
+/** ⚠ R23-05: откаты `cds` героя `pid` (в теле или в сейве), которые длиннее его часов сейчас (`cdClock`): конец не вставал вовсе или позже. */
+function cdLonger(w: FuzzWorld, pid: string, cds: Readonly<Record<string, number>>, what: string): Violation[] {
+  const t = w.probe.clock.get(pid) ?? 0;
+  const ends = w.probe.cdEnd.get(pid) ?? {};
+  const out: Violation[] = [];
+  for (const [k, left] of Object.entries(cds)) {
+    if (!(left > 1e-9)) continue;
+    const end = ends[k];
+    if (end === undefined || left > end - t + 1e-4) {
+      out.push({ inv: 'I3', code: 'skill-cd-long', msg: `${what}: откат «${k}» ${left.toFixed(3)} с — длиннее часов героя (${end === undefined ? 'не вставал ни разу' : `кончается через ${(end - t).toFixed(3)} с`})` });
+    }
+  }
+  return out;
+}
 
 function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number): Violation[] {
   const out: Violation[] = [];
@@ -1361,8 +1551,10 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
       if (p.hp > maxHp + 1e-6) V('I6', 'hp-max', `${name}: hp ${p.hp.toFixed(3)} > максимума ${maxHp.toFixed(3)}`);
       if (p.mana > maxMana + 1e-6) V('I6', 'mana-max', `${name}: мана ${p.mana.toFixed(3)} > максимума ${maxMana.toFixed(3)}`);
       if (p.stamina > maxStam + 1e-6) V('I6', 'stamina-max', `${name}: выносливость ${p.stamina.toFixed(3)} > максимума ${maxStam.toFixed(3)}`);
-      const effM = Math.max(b.effMana, effectivePool(o.maxMana, reservedFrac(reg, p.toggles, 'mana')), lv?.effMana ?? 0);
-      const effS = Math.max(b.effStam, effectivePool(o.maxStamina, reservedFrac(reg, p.toggles, 'stamina')), lv?.effStam ?? 0);
+      // ⭐ D4 (большой прогон, сид 2588 профиля `buffs`): и максимум НАЧАЛА тика при тоглах КОНЦА — реген тика идёт по снимку начала (с баффом,
+      // что истечёт в конце тика) и резерву тогла, переключённого в этом же тике (аура a2 → a1); подрежет следующий тик.
+      const effM = Math.max(b.effMana, effectivePool(o.maxMana, reservedFrac(reg, p.toggles, 'mana')), effectivePool(b.maxMana, reservedFrac(reg, p.toggles, 'mana')), lv?.effMana ?? 0);
+      const effS = Math.max(b.effStam, effectivePool(o.maxStamina, reservedFrac(reg, p.toggles, 'stamina')), effectivePool(b.maxStam, reservedFrac(reg, p.toggles, 'stamina')), lv?.effStam ?? 0);
       if (p.mana > effM + 1e-6 && p.mana <= maxMana + 1e-6) V('I6', 'mana-reserve', `${name}: мана ${p.mana.toFixed(3)} выше резерва аур ${effM.toFixed(3)} (тоглы ${p.toggles.join(',')})`);
       if (p.stamina > effS + 1e-6 && p.stamina <= maxStam + 1e-6) V('I6', 'stamina-reserve', `${name}: выносливость ${p.stamina.toFixed(3)} выше резерва стоек ${effS.toFixed(3)}`);
       // I4: тоглы — только выученные (сброс вычищает их в начале тика у живого).
@@ -1372,7 +1564,16 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
       const groups = p.toggles.map((t) => { const a = activeAbilityOf(reg, t); return a && (a.category === 'aura' || a.category === 'stance') ? a.toggleGroup : undefined; }).filter((g): g is string => !!g);
       if (new Set(groups).size !== groups.length) V('I4', 'toggle-group', `${name}: две стойки одной группы (${p.toggles.join(',')})`);
       for (const [k, left] of Object.entries(p.skillBuffs)) {
-        if (k.startsWith('ins:')) continue;
+        if (k.startsWith('ins:')) {
+          // ⭐ D4: печать — не дольше своего действия на высшем ранге донора (действие растёт с рангом донора, `insertGain`).
+          const ins = reg.get('skill-inserts').find((x) => x.id === k.slice(4));
+          const ab = ins?.proc?.ability;
+          const top = reg.get('skill-tree').nodes.reduce((mx, nd) => (nd.effect.grantsInsert === ins?.id ? Math.max(mx, nd.maxRank) : mx), 1);
+          const dur = ins && ab?.category === 'buff' ? ab.durationSec * insertGain(ins.perRank.gain, top) : undefined;
+          if (dur === undefined) V('I4', 'buff-unknown', `${name}: печать «${k}» без прок-баффа в конфиге`);
+          else if (left > dur + EPS) V('I4', 'buff-duration', `${name}: печать «${k}» ${left.toFixed(3)} с > ${dur.toFixed(3)}`);
+          continue;
+        }
         if (k.startsWith('pot:')) {
           const base = k.slice(4), def = potionBuffDef(reg, base);
           if (!def) V('I5', 'potion-buff', `${name}: бафф зелья «${base}» без определения в конфиге`);
@@ -1389,6 +1590,9 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
     } else if (p.hp > EPS) {
       V('I6', 'dead-hp', `мёртвый ${name} с hp ${p.hp.toFixed(1)} (${ev.some((e) => e.type === 'levelup' && e.playerId === p.id) ? 'левелап трупа' : 'без левелапа'})`);
     }
+    // ⭐ D4: правило времени баффа по часам героя; ⚠ R23-05: и откат не длиннее них.
+    cdClock(w, p, b, dt, name, V);
+    buffClock(w, p, b, dt, name, V);
     // I6: опыт — только за убийство, ровно опыт монстра; уровень и очки — по таблице.
     const xpEv = ev.filter((e): e is Extract<SessionEvent, { type: 'xp' }> => e.type === 'xp' && e.playerId === p.id);
     const kills = ev.filter((e): e is Extract<SessionEvent, { type: 'monster-died' }> => e.type === 'monster-died' && e.by === p.id).map((e) => e.def.xp).filter((x) => x > 0);
@@ -1402,6 +1606,12 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
     const dl = p.save.level - b.level;
     if (p.save.unspentAttributePoints - b.ua !== dl * bal.attributePointsPerLevel || p.save.unspentSkillPoints - b.us !== dl * bal.skillPointsPerLevel || p.save.unspentMasteryPoints - b.um !== dl * bal.masteryPointsPerLevel) {
       V('I6', 'points', `${name}: очки ${b.ua}/${b.us}/${b.um}→${p.save.unspentAttributePoints}/${p.save.unspentSkillPoints}/${p.save.unspentMasteryPoints} при +${dl} ур.`);
+    }
+    // ⭐ D2: левелап в бою пишет выданное в книгу заработанного — ровно очки уровней по конфигу этого мига; книга не появляется и не пропадает.
+    const e = p.save.earned;
+    if (!!e !== !!b.earned) V('I6', 'earned', `${name}: книга заработанного ${b.earned ? 'пропала' : 'появилась'} в тике`);
+    else if (e && b.earned && (e.attributePoints - b.earned.a !== dl * bal.attributePointsPerLevel || e.skillPoints - b.earned.s !== dl * bal.skillPointsPerLevel || e.masteryPoints - b.earned.m !== dl * bal.masteryPointsPerLevel)) {
+      V('I6', 'earned', `${name}: книга ${JSON.stringify(b.earned)}→${JSON.stringify(e)} при +${dl} ур.`);
     }
     if (JSON.stringify(p.save.attributes) !== b.attrs || JSON.stringify(p.save.skills) !== b.skills || JSON.stringify(p.save.masteries) !== b.masteries) V('I6', 'save-drift', `${name}: атрибуты/скилы/мастерства поменялись в тике`);
     if (JSON.stringify(Object.entries(p.save.equipment).map(([k, it]) => [k, it?.uid])) !== b.equip) V('I5', 'equip-drift', `${name}: снаряжение поменялось в тике`);
@@ -1519,11 +1729,20 @@ export interface FuzzHooks {
   /**
    * Профиль мира: доля арен (0…1), доля PvP на арене, наименьшее число героев, доля арен с колоннами в линии огня (C-10), все герои
    * на пороге уровня (R15-10: левелап поверх аур, стоек и баффов — в общем профиле он редок, убийств мало), бафф своего класса — на
-   * высшем ранге (R19-03: там откат по рангу короче действия — в общем профиле ранги размазаны по дереву).
+   * высшем ранге и печати вставок на высшем ранге донора (R19-03, ⭐ D4: правило времени баффа — в общем профиле ранги размазаны по
+   * дереву, а печати редки), ⚠ R21-06: все монстры — конструкты (`fuzzRegConstructs`: взрыв при смерти; в поставке путь скрытый).
    */
-  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean; buffs?: boolean };
+  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean; buffs?: boolean; constructs?: boolean };
   /** Только для зубов сторожа: подложить «баг» после каждого тика. */
   afterTick?: (w: FuzzWorld) => void;
+  /** ⭐ D4 (только для зубов сторожа): после возврата героя с арены в город (`arenaReturn`) — подложить «баг» в его тело. */
+  afterArenaReturn?: (w: FuzzWorld, p: PlayerEntity, home: HeroBody, dtSec: number) => void;
+  /** ⭐ D4 (только для зубов сторожа): после входа героя по коду (шаг `reconnect`). */
+  afterReconnect?: (w: FuzzWorld, p: PlayerEntity) => void;
+  /** ⭐ R22-04 (только для зубов сторожа): что комната пишет в сейв уходящего героя (`vitalsForSave`, как `Room.noteVitals`). */
+  vitalsOf?: typeof vitalsForSave;
+  /** ⚠ R23-05 (только для зубов сторожа): запись ушедшего с арены, когда она кончилась без него (`arenaAwayBody`, как `Room.leaveArena`). */
+  awayBodyOf?: typeof arenaAwayBody;
 }
 
 interface Step { desc: string; ok: boolean; why?: string; ticks: number }
@@ -1557,8 +1776,8 @@ function runTicks(w: FuzzWorld, n: number, build: (i: number) => Record<string, 
   return i;
 }
 
-/** Дойти до точки (путь по сетке, как бот), остальные герои стоят; не дальше `max` тиков. */
-function walkTo(w: FuzzWorld, pid: string, goal: Vec2, max: number, vs: Violation[], hooks: FuzzHooks, stopOn: (v: Violation) => boolean): number {
+/** Дойти до точки (путь по сетке, как бот), остальные герои стоят; не дальше `max` тиков и до `near` px от цели. */
+function walkTo(w: FuzzWorld, pid: string, goal: Vec2, max: number, vs: Violation[], hooks: FuzzHooks, stopOn: (v: Violation) => boolean, near = 30): number {
   const W = w.s.world;
   let wp: Vec2 | undefined;
   let at = -99;
@@ -1570,7 +1789,79 @@ function walkTo(w: FuzzWorld, pid: string, goal: Vec2, max: number, vs: Violatio
     for (const x of w.heroes) inputs[x.pid] = { ...idle, facing: W.players[x.pid]?.facing ?? 0 };
     inputs[pid] = { ...idle, move: { x: wp.x - p.pos.x, y: wp.y - p.pos.y }, facing: Math.atan2(goal.y - p.pos.y, goal.x - p.pos.x) };
     return inputs;
-  }, vs, hooks, stopOn, () => dist(W.players[pid]!.pos, goal) < 30 || !W.players[pid]!.alive);
+  }, vs, hooks, stopOn, () => dist(W.players[pid]!.pos, goal) < near || !W.players[pid]!.alive);
+}
+
+/**
+ * ⚠ R21-06: УКРЫТИЕ У МОНСТРА — клетка пола в области героя (дойти можно), в радиусе взрыва от монстра, но вне его видимости (стена,
+ * дверь, шов, колонна, преграда декора, закрывающая обзор). Кандидаты — по всем живым монстрам; нет ни одного — `undefined`.
+ */
+function coverSpot(w: FuzzWorld, p: PlayerEntity, alive: MonsterEntity[], r: Rng): { m: MonsterEntity; at: Vec2 } | undefined {
+  const W = w.s.world;
+  const home = w.regions.at(p.pos);
+  const out: { m: MonsterEntity; at: Vec2 }[] = [];
+  const across: { m: MonsterEntity; at: Vec2 }[] = [];
+  for (const m of alive) {
+    const reach = m.radius + BLAST_R + p.radius - 4;
+    const c = cellOf(m.pos);
+    const other = w.regions.at(m.pos) !== home;
+    for (let cy = c.cy - 3; cy <= c.cy + 3; cy++) for (let cx = c.cx - 3; cx <= c.cx + 3; cx++) {
+      if (isBlockedCell(W.grid, cx, cy)) continue;
+      const at = cellToWorld(cx, cy);
+      if (w.regions.at(at) !== home || dist(at, m.pos) > reach) continue;
+      if (!hasLineOfSight(W.grid, m.pos.x, m.pos.y, at.x, at.y, W.obstacles)) (other ? across : out).push({ m, at });
+    }
+  }
+  // Монстр за стеной/закрытой дверью подойти не может — укрытие у него держится до конца похода: такие — чаще.
+  if (across.length && (!out.length || r.chance(0.5))) return r.pick(across);
+  return out.length ? r.pick(out) : undefined;
+}
+
+/** Сбросить у героя слежку за замахом и локом удара: сущность сменила тело (замаха и серии у нового тела нет, лок — его). */
+function newBodyTrack(w: FuzzWorld, pid: string): void {
+  const t = w.probe.track.get(pid);
+  if (t) { t.lockUntil = -Infinity; t.series = undefined; t.castSig = undefined; t.castNode = undefined; }
+}
+
+/**
+ * ⭐ D4: ВХОД В АРЕНУ — как `Room.enterArenaFloor`: голосование за арену — из города (не в городе — сперва в город: он оживляет и снимает
+ * дебаффы, R4-09), тела города всех, кто в мире (`bodyOf` → `trip.home`), арена, возрождение каждого (`respawnPlayer`: баффы и тоглы сняты,
+ * откаты — остаются).
+ */
+function startTrip(w: FuzzWorld, r: Rng): string {
+  const W = w.s.world;
+  const via = w.mode === 'town' ? '' : 'через город ';
+  if (via) enterFloorFor(w, r, 'town');
+  const home = new Map<string, HeroBody>();
+  for (const x of w.heroes) { const pl = W.players[x.pid]; if (pl) home.set(x.pid, bodyOf(pl, W.timeMs)); }
+  enterFloorFor(w, r, 'arena');
+  for (const x of w.heroes) {
+    if (!W.players[x.pid]) continue;
+    w.s.respawnPlayer(x.pid, { ...W.spawn }, 3000);
+    newBodyTrack(w, x.pid);
+  }
+  w.trip = { at: W.timeMs, home };
+  w.cover['arena-trip'] = (w.cover['arena-trip'] ?? 0) + 1;
+  return `${via}в арену (тела города — ${home.size}): ${w.about}`;
+}
+
+/** ⭐ D4: КОНЕЦ АРЕНЫ — как `Room.enterTown` → `leaveArena`: город, тела города + время боя (`arenaReturn`: откаты — более поздние). */
+function endTrip(w: FuzzWorld, r: Rng, hooks: FuzzHooks): string {
+  const trip = w.trip!;
+  w.trip = undefined;
+  enterFloorFor(w, r, 'town');
+  const W = w.s.world;
+  const dtSec = Math.max(0, W.timeMs - trip.at) / 1000;
+  for (const x of w.heroes) {
+    const pl = W.players[x.pid];
+    const home = trip.home.get(x.pid);
+    if (!pl || !home) continue;
+    arenaReturn(w.reg, pl, home, dtSec, W.timeMs, !!w.s.snapshotOf(x.pid));
+    w.s.refreshSnapshot(x.pid);
+    hooks.afterArenaReturn?.(w, pl, home, dtSec);
+    newBodyTrack(w, x.pid);
+  }
+  return `с арены в город (${dtSec.toFixed(1)} с боя)`;
 }
 
 function execOp(w: FuzzWorld, op: Op, vs: Violation[], hooks: FuzzHooks, stopOn: (v: Violation) => boolean): Step {
@@ -1650,6 +1941,7 @@ function execOp(w: FuzzWorld, op: Op, vs: Violation[], hooks: FuzzHooks, stopOn:
       const snap = w.s.snapshotOf(h.pid)!.derived;
       // C-11: колба с баффом при неполном баффе — действие всегда (было: «Нет эффекта» навсегда, мёртвый груз в сумке).
       const def = potionBuffDef(reg, it.baseId), potWas = p.skillBuffs[`pot:${it.baseId}`] ?? 0;
+      const was = { hp: p.hp, mana: p.mana };
       if (!w.s.drink(h.pid, it.use, it.baseId)) {
         if (def && potWas < def.durationSec - 1e-6) vs.push({ inv: 'I5', code: 'potion-buff-lost', msg: `${h.pid}: колба ${it.baseId} — «нет эффекта» при баффе ${potWas.toFixed(3)} из ${def.durationSec} с` });
         return refuse(desc, 'нет эффекта');
@@ -1658,10 +1950,11 @@ function execOp(w: FuzzWorld, op: Op, vs: Violation[], hooks: FuzzHooks, stopOn:
       const bi = p.save.belt.findIndex((x) => x?.uid === it.uid);
       if (bi >= 0) p.save.belt[bi] = null;
       else { const ii = p.save.inventory.findIndex((x) => x.uid === it.uid); if (ii >= 0) p.save.inventory.splice(ii, 1); }
-      // C-14: мана — до потолка резерва аур; здоровье — до максимума.
+      // C-14: мана — до потолка резерва аур; здоровье — до максимума. ⭐ D4: «налило» — выросло этим зельем: выше потолка между тиками герой
+      // бывает и без него (снял вещь на +жизнь; тело города вернулось с арены, где он её снял, — подрежет тик, R5-02), и зелье его не лечит.
       const cap = effectivePool(snap.maxMana, reservedFrac(reg, p.toggles, 'mana'));
-      if (p.mana > cap + 1e-6) vs.push({ inv: 'I6', code: 'mana-reserve', msg: `${h.pid}: зелье налило ману ${p.mana.toFixed(2)} выше резерва ${cap.toFixed(2)}` });
-      if (p.hp > snap.maxHp + 1e-6) vs.push({ inv: 'I6', code: 'hp-max', msg: `${h.pid}: зелье налило hp ${p.hp.toFixed(2)} > ${snap.maxHp.toFixed(2)}` });
+      if (p.mana > cap + 1e-6 && p.mana > was.mana + 1e-9) vs.push({ inv: 'I6', code: 'mana-reserve', msg: `${h.pid}: зелье налило ману ${p.mana.toFixed(2)} выше резерва ${cap.toFixed(2)}` });
+      if (p.hp > snap.maxHp + 1e-6 && p.hp > was.hp + 1e-9) vs.push({ inv: 'I6', code: 'hp-max', msg: `${h.pid}: зелье налило hp ${p.hp.toFixed(2)} > ${snap.maxHp.toFixed(2)}` });
       return { desc, ok: true, ticks: 0 };
     }
     case 'drop': {
@@ -1715,6 +2008,8 @@ function execOp(w: FuzzWorld, op: Op, vs: Violation[], hooks: FuzzHooks, stopOn:
       return { desc: `возрождение на арене (${h.pid})`, ok: true, ticks: 0 };
     }
     case 'descend': {
+      // ⭐ D4: с арены круга — только в город (как комната: «В город»).
+      if (w.trip) return { desc: `спуск: ${endTrip(w, r, hooks)}`, ok: true, ticks: 0 };
       const arena = w.opts.arena ?? 0.6;
       const mode: FuzzWorld['mode'] = w.mode !== 'town' && r.chance(0.25) ? 'town' : r.chance(arena) ? 'arena' : 'floor';
       const dead = w.heroes.filter((x) => !W.players[x.pid]?.alive).map((x) => x.pid);
@@ -1728,6 +2023,107 @@ function execOp(w: FuzzWorld, op: Op, vs: Violation[], hooks: FuzzHooks, stopOn:
       // ⚠ Модель: оглушение героя в игре сегодня не ставит ни один путь (только тесты), правила «оглушённый не…» — есть.
       p.stunTimer = r.float(0.1, 2);
       return { desc: `оглушить ${h.pid} на ${p.stunTimer.toFixed(2)} с (модель)`, ok: true, ticks: 0 };
+    }
+    case 'dot': {
+      // ⚠ R21-06 (модель): яд героя, повешенный раньше, добивает монстра (R5-06 — убийца `dotOwner`), а герой тем временем:
+      //  • `cover` — отошёл за укрытие рядом с ним (`coverSpot`: в радиусе взрыва, вне видимости монстра). У конструкта смерть — взрыв:
+      //    так он встречает героя за стеной, дверью и колонной — случай, до которого бой вслепую не доходит (за сотни цепочек — ни разу),
+      //    а сторож M2 `blast-los` держит именно его;
+      //  • `brink` — стоит рядом, на последнем издыхании (здоровье 1): взрыв убивает самого убийцу, и награды убийцы (лечение за убийство,
+      //    левелап — полное здоровье) обязаны достаться ему живому, до взрыва, а не трупу после (I6 `dead-hp`, `xp-dead`);
+      //  • `any` — где стоял.
+      const alive = W.monsters.filter((m) => m.alive);
+      if (!alive.length) return refuse(`яд добивает (${h.pid})`, 'нет монстров');
+      const mode = r.pick(['cover', 'cover', 'cover', 'brink', 'any'] as const);
+      let spot = mode === 'cover' ? coverSpot(w, p, alive, r) : undefined;
+      const m = spot?.m ?? (mode === 'brink' ? alive.reduce((b, x) => (dist(x.pos, p.pos) < dist(b.pos, p.pos) ? x : b)) : r.pick(alive));
+      let ticks = 0;
+      if (spot) w.cover['dot-cover'] = (w.cover['dot-cover'] ?? 0) + 1;
+      // Монстр за время похода подходит сам (погоня): дошёл, а укрытия уже нет — новое укрытие у того же монстра, до трёх походов.
+      for (let tries = 0; spot && p.alive && m.alive && tries < 3 && !vs.some(stopOn); tries++) {
+        ticks += walkTo(w, h.pid, spot.at, 120, vs, hooks, stopOn, 4);
+        const behind = dist(m.pos, p.pos) <= m.radius + BLAST_R + p.radius && !hasLineOfSight(W.grid, m.pos.x, m.pos.y, p.pos.x, p.pos.y, W.obstacles);
+        if (behind) w.cover['dot-behind'] = (w.cover['dot-behind'] ?? 0) + 1;
+        spot = behind || !m.alive ? undefined : coverSpot(w, p, [m], r);
+      }
+      if (mode === 'brink' && p.alive && !vs.some(stopOn)) {
+        ticks += walkTo(w, h.pid, m.pos, 120, vs, hooks, stopOn, m.radius + p.radius + 8);
+        if (p.alive) p.hp = Math.min(p.hp, 1);
+      }
+      const desc = `яд ${h.pid} добивает монстра ${m.id} (${m.def.id}), ${mode}${ticks ? ` (поход ${ticks} т.)` : ''} (модель)`;
+      if (vs.some(stopOn)) return { desc, ok: true, ticks };
+      if (!m.alive) return { desc, ok: false, why: 'монстр уже пал', ticks };
+      addDebuffStack(m.debuffs, { kind: 'poison', chance: 1, maxStacks: 1, durationMs: 1000, mag: (m.hp + 1) / TICK_DT }, W.timeMs);
+      (w.s as unknown as { noteDot(m: MonsterEntity, kind: 'poison', by: PlayerEntity): void }).noteDot(m, 'poison', p);
+      const idle: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
+      const n = runTicks(w, 3, () => Object.fromEntries(w.heroes.filter((x) => W.players[x.pid]).map((x) => [x.pid, { ...idle, facing: W.players[x.pid]!.facing }])), vs, hooks, stopOn, () => !m.alive);
+      return { desc, ok: !m.alive, why: m.alive ? 'выжил' : undefined, ticks: ticks + n };
+    }
+    case 'arena': {
+      // ⭐ D4: круг «город → арена → город» — туда или обратно (как голосования комнаты).
+      return { desc: w.trip ? endTrip(w, r, hooks) : startTrip(w, r), ok: true, ticks: 0 };
+    }
+    case 'reconnect': {
+      // ⭐ D4: ПЕРЕПОДКЛЮЧЕНИЕ, как комната: уход (`noteLeft`: тело ухода — `bodyOf`, сущность снята), мир идёт без него (напарники играют),
+      // иногда за это время кончается арена (`leaveArena` ушедшему: запись ухода — тело города, откаты — более поздние, `arenaAwayBody`), вход
+      // по коду (`takeLeft`: живой или ушедший из подземелья с точкой — `addPlayer` на ней и `putBody`; мёртвый вне подземелья — свежая
+      // сущность, откаты — его). Время для ушедшего стоит (R4-06): часы героя (`buffClock`) без него не идут.
+      // ⭐ R22-04: и сейв ухода — как комната (`noteVitals` → `vitalsForSave`: пулы живого, откаты — и мёртвого); иногда пати без него меняет
+      // этаж (спуск, город — `floorChanged`): мёртвую запись ухода это снимает, и он входит свежей сущностью с откатами ТОЛЬКО из сейва.
+      let body: HeroBody = bodyOf(p, W.timeMs);
+      // ⚠ R23-05: тело города на арене — с временем, что он бился там до ухода (как `Room.arenaHome` с `leftAt`): оно старит его откаты и баффы.
+      const homeBody = w.trip?.home.get(h.pid);
+      const home: ArenaHome | undefined = homeBody && { body: homeBody, sec: Math.max(0, W.timeMs - w.trip!.at) / 1000 };
+      const vitals = (hooks.vitalsOf ?? vitalsForSave)(p, home, W.timeMs);
+      // ⚠ R23-05: откаты сейва ухода — не длиннее часов героя: их читает вход в ДРУГУЮ комнату («Продолжить», к другу по коду, другая нода,
+      // рестарт), а не только свежая сущность здесь (раньше: откаты тела города, застывшие на входе в арену).
+      vs.push(...cdLonger(w, h.pid, savedCooldowns(vitals, vitals?.at ?? W.timeMs), `${h.pid}: сейв ухода`));
+      w.s.removePlayer(h.pid);
+      const others = w.heroes.filter((x) => x.pid !== h.pid && W.players[x.pid]);
+      const n = r.pick(others.length ? [0, 1, 5, 30, 90] : [0, 1, 30]);
+      let ticks = 0;
+      if (n) {
+        const intents = new Map(others.map((x) => [x.pid, makeIntent(w, W.players[x.pid]!, r, false)]));
+        const paths = new Map(others.map((x) => [x.pid, { at: -99 } as { at: number; wp?: Vec2 }]));
+        ticks = runTicks(w, n, (k) => {
+          const inputs: Record<string, PlayerInput> = {};
+          for (const x of others) { const pl = W.players[x.pid]; if (pl) inputs[x.pid] = frame(w, pl, intents.get(x.pid)!, r, k, paths.get(x.pid)!); }
+          return inputs;
+        }, vs, hooks, stopOn);
+      }
+      let arenaEnd = '';
+      let moved: FuzzWorld['mode'] | undefined;
+      if (w.trip && r.chance(0.4)) {
+        arenaEnd = `; без него ${endTrip(w, r, hooks)}`;
+        if (home) body = (hooks.awayBodyOf ?? arenaAwayBody)(home, body);
+      } else if (!w.trip && others.length && r.chance(0.3)) {
+        // ⭐ R22-04: пати без него сменила этаж — как шаг `descend` у присутствующих; запись ухода — как `Room.floorChanged`.
+        moved = w.mode !== 'town' && r.chance(0.3) ? 'town' : 'floor';
+        const dead = others.filter((x) => !W.players[x.pid]?.alive).map((x) => x.pid);
+        enterFloorFor(w, r, moved);
+        for (const pid of dead) w.probe.track.delete(pid);
+        if (moved === 'town') for (const x of others) { const t = w.probe.track.get(x.pid); if (t) t.series = undefined; }
+        delete body.pos;
+        if (moved === 'town') { body.debuffs = {}; body.stunTimer = 0; }
+        arenaEnd = `; без него пати ушла (${moved === 'town' ? 'город' : 'новый этаж'})`;
+        w.cover['reconnect-moved'] = (w.cover['reconnect-moved'] ?? 0) + 1;
+      }
+      const dropped = !!moved && !body.alive;   // мёртвую запись ухода снимает смена этажа
+      if (dropped) w.cover['reconnect-dead-moved'] = (w.cover['reconnect-dead-moved'] ?? 0) + 1;
+      const usable = !dropped && (body.alive || (w.mode === 'floor' && !!body.pos));
+      const back = w.s.addPlayer(h.pid, p.save, usable ? body.pos : undefined, h.account);
+      if (usable) putBody(back, body, W.timeMs);
+      else {
+        // Свежая сущность: откаты — из сейва (время для ушедшего стоит — без вычета) и из записи ухода, если её не сняли.
+        keepLaterCooldowns(back.skillCd, savedCooldowns(vitals, vitals?.at ?? W.timeMs));
+        if (!dropped) keepLaterCooldowns(back.skillCd, body.skillCd);
+        if (dropped) w.probe.track.delete(h.pid);
+      }
+      hooks.afterReconnect?.(w, back);
+      vs.push(...cdLonger(w, h.pid, back.skillCd, `${h.pid}: вход по коду`));   // ⚠ R23-05: и тело входа (запись ушедшего с арены — `arenaAwayBody`)
+      newBodyTrack(w, h.pid);
+      w.cover.reconnect = (w.cover.reconnect ?? 0) + 1;
+      return { desc: `переподключение ${h.pid}: без него ${ticks} т.${arenaEnd}; вход ${usable ? 'с телом ухода' : dropped ? 'свежей сущностью (мёртвого пати оживила сменой этажа)' : 'свежей сущностью (мёртв вне подземелья)'}`, ok: true, ticks };
     }
   }
 }

@@ -1214,7 +1214,7 @@ export async function startOnline3d(): Promise<void> {
     replies: app.replies,
     log: (text) => app.bus.emit('log:message', { text, kind: 'system' }),
     route: routeToNode,   // R4-13: адрес ноды — у гейтвея, перед каждым подключением
-    onJoined: () => void app.syncConfig(),   // ⭐ R5-15: деплой не перезагружает вкладку — конфиг сверяется на входе
+    // ⭐ D3: версии и конфиг на входе сверяет `App` (рукопожатие `net/versionGate.ts`) — одно место на оба клиента.
     inWorld: (on) => app.setInWorld(on),   // ⭐ R6-25: вне мира (экраны входа, вход, выбор героя) хоткеи окон молчат, смена закрывает окна
     // R4-22: вход аккаунта недействителен — ко входу; героя нет у аккаунта — к выбору героя, потом снова в мир.
     onRejected: (code) => {

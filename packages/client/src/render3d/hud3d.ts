@@ -5,7 +5,7 @@
  * индикаторы досоздаёт в DOM. Читает `app.state` (авторитетный с сервера через online3d).
  */
 import type { App } from '../core/app.js';
-import { effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, debuffLabel, type DebuffKind } from '@dm/shared';
+import { effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, debuffLabel, xpProgress, type DebuffKind } from '@dm/shared';
 
 export interface Hud3d { update(): void; }
 
@@ -66,10 +66,9 @@ export function mountHud3d(app: App): Hud3d {
       bar(hp, st.hp, d.maxHp); bar(mana, st.mana, d.maxMana); bar(stam, st.stamina, d.maxStamina);
       if (manaReserve) manaReserve.style.width = `${clamp01(rMana) * 100}%`;
       if (stamReserve) stamReserve.style.width = `${clamp01(rStam) * 100}%`;
-      // xpTable кумулятивна: порог ТЕКУЩЕГО уровня = xt[lvl], следующего = xt[lvl+1] (на максимуме — полный бар).
-      const xt = app.config.get('balance').xpTable; const lvl = st.save.level;
-      const curXp = xt[lvl] ?? 0, nxXp = xt[lvl + 1] ?? curXp + 1;
-      bar(xp, st.save.xp - curXp, Math.max(1, nxXp - curXp));
+      // xpTable кумулятивна: порог ТЕКУЩЕГО уровня = xt[lvl], следующего = xt[lvl+1] (на максимуме — полный бар). ⭐ D2: та же полоса,
+      // что у окна персонажа и HUD 2D (`xpProgress`): уровень выше потолка — полная, опыт ниже порога после правки кривой — с нуля.
+      bar(xp, xpProgress(st.save.level, st.save.xp, app.config.get('balance').xpTable).frac, 1);
 
       // Числа на полосах.
       const reserved = Math.round(d.maxMana * rMana);
@@ -89,7 +88,7 @@ export function mountHud3d(app: App): Hud3d {
         const cl = st.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(st.save, app.config.get('balance').power, carriedGear(st.save), app.config.get('item-tiers')).total, diff), diff, st.depth);
         loc = `этаж ${st.depth} · ${diff.name} · вызов ур.${cl}`;
       }
-      if (info) info.textContent = `Ур. ${lvl}  ·  ${loc}  ·  Золото ${st.save.gold}  ·  Очки: атр ${st.save.unspentAttributePoints} / скилл ${st.save.unspentSkillPoints}`;
+      if (info) info.textContent = `Ур. ${st.save.level}  ·  ${loc}  ·  Золото ${st.save.gold}  ·  Очки: атр ${st.save.unspentAttributePoints} / скилл ${st.save.unspentSkillPoints}`;
 
       // Статус-эффекты игрока: пересобрать бейджи при изменении набора/стаков (не каждый кадр).
       const active = (Object.keys(st.debuffs) as DebuffKind[]).filter((k) => st.debuffs[k]);

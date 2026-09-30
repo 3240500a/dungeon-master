@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import type { GameConn } from './conn.js';
 import {
-  ConfigRegistry, addToInventory, itemFromBaseId, newCharacterSave, shopSellPrice, withConfigRev, PRICE_CHANGED,
-  type Item, type ServerFrame, type SaveState, type TownCommand,
+  ConfigRegistry, addToInventory, itemFromBaseId, newCharacterSave, shopSellPrice, withConfigRev, upgradedItem, upgradeCost, forgeGold,
+  emptyStash, fullJournal, keySlotOf, keyVariantsByBase, variantsFor, CRAFT_SLOT_LIST,
+  PRICE_CHANGED, type CraftParts, type Item, type ServerFrame, type SaveState, type TownCommand,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
 
@@ -14,7 +15,11 @@ import { limits } from './rateLimit.js';
  * комнаты другая — отказ «Цена изменилась» ДО исполнения (сейв цел, сейв вдогонку не шлётся — отказ ранний); та же — как раньше;
  * без поля (Unity) — как раньше. Сокет — фейковый, база — маленькая честная (версии сейва).
  */
-const db = vi.hoisted(() => ({ saves: new Map<string, number>(), data: new Map<string, SaveState>() }));
+const db = vi.hoisted(() => ({
+  saves: new Map<string, number>(), data: new Map<string, SaveState>(),
+  /** ⭐ R22-03: сундук аккаунта (с сырьём) и удержание его чтения — окно, в которое ложится правка хозяина живьём. */
+  stash: null as unknown, hold: null as Promise<void> | null, reading: 0,
+}));
 vi.mock('../db/db.js', () => ({
   putCharacter: (charId: string, _u: string, data: SaveState, v: number) => {
     if (v !== (db.saves.get(charId) ?? 1)) return Promise.resolve(null);
@@ -22,9 +27,19 @@ vi.mock('../db/db.js', () => ({
     db.data.set(charId, structuredClone(data));
     return Promise.resolve(v + 1);
   },
-  putCharacterWithStash: () => Promise.resolve({ ok: false, conflict: 'stash' }),
+  putCharacterWithStash: (charId: string, _u: string, data: SaveState, v: number, _st: unknown, sv: number) => {
+    if (db.stash === null) return Promise.resolve({ ok: false, conflict: 'stash' });
+    if (v !== (db.saves.get(charId) ?? 1)) return Promise.resolve({ ok: false, conflict: 'save' });
+    db.saves.set(charId, v + 1);
+    db.data.set(charId, structuredClone(data));
+    return Promise.resolve({ ok: true, version: v + 1, stashVersion: sv + 1 });
+  },
   getCharacter: () => Promise.resolve(null),
-  getAccountStash: () => Promise.resolve(null),
+  getAccountStash: async () => {
+    db.reading++;
+    if (db.hold) await db.hold;
+    return db.stash === null ? null : { data: structuredClone(db.stash), version: 1 };
+  },
   putAccountStash: () => Promise.resolve(),
   getRunLedger: () => Promise.resolve([]),
   mergeRunLedger: () => Promise.resolve(),
@@ -137,5 +152,94 @@ describe('⭐ V-B3-07: согласие на конфиг — команды к�
     expect(t.ws.last('cmdResult')).toMatchObject({ ok: true });
     expect('cfgRev' in withConfigRev(t.client, { cmd: 'equip', uid: 'x' })).toBe(false);
     expect('cfgRev' in withConfigRev(t.client, { cmd: 'buy', uid: 'x', maxGold: 1 }), 'покупка: вещь и цену прислал сервер').toBe(false);
+  });
+});
+
+/**
+ * ⭐ R22-03: СОГЛАСИЕ — ТАМ, ГДЕ ДЕЙСТВИЕ ИСПОЛНЯЕТСЯ. Ревизия конфига и сборки (и «кузнец куёт» у ковки и зачарования) сверялись ОДИН раз, до
+ * очереди записей героя; дальше команда ждала очередь (автосейв, запись подъёма с кругами свода) и чтение сундука из базы, а правка хозяина
+ * живьём (редактор, сверка конфига ноды раз в 3 с) правит тот же реестр на месте. Действие исполнялось по НОВОМУ конфигу: цена та же —
+ * согласие на цену проходило, а игрок платил показанное за другую вещь (требования, статы, детали ковки) или ковал при закрытом кузнеце.
+ */
+describe('⭐ R22-03: согласие на конфиг — и после ожидания очереди и базы, перед самим действием', () => {
+  afterEach(() => { db.stash = null; db.hold = null; db.reading = 0; });
+  const body = (t: ReturnType<typeof town>): string => { const { vitals: _v, ...rest } = t.save(); return JSON.stringify(rest); };
+  /** Удержать чтение сундука, дождаться, пока команда в него упрётся, — `edit` ложится в это окно, затем отпустить. */
+  async function inWindow(t: ReturnType<typeof town>, cmd: TownCommand, edit: () => void): Promise<void> {
+    let release!: () => void;
+    db.hold = new Promise<void>((r) => { release = r; });
+    const was = db.reading;
+    const done = t.room.handleCmd(t.pid, cmd, 1);
+    for (let i = 0; i < 200 && db.reading === was; i++) await new Promise((r) => setImmediate(r));
+    expect(db.reading, 'команда дошла до чтения сундука').toBeGreaterThan(was);
+    edit();
+    db.hold = null;
+    release();
+    await done;
+  }
+  const wallet = (cfg: ConfigRegistry): Record<string, number> => Object.fromEntries(cfg.get('craft-materials').map((m) => [m.id, 99_999]));
+
+  it('улучшение: скидка требований сменилась живьём в окне (цена та же) — «Цена изменилась», сейв цел, без сейва вдогонку', async () => {
+    const t = town();
+    db.stash = { version: 1, tabs: [], materials: wallet(t.cfg) };
+    const shown = upgradedItem(t.client, t.item)!;
+    const cmd = withConfigRev(t.client, { cmd: 'forgeUpgrade', uid: t.item.uid, maxGold: forgeGold(t.client, t.item, 'upgrade'), maxMaterials: upgradeCost(t.client, t.item) });
+    const before = body(t);
+    const saves0 = t.ws.frames.filter((f) => f.t === 'saveUpdate').length;
+    await inWindow(t, cmd, () => {
+      const b = structuredClone(t.cfg.get('balance'));
+      b.forgePrices.upgradeReqDiscount = b.forgePrices.upgradeReqDiscount === 0 ? 0.2 : 0;
+      t.cfg.reload({ balance: b });
+      expect(forgeGold(t.cfg, t.item, 'upgrade'), 'цена та же — согласие на цену его бы не остановило').toBe(forgeGold(t.client, t.item, 'upgrade'));
+      expect(upgradedItem(t.cfg, t.item)!.requirements, 'а вещь другая').not.toEqual(shown.requirements);
+    });
+    const r = t.ws.last('cmdResult')!;
+    expect(r.ok, `было — ok, требования ${JSON.stringify(upgradedItem(t.cfg, t.item)?.requirements)} вместо показанных ${JSON.stringify(shown.requirements)}`).toBe(false);
+    expect(r.reason?.startsWith(PRICE_CHANGED), `«${r.reason}»`).toBe(true);
+    expect(body(t), 'сейв цел').toBe(before);
+    expect(t.ws.frames.filter((f) => f.t === 'saveUpdate').length, 'отказ до действия — без сейва вдогонку').toBe(saves0);
+  });
+
+  /** Ковка меча ступени 4 (как `priceConsent.test.ts`): всё сырьё включено, журнал кузнеца открыт, в сундуке сырья вдоволь. */
+  function forge(t: ReturnType<typeof town>): TownCommand {
+    const d = structuredClone(t.cfg.snapshot()) as unknown as { 'craft-materials': { enabled: boolean }[] };
+    for (const m of d['craft-materials']) m.enabled = true;
+    t.cfg.reload({ 'craft-materials': d['craft-materials'] } as never);
+    db.stash = { ...emptyStash(t.cfg), materials: wallet(t.cfg), forgeJournal: fullJournal(t.cfg) };
+    const keySlot = keySlotOf(t.cfg, 'sword');
+    const group = keyVariantsByBase(t.cfg, 'sword', 1).find((g) => g.variants.some((v) => v.stepMin <= 4 && 4 <= v.stepMax))!;
+    const parts = {} as CraftParts;
+    for (const slot of CRAFT_SLOT_LIST) {
+      const pool = slot === keySlot ? group.variants : variantsFor(t.cfg, 'sword', slot, 1);
+      const v = pool.find((x) => x.stepMin <= 4 && 4 <= x.stepMax)!;
+      parts[slot] = { id: v.id, step: 4 };
+    }
+    return { cmd: 'craft', nonce: `r22-craft-${++seq}`, input: { weaponClass: 'sword', hands: 1, parts } };
+  }
+
+  it('ковка без `cfgRev` (Unity): кузнец закрыт живьём в окне — «Кузнец ещё не куёт», ничего не сковано; контроль без правки — куётся', async () => {
+    const ctl = town();
+    await inWindow(ctl, forge(ctl), () => undefined);
+    expect(ctl.ws.last('cmdResult'), 'контроль: без правки ковка идёт').toMatchObject({ ok: true });
+    const t = town();
+    const cmd = forge(t);
+    const before = body(t);
+    await inWindow(t, cmd, () => {
+      const b = structuredClone(t.cfg.get('balance'));
+      b.craft.live = false;
+      t.cfg.reload({ balance: b });
+    });
+    const r = t.ws.last('cmdResult')!;
+    expect(r.ok, 'было — сковано при закрытом кузнеце').toBe(false);
+    expect(r.reason).toBe('Кузнец ещё не куёт');
+    expect(body(t), 'ни золота, ни вещи').toBe(before);
+  });
+
+  it('контроль: правки в окне нет — улучшение проходит, как раньше', async () => {
+    const t = town();
+    db.stash = { version: 1, tabs: [], materials: wallet(t.cfg) };
+    const cmd = withConfigRev(t.client, { cmd: 'forgeUpgrade', uid: t.item.uid, maxGold: forgeGold(t.client, t.item, 'upgrade'), maxMaterials: upgradeCost(t.client, t.item) });
+    await inWindow(t, cmd, () => undefined);
+    expect(t.ws.last('cmdResult')).toMatchObject({ ok: true });
   });
 });

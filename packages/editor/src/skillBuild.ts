@@ -28,7 +28,7 @@ let slots: string[] = [];
 
 const h = (tag: string, css: string, txt = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (txt) e.textContent = txt; return e; };
 const INP = 'padding:5px 8px;background:#0f0f16;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;font-size:13px';
-function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg = new ConfigRegistry(); reg.loadAll(data); return reg; }
+function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg = new ConfigRegistry(); reg.loadAll(data, { cross: false }); return reg; }   // ⭐ R22-01: читатель рабочей копии (правило D4 — у записи)
 
 function sel(val: string, opts: [string, string][], on: (v: string) => void, w = ''): HTMLSelectElement {
   const s = document.createElement('select'); s.style.cssText = INP + (w ? `;width:${w}` : '');

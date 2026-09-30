@@ -32,6 +32,10 @@ beforeAll(async () => {
   await pool.initSchema();
   await (await import('../cluster/registry.js')).initClusterSchema();
   db = await import('./db.js');
+  // Модули, которые тесты берут динамическим `import()`, — загрузить здесь, под потолком хука: первый такой импорт в теле теста под нагрузкой
+  // полного прогона ждёт главный процесс vitest (он разбирает модули всех файлов) — время теста, а не проверка.
+  await import('./rollback.js');
+  await import('./audit.js');
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
@@ -60,6 +64,22 @@ function takeEquipped(save: SaveState): Item {
 
 const events = async (itemId: string): Promise<{ kind: string; from_loc: string | null; to_loc: string | null }[]> =>
   pool.q('SELECT kind, from_loc, to_loc FROM item_events WHERE item_id = $1 ORDER BY seq', [itemId]);
+
+/**
+ * ⭐ МОМЕНТ ОТСЕЧКИ ОТКАТА — ПО ЧАСАМ БАЗЫ, строго между записанным и следующим. События журнала штампует база (`at` — `now()` её транзакции),
+ * а отсечка бралась часами процесса (`new Date()`) между двумя паузами по 50 мс: двое часов (процесса и базы) и надежда, что пауза покроет их
+ * расхождение и любую задержку между ними. Теперь отсечка — последнее событие аккаунта, округлённое ВВЕРХ до миллисекунды (`Date`
+ * точнее не держит: округление вниз оставило бы само событие «после»), а следующая запись начинается, только когда часы базы отсечку прошли:
+ * «до» и «после» разделяет порядок, а не пауза.
+ */
+async function cutoffNow(userId: string): Promise<Date> {
+  const r = await pool.q1<{ at: Date | null }>(
+    `SELECT date_trunc('milliseconds', max(at)) + interval '1 millisecond' AS at FROM item_events WHERE user_id = $1`, [userId]);
+  const at = r?.at;
+  if (!at) throw new Error(`у аккаунта ${userId} нет событий журнала — отсекать нечего`);
+  while (!(await pool.q1<{ ok: boolean }>('SELECT clock_timestamp() > $1::timestamptz AS ok', [at]))?.ok) { /* часы базы ещё не прошли отсечку */ }
+  return at;
+}
 
 describe.runIf(process.env.DM_SKIP_PG !== '1')('леджер предметов', () => {
   it('стартовый комплект попадает в леджер и журнал', async () => {
@@ -211,9 +231,7 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('леджер предметов'
     const kept = Object.values(save.equipment)[0]!;
 
     // Момент отсечки: всё, что было ДО него, считается законным.
-    await new Promise((r) => setTimeout(r, 50));
-    const cutoff = new Date();
-    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = await cutoffNow(userId);
 
     // После отсечки: одну вещь потеряли, другая появилась из ниоткуда.
     const appeared = { ...kept, uid: uuidv7(), name: 'Появилась позже' };
@@ -325,10 +343,8 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('R1-17: отзыв и откат 
     if (!alive) return;
     const { planRollback, applyRollback } = await import('./rollback.js');
     const { userId, charId, save } = await freshChar();
-    await new Promise((r) => setTimeout(r, 30));
-    const cutoff = new Date();
-    await new Promise((r) => setTimeout(r, 30));
-    const appeared = { ...Object.values(save.equipment)[0]!, uid: uuidv7(), name: 'Появилась позже', pos: { x: 0, y: 0 } };
+    const cutoff = await cutoffNow(userId);
+    const appeared ={ ...Object.values(save.equipment)[0]!, uid: uuidv7(), name: 'Появилась позже', pos: { x: 0, y: 0 } };
     save.inventory.push(appeared);
     await db.putCharacter(charId, userId, save, 1, 'cmd:test');
     const plan = await planRollback(userId, cutoff);
@@ -459,9 +475,7 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 2: журнал ве�
     const { userId, charId, save } = await freshChar();
     const slot = Object.keys(save.equipment)[0] as keyof SaveState['equipment'];
     const w = save.equipment[slot]!;
-    await new Promise((r) => setTimeout(r, 50));
-    const cutoff = new Date();
-    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = await cutoffNow(userId);
     delete save.equipment[slot];
     const stash = emptyStash(cfg);
     stash.forgeJournal = { ...emptyJournal(), mythic: 1 };
@@ -637,9 +651,7 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 15: удаление 
     const yId = uuidv7();
     await db.createCharacter(yId, x.userId, newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Игрек', yId));
     // Момент отсечки: у X — весь стартовый комплект.
-    await new Promise((r) => setTimeout(r, 50));
-    const cutoff = new Date();
-    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = await cutoffNow(x.userId);
     // После неё: вещь S из комплекта X — в сундук аккаунта (законно), затем X удалён (его прочие вещи — в world, R15-03).
     const s = takeEquipped(x.save);
     const stash: AccountStash = emptyStash(cfg);
@@ -669,9 +681,7 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 15: удаление 
     const x = await freshChar();
     const yId = uuidv7();
     await db.createCharacter(yId, x.userId, newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Игрек', yId));
-    await new Promise((r) => setTimeout(r, 50));
-    const cutoff = new Date();
-    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = await cutoffNow(x.userId);
     const s = takeEquipped(x.save);
     const stash: AccountStash = emptyStash(cfg);
     stash.tabs[0]!.push({ ...s, pos: { x: 0, y: 0 } });

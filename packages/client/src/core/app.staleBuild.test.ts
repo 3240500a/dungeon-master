@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { App } from './app.js';
-import { PROTOCOL_STALE } from '../net/entryFlow.js';
+import { PROTOCOL_STALE } from '../net/versionGate.js';
 
 /**
  * ⭐ R10-12: ЛЮБОЙ ЛЕНИВЫЙ КУСОК СБОРКИ, НЕ ЗАГРУЗИВШИЙСЯ ПОСЛЕ ДЕПЛОЯ, — «ПЕРЕЗАГРУЗИТЕ СТРАНИЦУ».

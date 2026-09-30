@@ -418,14 +418,14 @@
         "requires": [
           "a-warrior-natisk-m1"
         ],
-        "maxRank": 20,
+        "maxRank": 8,
         "levelReq": 12,
         "effect": {
           "active": {
             "category": "buff",
             "abilityId": "warcry",
             "manaCost": 10,
-            "cooldown": 12,
+            "cooldown": 13.5,
             "durationSec": 8,
             "buffMods": [
               {
@@ -2865,14 +2865,14 @@
         "requires": [
           "a-vyuga-valkyrie-m1"
         ],
-        "maxRank": 20,
+        "maxRank": 8,
         "levelReq": 12,
         "effect": {
           "active": {
             "category": "buff",
             "abilityId": "storm-shield",
             "manaCost": 10,
-            "cooldown": 12,
+            "cooldown": 13.5,
             "durationSec": 8,
             "buffMods": [
               {
@@ -3782,14 +3782,14 @@
         "requires": [
           "a-arbalest-veteran-m1"
         ],
-        "maxRank": 20,
+        "maxRank": 8,
         "levelReq": 12,
         "effect": {
           "active": {
             "category": "buff",
             "abilityId": "take-aim",
             "manaCost": 8,
-            "cooldown": 10,
+            "cooldown": 11,
             "durationSec": 6,
             "buffMods": [
               {
@@ -4582,14 +4582,14 @@
           "amount": 1
         },
         "requires": [],
-        "maxRank": 20,
+        "maxRank": 8,
         "levelReq": 1,
         "effect": {
           "active": {
             "category": "buff",
             "abilityId": "fire-charm",
             "manaCost": 8,
-            "cooldown": 12,
+            "cooldown": 25.5,
             "durationSec": 12,
             "buffMods": [
               {
@@ -4774,14 +4774,14 @@
         "requires": [
           "a-vorozheya-charms-m3"
         ],
-        "maxRank": 20,
+        "maxRank": 8,
         "levelReq": 18,
         "effect": {
           "active": {
             "category": "buff",
             "abilityId": "thorn-mantle",
             "manaCost": 10,
-            "cooldown": 14,
+            "cooldown": 16,
             "durationSec": 10,
             "buffMods": [
               {

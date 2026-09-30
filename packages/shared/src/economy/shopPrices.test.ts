@@ -6,12 +6,13 @@ import {
   partById, shapeFoundWeapon, tierOfSteps, variantsFor, type CraftInput,
 } from '../formulas/craft.js';
 import { CRAFT_SLOT_LIST, keySlotOf, type CraftSlot } from '../formulas/craftType.js';
-import { generateItem, rollTierLevel } from '../formulas/itemgen.js';
+import { generateItem, itemFromBaseId, rollTierLevel } from '../formulas/itemgen.js';
 import { createRng } from '../formulas/rng.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
 import type { SalvageRng } from '../formulas/salvage.js';
 import {
-  buyItem, craftAction, forgeSalvage, forgeUpgrade, salvageRange, salvageWorth, salvageYield, sellItem, shopBuyPrice, shopItemValue, shopSellPrice,
+  buyItem, craftAction, forgeSalvage, forgeUpgrade, salvageRange, salvageWorth, salvageYield, sellItem, shopBuyPrice, shopConsumableIds, shopItemValue,
+  shopSellPrice,
 } from './townActions.js';
 import { materialItem } from './materials.js';
 import { emptyStash } from './stashActions.js';
@@ -49,12 +50,12 @@ function sellMaterials(save: SaveState): void {
   for (const it of save.inventory.filter((i) => i.kind === 'material')) expect(sellItem(reg, save, it.uid).ok).toBe(true);
 }
 
-/** Вещь «с прилавка»: как `rollGear` сервера (дроп-генератор + форма найденного), с заданной ступенью и редкостью. */
-function shopItem(base: Base, itemLevel: number, tierLevel: number, rarity: Rarity, seed: number): Item {
-  return shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
-    dropBias: 1.3, itemLevel, tierLevel, baseId: base.id, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'),
-    rareNames: reg.get('rare-names'), forceRarity: rarity, maxReqTotal: reg.get('balance').maxTotalRequirement,
-    baseRoll: reg.get('balance').loot.baseRoll, origin: 'shop',
+/** Вещь «с прилавка»: как `rollGear` сервера (дроп-генератор + форма найденного), с заданной ступенью и редкостью (`R` — реестр, по умолчанию поставка). */
+function shopItem(base: Base, itemLevel: number, tierLevel: number, rarity: Rarity, seed: number, R: ConfigRegistry = reg): Item {
+  return shapeFoundWeapon(R, generateItem(R.get('items.base'), R.get('affixes'), R.get('uniques'), {
+    dropBias: 1.3, itemLevel, tierLevel, baseId: base.id, tiers: R.get('item-tiers'), rarities: R.get('rarities'),
+    rareNames: R.get('rare-names'), forceRarity: rarity, maxReqTotal: R.get('balance').maxTotalRequirement,
+    baseRoll: R.get('balance').loot.baseRoll, origin: 'shop',
   }, createRng(seed)));
 }
 
@@ -573,5 +574,64 @@ describe('⚠ R1-20: вилка разбора «от и до» — ровно �
     }
     expect(bad, bad.slice(0, 12).join('\n')).toEqual([]);
     expect(checked, 'сторож видит и находки, и скованное, и оба места').toBeGreaterThan(150);
+  });
+});
+
+describe('⚠ R23-04: лавка не скупает дороже, чем продаёт, — и при множителе цены редкости у нуля', () => {
+  /**
+   * Схема пускает `rarities.priceMult` от 0 («обычное ничего не стоит»). Оценка вещи — `round(… × priceMult)`, и ниже ≈ 0.026 зелье
+   * прилавка (обычное, ilvl 1: `(15 + 4) × priceMult`) стоило 0, а скупка держит пол 1 (`shopSellPrice`): герой с нулём золота
+   * раскупал 20 колб, сдавал по 1 — и так на каждый заход в город (прилавок зелий заново). Кузница пол 1 держит (`forgeGold`), лавка — нет.
+   * Поставку (normal = 1) это не задевает — только правку из редактора; мерим при 0 / 0.01 / 0.02 у каждой редкости по очереди.
+   */
+  function cheapRarity(id: Rarity, mult: number): ConfigRegistry {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    r.reload({ rarities: r.get('rarities').map((x) => (x.id === id ? { ...x, priceMult: mult } : x)) });
+    return r;
+  }
+  const KINDS = ['weapon', 'armor', 'shield', 'jewelry'] as const;
+
+  it('зелья прилавка и снаряжение каждой редкости: покупка ≥ скупки (и ≥ 1), «купил → продал» не в плюс', () => {
+    const bad: string[] = [];
+    let n = 0;
+    for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) for (const mult of [0, 0.01, 0.02]) {
+      const R = cheapRarity(rarity, mult);
+      const items: Item[] = [];
+      if (rarity === 'normal') for (const id of shopConsumableIds(R)) items.push(itemFromBaseId(R.get('items.base'), id, undefined, 'shop')!);
+      for (const kind of KINDS) for (const base of R.get('items.base').filter((b) => b.kind === kind && b.enabled !== false).slice(0, 3)) {
+        for (const lvl of [1, 12]) {
+          const it = shopItem(base, lvl, lvl, rarity, 17 + lvl, R);
+          if (it.rarity === rarity) items.push(it);
+        }
+      }
+      for (const it of items) {
+        const label = `${rarity}×${mult} «${it.baseId}» ilvl ${it.itemLevel}`;
+        const buy = shopBuyPrice(R, it), sell = shopSellPrice(R, it);
+        if (!(buy >= 1)) bad.push(`${label}: цена покупки ${buy}`);
+        if (buy < sell) bad.push(`${label}: покупка ${buy} < скупки ${sell}`);
+        // Петля настоящими действиями: ровно столько золота, сколько просят, — купил и сдал.
+        const save = mkSave(buy);
+        if (buyItem(R, save, it).ok && sellItem(R, save, it.uid).ok && save.gold > buy) bad.push(`${label}: купил за ${buy} → сдал, стало ${save.gold}`);
+        // Героем без гроша вещь не купить (согласие «до 0» — тоже нет).
+        if (buyItem(R, mkSave(0), { ...it, uid: `${it.uid}-0` }, 0).ok) bad.push(`${label}: куплена за 0 золота`);
+        n++;
+      }
+    }
+    expect(bad, bad.slice(0, 12).join('\n')).toEqual([]);
+    expect(n, 'сторож видит и зелья, и снаряжение каждой редкости').toBeGreaterThan(150);
+  });
+
+  it('поставка не сдвинулась: пол скупки не трогает ни одну цену прилавка (оценка и сырьё разбора и так выше)', () => {
+    for (const id of shopConsumableIds(reg)) {
+      const p = itemFromBaseId(reg.get('items.base'), id, undefined, 'shop')!;
+      expect(shopBuyPrice(reg, p), id).toBe(Math.max(shopItemValue(reg, p), salvageWorth(reg, p)));
+    }
+    for (const kind of KINDS) for (const base of reg.get('items.base').filter((b) => b.kind === kind && b.enabled !== false)) {
+      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+        const it = shopItem(base, 20, 20, rarity, 41);
+        expect(shopBuyPrice(reg, it), `${base.id} ${rarity}`).toBe(Math.max(shopItemValue(reg, it), salvageWorth(reg, it)));
+      }
+    }
   });
 });

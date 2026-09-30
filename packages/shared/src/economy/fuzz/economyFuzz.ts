@@ -1,6 +1,6 @@
 import { ConfigRegistry } from '../../config/registry.js';
 import { affixFormKeys, questsRandomSchema, type ConfigShapes } from '../../config/schemas.js';
-import type { SaveState } from '../../types/save.js';
+import type { EarnedPoints, SaveState } from '../../types/save.js';
 import type { CraftParts, EquipSlot, Item, ItemOrigin } from '../../types/items.js';
 import type { AccountStash } from '../../types/stash.js';
 import type { QuestDef } from '../../types/quest.js';
@@ -23,8 +23,8 @@ import {
   SHOP_CONSUMABLE_STOCK, allocActive, allocAttr, allocPassive, applyConsumable, attrRespecRefund, buyItem, canEnchantItem, canUpgradeItem, craftAction,
   depositMaterials, enchantAction, equip, fieldSalvage, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade,
   moveInventoryItem, moveToBelt, passiveRespecFee, repairCost, respec, respecPassives, respecSkills, salvageMean, salvageRange,
-  salvageWorth, sellItem, shopBuyPrice, shopConsumableIds, shopSellPrice, sketchAction, skillRespecFee, unequip, upgradeCost,
-  upgradedItem, type ActionResult,
+  salvageWorth, sellItem, settleEarned, shopBuyPrice, shopConsumableIds, shopSellPrice, sketchAction, skillRespecFee, unequip, upgradeCost,
+  upgradedItem, pointsHeld, type ActionResult,
 } from '../townActions.js';
 import { emptyStash, sanitizeStash, stashDims, stashMove, type StashDst } from '../stashActions.js';
 import { acceptQuest, ensureMainQuest, generateBoard, trackFloor, trackObjective, turnInQuest } from '../questLogic.js';
@@ -54,11 +54,15 @@ import { canAffordBoth, giveMaterialsTo, type MaterialCost } from '../materials.
  *  I7 — каждая вещь проходит zod-схему сейва (`validation/save.ts`) туда-обратно без изменений;
  *  плюс сетка (вещь в своих клетках, без наложений), экипировка по правилам слотов и требований, правила вещи (свойств не больше
  *  редкости и оплаченной формы, ступень в окне базы, сумма требований под потолком), очки (вложенное + свободное = выданное
- *  уровнями; атрибуты — по книге героя `AttrBook`: от старта, с которым создан, не ниже него, R18-07; сброс итог Σ атрибутов +
- *  свободные не двигает — `respec-total`, и у сейва без старта, R19-01), согласие на цену
+ *  уровнями по очкам за уровень ТОГО мига — по книге героя `PointsBook`, все три пула; атрибуты — от старта, с которым создан, не ниже
+ *  него, R18-07; сброс итог Σ атрибутов + свободные не двигает — `respec-total`, и у сейва без старта, R19-01), ⭐ D2: книга
+ *  заработанного сейва (`save.earned`) = выданное моделью (`earned`) и = вложенное + свободное (`earned-held`), уровень не опускается
+ *  (`level-drop`), возврат сброса атрибутов не зависит от живого конфига (`refund-config`), вход дописывает только недостающее
+ *  (`reenter`); согласие на цену
  *  (`maxGold`/`minGold`/`maxMaterials`/`minYield`), «не упал» и «конфиг никто не правит на месте»; цена у каждой формы ёмкости,
  *  которую даёт ковка, и богаче не дешевле (`formPrices`, R17-03), и ковка, зачарование и перекатка платят только за форму с ценой
- *  (`unpricedForm`); кривая опыта строго растёт (`xpCurve`, R20-05).
+ *  (`unpricedForm`); кривая опыта строго растёт (`xpCurve`, R20-05); ⚠ R23-04: лавка не скупает дороже, чем продаёт, — у каждой вещи
+ *  прилавка (снаряжение и зелья) цена покупки не ниже скупки и не ниже 1 (`shopArbitrage`, при любом `rarities.priceMult`, шаг `priceEdit`).
  *
  * Шаг хранится АБСТРАКТНО — `{k, h, s}`: вид, герой, сид своих бросков; что именно он берёт (какую вещь, какую цену), решается
  * по состоянию в момент исполнения. Поэтому сжатие (`shrink`) выбрасывает шаги, и оставшиеся по-прежнему осмысленны.
@@ -71,7 +75,8 @@ export type OpKind =
   | 'buy' | 'sell' | 'craft' | 'enchant' | 'sketch' | 'forgeSalvage' | 'fieldSalvage' | 'upgrade' | 'reroll' | 'repair'
   | 'stashMove' | 'deposit' | 'equip' | 'unequip' | 'useConsumable' | 'moveBelt' | 'moveItem' | 'allocAttr' | 'respec'
   | 'allocPassive' | 'respecPassives' | 'allocSkill' | 'respecSkills' | 'acceptQuest' | 'ensureMain' | 'questProgress' | 'turnIn'
-  | 'death' | 'loot' | 'lootMats' | 'gold' | 'xp' | 'config' | 'restock' | 'clientSync' | 'newHero' | 'classEdit';
+  | 'death' | 'loot' | 'lootMats' | 'gold' | 'xp' | 'config' | 'restock' | 'clientSync' | 'newHero' | 'classEdit' | 'progEdit' | 'reenter'
+  | 'priceEdit';
 
 /** Шаг цепочки: вид, чей герой (0/1), сид его бросков. */
 export interface Op { k: OpKind; h: 0 | 1; s: number }
@@ -85,6 +90,13 @@ export const OP_WEIGHTS: Record<OpKind, number> = {
   // ⚠ R19-01: только правка старта классов и очков за уровень (в `config` она — две из пятнадцати): зовёт свой профиль (R18-07), здесь — 0,
   // чтобы цепочки прочих профилей не сдвинулись.
   classEdit: 0,
+  // ⭐ D2: правка прокачки (старт, очки за уровень всех трёх пулов, кривая, древа) — свой профиль; в общем она идёт через `config`.
+  progEdit: 0,
+  // ⭐ D2: вход героя заново (сервер дописывает сейв старше правила, записанное не трогает).
+  reenter: 1,
+  // ⚠ R23-04: множитель цены редкости ВНИЗ, до нуля (`rarities.priceMult`), — свой профиль. Здесь — 0: он дешевит и золото кузницы
+  // (`forgeGold`), а правки конфига общего профиля нарочно «игроку хуже» (`configPlan`) — иначе гросбух мерил бы баланс цен подъёма.
+  priceEdit: 0,
 };
 
 /** Цепочка шагов из сида: виды по весам, от состояния не зависит (сжатие это и требует). */
@@ -167,45 +179,89 @@ export interface FuzzWorld {
   landed?: { baseId: string; tierLevel: number };
   /** ⭐ C-01: потолок требований, под которым вещь (uid + требования) встретилась впервые (`birthCap`). */
   reqCaps?: Map<string, number>;
-  /** ⚠ R18-07: книга очков атрибутов каждого героя (`AttrBook`) — по ней I4 меряет вложенное и выданное. */
-  attrBook: [AttrBook, AttrBook];
+  /** ⚠ R18-07 / ⭐ D2: книга очков каждого героя (`PointsBook`) — по ней I4 меряет вложенное и выданное по всем трём пулам. */
+  books: [PointsBook, PointsBook];
   liqCache: Map<string, number>;
 }
 
 /**
- * ⚠ R18-07: КНИГА ОЧКОВ АТРИБУТОВ ГЕРОЯ — модель, а не сейв: старт, с которым герой создан (строка класса В ТОТ МОМЕНТ), и очки,
- * выданные уровнями по `attributePointsPerLevel` того времени (`cum[L]` — выдано к уровню L). Правка хозяина живьём (строка класса,
- * очки за уровень) выданного не пересчитывает: I4 мерил вложенное от нынешней строки — так же, как мерил его сброс, и правка
- * «Сила 20→15, Ловкость 15→20» с последующим сбросом (+5 очков из воздуха) была ему не видна.
+ * ⚠ R18-07 / ⭐ D2: КНИГА ОЧКОВ ГЕРОЯ — модель, а не сейв: старт, с которым герой создан (строка класса В ТОТ МОМЕНТ), и очки, выданные
+ * уровнями по очкам за уровень того времени — по пулам (`cum.attr[L]` — очков атрибутов выдано к уровню L; `skill`, `mastery` — так же).
+ * Правка хозяина живьём (строка класса, очки за уровень, кривая, древа) выданного не пересчитывает: I4 мерил вложенное от нынешней строки —
+ * так же, как мерил его сброс, и правка «Сила 20→15, Ловкость 15→20» с последующим сбросом (+5 очков из воздуха) была ему не видна; очки
+ * скилов и мастерства мерил по ЖИВЫМ очкам за уровень — правку их он не пережил бы.
  * ⚠ R19-01: `floor` — старт, который сейв обязан помнить (у героя, созданного после R18-07, — тот же `start`). Сейв старше R18-07 (`legacy`)
- * старта не помнит, пока его не запишет первый сброс: по атрибуту не выше нынешнего значения и не выше строки класса В МИГ СБРОСА — модель
- * считает это сама в плане шага (`pending`) и сверяет после него. Итог героя (`start` + выданное) сброс не двигает ни у кого.
+ * старта не помнит, пока его не запишет первый вход или сброс: по атрибуту не выше нынешнего значения и не выше строки класса В ТОТ МИГ —
+ * модель считает это сама в плане шага (`pending`) и сверяет после него. Итог героя (`start` + выданное) сброс не двигает ни у кого.
+ * ⭐ D2: `ledger` — сдвиг книги заработанного сейва (`save.earned`) от выданного моделью: у героя, созданного с книгой, — нули. Сейв старше D2
+ * (`legacyLedger`) книги не помнит, пока её не допишет вход или сброс (`settleEarned`) — из того, что у героя есть: модель считает дописку сама
+ * в плане шага (`pendingLedger`), дальше ждёт `save.earned` = выдано моделью + сдвиг. Нет `ledger` — сейв книги не помнит и не должен.
  */
-export interface AttrBook {
-  start: Record<string, number>; level: number; cum: number[];
+export interface PointsBook {
+  start: Record<string, number>; level: number; cum: { attr: number[]; skill: number[]; mastery: number[] };
   legacy?: boolean; floor?: Record<string, number>; pending?: Record<string, number>;
+  legacyLedger?: boolean; ledger?: EarnedPoints; pendingLedger?: EarnedPoints;
 }
-function attrBookOf(reg: ConfigRegistry, s: SaveState): AttrBook {
+function bookOf(reg: ConfigRegistry, s: SaveState): PointsBook {
   const cls = reg.get('classes').find((c) => c.id === s.classId);
-  const app = reg.get('balance').attributePointsPerLevel;
+  const b = reg.get('balance');
   const start = { ...(cls?.startAttributes ?? s.attributes) };
+  const line = (per: number): number[] => Array.from({ length: s.level + 1 }, (_, l) => Math.max(0, l - 1) * per);
   return {
-    start, level: s.level, cum: Array.from({ length: s.level + 1 }, (_, l) => Math.max(0, l - 1) * app),
+    start, level: s.level, cum: { attr: line(b.attributePointsPerLevel), skill: line(b.skillPointsPerLevel), mastery: line(b.masteryPointsPerLevel) },
     ...(s.startAttributes ? { floor: { ...start } } : { legacy: true }),
+    ...(s.earned ? { ledger: { attributePoints: 0, skillPoints: 0, masteryPoints: 0 } } : { legacyLedger: true }),
   };
 }
 /**
  * Книга ← уровни героев после шага: каждый новый уровень — по очкам за уровень нынешнего конфига (шаг шёл при нём; правка конфига —
- * отдельный шаг). Уровень ниже записанного (комната поднялась из базы после падения) — книга помнит выданное к каждому уровню.
+ * отдельный шаг). Уровень ниже записанного (комната поднялась из базы после падения) — книга помнит выданное к каждому уровню; в ядре
+ * такое — нарушение ⭐ D2 `level-drop` (уровни не отнимаются, R9-05; шаг падения процесса комната судит отдельно).
  */
-function noteLevels(w: FuzzWorld): void {
-  const app = w.reg.get('balance').attributePointsPerLevel;
+function noteLevels(w: FuzzWorld, out: Violation[]): void {
+  const bal = w.reg.get('balance');
   w.heroes.forEach((s, h) => {
-    const b = w.attrBook[h]!;
-    for (let l = b.level + 1; l <= s.level && l <= 10_000; l++) b.cum[l] = (b.cum[l - 1] ?? 0) + app;
+    const b = w.books[h]!;
+    if (s.level < b.level) out.push({ inv: 'I4', code: 'level-drop', id: `${h}`, msg: `герой ${h}: уровень ${b.level} → ${s.level} — уровни не отнимаются (R9-05)` });
+    for (let l = b.level + 1; l <= s.level && l <= 10_000; l++) {
+      b.cum.attr[l] = (b.cum.attr[l - 1] ?? 0) + bal.attributePointsPerLevel;
+      b.cum.skill[l] = (b.cum.skill[l - 1] ?? 0) + bal.skillPointsPerLevel;
+      b.cum.mastery[l] = (b.cum.mastery[l - 1] ?? 0) + bal.masteryPointsPerLevel;
+    }
     b.level = s.level;
   });
 }
+/** ⚠ R19-01: старт, который вход или сброс запишет сейву без него (не выше своих атрибутов и нынешней строки класса) — модель считает сама. */
+function legacyStartOf(reg: ConfigRegistry, s: SaveState): Record<string, number> | undefined {
+  const row = reg.get('classes').find((c) => c.id === s.classId)?.startAttributes;
+  return row ? Object.fromEntries(ATTRIBUTES.map((a) => [a, Math.max(0, Math.min(Math.floor(s.attributes[a]), row[a]))])) : undefined;
+}
+/**
+ * ⭐ D2: что допишет вход или сброс сейву старше правила — модель считает сама (план шага, до исполнения): старт (R19-01) и книгу заработанного
+ * из того, что у героя есть: атрибуты сверх старта целым + свободные, Σ рангов скилов и мастерства + свободные.
+ */
+function planSettle(w: FuzzWorld, h: 0 | 1, s: SaveState): void {
+  const book = w.books[h]!;
+  const st = s.startAttributes ?? legacyStartOf(w.reg, s);
+  if (!s.startAttributes && st) book.pending = st;
+  if (s.earned || !st) return;
+  let over = 0;
+  for (const a of ATTRIBUTES) over += Math.max(0, s.attributes[a] - st[a]!);
+  const ranks = (m: Record<string, number>): number => Object.values(m).reduce((n, v) => n + (v > 0 ? v : 0), 0);
+  book.pendingLedger = {
+    attributePoints: Math.floor(over) + s.unspentAttributePoints,
+    skillPoints: ranks(s.skills) + s.unspentSkillPoints,
+    masteryPoints: ranks(s.masteries) + s.unspentMasteryPoints,
+  };
+}
+/** Очки скилов наград сданных заданий героя (цепочка) — выданное сверх уровней. */
+function questSkillBonus(s: SaveState): number {
+  return s.quests.filter((q) => q.status === 'turned-in')
+    .reduce((n, q) => n + (s.activeQuestDefs.find((d) => d.id === q.questId)?.reward.skillPoints ?? 0), 0);
+}
+let PRISTINE_REG: ConfigRegistry | null = null;
+/** Реестр по умолчанию (общий, только для чтения) — «конфиг, которого никто не правил», для сверки `refund-config`. */
+function pristineReg(): ConfigRegistry { return (PRISTINE_REG ??= regFrom(pristineTables())); }
 
 const dimsOf = (reg: ConfigRegistry): Dims => reg.get('balance').inventory;
 const windowMs = (reg: ConfigRegistry): number => Math.max(0, reg.get('balance').townRestockSec) * 1000;
@@ -292,9 +348,12 @@ export function newWorld(seed: number): FuzzWorld {
   const dims = dimsOf(reg);
   // ⚠ R19-01: герой, созданный до R18-07, старта не помнит (таких в базе все старые) — свой бросок, чтобы миры прочих сидов не сдвинулись.
   const old = createRng((seed * 2654435761 + 11) >>> 0 || 7);
+  // ⭐ D2: и книги заработанного не помнит; герой между R18-07 и D2 — старт помнит, книгу нет. Тоже свой бросок.
+  const preD2 = createRng((seed * 40503 + 17) >>> 0 || 5);
   const mk = (i: number): SaveState => {
     const s = newCharacterSave(reg, r.pick(classes).id, `Ф${i}`, `fz${seed}-${i}`);
     if (old.chance(0.35)) delete s.startAttributes;
+    if (!s.startAttributes || preD2.chance(0.3)) delete s.earned;
     s.createdAt = 0;
     if (r.chance(0.8)) gainXp(s, bal, xpForLevel(r.int(2, 70), bal.xpTable));
     // Очки — вложены (законно) целиком или частью; часть ждёт.
@@ -332,7 +391,7 @@ export function newWorld(seed: number): FuzzWorld {
   const now = 1_700_000_000_000 + r.int(0, 1e6);
   const w: FuzzWorld = {
     reg, view: regFrom(tablesOf(reg)), heroes, stash, shop: [], potions: [], board: [], boardAt: now, now,
-    nonces: [[], []], n: 0, cfgVer: 0, attrBook: [attrBookOf(reg, heroes[0]), attrBookOf(reg, heroes[1])], liqCache: new Map(),
+    nonces: [[], []], n: 0, cfgVer: 0, books: [bookOf(reg, heroes[0]), bookOf(reg, heroes[1])], liqCache: new Map(),
   };
   restock(w, r);
   return w;
@@ -1105,8 +1164,8 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       // ⚠ R19-01: итог героя (Σ атрибутов + свободные) сброс только переносит; сейву без старта он запишет старт — по атрибуту не выше
       // нынешнего и не выше строки класса сейчас (модель считает сама, `stateInvariants` сверяет).
       const total = ATTRIBUTES.reduce((n, a) => n + s.attributes[a], 0) + pts;
-      const row = reg.get('classes').find((c) => c.id === s.classId)?.startAttributes;
-      if (!s.startAttributes && row) w.attrBook[h]!.pending = Object.fromEntries(ATTRIBUTES.map((a) => [a, Math.min(s.attributes[a], row[a])]));
+      // ⭐ D2: сейву старше правила сброс допишет и книгу заработанного — из того, что есть до сброса (`planSettle`).
+      planSettle(w, h, s);
       return {
         desc: `сброс атрибутов за ${cost} (вернёт ${refund}${s.startAttributes ? '' : ', сейв без старта'}), согласие ${maxGold}`, kind: 'town', cmd: { cmd: 'respec', ...(maxGold !== undefined ? { maxGold } : {}) },
         run: () => asRes(respec(reg, s, maxGold)),
@@ -1305,6 +1364,59 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
         spec: () => ({}),
       };
     }
+    case 'progEdit': {
+      // ⭐ D2: правка прокачки хозяином — старт класса, очки за уровень всех трёх пулов, кривая опыта, древа скилов и мастерства (с опечатками).
+      // Служебный шаг: сейвы и сундук — байт в байт (I1 `meta-mutates`): правка сама ничего не чеканит и не отнимает.
+      let desc = '';
+      const sync = r.chance(0.3);
+      return {
+        get desc() { return `конфиг: ${desc}${sync ? ' (клиент перечитал)' : ''}`; }, kind: 'meta',
+        run: () => {
+          desc = editProgression(w, r);
+          w.cfgVer++; w.liqCache.clear();
+          if (sync) w.view = regFrom(tablesOf(reg));
+          return { ok: true };
+        },
+        spec: () => ({}),
+      };
+    }
+    case 'priceEdit': {
+      // ⚠ R23-04: хозяин опускает множитель цены редкости («обычное ничего не стоит») — служебный шаг, сейвы байт в байт; клиент — иногда.
+      let desc = '';
+      const sync = r.chance(0.5);
+      return {
+        get desc() { return `конфиг: ${desc}${sync ? ' (клиент перечитал)' : ''}`; }, kind: 'meta',
+        run: () => {
+          desc = editRarityPrice(reg, r);
+          w.cfgVer++; w.liqCache.clear();
+          if (sync) w.view = regFrom(tablesOf(reg));
+          return { ok: true };
+        },
+        spec: () => ({}),
+      };
+    }
+    case 'reenter': {
+      // ⭐ D2: герой вошёл заново — сервер дописывает сейву старше правила старт и книгу заработанного (`RoomManager.sanitize` →
+      // `settleEarned`) из того, что у героя есть, по конфигу этого мига; что сейв помнит — не трогает, уровень и очки — тоже.
+      planSettle(w, h, s);
+      const had = { start: !!s.startAttributes, earned: !!s.earned };
+      const snap = (): string => JSON.stringify([
+        s.level, s.xp, s.attributes, s.unspentAttributePoints, s.unspentSkillPoints, s.unspentMasteryPoints, s.skills, s.masteries,
+        had.start ? s.startAttributes : null, had.earned ? s.earned : null,
+      ]);
+      const was = snap();
+      return {
+        desc: `вход героя ${h}${had.start ? '' : ', сейв без старта'}${had.earned ? '' : ', сейв без книги'}`, kind: 'town',
+        run: () => { settleEarned(reg, s); return { ok: true }; },
+        spec: () => ({
+          extra: () => {
+            if (snap() !== was) return `вход тронул уровень, очки или записанное: ${was.slice(0, 200)} → ${snap().slice(0, 200)}`;
+            if (!s.startAttributes || !s.earned) return `вход не дописал сейв (старт ${!!s.startAttributes}, книга ${!!s.earned})`;
+            return null;
+          },
+        }),
+      };
+    }
     case 'newHero': {
       // Герой удалён, на его месте — новый со стартовым комплектом (R3-04: комплект бесплатен и бесконечен — продаётся за 1,
       // не разбирается; переложенное в сундук до удаления остаётся аккаунту).
@@ -1312,15 +1424,18 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       const cls = r.pick(classes).id;
       // ⚠ R19-01: иногда — герой, созданный до R18-07 (сейв старта не помнит): сброс таких мерил от живых очков за уровень и строки класса.
       const legacy = r.chance(0.4);
+      // ⭐ D2: и между R18-07 и D2 — старт помнит, книги заработанного нет (её допишет вход или сброс).
+      const preD2 = !legacy && r.chance(0.3);
       let born: Item[] = [];
       return {
-        desc: `удалить героя ${h} и создать нового (${cls}${legacy ? ', сейв старше R18-07 — без старта' : ''})`, kind: 'inject',
+        desc: `удалить героя ${h} и создать нового (${cls}${legacy ? ', сейв старше R18-07 — без старта' : preD2 ? ', сейв старше D2 — без книги' : ''})`, kind: 'inject',
         run: () => {
           const fresh = newCharacterSave(reg, cls, `Н${++w.n}`, s.charId);
           if (legacy) delete fresh.startAttributes;
+          if (legacy || preD2) delete fresh.earned;
           fresh.createdAt = 0;
           w.heroes[h] = fresh;
-          w.attrBook[h] = attrBookOf(reg, fresh);
+          w.books[h] = bookOf(reg, fresh);
           born = [...fresh.inventory, ...(Object.values(fresh.equipment).filter(Boolean) as Item[])];
           return { ok: true };
         },
@@ -1460,10 +1575,10 @@ function editForms(reg: ConfigRegistry, r: Rng): string {
 
 /**
  * ⚠ R18-07: ПРАВКА СТАРТА КЛАССА И ОЧКОВ ЗА УРОВЕНЬ — как хозяин в редакторе: старт класса героя (чаще) или любого, вверх и вниз, изредка
- * дробь и минус (их обязана отвергнуть схема: половину очка после сброса не вложить); очки атрибутов за уровень — туда и обратно, с теми же
- * опечатками. Старым героям ни то ни другое выданного не пересчитывает: сброс меряет вложенное от старта, с которым герой создан
- * (`save.startAttributes`), книга модели (`AttrBook`) — тоже. Мерил бы от нынешней строки — сброс после правки дарил бы очки (I4
- * `attr-points`) или делал очки базы свободными (I4 `attr-floor`).
+ * дробь и минус (их обязана отвергнуть схема: половину очка после сброса не вложить); очки за уровень — атрибутов, ⭐ D2 скилов и мастерства —
+ * туда и обратно, с теми же опечатками. Старым героям ни то ни другое выданного не пересчитывает: сброс меряет вложенное от старта, с которым
+ * герой создан (`save.startAttributes`), книга модели (`PointsBook`) — тоже. Мерил бы от нынешней строки — сброс после правки дарил бы очки
+ * (I4 `attr-points`) или делал очки базы свободными (I4 `attr-floor`).
  */
 function editClassPoints(w: FuzzWorld, r: Rng): string {
   const reg = w.reg;
@@ -1488,9 +1603,11 @@ function editClassPoints(w: FuzzWorld, r: Rng): string {
         what = `старт ${row.id}: ${edits.join(', ')}`;
       });
     } else {
+      const k = r.pick(['attributePointsPerLevel', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel'] as const);
+      const name = k === 'attributePointsPerLevel' ? 'атрибутов' : k === 'skillPointsPerLevel' ? 'скилов' : 'мастерства';
       reloadTable(reg, 'balance', (b) => {
-        b.attributePointsPerLevel = val(b.attributePointsPerLevel, [-2, -1, 1, 2, 3]);
-        what = `очков атрибутов за уровень → ${b.attributePointsPerLevel}`;
+        b[k] = val(b[k], [-2, -1, 1, 2, 3]);
+        what = `очков ${name} за уровень → ${b[k]}`;
       });
     }
     return `классы: ${what}`;
@@ -1498,6 +1615,59 @@ function editClassPoints(w: FuzzWorld, r: Rng): string {
     if (!/не прошёл валидацию/.test(String((e as Error)?.message))) throw e;
     return `классы: ${what} — отказ схемы`;
   }
+}
+
+/**
+ * ⭐ D2: ПРАВКА ДРЕВ СКИЛОВ И МАСТЕРСТВА — как хозяин в редакторе, чаще по узлу, куда вложено: потолок ранга ниже вложенного, уровень узла
+ * выше героя, узел убран целиком (со связями и входом), цена ранга мастерства; и опечатки, которые обязана отвергнуть схема (ранг 0, уровень 0,
+ * узел древа скилов не за одно очко — R6-17). Вложенное остаётся рангами, как было: сброс обязан вернуть Σ рангов и за узлы, которых в древе
+ * больше нет (очки скилов и мастерства по книге — `skill-points`, `mastery-points`).
+ */
+function editTrees(w: FuzzWorld, r: Rng): string {
+  const reg = w.reg;
+  let what = '';
+  type Node = { id: string; maxRank: number; levelReq: number; cost: { type: string; amount: number } };
+  type Tree = { nodes: Node[]; edges: [string, string][]; entryNodes: string[] };
+  const edit = (label: string, t: Tree, owned: string[], skill: boolean): void => {
+    const mine = t.nodes.filter((n) => owned.includes(n.id));
+    const node = mine.length && r.chance(0.8) ? r.pick(mine) : r.pick(t.nodes);
+    if (!node) { what = `${label}: пусто`; return; }
+    switch (r.int(0, 5)) {
+      case 0: node.maxRank = 1; what = `${label}: ${node.id} — ранг не выше 1`; break;
+      case 1: node.levelReq = r.int(40, 99); what = `${label}: ${node.id} — с уровня ${node.levelReq}`; break;
+      case 2: case 3:
+        t.nodes = t.nodes.filter((n) => n !== node);
+        t.edges = t.edges.filter(([a, b]) => a !== node.id && b !== node.id);
+        t.entryNodes = t.entryNodes.filter((id) => id !== node.id);
+        what = `${label}: ${node.id} убран`;
+        break;
+      case 4:
+        if (skill) { node.maxRank += r.int(1, 3); what = `${label}: ${node.id} — ранг до ${node.maxRank}`; }
+        else { node.cost.amount = Math.max(1, Math.round(node.cost.amount * r.pick([0.5, 2, 3]))); what = `${label}: ${node.id} — цена ранга ${node.cost.amount}`; }
+        break;
+      default: {
+        const x = r.int(0, 2);
+        if (x === 0) { node.maxRank = 0; what = `${label}: ${node.id} — ранг 0`; }
+        else if (x === 1) { node.levelReq = 0; what = `${label}: ${node.id} — уровень 0`; }
+        else if (skill) { node.cost.amount = 2; what = `${label}: ${node.id} — два очка за ранг`; }
+        else { node.maxRank = -1; what = `${label}: ${node.id} — ранг −1`; }
+      }
+    }
+  };
+  try {
+    if (r.chance(0.5)) reloadTable(reg, 'skill-tree', (t) => edit('древо скилов', t as unknown as Tree, w.heroes.flatMap((s) => Object.keys(s.skills)), true));
+    else reloadTable(reg, 'mastery-tree', (t) => edit('древо мастерства', t as unknown as Tree, w.heroes.flatMap((s) => Object.keys(s.masteries)), false));
+    return `древа: ${what}`;
+  } catch (e) {
+    if (!/не прошёл валидацию/.test(String((e as Error)?.message))) throw e;
+    return `древа: ${what} — отказ схемы`;
+  }
+}
+
+/** ⭐ D2: ПРАВКА ПРОКАЧКИ — старт класса и очки за уровень (`editClassPoints`), кривая опыта (`editXpCurve`) или древа (`editTrees`). */
+function editProgression(w: FuzzWorld, r: Rng): string {
+  const x = r.int(0, 9);
+  return x < 4 ? editClassPoints(w, r) : x < 7 ? editXpCurve(w.reg, r) : editTrees(w, r);
 }
 
 /**
@@ -1534,10 +1704,28 @@ function editXpCurve(reg: ConfigRegistry, r: Rng): string {
 }
 
 /**
+ * ⚠ R23-04: МНОЖИТЕЛЬ ЦЕНЫ РЕДКОСТИ ВНИЗ — как хозяин из редактора: схема пускает `rarities.priceMult` от 0 («обычное ничего не стоит»),
+ * и оценка вещи (`round(… × priceMult)`) у зелья прилавка ниже ≈ 0.026 округлялась в 0, а скупка держит пол 1. Вниз: в разы, к порогу
+ * округления, в ноль; иногда — назад к поставке.
+ */
+function editRarityPrice(reg: ConfigRegistry, r: Rng): string {
+  let desc = '';
+  reloadTable(reg, 'rarities', (t) => {
+    const row = r.pick(t);
+    const was = row.priceMult;
+    const x = r.int(0, 5);
+    row.priceMult = x === 0 ? 0 : x === 1 ? r.pick([0.005, 0.01, 0.02, 0.025]) : x === 2 ? Math.round(was * 10) / 100
+      : x === 3 ? Math.round(was * 50) / 100 : x === 4 ? r.pick([0.026, 0.03, 0.05]) : pristineReg().get('rarities').find((q) => q.id === row.id)?.priceMult ?? 1;
+    desc = `множитель цены «${row.id}» ${was} → ${row.priceMult}`;
+  });
+  return desc;
+}
+
+/**
  * ПРАВКА КОНФИГА ЖИВЬЁМ — как хозяин из редактора: галки (сырьё, деталь, база, ступень) в обе стороны, правки «игроку хуже»
  * (цена ковки и кузницы вверх, выход разбора и цена сырья вниз; требования базы, множитель ступени и потолок требований — вверх,
  * с посадкой ровно на потолок, C-01), правка заданий с опечатками (C-02), цен форм ёмкости (R17-03), старта классов и очков за
- * уровень (R18-07), кривой опыта (R20-05) и откат к умолчанию. Клиент перечитывает конфиг не всегда.
+ * уровень (R18-07), кривой опыта (R20-05; и правкой прокачки — D2), древ (D2) и откат к умолчанию. Клиент перечитывает конфиг не всегда.
  */
 function configPlan(w: FuzzWorld, r: Rng): Plan {
   const reg = w.reg;
@@ -1591,7 +1779,8 @@ function configPlan(w: FuzzWorld, r: Rng): Plan {
       edit = () => { desc = editForms(reg, r); };
       break;
     case 13: case 14:
-      edit = () => { desc = editClassPoints(w, r); };
+      // ⭐ D2: старт класса и очки за уровень (R18-07), кривая опыта (R20-05) и древа — одной правкой прокачки.
+      edit = () => { desc = editProgression(w, r); };
       break;
     case 10:
       edit = () => { desc = editXpCurve(reg, r); };
@@ -1697,6 +1886,23 @@ function itemRules(w: FuzzWorld, it: Item, where: string, out: Violation[]): voi
 }
 
 /**
+ * ⚠ R23-04: ЛАВКА НЕ СКУПАЕТ ДОРОЖЕ, ЧЕМ ПРОДАЁТ — у каждой вещи прилавка (снаряжение стока и зелья) цена покупки (`shopBuyPrice`) не ниже
+ * скупки (`shopSellPrice`) и не ниже 1: «купил → сдал» в худшем случае в ноль. Гросбух (I5) видит это только на покупке, а здесь — сама цена,
+ * как только правка конфига её сделала (зелье за 0 при скупке за 1 — раскупить прилавок без гроша и сдать; и так на каждый заход в город).
+ */
+function shopArbitrage(w: FuzzWorld, out: Violation[]): void {
+  for (const it of [...w.shop, ...w.potions]) {
+    const k = `buy|${w.cfgVer}|${it.uid}`;
+    let buy = w.liqCache.get(k);
+    if (buy === undefined) { buy = shopBuyPrice(w.reg, it); w.liqCache.set(k, buy); }
+    const sell = shopSellPrice(w.reg, it);
+    if (!(buy >= 1) || buy < sell) {
+      out.push({ inv: 'rule', code: 'buy-sell', id: `shop:${it.uid}`, msg: `прилавок «${it.name}» [${it.uid.slice(-6)}] (${it.rarity}, ilvl ${it.itemLevel}): покупка ${buy}, скупка ${sell} — купил и сдал в плюс` });
+    }
+  }
+}
+
+/**
  * ⚠ R17-03: ЦЕНЫ ФОРМ ЁМКОСТИ. У каждой формы, которую даёт ёмкость (`affixFormKeys`), цена есть — по `formMult`, которым платят
  * ковка, зачарование и перекатка, — и форма на свойство богаче (с любой стороны) не дешевле. ✕ у строки или опечатка, пропущенные
  * схемой, — здесь: без строки форма шла по ×1 (3+2 дешевле 3+1 вшестеро), с нынешним `formMult` — «цены нет».
@@ -1717,7 +1923,7 @@ function formPrices(reg: ConfigRegistry, out: Violation[]): void {
 
 /**
  * ⚠ R20-05: КРИВАЯ ОПЫТА ЖИВОГО КОНФИГА — 0, 0, дальше строго растёт, числа конечные ≥ 0. Иначе участок порогов ниже прежних герой
- * проходит одним очком опыта — уровни с очками за каждый, навсегда (R9-05). Книга очков (`AttrBook`) такого не видит: она пишет
+ * проходит одним очком опыта — уровни с очками за каждый, навсегда (R9-05). Книга очков (`PointsBook`) такого не видит: она пишет
  * уровни, какие выдало ядро по той же кривой, — сторож здесь, на самой кривой.
  */
 function xpCurve(reg: ConfigRegistry, out: Violation[]): void {
@@ -1774,12 +1980,12 @@ function firstDiff(a: unknown, b: unknown, path = ''): string {
 
 /**
  * Инварианты состояния после шага (что бы ни делал шаг). Зовётся после КАЖДОГО шага (и в ядре, и в комнате) — поэтому здесь же книга
- * очков атрибутов дописывает уровни, взятые шагом (`noteLevels`, R18-07).
+ * очков дописывает уровни, взятые шагом (`noteLevels`, R18-07, D2).
  */
 export function stateInvariants(w: FuzzWorld, c: Census, zodFor: { hero: boolean[]; stash: boolean }): Violation[] {
   const out: Violation[] = [];
   const reg = w.reg;
-  noteLevels(w);
+  noteLevels(w, out);
   // Прилавок родился под тем потолком, что действовал при броске стока: запомнить сейчас, до правки, а не при покупке (`birthCap`).
   for (const it of w.shop) birthCap(w, it);
   // I3: uid уникальны.
@@ -1824,40 +2030,67 @@ export function stateInvariants(w: FuzzWorld, c: Census, zodFor: { hero: boolean
       if (it && it.kind !== 'consumable') out.push({ inv: 'equip', code: 'belt-kind', msg: `${who}: в поясе ${it.kind}` });
     });
     // Очки не берутся из воздуха: вложенное + свободное = выданное уровнями (и наградой цепочки — очки скилов).
-    const bal = reg.get('balance');
-    // ⚠ R18-07: атрибуты — по книге героя (`AttrBook`): вложенное — от старта, с которым он создан, выданное — по очкам за уровень
+    // ⚠ R18-07: атрибуты — по книге героя (`PointsBook`): вложенное — от старта, с которым он создан, выданное — по очкам за уровень
     // того времени. От нынешней строки класса правка хозяина двигала бы «вложенное» сама, без единого шага героя.
-    const book = w.attrBook[h]!;
-    // ⚠ R19-01: сейв старше R18-07 — старт появляется первым сбросом (что он запишет, модель посчитала в плане шага — `pending`); комната,
-    // поднятая из базы до записи сброса, снова его не помнит.
+    const book = w.books[h]!;
+    const L = s.level;
+    // ⚠ R19-01: сейв старше R18-07 — старт появляется первым входом или сбросом (что он запишет, модель посчитала в плане шага — `pending`);
+    // комната, поднятая из базы до записи, снова его не помнит.
     const pend = book.pending;
     book.pending = undefined;
     if (book.legacy) book.floor = s.startAttributes === undefined ? undefined : pend ?? book.floor;
     const inv = ATTRIBUTES.reduce((n, a) => n + (s.attributes[a] - (book.start[a] ?? 0)), 0);
-    const want = book.cum[s.level];
-    if (inv + s.unspentAttributePoints !== want) out.push({ inv: 'I4', code: 'attr-points', id: `${h}`, msg: `${who}: атрибутов вложено ${inv} + свободно ${s.unspentAttributePoints} ≠ выдано ${want} (уровень ${s.level})` });
+    const want = book.cum.attr[L];
+    if (inv + s.unspentAttributePoints !== want) out.push({ inv: 'I4', code: 'attr-points', id: `${h}`, msg: `${who}: атрибутов вложено ${inv} + свободно ${s.unspentAttributePoints} ≠ выдано ${want} (уровень ${L})` });
     // Очки базы свободными не становятся: атрибут не ниже старта (сброс к опущенной строке класса раздавал их заново). У сейва без старта —
-    // не ниже старта при создании, пока сброс не записал свой.
+    // не ниже старта при создании, пока вход или сброс не записал свой.
     const floor = book.floor ?? book.start;
     const low = ATTRIBUTES.filter((a) => s.attributes[a] < (floor[a] ?? 0));
     if (low.length) out.push({ inv: 'I4', code: 'attr-floor', id: `${h}`, msg: `${who}: ${low.map((a) => `${a} ${s.attributes[a]} < старта ${floor[a]}`).join(', ')}` });
-    // Сейв помнит тот же старт — от него ядро меряет возврат сброса (сейв старше R18-07 до первого сброса — никакого).
+    // Сейв помнит тот же старт — от него ядро меряет возврат сброса (сейв старше R18-07 до первого входа или сброса — никакого).
     const startOk = book.floor ? ATTRIBUTES.every((a) => s.startAttributes?.[a] === book.floor![a]) : s.startAttributes === undefined;
     if (!startOk) out.push({ inv: 'I4', code: 'attr-start', id: `${h}`, msg: `${who}: старт в сейве ${JSON.stringify(s.startAttributes)} ≠ ${book.floor ? `ждали ${JSON.stringify(book.floor)}` : 'сейв без старта его не помнит'}` });
-    const tree = reg.get('skill-tree');
-    const spent = Object.entries(s.skills).reduce((n, [id, r]) => n + r * (tree.nodes.find((x) => x.id === id)?.cost.amount ?? 1), 0);
-    const bonus = s.quests.filter((q) => q.status === 'turned-in')
-      .reduce((n, q) => n + (s.activeQuestDefs.find((d) => d.id === q.questId)?.reward.skillPoints ?? 0), 0);
-    const sWant = (s.level - 1) * bal.skillPointsPerLevel + bonus;
-    if (spent + s.unspentSkillPoints !== sWant) out.push({ inv: 'I4', code: 'skill-points', id: `${h}`, msg: `${who}: очков скилов вложено ${spent} + свободно ${s.unspentSkillPoints} ≠ выдано ${sWant}` });
-    const mSpent = Object.values(s.masteries).reduce((n, r) => n + r, 0);
-    const mWant = (s.level - 1) * bal.masteryPointsPerLevel;
-    if (mSpent + s.unspentMasteryPoints !== mWant) out.push({ inv: 'I4', code: 'mastery-points', id: `${h}`, msg: `${who}: очков мастерства вложено ${mSpent} + свободно ${s.unspentMasteryPoints} ≠ выдано ${mWant}` });
+    // ⭐ D2: очки скилов и мастерства — тоже по книге (очки за уровень того времени), вложенное — Σ рангов (очко за ранг, R6-17; и за узлы,
+    // которых в древе уже нет): живые очки за уровень и живое древо правка хозяина двигала бы сама.
+    const ranks = (m: Record<string, number>): number => Object.values(m).reduce((n, v) => n + v, 0);
+    const bonus = questSkillBonus(s);
+    const sWant = (book.cum.skill[L] ?? 0) + bonus;
+    if (ranks(s.skills) + s.unspentSkillPoints !== sWant) out.push({ inv: 'I4', code: 'skill-points', id: `${h}`, msg: `${who}: очков скилов вложено ${ranks(s.skills)} + свободно ${s.unspentSkillPoints} ≠ выдано ${sWant}` });
+    const mWant = book.cum.mastery[L] ?? 0;
+    if (ranks(s.masteries) + s.unspentMasteryPoints !== mWant) out.push({ inv: 'I4', code: 'mastery-points', id: `${h}`, msg: `${who}: очков мастерства вложено ${ranks(s.masteries)} + свободно ${s.unspentMasteryPoints} ≠ выдано ${mWant}` });
+    // ⭐ D2: книга заработанного сейва — ровно выданное моделью (сдвиг — от дописки сейва старше правила, дальше заморожен): правка конфига,
+    // вход и сброс её не двигают, двигает только выдача. Сейв старше D2 — книги нет, пока её не допишет вход или сброс (`pendingLedger`).
+    const pl = book.pendingLedger;
+    book.pendingLedger = undefined;
+    if (book.legacyLedger) {
+      if (s.earned === undefined) book.ledger = undefined;
+      else if (pl && !book.ledger) {
+        book.ledger = {
+          attributePoints: pl.attributePoints - (book.cum.attr[L] ?? 0), skillPoints: pl.skillPoints - sWant, masteryPoints: pl.masteryPoints - mWant,
+        };
+      }
+    }
+    const led = book.ledger;
+    const eWant: EarnedPoints | undefined = led && {
+      attributePoints: (book.cum.attr[L] ?? 0) + led.attributePoints, skillPoints: sWant + led.skillPoints, masteryPoints: mWant + led.masteryPoints,
+    };
+    if (!deepEq(s.earned, eWant)) out.push({ inv: 'I4', code: 'earned', id: `${h}`, msg: `${who}: книга заработанного ${JSON.stringify(s.earned)} ≠ ${eWant ? `выдано ${JSON.stringify(eWant)}` : 'сейв старше D2 её не помнит (дописки не было)'}` });
+    // ⭐ D2: и по самому сейву — вложенное (атрибуты — сверх его старта) + свободное = записано в книге.
+    if (s.earned && s.startAttributes && !deepEq(pointsHeld(s, s.startAttributes), s.earned)) {
+      out.push({ inv: 'I4', code: 'earned-held', id: `${h}`, msg: `${who}: вложено + свободно ${JSON.stringify(pointsHeld(s, s.startAttributes))} ≠ книга ${JSON.stringify(s.earned)}` });
+    }
+    // ⭐ D2: возврат сброса атрибутов — вложенное сверх записанного старта, от живого конфига не зависит (правка строки класса и очков за
+    // уровень его не двигает): тот же сейв по конфигу по умолчанию — то же число.
+    if (s.startAttributes) {
+      const live = attrRespecRefund(reg, s), base = attrRespecRefund(pristineReg(), s);
+      if (live !== base) out.push({ inv: 'I4', code: 'refund-config', id: `${h}`, msg: `${who}: сброс вернёт ${live} по живому конфигу и ${base} по умолчанию — правка конфига двигает возврат` });
+    }
     if (zodFor.hero[h]) zodCheck(s, who, out);
   });
   for (const d of w.board) questNumbers(d, 'доска', out);
   formPrices(reg, out);
   xpCurve(reg, out);
+  shopArbitrage(w, out);
   // Сундук: кошелёк, вкладки, журнал.
   for (const [id, n] of Object.entries(w.stash.materials ?? {})) if (!(isInt(n) && n >= 1)) out.push({ inv: 'I2', code: 'wallet', msg: `кошелёк: ${id}=${n}` });
   const sd = stashDims(reg);

@@ -1,5 +1,5 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { counters, readGauges } from '../net/metrics.js';
+import { counters, counterSnapshot, readGauges } from '../net/metrics.js';
 import { heartbeat, releaseNode, touchClaims, touchRuns, initClusterSchema, nodeBeatAge } from './registry.js';
 import { leaseBeat, leaseLeft, leaseDoubted, LEASE_MS } from './lease.js';
 
@@ -138,6 +138,7 @@ export async function joinCluster(
       loopP99: loop.percentile(99) / 1e6,
       tickHz: hz,
       draining,
+      counters: counterSnapshot(),   // ⭐ E2E 30.09: счётчики процесса — гейтвею, в метрики кластера (`clusterMetrics`)
     }, leased);
     // ⭐ R17-01: УДАР НЕ ЛЁГ — РЕЕСТР УЖЕ СЧЁЛ НОДУ МЁРТВОЙ. Сверка в начале ответила «жива» до паузы машины (её ответ ждал в буфере сокета, пока
     // гость стоял, — часы процесса паузы не видели), а за паузу реестр отдал её героев и забеги другой, та их доиграла и отпустила. Раньше удар

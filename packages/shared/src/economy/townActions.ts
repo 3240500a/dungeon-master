@@ -1,6 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
-import type { SaveState } from '../types/save.js';
+import type { EarnedPoints, SaveState } from '../types/save.js';
 import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { unmetWorn } from '../formulas/stats.js';
@@ -71,12 +71,32 @@ export function configChanged(reg: ConfigRegistry, cfgRev: string | undefined): 
 }
 
 /**
+ * ⭐ D3: причина отказа СОГЛАСИЯ НА СБОРКУ (`buildChanged`) — «Цена изменилась…»: клиент по ней перечитывает конфиг, а поскольку код вкладки
+ * перечитыванием не догнать, сразу за этим говорит «перезагрузите страницу» (`client/net/versionGate.ts`).
+ */
+export const BUILD_CHANGED = `${PRICE_CHANGED}: сервер обновился`;
+
+/**
+ * ⭐ D3: СОГЛАСИЕ НА СБОРКУ — зеркало `configChanged` для КОДА. `build` — штамп сборки вкладки (`buildStampOf` исходников shared, вписан в
+ * бандл), с кода которой окно посчитало цену и исход: формулу цены кузницы и скупки, выход разбора, вилки ковки. У сервера штамп другой
+ * (`serverBuild`: деплой сменил код, вкладка его пережила без перезагрузки — L2 / R3-25) — отказ ДО исполнения: согласие на цену
+ * (`maxGold`, `minGold`, `minYield`) держит лишь одну сторону, и старый код, показавший цену ВЫШЕ новой, получал вещь за другую цену, чем
+ * показал (дешевле показанного, а выход разбора — щедрее обещанного). Нет штампа с любой стороны (Unity, дев-сервер Vite, сервер без
+ * исходников, старая вкладка) — сравнивать нечего, как раньше.
+ */
+export function buildChanged(serverBuild: string, build: string | undefined): ActionResult | null {
+  if (!build || !serverBuild || build === serverBuild) return null;
+  return { ok: false, reason: BUILD_CHANGED };
+}
+
+/**
  * V-B3-07: команда с ревизией СВОЕГО конфига — для команд `CONFIG_CONSENT_CMDS` (прочие — как есть). Клиент зовёт на отправке.
  * ⭐ R16 C-07: `rev` строкой — ревизия, которую сервер прислал с телом конфига, легшим у клиента (`CONFIG_REV_HEADER`, `App.configRevision`).
+ * ⭐ D3: `build` — штамп сборки вкладки (`clientBuild`), согласие на КОД (`buildChanged`); пустой — поля нет (дев-сервер, мост редактора).
  */
-export function withConfigRev(rev: ConfigRegistry | string, command: TownCommand): TownCommand {
+export function withConfigRev(rev: ConfigRegistry | string, command: TownCommand, build = ''): TownCommand {
   if (!CONFIG_CONSENT_CMDS.has(command.cmd)) return command;
-  return { ...command, cfgRev: typeof rev === 'string' ? rev : rev.revision() } as TownCommand;
+  return { ...command, cfgRev: typeof rev === 'string' ? rev : rev.revision(), ...(build ? { build } : {}) } as TownCommand;
 }
 
 /**
@@ -280,9 +300,13 @@ export function shopConsumableIds(reg: ConfigRegistry): string[] {
  * ⚠ Без пола лавка была бы краном сырья за золото: детали найденной вещи видны на ней (`foundParts`), и
  * «Крепкий» меч с булатным клинком (ступень вещи — средняя по массе, §11) стоил ≈ 130 золота, а разбор
  * отдавал три булата — 324 в ценах сырья. Покупатель выбирал бы такие глазами. Продажу пол не трогает.
+ * ⚠ R23-04: и НЕ ДЕШЕВЛЕ СКУПКИ (`shopSellPrice`, а она — от 1): лавка не скупает дороже, чем продаёт, — «купил → сдал» в худшем случае
+ * в ноль. Оценка — `round(… × priceMult)`, а схема пускает множитель редкости от 0 («обычное ничего не стоит»): ниже ≈ 0.026 зелье прилавка
+ * стоило 0, а сдавалось за 1 — 20 колб даром и +20 золота на каждый заход в город (прилавок зелий заново). Одно правило вместо пола под
+ * каждую правку: кузница пол 1 держит сама (`forgeGold`), а тут пол — и есть скупка той же вещи.
  */
 export function shopBuyPrice(reg: ConfigRegistry, item: Item): number {
-  return Math.max(shopItemValue(reg, item), salvageWorth(reg, item));
+  return Math.max(shopItemValue(reg, item), salvageWorth(reg, item), shopSellPrice(reg, item));
 }
 
 const dimsOf = (reg: ConfigRegistry): Dims => reg.get('balance').inventory;
@@ -1278,11 +1302,13 @@ export function allocAttr(save: SaveState, attr: string, n = 1): ActionResult {
  * нынешней строки класса. Мерили от строки живого конфига: правка хозяина (живьём или деплоем) дарила старым героям очки — воин 10-го,
  * вложивший 45 в Силу, после «Сила 20→15, Ловкость 15→20» получал 50 и выходил со 115 против 110 у свежего; опущенный старт делал очки
  * базы свободными. Правка строки класса старых героев не догоняет и при сбросе (как кривая опыта — уровни, R9-05).
- * Сейв старше правки старта не помнит — старт по `legacyStartAttributes` (R19-01). Возврат целый. Класс неизвестен — `null`.
+ * Сейв старше правки старта не помнит — старт по `legacyStartAttributes` (R19-01). Возврат целый.
+ * ⭐ D2: сейву со стартом строка класса не нужна вовсе — возврат от живого конфига не зависит, и правка (строку убрали, id сменили) сброс не
+ * запирает. `null` — только старта нет и вывести не из чего (класс неизвестен).
  */
 function attrRespecPlan(reg: ConfigRegistry, save: SaveState): { base: Attributes; refund: number } | null {
   const base = save.startAttributes ? { ...save.startAttributes } : legacyStartAttributes(reg, save);
-  if (!base || !reg.get('classes').some((c) => c.id === save.classId)) return null;
+  if (!base) return null;
   let over = 0;
   for (const a of ATTRIBUTES) over += Math.max(0, save.attributes[a] - base[a]);
   return { base, refund: Math.floor(over) };
@@ -1303,6 +1329,40 @@ export function legacyStartAttributes(reg: ConfigRegistry, save: SaveState): Att
   const out = { ...row } as Attributes;
   for (const a of ATTRIBUTES) out[a] = Math.max(0, Math.min(Math.floor(save.attributes[a]), row[a]));
   return out;
+}
+
+/**
+ * ⭐ D2: СКОЛЬКО ОЧКОВ У ГЕРОЯ ЕСТЬ — по пулам, вложенное + свободное. Атрибуты — сверх старта `start` и целым, ровно как их вернёт сброс
+ * (`attrRespecPlan`); скилы и мастерство — Σ рангов (узел стоит очко за ранг, R6-17; сброс возвращает Σ рангов и за узлы, которых в
+ * древе уже нет). От конфига не зависит ничего: выдачу не пересчитывает ни одна правка.
+ */
+export function pointsHeld(save: SaveState, start: Attributes): EarnedPoints {
+  let over = 0;
+  for (const a of ATTRIBUTES) over += Math.max(0, save.attributes[a] - start[a]);
+  const ranks = (m: Record<string, number>): number => Object.values(m).reduce((n, r) => n + (r > 0 ? r : 0), 0);
+  return {
+    attributePoints: Math.floor(over) + save.unspentAttributePoints,
+    skillPoints: ranks(save.skills) + save.unspentSkillPoints,
+    masteryPoints: ranks(save.masteries) + save.unspentMasteryPoints,
+  };
+}
+
+/**
+ * ⭐ D2: ОДНОРАЗОВАЯ ДОПИСЬ СЕЙВА СТАРШЕ ПРАВИЛА «ПРАВКА КОНФИГА НЕ ЧЕКАНИТ И НЕ ОТНИМАЕТ ЗАРАБОТАННОЕ». Чего сейв не помнит — выводится
+ * из того, что у героя ЕСТЬ, по конфигу этого мига, ОДИН раз, и дальше заморожено: старт (R19-01, `legacyStartAttributes` — не выше своих
+ * атрибутов и нынешней строки класса) и книга заработанного (`save.earned` = `pointsHeld` от этого старта — итог героя не двигается).
+ * Записанное не трогается никогда — правка хозяина после дописи до героя не доходит. Зовут вход (`RoomManager.sanitize` — до любой
+ * будущей правки) и сброс атрибутов (он и так пишет старт). Класс неизвестен и старта нет — ничего (допишет следующий вход).
+ * Возвращает, дописано ли что-нибудь.
+ */
+export function settleEarned(reg: ConfigRegistry, save: SaveState): boolean {
+  let changed = false;
+  if (!save.startAttributes) {
+    const st = legacyStartAttributes(reg, save);
+    if (st) { save.startAttributes = st; changed = true; }
+  }
+  if (!save.earned && save.startAttributes) { save.earned = pointsHeld(save, save.startAttributes); changed = true; }
+  return changed;
 }
 
 /**
@@ -1351,6 +1411,8 @@ export function respec(reg: ConfigRegistry, save: SaveState, maxGold?: number): 
   const peak = { ...save.attributes };
   for (const a of ATTRIBUTES) peak[a] = Math.max(peak[a], save.respecPeak?.[a] ?? 0);
   save.respecPeak = peak;
+  // ⭐ D2: сейв старше правила — дописать старт и книгу заработанного ДО переноса очков (итог тот же до и после сброса; старт — тот же `base`).
+  settleEarned(reg, save);
   save.attributes = { ...base };
   // R18-07: сейв без старта с этой минуты его помнит — следующий сброс меряет от того, к чему сбросили (у прочих — тот же).
   save.startAttributes = { ...base };

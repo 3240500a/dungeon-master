@@ -280,9 +280,43 @@ describe('⚠ R17-03: фаззер — правка цен форм ёмкост
 });
 
 /**
+ * ⚠ R23-04: МНОЖИТЕЛЬ ЦЕНЫ РЕДКОСТИ ВНИЗ ДО НУЛЯ — свой профиль весов (шаг `priceEdit`): покупка, продажа, прилавок заново, добыча и правка
+ * чаще прочего. Схема пускает `rarities.priceMult` от 0, оценка вещи — `round(… × priceMult)`: ниже ≈ 0.026 зелье прилавка стоило 0, а
+ * сдавалось за 1 — прилавок раскупался без гроша и сдавался в плюс, на каждый заход в город. Сторожа два: цена прилавка (`shopArbitrage`:
+ * покупка не ниже скупки и 1) и гросбух (I5) на самой покупке. Кузница (подъём, перекатка, починка, зачарование, ковка) здесь — 0: тот же
+ * множитель дешевит её золото (`forgeGold`), а дешёвое золото подъёма — баланс цен кузницы (сторож R3-21 — на поставке), а не эта дыра.
+ */
+describe('⚠ R23-04: фаззер — множитель цены редкости вниз до нуля живьём', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  const PRICES: Partial<Record<OpKind, number>> = {
+    priceEdit: 8, buy: 14, sell: 12, restock: 5, loot: 5, gold: 2, clientSync: 2, stashMove: 2, equip: 2, unequip: 1, forgeSalvage: 2, fieldSalvage: 1,
+    useConsumable: 1, moveBelt: 1,
+  };
+  it('24 цепочки по 70 шагов: ни одного нарушения; множитель доходил до нуля, покупки и продажи шли и после правки', () => {
+    const hits: string[] = [];
+    let edits = 0, zero = 0, buysAfter = 0, sells = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 70, PRICES), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      let edited = false;
+      for (const l of out.log) {
+        if (l.includes('конфиг: множитель цены')) { edits++; edited = true; if (/→ 0( |$)/.test(l)) zero++; continue; }
+        if (edited && / buy\/\d: .* → ок$/.test(l)) buysAfter++;
+      }
+      sells += out.stats.sell?.ok ?? 0;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(edits, 'правки множителя идут').toBeGreaterThan(0);
+    expect(zero, 'множитель доходит до нуля').toBeGreaterThan(0);
+    expect(buysAfter, 'покупки после правки идут (гросбух их меряет)').toBeGreaterThan(0);
+    expect(sells, 'продажи идут').toBeGreaterThan(0);
+  });
+});
+
+/**
  * ⚠ R18-07: СТАРТ КЛАССОВ И ОЧКИ ЗА УРОВЕНЬ ЖИВЬЁМ — свой профиль весов: конфиг, сброс и вложение атрибутов, опыт и золото чаще прочего.
  * Хозяин правит старт класса героя (вверх, вниз, с опечатками — дробь и минус обязана отвергнуть схема) и очки за уровень; сброс после
- * правки обязан вернуть ровно вложенное от старта, с которым герой создан. Книга очков модели (`AttrBook`) меряет так же — прежний сброс
+ * правки обязан вернуть ровно вложенное от старта, с которым герой создан. Книга очков модели (`PointsBook`) меряет так же — прежний сброс
  * (от нынешней строки класса) она ловит: с опущенной строкой — очки базы свободны (`attr-floor`), с поднятой выше вложенного — очки из
  * воздуха (`attr-points`). До правки фаззер этого не видел: конфиг не правил ни классы, ни очки за уровень, а I4 мерил от строки живьём.
  */
@@ -458,7 +492,7 @@ describe('B2: нарушения, найденные фаззером (до пр
  * ⚠ R20-05: КРИВАЯ ОПЫТА ЖИВЬЁМ — свой профиль весов: конфиг и опыт чаще прочего, вложение и сброс очков, задания. Хозяин правит
  * `balance.xpTable`: годное (медленнее, быстрее, потолок ниже) проходит, опечатку (ступенька, пропущенная цифра, повтор, минус, NaN,
  * ненулевой порог первого уровня) обязана отвергнуть схема. Без сторожа схемы герой 10-го с одного очка опыта вставал 20-м с очками
- * всех десяти уровней — книга очков (`AttrBook`) этого не видит (уровни она пишет те, что выдало ядро по той же кривой), видит `xpCurve`.
+ * всех десяти уровней — книга очков (`PointsBook`) этого не видит (уровни она пишет те, что выдало ядро по той же кривой), видит `xpCurve`.
  */
 describe('⚠ R20-05: фаззер — правка кривой опыта живьём', () => {
   type OpKind = import('./fuzz/economyFuzz.js').OpKind;
@@ -484,4 +518,123 @@ describe('⚠ R20-05: фаззер — правка кривой опыта жи
     expect(typoPassed, 'ни одна опечатка кривой не прошла схему').toBe(0);
     expect(levels, 'опыт идёт').toBeGreaterThan(0);
   });
+});
+
+/**
+ * ⭐ D2: ПРАВКА ПРОКАЧКИ ЖИВЬЁМ НЕ ЧЕКАНИТ И НЕ ОТНИМАЕТ ЗАРАБОТАННОГО — свой профиль весов: правка прокачки (`progEdit`: старт класса, очки за
+ * уровень всех трёх пулов, кривая опыта, древа скилов и мастерства — с опечатками), вход героя заново (`reenter`), вложение и три сброса, опыт
+ * и задания чаще прочего; герои — и новые, и сейвы старше R18-07 (без старта и книги) и старше D2 (без книги). Инварианты: правка сама сейвов
+ * не трогает (I1 `meta-mutates`); очки всех трёх пулов — по книге модели (очки за уровень того времени); книга заработанного сейва — ровно
+ * выданное (`earned`) и = вложенное + свободное (`earned-held`); уровень не опускается (`level-drop`); возврат сброса атрибутов по живому
+ * конфигу = по умолчанию (`refund-config`); вход дописывает только недостающее. Больше цепочек — `DM_FUZZ_D2_SEEDS`, длина — `DM_FUZZ_D2_LEN`,
+ * первый сид — `DM_FUZZ_D2_FROM`.
+ */
+describe('⭐ D2: фаззер — правка прокачки живьём не двигает заработанного', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  const D2: Partial<Record<OpKind, number>> = {
+    progEdit: 10, reenter: 6, config: 2, respec: 5, respecSkills: 4, respecPassives: 4, allocAttr: 6, allocSkill: 6, allocPassive: 5, xp: 7, gold: 4,
+    acceptQuest: 2, questProgress: 2, turnIn: 2, ensureMain: 1, newHero: 2, unequip: 2, clientSync: 1,
+  };
+  const D2_SEEDS = env('DM_FUZZ_D2_SEEDS', 24);
+  const D2_FROM = env('DM_FUZZ_D2_FROM', 1);
+  const D2_LEN = env('DM_FUZZ_D2_LEN', 80);
+
+  it(`${D2_SEEDS} цепочек по ${D2_LEN} шагов: ни одного нарушения; правки прокачки и проходили, и отвергались схемой; сбросы и входы идут`, () => {
+    const hits = new Map<string, string>();
+    const n = { edits: 0, refused: 0, trees: 0, rates: 0, curve: 0, legacyEntry: 0, respec: 0, respecSkills: 0, respecPassives: 0, levels: 0 };
+    for (let seed = D2_FROM; seed < D2_FROM + D2_SEEDS; seed++) {
+      const ops = genOps(seed, D2_LEN, D2);
+      const skip = new Set<string>();
+      for (let pass = 0; pass < 4; pass++) {
+        const out = runOps(seed, ops, hooks, undefined, (k) => skip.has(k) || hits.has(k) || (!REPORT_KNOWN && !!knownId(k)));
+        if (pass === 0) {
+          for (const l of out.log) {
+            if (!/→ ок$/.test(l)) continue;
+            if (l.includes('progEdit/')) { if (l.includes('отказ схемы')) n.refused++; else n.edits++; }
+            if (l.includes('progEdit/') && l.includes('древа:') && !l.includes('отказ схемы')) n.trees++;
+            if (l.includes('progEdit/') && l.includes('за уровень') && !l.includes('отказ схемы')) n.rates++;
+            if (l.includes('progEdit/') && l.includes('кривая опыта:') && !l.includes('отказ схемы')) n.curve++;
+            if (l.includes('reenter/') && l.includes('сейв без книги')) n.legacyEntry++;
+          }
+          n.respec += out.stats.respec?.ok ?? 0;
+          n.respecSkills += out.stats.respecSkills?.ok ?? 0;
+          n.respecPassives += out.stats.respecPassives?.ok ?? 0;
+          n.levels += out.stats.xp?.ok ?? 0;
+        }
+        if (!out.found) break;
+        const key = violationKey(out.found);
+        skip.add(key);
+        if (!hits.has(key)) {
+          const s = shrink(seed, ops, key, hooks);
+          hits.set(key, report(key, { seed, ops: s.ops, out: s.out.found ? s.out : out }));
+        }
+      }
+    }
+    if (process.env.DM_FUZZ_VERBOSE) console.log(`D2: ${JSON.stringify(n)}`);
+    expect([...hits.values()], [...hits.values()].join('\n\n')).toEqual([]);
+    if (D2_SEEDS >= 20) {
+      expect(n.edits, 'правки прокачки проходят').toBeGreaterThan(0);
+      expect(n.refused, 'опечатки доходят до схемы').toBeGreaterThan(0);
+      expect(n.trees, 'древа правятся').toBeGreaterThan(0);
+      expect(n.rates, 'очки за уровень правятся').toBeGreaterThan(0);
+      expect(n.curve, 'кривая правится').toBeGreaterThan(0);
+      expect(n.legacyEntry, 'вход дописывает сейвы старше D2').toBeGreaterThan(0);
+      for (const k of ['respec', 'respecSkills', 'respecPassives', 'levels'] as const) expect(n[k], `${k} идут`).toBeGreaterThan(0);
+    }
+  }, Math.max(600_000, D2_SEEDS * D2_LEN * 20));
+
+  /** Сброс скилов, как он мог бы быть: возвращает ранги только узлов живого древа (правка убрала узел — очки пропали). */
+  const liveTreeRespec = (): ((w: World, op: Op, res: Res) => void) => {
+    const seen = new WeakMap<World, (Record<string, number> | undefined)[]>();
+    return (w, op, res) => {
+      const last = seen.get(w) ?? [];
+      seen.set(w, last);
+      const was = last[op.h];
+      if (op.k === 'respecSkills' && res.ok && was) {
+        const nodes = new Set(w.reg.get('skill-tree').nodes.map((x) => x.id));
+        w.heroes[op.h].unspentSkillPoints -= Object.entries(was).reduce((n, [id, r]) => n + (nodes.has(id) ? 0 : r), 0);
+      }
+      w.heroes.forEach((x, i) => { last[i] = { ...x.skills }; });
+    };
+  };
+  const TEETH: { name: string; want: string; bug: () => (w: World, op: Op, res: Res) => void }[] = [
+    {
+      // Вход «пересчитал» книгу по ЖИВЫМ очкам за уровень — так мерил сброс до R19-01.
+      name: 'вход пересчитал книгу заработанного по живым очкам за уровень', want: 'I4:earned:reenter',
+      bug: () => (w, op, res) => {
+        const s = w.heroes[op.h];
+        if (op.k !== 'reenter' || !res.ok || !s.earned) return;
+        const b = w.reg.get('balance');
+        s.earned = { attributePoints: (s.level - 1) * b.attributePointsPerLevel, skillPoints: (s.level - 1) * b.skillPointsPerLevel, masteryPoints: (s.level - 1) * b.masteryPointsPerLevel };
+      },
+    },
+    {
+      // Вход опустил уровень по живой кривой — так делал `sanitizeSave` (и вход до R9-05).
+      name: 'вход опустил уровень по живой кривой опыта', want: 'I4:level-drop:reenter',
+      bug: () => (w, op, res) => {
+        const s = w.heroes[op.h];
+        if (op.k !== 'reenter' || !res.ok) return;
+        const t = w.reg.get('balance').xpTable;
+        let lvl = 1;
+        for (let i = 2; i < t.length && s.xp >= t[i]!; i++) lvl = i;
+        s.level = Math.max(1, Math.min(s.level, lvl));
+      },
+    },
+    { name: 'сброс скилов вернул только узлы живого древа', want: 'I4:skill-points:respecSkills', bug: liveTreeRespec },
+    {
+      // Уровень выдал очки, а книга их не записала.
+      name: 'уровень выдан мимо книги заработанного', want: 'I4:earned:xp',
+      bug: () => (w, op, res) => { const s = w.heroes[op.h]; if (op.k === 'xp' && res.ok && s.earned && s.level > 1) s.earned.masteryPoints = Math.max(0, s.earned.masteryPoints - 1); },
+    },
+  ];
+  for (const t of TEETH) {
+    it(`⭐ у сторожа есть зубы: ${t.name}`, () => {
+      let got = '';
+      for (let seed = 1; seed <= 60 && !got; seed++) {
+        const out = runOps(seed, genOps(seed, 80, D2), { ...hooks, afterRun: t.bug() }, t.want);
+        if (out.found) got = violationKey(out.found);
+      }
+      expect(got).toBe(t.want);
+    });
+  }
 });

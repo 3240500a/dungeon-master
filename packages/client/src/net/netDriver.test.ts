@@ -171,7 +171,9 @@ describe('⚠ R8-15: событие отката баффа', () => {
     emit([{ type: 'cooldown', playerId: 'p1', ability: 'b-class-warrior-a5', cooldownMs: 12_000 }]);
     expect(a.attackLockUntil, 'лок удара цел').toBe(lock);
     const cd = a.actionCooldowns['b-class-warrior-a5'];
-    expect(cd && cd.until - cd.start, 'откат слота залит').toBe(12_000);
+    // `until − start` — разность двух дробных `performance.now` (`start + 12 000`): точно 12 000 — только при «удобном» `start`, а он — сколько
+    // процесс уже живёт (при 5000,1 выходило 11 999,999999999998 — красный полный прогон). Сравнение с точностью до микросекунд.
+    expect(cd && cd.until - cd.start, 'откат слота залит').toBeCloseTo(12_000, 6);
     emit([{ type: 'cooldown', playerId: 'p2', ability: 'x', cooldownMs: 5_000 }]);
     expect(a.actionCooldowns.x, 'откат чужого героя — не мой слот').toBeUndefined();
   });

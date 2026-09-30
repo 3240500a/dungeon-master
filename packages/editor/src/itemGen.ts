@@ -8,7 +8,7 @@ import { ConfigRegistry, generateItem, pickTierClamped, createRng, describeItem,
  */
 function regFromData(data: Record<string, unknown>): ConfigRegistry {
   const reg = new ConfigRegistry();
-  reg.loadAll(data);
+  reg.loadAll(data, { cross: false });   // ⭐ R22-01: читатель рабочей копии (правило D4 — у записи)
   return reg;
 }
 

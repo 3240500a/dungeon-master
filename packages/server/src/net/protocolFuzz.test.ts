@@ -330,6 +330,12 @@ const bucketsOf = (l: unknown): Map<string, unknown>[] => {
   return t ? t.map((x) => (x as { buckets: Map<string, unknown> }).buckets) : [(l as { buckets: Map<string, unknown> }).buckets];
 };
 const keysOf = (l: unknown): string[] => bucketsOf(l).flatMap((m) => [...m.keys()]);
+/**
+ * ⭐ Перепрогон Z3: ОТКАЗЫ ЛИМИТОВ — момент последнего по бакету (`имя|ключ` → часы фаззера; ставится в `beforeAll`). Суд отказа честному
+ * (`refused`) видит бакет пустым и тогда, когда тот отказал С МОМЕНТА КАДРА: «гоночная» операция судится в ближайшей тишине, и к ней бакет с
+ * быстрым наливом (лобби аккаунта — 2 в секунду) уже полон — законный отказ читался «исчерпано: —».
+ */
+const deniedAt = new Map<string, number>();
 
 // ── Модель: аккаунты, роли, адреса ──────────────────────────────────────────
 type Role = 'honest' | 'sibling' | 'attacker' | 'anon';
@@ -521,6 +527,16 @@ beforeAll(async () => {
   cfg.loadAll();
   FORGE = forgePlan(cfg);
   process.on('unhandledRejection', onUnhandled);
+  // ⭐ Перепрогон Z3: каждый отказ лимита — в `deniedAt` (самопроверки, подменяющие `take`, оборачивают уже эту обёртку).
+  for (const [name, l] of Object.entries(limits)) {
+    const lim = l as unknown as { take(key: string, now?: number): boolean };
+    const take = lim.take.bind(lim);
+    lim.take = (key: string, now?: number): boolean => {
+      const ok = take(key, now);
+      if (!ok) deniedAt.set(`${name}|${key}`, clock);
+      return ok;
+    };
+  }
 });
 
 /**
@@ -648,6 +664,7 @@ class Run {
     this.restore.push(() => { sMath.mockRestore(); sPerf.mockRestore(); sDate.mockRestore(); sErr.mockRestore(); sWarn.mockRestore(); sLog.mockRestore(); });
     // Лимиты процесса — с чистого листа (они модульные: живут между последовательностями).
     for (const l of Object.values(limits)) for (const m of bucketsOf(l)) m.clear();
+    deniedAt.clear();
     for (const k of [...(known.sessions as unknown as { seen: Map<string, unknown> }).seen.keys()]) known.sessions.delete(k);
     db.sessions.clear(); db.chars.clear(); db.stash.clear(); db.pgRejects.length = 0;
     db.tm.rows.clear(); db.tm.inserts.clear();
@@ -752,12 +769,12 @@ class Run {
   }
   racing = false;
   /** Ответы честным, которые «гоночная» операция не дождалась, — судятся в ближайшей тишине. */
-  deferred: { s: SlotRt; frame: Record<string, unknown>; from: number; expect: (got: Got[]) => string | null }[] = [];
+  deferred: { s: SlotRt; frame: Record<string, unknown>; from: number; at: number; expect: (got: Got[]) => string | null }[] = [];
   judgeDeferred(): void {
     for (const d of this.deferred.splice(0)) {
       const got = d.s.frames.slice(d.from);
       this.note(d.frame, got, 'honest~');
-      this.judgeHonest(d.s, d.frame, got, d.expect(got));
+      this.judgeHonest(d.s, d.frame, got, d.expect(got), d.at);
     }
   }
 
@@ -948,17 +965,18 @@ class Run {
   async honestSend(s: SlotRt, frame: Record<string, unknown>, expect: (got: Got[]) => string | null): Promise<Got[]> {
     if (!this.alive(s) || s.serverClosed !== undefined) return [];
     const from = s.frames.length;
+    const at = this.now;
     const raw = JSON.stringify(frame);
     this.deliver(s, raw);
-    if (this.racing) { this.deferred.push({ s, frame, from, expect }); await turn(); return []; }
+    if (this.racing) { this.deferred.push({ s, frame, from, at, expect }); await turn(); return []; }
     await this.settle();
     const got = s.frames.slice(from);
     this.note(frame, got, 'honest');
-    this.judgeHonest(s, frame, got, expect(got));
+    this.judgeHonest(s, frame, got, expect(got), at);
     return got;
   }
-  /** Разбор ответа честному: закрыт сервером, лимит, «неверно», нет ответа. */
-  judgeHonest(s: SlotRt, frame: Record<string, unknown>, got: Got[], missing: string | null): void {
+  /** Разбор ответа честному: закрыт сервером, лимит, «неверно», нет ответа. `sentAt` — когда послан кадр (отказы лимитов с этого момента). */
+  judgeHonest(s: SlotRt, frame: Record<string, unknown>, got: Got[], missing: string | null, sentAt = this.now): void {
     const what = `${String(frame.t)}${frame.t === 'cmd' ? `:${String((frame.command as { cmd?: unknown })?.cmd)}` : ''}`;
     if (s.serverClosed !== undefined) {
       if (!s.closeJudged) this.refused(s, 'сервер закрыл честное соединение', `код ${s.serverClosed} после ${what}`, 'close');
@@ -971,38 +989,42 @@ class Run {
       if (g.t === 'error') {
         const code = String(f.code), msg = String(f.msg);
         if (code === 'rate' && msg === VOTE_COOLDOWN_MSG) continue;
-        if (['rate', 'bad-frame', 'auth', 'busy', 'forbidden', 'wrong-node', 'ledger'].includes(code)) this.refused(s, `отказ ${code}`, `${what}: ${msg}`, code === 'rate' ? msg : code);
-        else if (code === 'cmd' && LIMIT_REASONS.has(msg)) this.refused(s, `отказ команды «${msg}»`, what, msg);
+        if (['rate', 'bad-frame', 'auth', 'busy', 'forbidden', 'wrong-node', 'ledger'].includes(code)) this.refused(s, `отказ ${code}`, `${what}: ${msg}`, code === 'rate' ? msg : code, sentAt);
+        else if (code === 'cmd' && LIMIT_REASONS.has(msg)) this.refused(s, `отказ команды «${msg}»`, what, msg, sentAt);
       }
       if (g.t === 'cmdResult' && f.ok === false && typeof f.reason === 'string' && (LIMIT_REASONS.has(f.reason) || f.reason === 'Не удалось сохранить, попробуйте ещё раз')) {
-        this.refused(s, `cmdResult «${f.reason}»`, what, f.reason);
+        this.refused(s, `cmdResult «${f.reason}»`, what, f.reason, sentAt);
       }
     }
-    if (missing) this.refused(s, `нет ответа (${missing})`, what, 'missing');
+    if (missing) this.refused(s, `нет ответа (${missing})`, what, 'missing', sentAt);
   }
   /**
    * Честному отказали. Лимит АККАУНТА при живой соседней сессии того же аккаунта — документирован (I3 разрешает); лимит, который
    * честный исчерпал сам в честном темпе, — нарушение I5 (или темп модели не честный — это видно по ключу); всё прочее — I3, если
    * рядом был мусор, иначе I5.
    */
-  refused(s: SlotRt, kind: string, detail: string, why: string): void {
+  refused(s: SlotRt, kind: string, detail: string, why: string, sentAt = this.now): void {
     const acct = s.acct!;
     const key = this.rm.connKeys.get(s.conn) ?? '';
     const net = `ip:${s.ip ? ipBucket(s.ip) : key}`;
     const exhausted: string[] = [];
-    if (!limits.lobbyConn.peek(key)) exhausted.push('lobbyConn(соединение)');
-    if (!limits.wsFrames.peek(key)) exhausted.push('wsFrames(соединение)');
-    if (!limits.lobby.peek(acct.user)) exhausted.push('lobby(аккаунт)');
-    if (!limits.townCmd.peek(acct.user)) exhausted.push('townCmd(аккаунт)');
-    if (!limits.stashRead.peek(acct.user)) exhausted.push('stashRead(аккаунт)');
-    if (!limits.forgeCmd.peek(acct.user)) exhausted.push('forgeCmd(аккаунт)');
-    if (!limits.roomJoin.peek(acct.user)) exhausted.push('roomJoin(аккаунт)');
-    if (!limits.roomCreate.peek(acct.user)) exhausted.push('roomCreate(аккаунт)');
-    if (!limits.roomCodeMiss.peek(`user:${acct.user}`)) exhausted.push('roomCodeMiss(аккаунт)');
-    if (!limits.roomCodeMissIp.peek(net)) exhausted.push('roomCodeMissIp(адрес)');
-    if (!limits.lobbyIp.peek(net)) exhausted.push('lobbyIp(адрес)');
+    // ⭐ Перепрогон Z3: пуст сейчас — или отказал с момента кадра (`deniedAt`): к суду «гоночной» операции бакет успевает налиться.
+    const empty = (name: keyof typeof limits, k: string): boolean => !limits[name].peek(k) || (deniedAt.get(`${name}|${k}`) ?? -Infinity) >= sentAt;
+    if (empty('lobbyConn', key)) exhausted.push('lobbyConn(соединение)');
+    if (empty('wsFrames', key)) exhausted.push('wsFrames(соединение)');
+    if (empty('lobby', acct.user)) exhausted.push('lobby(аккаунт)');
+    if (empty('townCmd', acct.user)) exhausted.push('townCmd(аккаунт)');
+    if (empty('stashRead', acct.user)) exhausted.push('stashRead(аккаунт)');
+    if (empty('forgeCmd', acct.user)) exhausted.push('forgeCmd(аккаунт)');
+    if (empty('roomJoin', acct.user)) exhausted.push('roomJoin(аккаунт)');
+    if (empty('roomCreate', acct.user)) exhausted.push('roomCreate(аккаунт)');
+    if (empty('roomCodeMiss', `user:${acct.user}`)) exhausted.push('roomCodeMiss(аккаунт)');
+    if (empty('roomCodeMissIp', net)) exhausted.push('roomCodeMissIp(адрес)');
+    if (empty('lobbyIp', net)) exhausted.push('lobbyIp(адрес)');
     const accountOnly = exhausted.length > 0 && exhausted.every((e) => e.includes('(аккаунт)'));
-    const siblingNear = this.now - this.siblingAt < 120_000;
+    // Слот соседа (2: `h1b` или двойник `h1t`) — вкладка аккаунта `u-h1`: его лимиты аккаунта общие только с честным `h1`. ⭐ Перепрогон Z3:
+    // раньше соседство прощало и отказ честному `h2` — чужому аккаунту, чьих бакетов сосед не трогает (пустой бакет `h2` — его собственный).
+    const siblingNear = acct.user === ACCTS.h1b!.user && this.now - this.siblingAt < 120_000;
     // D8: сундук аккаунта обогнала соседняя сессия — «не удалось сохранить», документировано (R1-05, D8).
     const stashRace = why === 'Не удалось сохранить, попробуйте ещё раз' && siblingNear;
     if ((accountOnly && siblingNear) || stashRace) return;
@@ -1222,6 +1244,8 @@ class Run {
     const before = charId ? { live: econ(me.p.save), db: dbRow(charId), stash: user ? dbStash(user) : '' } : undefined;
     // I10: снимок до кадра — только в тишине (ни запроса к базе в полёте, ни неосуждённой гонки): иначе в окно попала бы чужая запись.
     const tally = !this.racing && db.pending === 0 && this.deferred.length === 0 ? forgeTally() : undefined;
+    // ⭐ Перепрогон Z2: повтор номера команды (Ф2.5) не исполняется — ответ итогом оригинала; действия, которого ждать в телеметрии, нет.
+    const dup0 = counters.cmdDuplicate;
     const c = (command ?? {}) as { cmd?: unknown; uid?: unknown; nonce?: unknown };
     const melt = typeof c.uid === 'string' && !!me?.p.save.inventory.some((i) => i.uid === c.uid && !!i.parts);
     const replay = c.cmd === 'craft' && !!user
@@ -1242,7 +1266,7 @@ class Run {
     if (tally && res) {
       // I10: телеметрия кузницы — ровно состоявшееся действие этой команды.
       const want: ForgeTally = { crafted: 0, melted: 0, salvaged: 0, enchanted: 0 };
-      if (res.ok === true) {
+      if (res.ok === true && counters.cmdDuplicate === dup0) {
         if (c.cmd === 'craft' && !replay) want.crafted = 1;
         else if (c.cmd === 'forgeSalvage' || c.cmd === 'salvage') want[melt ? 'melted' : 'salvaged'] = 1;
         else if (c.cmd === 'forgeEnchant') want.enchanted = 1;
@@ -2149,6 +2173,46 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
     ], 4096);
     expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
     expect(db.tm.rows.size, 'сессия писала телеметрию').toBeGreaterThan(0);
+  });
+  // ⭐ Перепрогон Z2 (30.09, сиды 52 120 001…52 120 800 по 200 операций; сид 52120162, ужато 215 → 6), МОДЕЛЬ ФАЗЗЕРА — сервер прав. Сосед
+  // честного по коду шлёт пачку команд и следом зачарование — номера команд мусора из 50, и номер зачарования уже был у команды пачки. Сервер
+  // такой кадр не исполняет (Ф2.5: повтор номера) и отвечает итогом оригинала — «ок». I10 читал ответ как состоявшееся зачарование и ждал его в
+  // `/metrics`. Повтор номера — не действие: телеметрия не растёт (`cmdDuplicate` за кадр).
+  it('перепрогон Z2: повтор номера команды отвечает итогом оригинала — не состоявшееся действие кузницы (I10)', async () => {
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 909 } },
+      { k: 'open', s: 4, mode: 'uws', ip: 0 },
+      { k: 'junk', s: 4, junk: { j: 'valid', base: 'joinCode', seed: 528775373 } },
+      { k: 'junk', s: 4, junk: { j: 'flood', base: 'cmd', n: 10, seed: 3055752787, mutate: false } },
+      { k: 'junk', s: 4, junk: { j: 'valid', base: 'cmd', seed: 670372534 } },
+    ], 52120162);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    expect(run.slots[4]?.frames.some((f) => f.t === 'cmdResult' && f.f?.cmd === 'forgeEnchant' && f.f?.ok === true), 'повтор ответил «ок»').toBe(true);
+  });
+  // ⭐ Перепрогон Z3 (30.09, сиды 62 200 001…62 201 000 по 60 операций; сид 62200866, ужато 74 → 12), МОДЕЛЬ ФАЗЗЕРА — сервер прав. Двойник
+  // честного (вторая вкладка ТОГО ЖЕ героя, аккаунт тот же) шлёт поток статусов забега — потолок кадров лобби АККАУНТА (`limits.lobby`, R5-12)
+  // пуст, — входит по коду и вытесняет честного (4001). Честный переподключается (статус, вход) — «rate»: лимит аккаунта общий у всех его
+  // вкладок (документировано, I3 это прощает при соседней вкладке рядом). Но модель судила, какой бакет пуст, ПОСЛЕ «гоночной» операции, в
+  // ближайшей тишине, — бакет лобби аккаунта (2 в секунду) к ней уже налился: «исчерпано: —». Теперь бакет пуст и тогда, когда он отказал с
+  // момента кадра (`deniedAt`).
+  it('перепрогон Z3: поток двойника исчерпал лимит лобби аккаунта — отказ его переподключению не нарушение (I3)', async () => {
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 784 } },
+      { k: 'open', s: 1, mode: 'ws', ip: 1 },
+      { k: 'honest', s: 1, act: { a: 'joinFriend' } },
+      { k: 'open', s: 2, mode: 'uws', ip: 0, twin: true },
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'moveBelt', pick: 30412 }, race: true },
+      { k: 'junk', s: 2, junk: { j: 'flood', base: 'runStatus', n: 50, seed: 247267422, mutate: false } },
+      { k: 'honest', s: 1, act: { a: 'cmd', cmd: 'buy', pick: 22093 } },
+      { k: 'honest', s: 1, act: { a: 'cmd', cmd: 'buy', pick: 62485 } },
+      { k: 'honest', s: 1, act: { a: 'cmd', cmd: 'drop', pick: 55531 } },
+      { k: 'junk', s: 2, junk: { j: 'valid', base: 'joinCode', seed: 3519863616 } },
+      { k: 'honest', s: 0, act: { a: 'runStatus' }, race: true },
+    ], 62200866);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    expect(run.slots[0]?.frames.some((f) => f.t === 'error' && f.f?.code === 'rate'), 'честному отказали лимитом — путь пройден').toBe(true);
   });
   it('контроль: те же последовательности на uWS — закрытие окончательно, нарушений нет', async () => {
     const uws = (ops: Op[]): Op[] => ops.map((o) => (o.k === 'open' ? { ...o, mode: 'uws' } : o));

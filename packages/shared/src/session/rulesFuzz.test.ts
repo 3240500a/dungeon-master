@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { ConfigRegistry } from '../config/registry.js';
 import { createRng } from '../formulas/rng.js';
-import { abilityCooldown } from '../formulas/combat.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
 import { newCharacterSave, fitToClass } from '../economy/newCharacter.js';
@@ -16,6 +15,7 @@ import type { PlayerEntity } from '../world/state.js';
 import { GameSession, type PlayerInput, type SessionEvent } from './session.js';
 import { playerSnapshot, type PlayerSnapshot } from './derive.js';
 import { effectivePool, reservedFrac } from './toggles.js';
+import { arenaAwayBody, vitalsForSave } from './heroBody.js';
 
 /**
  * ⭐ B2: ФАЗЗЕР ПРАВИЛ ИГРЫ. Вместо ручного обзора — случайные цепочки НАСТОЯЩЕГО ввода и команд над настоящим `GameSession`
@@ -52,7 +52,11 @@ const LEN = env('DM_FUZZ_LEN', 80);
  * Профили (`DM_FUZZ_PROFILE`): `combat` — тики чаще (бой, [E], пояс, рывки), `world` — команды мира и смены посреди замаха,
  * `pvp` — арены с PvP и пати от двух героев, `floor` — этажи генератора забега почти без арен, `pillars` — арены с колоннами
  * в линии огня (C-10: снаряды и преграды декора, закрывающие обзор), `levelup` — арены, все герои на пороге уровня (R15-10:
- * левелап поверх аур, стоек и баффов), `buffs` — арены, бафф своего класса на высшем ранге (R19-03: отдых баффа).
+ * левелап поверх аур, стоек и баффов), `buffs` — арены, бафф своего класса на высшем ранге и печати вставок на высшем ранге донора, чаще
+ * круги на арену и переподключения (⭐ D4: одно правило времени баффа — отдых и доля времени под баффом по часам героя),
+ * `constructs` — ⚠ R21-06: вариант конфига, где все монстры — конструкты (взрыв при смерти, в поставке путь скрытый), арены с колоннами,
+ * герои на пороге уровня и шаг `dot` (яд добивает монстра, а герой — за укрытием рядом или на последнем издыхании вплотную).
+ * ⭐ D4: большой прогон правила времени баффа — `DM_FUZZ_PROFILE=buffs DM_FUZZ_SEEDS=2000 DM_FUZZ_LEN=240`.
  */
 const PROFILES: Record<string, { weights?: Partial<Record<OpKind, number>>; world?: import('./fuzz/rulesFuzz.js').FuzzHooks['world'] }> = {
   combat: { weights: { ...OP_WEIGHTS, tick: 80 } },
@@ -61,7 +65,8 @@ const PROFILES: Record<string, { weights?: Partial<Record<OpKind, number>>; worl
   floor: { world: { arena: 0.1 } },
   pillars: { weights: { ...OP_WEIGHTS, tick: 60 }, world: { arena: 1, pillars: 1 } },
   levelup: { weights: { ...OP_WEIGHTS, tick: 60 }, world: { arena: 1, levelup: true } },
-  buffs: { weights: { ...OP_WEIGHTS, tick: 70 }, world: { arena: 1, buffs: true } },
+  buffs: { weights: { ...OP_WEIGHTS, tick: 70, arena: 6, reconnect: 6 }, world: { arena: 1, buffs: true } },
+  constructs: { weights: { ...OP_WEIGHTS, tick: 60, dot: 8 }, world: { arena: 1, pillars: 1, constructs: true, levelup: true } },
 };
 const PROFILE = PROFILES[process.env.DM_FUZZ_PROFILE ?? ''] ?? {};
 const WEIGHTS = PROFILE.weights ?? OP_WEIGHTS;
@@ -104,7 +109,17 @@ const patch = (w: World, name: string, make: (orig: (...a: unknown[]) => unknown
   const orig = (S[name] as (...a: unknown[]) => unknown).bind(w.s);
   S[name] = make(orig) as (...a: never[]) => unknown;
 };
-const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuzz.js').FuzzHooks> }[] = [
+/** Сдвинуть откаты героя назад на `dt` (как до D4: откаты тела города минус время боя — взятое на арене пропадало). */
+const minusDt = (cd: Record<string, number>, dt: number): Record<string, number> =>
+  Object.fromEntries(Object.entries(cd).map(([k, v]) => [k, v - dt] as const).filter(([, v]) => v > 0));
+/** ⚠ R21-06: взрыв конструкта — ДО наград убийцы (как было): зовётся перед наградами, второй (штатный, после них) пропускается. */
+const blastBeforeRewards = (w: World): void => {
+  const done = new Set<unknown>();
+  const S = w.s as unknown as Record<string, (...a: unknown[]) => unknown>;
+  patch(w, 'overloadOnDeath', (o) => (...a) => { if (done.has(a[0])) return undefined; done.add(a[0]); return o(...a); });
+  patch(w, 'killRewards', (o) => (...a) => { S.overloadOnDeath!.call(w.s, a[0]); return o(...a); });
+};
+const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuzz.js').FuzzHooks>; weights?: Partial<Record<OpKind, number>>; len?: number }[] = [
   {
     name: 'шаг длиннее скорости', want: /^I1:speed:/,
     hooks: { install: (w) => patch(w, 'stepPlayerInput', (o) => (...a) => { const r = o(...a); const p = a[0] as { pos: { x: number }; vel: { x: number } }; if (p.vel.x > 0) p.pos.x += 3; return r; }) },
@@ -137,13 +152,34 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
     },
   },
   {
+    // ⚠ R21-06: взрыв конструкта при смерти без видимости (как было: по одному расстоянию) — сквозь стену, закрытую дверь и колонну.
+    name: 'взрыв конструкта сквозь стену', want: /^M2:blast-los:/,
+    hooks: {
+      world: PROFILES.constructs!.world,
+      install: (w) => patch(w, 'overloadOnDeath', (o) => (...a) => {
+        const S = w.s as unknown as Record<string, unknown>;
+        const los = S.hasLos;
+        S.hasLos = () => true;
+        try { return o(...a); } finally { S.hasLos = los; }
+      }),
+    },
+    weights: PROFILES.constructs!.weights,
+  },
+  {
+    // ⚠ R21-06 (нашёл фаззер в профиле `constructs`): взрыв — до наград убийцы (как было). Взрыв убил добившего, и лечение за убийство и
+    // левелап доставались трупу. Подмена: взрыв зовётся перед наградами (второй, штатный — пропускается).
+    name: 'взрыв до наград убийцы', want: /^I6:(dead-hp|xp-dead):/,
+    hooks: { world: PROFILES.constructs!.world, install: blastBeforeRewards },
+    weights: PROFILES.constructs!.weights,
+  },
+  {
     name: 'взмах вдвое длиннее', want: /^I2:melee-(range|mult):/,
     hooks: { install: (w) => patch(w, 'meleeSwing', (o) => (...a) => { const b = [...a]; b[5] = ((b[5] as number | undefined) ?? 1) * 2; return o(...b); }) },
   },
   { name: 'откат не держится', want: /^I3:/, hooks: { afterTick: (w) => { for (const p of Object.values(w.s.world.players)) { p.attackCd = 0; p.skillCd = {}; } } } },
   {
-    // R19-03: откат баффа — по рангу, без отдыха (как было: ранг режет откат, а не действие — с какого-то ранга повтор в кадр истечения).
-    name: 'бафф без отдыха', want: /^I4:buff-rest:/,
+    // R6-15/R19-03 → ⭐ D4: откат баффа не длиннее действия (как было: без отката, потом «ранг режет откат, а не действие») — повтор в кадр истечения.
+    name: 'бафф без отдыха (откат = действию)', want: /^I4:buff-(rest|uptime):/,
     hooks: {
       world: { buffs: true },
       install: (w) => patch(w, 'castSkill', (o) => (...a) => {
@@ -151,10 +187,57 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
         const had = (p.skillBuffs[id] ?? 0) > 0;
         const out = o(...a);
         const act = w.reg.get('skill-tree').nodes.find((n) => n.id === id)?.effect.active;
-        if (!had && act?.category === 'buff' && (p.skillBuffs[id] ?? 0) > 0) p.skillCd[id] = abilityCooldown(act.cooldown, p.save.skills[id] ?? 1);
+        if (!had && act?.category === 'buff' && (p.skillBuffs[id] ?? 0) > 0) p.skillCd[id] = act.durationSec;
         return out;
       }),
     },
+  },
+  {
+    // ⭐ D4: печать без своего отката (как было: освежалась каждым применением носителя — на спамном ударе 100 % времени).
+    name: 'печать без отката', want: /^I4:buff-(rest|refresh|uptime):/,
+    hooks: { world: { buffs: true }, afterTick: (w) => { for (const p of Object.values(w.s.world.players)) for (const k of Object.keys(p.skillCd)) if (k.startsWith('ins:')) delete p.skillCd[k]; } },
+    weights: { ...OP_WEIGHTS, tick: 80 },
+  },
+  {
+    // ⭐ D4: бафф тикает вдвое медленнее — ни одного лишнего каста, а под баффом вдвое дольше: ловит только доля времени (за долгий прогон:
+    // запас правила — одно действие, так что нужно не меньше пяти действий часов героя; три героя и почти одни тики — в первом же сиде).
+    name: 'бафф тянется дольше действия', want: /^I4:buff-uptime:/,
+    hooks: { world: { buffs: true, minHeroes: 3 }, afterTick: (w) => { for (const p of Object.values(w.s.world.players)) for (const k of Object.keys(p.skillBuffs)) if (!k.startsWith('pot:')) p.skillBuffs[k]! += 1 / 60; } },
+    weights: { ...OP_WEIGHTS, tick: 200, arena: 0, reconnect: 0, revive: 0, descend: 0 },
+    len: 160,
+  },
+  {
+    // ⭐ D4: конец арены теряет откаты арены (как было: тело города минус время боя) — бафф, взятый на арене, в городе готов снова.
+    name: 'арена теряет откаты', want: /^(I4:buff-(rest|uptime)|I3:skill-cd):/,
+    hooks: { world: { buffs: true }, afterArenaReturn: (_w, p, home, dt) => { p.skillCd = minusDt(home.skillCd, dt); } },
+    weights: { ...OP_WEIGHTS, tick: 60, arena: 25 },
+  },
+  {
+    // ⭐ D4: вход по коду — свежие откаты (как свежая сущность без тела ухода).
+    name: 'переподключение сбрасывает откаты', want: /^(I4:buff-(rest|uptime)|I3:skill-cd):/,
+    hooks: { world: { buffs: true }, afterReconnect: (_w, p) => { p.skillCd = {}; } },
+    weights: { ...OP_WEIGHTS, tick: 60, reconnect: 25 },
+  },
+  {
+    // ⭐ R22-04: мёртвый пишется в сейв без откатов (как было: `vitals` сняты целиком) — ушедший мёртвым, которого пати оживила сменой этажа,
+    // входит с готовым кличем. Герой гибнет чаще (последнее издыхание — шаг `dot`), уходит и возвращается чаще; трое героев — пати без него
+    // меняет этаж чаще (в 40 цепочках — с 15-й).
+    name: 'смерть снимает откаты из сейва', want: /^(I4:buff-(rest|uptime)|I3:skill-cd):/,
+    hooks: { world: { buffs: true, arena: 0, minHeroes: 3 }, vitalsOf: (p, home, now) => ((home?.body ?? p).alive ? vitalsForSave(p, home, now) : undefined) },
+    weights: { ...OP_WEIGHTS, tick: 60, reconnect: 30, dot: 6, arena: 0, revive: 0 },
+  },
+  {
+    // ⚠ R23-05: сейв с арены несёт откаты тела города, застывшие на входе в арену (как было: время арены их не старило), — погибший на арене и
+    // оборвавшийся входит свежей сущностью с откатами из сейва: клич, по часам героя давно готовый, — в откате.
+    name: 'сейв с арены: откаты города на входе в арену', want: /^I3:skill-cd-long:/,
+    hooks: { world: { buffs: true, arena: 1, pvp: 1, minHeroes: 3 }, vitalsOf: (p, home, now) => vitalsForSave(p, home && { ...home, sec: 0 }, now) },
+    weights: { ...OP_WEIGHTS, tick: 60, arena: 12, reconnect: 30, dot: 6, revive: 0 },
+  },
+  {
+    // ⚠ R23-05: запись ушедшего с арены, когда она кончилась без него, — тело города, застывшее на входе (как было): вход по коду — клич в откате.
+    name: 'ушедший с арены: тело города на входе в арену', want: /^I3:skill-cd-long:/,
+    hooks: { world: { buffs: true, arena: 1 }, awayBodyOf: (home, left) => arenaAwayBody({ ...home, sec: 0 }, left) },
+    weights: { ...OP_WEIGHTS, tick: 60, arena: 12, reconnect: 30 },
   },
   {
     name: 'каст невыученного', want: /^I4:unlearned-cast:/,
@@ -206,6 +289,28 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
     },
   },
   { name: 'дверь открылась сама', want: /^I5:door-open:/, hooks: { afterTick: (w) => { const d = w.s.world.doors[0]; const c = d?.cells[0]; if (c) w.s.world.grid[c.cy]![c.cx] = 0; } } },
+  {
+    // ⭐ Z: сторож стал уже (погибший внутри своего взмаха его доносит) — но замах, НАЧАТЫЙ трупом, ловится по-прежнему: удар живого
+    // «будит» павших, и каждый бьёт с места, где лежит.
+    name: 'замах трупа', want: /^I2:dead-attacker:/,
+    hooks: {
+      world: { arena: 1, pvp: 1, minHeroes: 3 },
+      install: (w) => {
+        let busy = false;
+        patch(w, 'executeBasicAttack', (o) => (...a) => {
+          const out = o(...a);
+          if (busy) return out;
+          busy = true;
+          try {
+            const S = w.s as unknown as Record<string, (...x: unknown[]) => unknown>;
+            for (const q of Object.values(w.s.world.players)) if (!q.alive && q !== a[0]) S.executeBasicAttack!.call(w.s, q, a[1]);
+          } finally { busy = false; }
+          return out;
+        });
+      },
+    },
+    weights: { ...OP_WEIGHTS, tick: 120, revive: 0 },
+  },
 ];
 
 describe('⭐ B2: у сторожа правил есть зубы — подложенный баг ловится своим инвариантом', () => {
@@ -213,7 +318,7 @@ describe('⭐ B2: у сторожа правил есть зубы — подл�
     it(b.name, () => {
       const got = new Set<string>();
       for (let seed = 1; seed <= 40 && ![...got].some((k) => b.want.test(k)); seed++) {
-        const out = runOps(seed, genOps(seed, 60, { ...OP_WEIGHTS, tick: 60, pickup: 10, lever: 10 }), { ...hooks, ...b.hooks }, undefined, (k) => !b.want.test(k));
+        const out = runOps(seed, genOps(seed, b.len ?? 60, b.weights ?? { ...OP_WEIGHTS, tick: 60, pickup: 10, lever: 10 }), { ...hooks, ...b.hooks }, undefined, (k) => !b.want.test(k));
         if (out.found) got.add(violationKey(out.found));
       }
       expect([...got].some((k) => b.want.test(k)), `ждали ${b.want}, поймано: ${[...got].join(', ') || 'ничего'}`).toBe(true);
@@ -271,7 +376,7 @@ describe('⭐ B2: фаззер правил — инварианты после 
     }
     // Фаззер стережёт не пустоту: бой, касты, подбор и сундуки действительно случаются.
     if (SEEDS >= 12) {
-      for (const k of ['attack', 'cast', 'ev-hit', 'ev-monster-died', 'pick-auto', 'chest', 'belt-buff'] as const) expect(cover[k] ?? 0, `«${k}» за прогон`).toBeGreaterThan(0);
+      for (const k of ['attack', 'cast', 'ev-hit', 'ev-monster-died', 'pick-auto', 'chest', 'belt-buff', 'arena-trip', 'reconnect'] as const) expect(cover[k] ?? 0, `«${k}» за прогон`).toBeGreaterThan(0);
     }
     const unknown = [...initHits.keys(), ...shrunk.keys()].filter((k) => !knownId(k));
     expect(unknown, lines.join('\n\n')).toEqual([]);
@@ -296,6 +401,56 @@ describe('⚠ C-10: фаззер правил — колонны в линии �
     expect(cover['proj-pillar'] ?? 0, 'снаряды у колонн').toBeGreaterThan(0);
     expect(cover['hit-proj'] ?? 0, 'снаряды попадали').toBeGreaterThan(0);
   }, 120_000);
+});
+
+/**
+ * ⚠ R21-06: ВЗРЫВ КОНСТРУКТА ПРИ СМЕРТИ — свой профиль мира (`constructs`): вариант конфига, где все монстры — конструкты (в поставке все —
+ * нежить, путь скрытый), арены с колоннами, герои на пороге уровня, шаг `dot` — яд добивает монстра, а герой за укрытием рядом (стена, дверь,
+ * колонна) или вплотную на последнем издыхании. Сторож M2: взрыв — в радиусе и видимости (`blast-range`, `blast-los`); I6: награды убийцы,
+ * которого убил взрыв, — живому (`dead-hp`, `xp-dead`). Зубы — «взрыв конструкта сквозь стену» и «взрыв до наград убийцы» выше.
+ */
+describe('⚠ R21-06: фаззер правил — взрыв конструкта при смерти', () => {
+  it('24 цепочки по 80 шагов: ни одного нарушения; взрывы были — и по герою за укрытием, и по добившему', () => {
+    const hits: string[] = [];
+    const cover: Record<string, number> = {};
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 80, PROFILES.constructs!.weights), { ...hooks, world: PROFILES.constructs!.world }, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      for (const [k, n] of Object.entries(out.cover)) cover[k] = (cover[k] ?? 0) + n;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    for (const k of ['blast', 'hit-blast', 'blast-behind-wall', 'blast-kill'] as const) expect(cover[k] ?? 0, `«${k}» за прогон`).toBeGreaterThan(0);
+  }, 180_000);
+
+  // ⚠ R21-06 (профиль `constructs` без шага `dot`, сид 14; сжато фаззером): маг 1-го уровня на пороге добил конструкта, взрыв убил его, а
+  // левелап (полное здоровье) пришёл уже трупу — награда решалась до взрыва, выдавалась после. Теперь награды — до взрыва, живому.
+  it('перепрогон R21-06: взрыв убил добившего — левелап не поднимает труп', () => {
+    const ops = [
+      { k: 'pickup', h: 2, s: 738955479 }, { k: 'descend', h: 0, s: 2133699619 }, { k: 'tick', h: 0, s: 144734269 }, { k: 'tick', h: 2, s: 1580993977 },
+      { k: 'tick', h: 1, s: 227675006 }, { k: 'tick', h: 1, s: 1222957311 }, { k: 'chest', h: 1, s: 741161182 }, { k: 'tick', h: 0, s: 1445148552 },
+      { k: 'reconnect', h: 1, s: 1813028185 }, { k: 'tick', h: 0, s: 501132757 }, { k: 'tick', h: 1, s: 1525389358 }, { k: 'tick', h: 2, s: 758920298 },
+    ] as Op[];
+    const out = runOps(14, ops, { resetUids: hooks.resetUids, world: { constructs: true } });
+    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+    // Цепочка всё ещё ведёт по этому пути: с прежним порядком (взрыв до наград) она же ловит «левелап трупа».
+    const old = runOps(14, ops, { resetUids: hooks.resetUids, world: { constructs: true }, install: blastBeforeRewards });
+    expect(old.found ? violationKey(old.found) : null, 'прежний порядок — левелап трупа').toBe('I6:dead-hp:tick');
+  });
+
+  // ⚠ R21-06 (большой прогон профиля `constructs`, сид 1028; сжато фаззером). МОДЕЛЬ ФАЗЗЕРА: у ворожеи горела печать «Стремительность», она
+  // пала — тик мёртвому не ведёт ни откатов, ни баффов, и печать застыла на трупе (возрождение её снимет), а часы героя у наблюдателя шли:
+  // «под баффом 15.90 с из 15.90 с». Павший — как ушедший: часы стоят (`buffClock`).
+  it('перепрогон R21-06: бафф, застывший на трупе, — не время под баффом', () => {
+    const ops = [
+      { k: 'dot', h: 2, s: 1578322620 }, { k: 'tick', h: 0, s: 1092932095 }, { k: 'tick', h: 0, s: 1008869910 }, { k: 'dot', h: 2, s: 988207533 },
+      { k: 'tick', h: 0, s: 641964205 }, { k: 'tick', h: 0, s: 2061792626 }, { k: 'chest', h: 0, s: 1828621563 }, { k: 'tick', h: 1, s: 792659452 },
+      { k: 'tick', h: 2, s: 815217069 }, { k: 'dot', h: 0, s: 238735985 },
+    ] as Op[];
+    const out = runOps(1028, ops, { resetUids: hooks.resetUids, world: PROFILES.constructs!.world });
+    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+    expect(out.cover['buff-rise-ins'] ?? 0, 'печать срабатывала').toBeGreaterThan(0);
+    expect(out.cover['ev-player-died'] ?? 0, 'и герой с ней пал').toBeGreaterThan(0);
+  });
 });
 
 /**
@@ -330,22 +485,67 @@ describe('⚠ R15-10: фаззер правил — левелап в бою', (
 });
 
 /**
- * ⚠ R19-03: БАФФ НА ВЫСШЕМ РАНГЕ — свой профиль мира: только арены, бафф своего класса (по уровню) на высшем ранге. Ранг режет откат, а не
- * действие: с ранга, где откат ≤ действия, повтор в кадр истечения держал бафф 100 % времени. В общем профиле ранги размазаны по дереву,
- * и высокий ранг баффа с повтором через цикл не встречался; этот — в первых же (зубы — «бафф без отдыха» выше).
+ * ⭐ D4: ОДНО ПРАВИЛО ВРЕМЕНИ БАФФА — свой профиль мира (`buffs`): только арены, бафф своего класса на высшем ранге и печати вставок на
+ * высшем ранге донора, чаще круги на арену и переподключения. Инварианты — по часам героя: срабатывание не раньше отдыха (`buff-rest`), не
+ * поверх идущего (`buff-refresh`), под баффом не больше правила за весь прогон (`buff-uptime`). Зубы — пять «багов» выше (без отдыха, печать
+ * без отката, медленный таймер, арена теряет откаты, переподключение сбрасывает откаты). Большой прогон — `DM_FUZZ_PROFILE=buffs`.
  */
-describe('⚠ R19-03: фаззер правил — бафф на высшем ранге', () => {
-  it('16 цепочек по 80 шагов: ни одного нарушения; баффы кастовались', () => {
+describe('⭐ D4: фаззер правил — правило времени баффа (арены, переподключения, печати)', () => {
+  it('24 цепочки по 120 шагов: ни одного нарушения; баффы и печати срабатывали, арены и переподключения были', () => {
     const hits: string[] = [];
     const cover: Record<string, number> = {};
-    for (let seed = 1; seed <= 16; seed++) {
-      const out = runOps(seed, genOps(seed, 80, PROFILES.buffs!.weights), { ...hooks, world: PROFILES.buffs!.world }, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 120, PROFILES.buffs!.weights), { ...hooks, world: PROFILES.buffs!.world }, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
       if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
       for (const [k, n] of Object.entries(out.cover)) cover[k] = (cover[k] ?? 0) + n;
     }
     expect(hits, hits.join('\n\n')).toEqual([]);
     expect(cover.buff ?? 0, 'баффы кастовались').toBeGreaterThan(1);
-  }, 120_000);
+    for (const k of ['buff-rise', 'buff-rise-ins', 'arena-trip', 'reconnect'] as const) expect(cover[k] ?? 0, `«${k}» за прогон`).toBeGreaterThan(0);
+  }, 180_000);
+
+  // ⭐ D4 (большой прогон шага `arena`, сиды 20069 и 20557; сжато фаззером): конец арены между тиками оставлял сессии снимок арены (без баффа
+  // колбы «сила» +60 к здоровью и без ауры тела города) до следующего тика — зелье сразу после возврата мерило потолки им: «налило здоровье
+  // выше максимума», «ману выше резерва». Теперь конец арены пересчитывает снимок героя города (`refreshSnapshot`; комната — так же).
+  it('перепрогон D4: зелье сразу после конца арены — потолки героя города, а не снимка арены', () => {
+    const cases: [number, Op[]][] = [
+      [20069, [{ k: 'arena', h: 2, s: 1376489274 }, { k: 'unequip', h: 1, s: 594916192 }, { k: 'tick', h: 1, s: 619459939 }, { k: 'descend', h: 0, s: 1925720128 }, { k: 'drink', h: 1, s: 104078453 }]],
+      [20557, [{ k: 'tick', h: 2, s: 1011015505 }, { k: 'arena', h: 1, s: 153611118 }, { k: 'arena', h: 1, s: 1315298795 }, { k: 'drink', h: 1, s: 1384310972 }]],
+    ];
+    for (const [seed, ops] of cases) {
+      const out = runOps(seed, ops, { resetUids: hooks.resetUids });
+      expect(out.found ? `сид ${seed}: ${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+      expect(out.stats.drink?.ok ?? 0, `сид ${seed}: зелье выпито`).toBe(1);
+    }
+  });
+
+  // ⭐ D4 (большой прогон профиля `buffs`, сид 2588; сжато фаззером). МОДЕЛЬ ФАЗЗЕРА: в одном тике переключена аура (a2 → a1, резерв меньше) и
+  // истёк бафф колбы «сила» (+30 к мане) — реген тика шёл по снимку начала тика (с баффом) и резерву новой ауры, а сторож знал только
+  // максимум начала при старой ауре и конца без баффа. Следующий тик подрезает (как любой истёкший бафф) — потолок тика и такой.
+  it('перепрогон D4: смена ауры в тике, где истекает бафф колбы, — не «мана выше резерва»', () => {
+    const ops = [
+      { k: 'hold', h: 1, s: 292063037 }, { k: 'tick', h: 1, s: 126860266 }, { k: 'hold', h: 1, s: 1216997735 }, { k: 'tick', h: 0, s: 2044998083 },
+      { k: 'tick', h: 2, s: 639911829 }, { k: 'tick', h: 0, s: 415667563 }, { k: 'tick', h: 1, s: 1935023971 }, { k: 'tick', h: 0, s: 243940717 },
+      { k: 'tick', h: 1, s: 1145542272 },
+    ] as Op[];
+    const out = runOps(2588, ops, { resetUids: hooks.resetUids, world: PROFILES.buffs!.world });
+    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+  });
+});
+
+/**
+ * ⭐ Z (большой прогон 30.09, профиль `pvp`, сид 45010073; сжато фаззером до одного шага). МОДЕЛЬ ФАЗЗЕРА — ядро право: p1 бьёт пикой, первым
+ * в дуге — p0, его прок «при получении удара» (нова) убивает p1, и тот же взмах доносится до p2. Взмах начат живым и доносится весь, как
+ * стрела в полёте и шипы павшего (V-RF-04: труп не лечится, не кастует и наград не получает — это ядро держит). Иначе, кого заденет взмах,
+ * решал бы порядок входа героев в комнату: стой p2 в списке раньше p0 — удар бы прошёл. Нарушение `dead-attacker` — доставка, НАЧАТАЯ мёртвым.
+ */
+describe('⭐ Z: фаззер правил — бьющий погиб посреди своего взмаха (PvP)', () => {
+  it('перепрогон Z: прок цели убил бьющего — остаток того же взмаха не «удар мёртвого»', () => {
+    const out = runOps(45010073, [{ k: 'tick', h: 2, s: 1420080491 }] as Op[], { resetUids: hooks.resetUids, world: PROFILES.pvp!.world });
+    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+    // Цепочка всё ещё ведёт по этому пути: бьющий погиб внутри своей доставки, и она ударила после его смерти.
+    expect(out.cover['hit-after-own-death'] ?? 0, 'удар доставки, в которой бьющий погиб').toBeGreaterThan(0);
+  });
 });
 
 /**
@@ -571,6 +771,19 @@ describe('B2: нарушения правил, найденные фаззеро
       { k: 'tick', h: 1, s: 1471917063 },
     ] as unknown as Op[];
     const out = runOps(500650, ops, hooks);
+    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+  });
+
+  // АРТЕФАКТ СТЕНДА (перепрогон Z2, профиль `constructs`, сид 55190320; сжато фаззером). Оглушённый стоит у стены вплотную к повёрнутой преграде:
+  // толчок из неё идёт по нормали, стена гасит его часть поперёк (V-RF-05), и круг остаётся внутри — второй проход релаксации толкает снова.
+  // Сдвиг за тик — до двух глубин (2.88e-3 px при глубине 2.80e-3): это выход из преграды вдоль стены, а не бег в стане. Допуск — по числу
+  // проходов выталкивания (`OBSTACLE_PASSES`), а не одна глубина.
+  it('стенд: оглушённый между стеной и повёрнутой преградой — второй проход толчка не «бег в стане»', () => {
+    const ops = [
+      { k: 'descend', h: 1, s: 1461378948 }, { k: 'dot', h: 2, s: 1481723429 }, { k: 'tick', h: 2, s: 1903206946 }, { k: 'tick', h: 2, s: 2103455752 },
+      { k: 'stun', h: 0, s: 238654652 }, { k: 'tick', h: 2, s: 152198515 },
+    ] as Op[];
+    const out = runOps(55190320, ops, { resetUids: hooks.resetUids, world: PROFILES.constructs!.world });
     expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
   });
 });

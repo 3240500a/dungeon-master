@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { levelForXp, xpForLevel, effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
+import { xpProgress, effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
 import { App } from '../core/app.js';
 import { ActionBar } from '../ui/actionBar.js';
 import { BeltBar } from '../ui/beltBar.js';
@@ -125,11 +125,8 @@ export class UIScene extends Phaser.Scene {
       return;
     }
     const d = state.derived();
-    const xpTable = this.app.config.get('balance').xpTable;
-    const lvl = state.save.level;
-    const xpThis = xpForLevel(lvl, xpTable);
-    const xpNext = xpForLevel(lvl + 1, xpTable);
-    const xpFrac = xpNext > xpThis ? (state.save.xp - xpThis) / (xpNext - xpThis) : 1;
+    // ⭐ D2: полоса терпит сейв, которого кривая «не узнаёт» (уровень выше потолка, опыт ниже порога после правки) — `xpProgress`.
+    const xpFrac = xpProgress(state.save.level, state.save.xp, this.app.config.get('balance').xpTable).frac;
 
     const reservedFrac = state.reservedManaFracProvider();
     const reserved = Math.round(d.maxMana * reservedFrac);
@@ -166,7 +163,7 @@ export class UIScene extends Phaser.Scene {
       loc = `Этаж ${state.depth} · ${diff.name} · вызов ур.${cl}`;
     }
     this.label.setText(
-      `Ур. ${lvl}   ${loc}   Золото: ${state.save.gold}   Очки: атр ${state.save.unspentAttributePoints} / скилл ${state.save.unspentSkillPoints}`,
+      `Ур. ${state.save.level}   ${loc}   Золото: ${state.save.gold}   Очки: атр ${state.save.unspentAttributePoints} / скилл ${state.save.unspentSkillPoints}`,
     );
     // Панель биндов рисует DOM ActionBar (см. create()).
   }

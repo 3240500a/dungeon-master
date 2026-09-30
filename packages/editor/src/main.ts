@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
+import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, renderEnum } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
@@ -21,7 +21,8 @@ import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 import { renderColorField, renderUploadField, renderBatchUpload, renderMaterialPanel, currentAssetCategory } from './assetFields.js';
 import { renderDocs } from './docs.js';
-import { LiveConfigBase, loadLiveConfig } from './liveConfig.js';
+import { LiveConfigBase, bundledWorkingCopy, loadLiveConfig } from './liveConfig.js';
+import { ConfigChannel } from './configChannel.js';
 
 /**
  * HTML-редактор конфигов. Страницы по механикам (по одному конфигу на страницу),
@@ -144,12 +145,11 @@ const balanceGroupsFull = (() => {
 /** Раскрытые группы навигации (переживают перерисовку). */
 const expandedNav = new Set<string>(['Предметы']);
 
-const registry = new ConfigRegistry();
-registry.loadAll();
-
 // Рабочая копия данных: старт со встроенных дефолтов (мгновенно), затем перекрываем
 // АКТУАЛЬНЫМ конфигом с сервера (единая истина) — loadFromServer() после первого render().
-const data: Record<string, unknown> = structuredClone(registry.snapshot());
+// ⭐ R22-01: встроенные — ЧИТАТЕЛЕМ (`bundledWorkingCopy`: схема каждой таблицы, без правила поверх таблиц). Файлы, вместе нарушающие D4, сервер
+// собирает с зажимом и инцидентом «поправить в редакторе», а `registry.loadAll()` здесь бросал на старте модуля — редактор не открывался.
+const data: Record<string, unknown> = bundledWorkingCopy();
 /**
  * ⭐ C-09: поверх какой правды сервера рабочая копия. Пока живой конфиг не загружен, записи нет вовсе (копия — встроенные дефолты: таблица
  * целиком затёрла бы правки на сервере); загружен — запись несёт ревизии загруженного, и сервер отказывает (409) правке поверх чужой.
@@ -157,6 +157,19 @@ const data: Record<string, unknown> = structuredClone(registry.snapshot());
 const live = new LiveConfigBase();
 
 const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : null;
+
+/**
+ * ⭐ R22-08: запись конфига (Применить, в файл, инструменты, уборка ассетов, сброс) и её проверка до отправки — `configChannel.ts`: рабочая копия,
+ * база записи (C-09) и вкладки игры двигаются только с ответом сервера; правило поверх таблиц — над живыми прочими таблицами, как у сервера.
+ */
+const channel = new ConfigChannel(data, live, {
+  send: (url, init) => devFetch(url, init),   // ⚠ `devFetch`, а не голый `fetch`: инструментальные роуты требуют роли admin
+  read: readLiveConfig,
+  post: (key, value) => bc?.postMessage({ key, value }),
+  status: (text, color) => setStatus(text, color),
+  label: (key) => LABELS[key as ConfigKey] ?? key,
+  later: (fn, ms) => { setTimeout(fn, ms); },
+});
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
@@ -347,7 +360,7 @@ loadFromServer(); // подтянуть актуальный конфиг с с�
  */
 function loadFromServer(): void {
   loadLiveConfig(
-    () => fetch('/api/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() as Promise<Record<string, unknown>> : Promise.reject(new Error(String(r.status))))),
+    readLiveConfig,
     live,
     {
       loaded: (snapshot) => {
@@ -360,11 +373,9 @@ function loadFromServer(): void {
   );
 }
 
-/** ⭐ C-09: тело записи поверх загруженного конфига (`live.body`) — или отказ строкой статуса: живой конфиг ещё не загружен. */
-function liveBody(values: Record<string, unknown>): Record<string, unknown> | null {
-  const body = live.body(values);
-  if (!body) setStatus('Не сохранено: конфиг сервера ещё не загружен — показаны встроенные дефолты, и таблица из них затёрла бы правки на сервере. Жду сервер…', '#ff8080');
-  return body;
+/** Живой конфиг сервера (`GET /api/config`): загрузка страницы и перечитывание таблицы после сброса (R22-08). */
+function readLiveConfig(): Promise<Record<string, unknown>> {
+  return fetch('/api/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() as Promise<Record<string, unknown>> : Promise.reject(new Error(String(r.status)))));
 }
 
 function entryLabel(entry: unknown, i: number): string {
@@ -1100,24 +1111,11 @@ function lockGate(save: () => void): void {
 }
 
 /**
- * Проверить схемой НЕСКОЛЬКО ключей разом и вернуть разобранные значения. Первая ошибка — в статус и
- * `null`: частично не отправляем ничего (вкладка «Ковка → Клинки» правит `balance` и `weapon-parts`
- * вместе, и половина правки на сервере хуже, чем никакой).
+ * Проверить схемой НЕСКОЛЬКО ключей разом и вернуть разобранные значения (первая ошибка — в статус и `null`): `ConfigChannel.validated`.
+ * ⭐ D4 — правило поверх таблиц над живыми прочими таблицами, как у сервера (R22-08).
  */
 function validatedKeys(keys: readonly string[]): Record<string, unknown> | null {
-  const out: Record<string, unknown> = {};
-  for (const key of keys) {
-    const schema = configSchemas[key as ConfigKey] as z.ZodTypeAny | undefined;
-    if (!schema) { setStatus(`Нет такого конфига: ${key}`, '#ff8080'); return null; }
-    const result = schema.safeParse(data[key]);
-    if (!result.success) {
-      const where = keys.length > 1 ? ` «${LABELS[key as ConfigKey] ?? key}»` : '';
-      setStatus(`Ошибка валидации${where}: ` + result.error.issues[0]?.message + ' @ ' + result.error.issues[0]?.path.join('.'), '#ff8080');
-      return null;
-    }
-    out[key] = result.data;
-  }
-  return out;
+  return channel.validated(keys);
 }
 
 /** «Применить на сервере» для набора ключей: серверу — оверрайд в БД, клиенту (вью/тултипы) — как только сервер принял. */
@@ -1127,24 +1125,9 @@ function applyKeys(keys: readonly string[], onOk?: () => void): void {
   pushToServer(values, onOk); // сервер: персист в БД + авторитетная игра
 }
 
-/**
- * Открытым вкладкам игры — принятое сервером (вью/тултипы). ⭐ C-09: только ПОСЛЕ ответа сервера: раньше — до него, и вкладки показывали (и
- * соглашались на) цены, которые сервер отклонил (422, 409) или так и не получил.
- */
-function broadcast(values: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(values)) bc?.postMessage({ key, value });
-}
-
-/** Уже проверенные значения — в файлы `data/*.json` (и оверрайдом на сервер, см. роут). */
+/** Уже проверенные значения — в файлы `data/*.json` (и оверрайдом на сервер, см. роут): `ConfigChannel.toFile`. */
 function writeKeysToFile(values: Record<string, unknown>, onOk?: () => void): void {
-  const body = liveBody(values);   // C-09: поверх загруженного конфига — или никак
-  if (!body) return;
-  sendConfig(
-    () => devFetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-    'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
-    () => { broadcast(values); onOk?.(); },
-  );
-  setStatus('Запись в файл…', '#9fb0c0');
+  void channel.toFile(values, onOk);
 }
 
 /** Сохранение для инструментов, которые правят несколько конфигов сразу (вкладка «Ковка → Клинки»). */
@@ -1177,59 +1160,11 @@ function applyToFile(): void {
 }
 
 /**
- * Шлёт запрос на dev-роут конфига С АВТО-ПОВТОРОМ. Зачем: dev-сервер крутится под `tsx watch`
- * и перезапускается на каждую правку кода (~1–2 c недоступен) — клик «Применить» может попасть
- * ровно в это окно. Сетевую ошибку/5xx/404 (сервер поднимается) ретраим; 422 (данные не прошли
- * валидацию) — не ретраим, это реальный отказ.
- * ⭐ C-09: 409 — тоже отказ без повтора: таблица на сервере уже не та, поверх которой правка (сохранили в другой вкладке, инструментом, с другой
- * машины), и запись затёрла бы чужую правку. Принятая запись сдвигает базу ревизиями из ответа сервера (`live.saved`).
- */
-function sendConfig(req: () => Promise<Response>, okMsg: string, onOk?: () => void, attempt = 0): void {
-  req()
-    .then((r) => {
-      if (r.ok) {
-        void r.json().then((j: { rev?: unknown }) => live.saved(j?.rev), () => undefined)
-          .then(() => { setStatus(okMsg, '#7fd67f'); onOk?.(); });
-        return;
-      }
-      if (r.status === 422) {
-        r.json().then((e: { error?: string }) => setStatus(`Сервер отклонил конфиг: ${e?.error ?? '422'}`, '#ffb020'))
-          .catch(() => setStatus('Сервер отклонил конфиг (422).', '#ffb020'));
-        return;
-      }
-      if (r.status === 409) {
-        const stale = (keys?: string[]): void => setStatus(`Не сохранено: на сервере ${keys?.length ? `«${keys.map((k) => LABELS[k as ConfigKey] ?? k).join('», «')}»` : 'эта таблица'} уже не та, что загружена здесь (сохранили в другой вкладке, инструментом или с другой машины) — правка затёрла бы её. Обнови страницу редактора и повтори правку.`, '#ff8080');
-        r.json().then((e: { conflicts?: string[] }) => stale(e?.conflicts), () => stale());
-        return;
-      }
-      throw new Error(String(r.status)); // 404/5xx — вероятно рестарт, ретраим
-    })
-    .catch(() => {
-      if (attempt < 4) {
-        setStatus(`Сервер перезапускается… повтор (${attempt + 1}/4)`, '#9fb0c0');
-        setTimeout(() => sendConfig(req, okMsg, onOk, attempt + 1), 800);
-      } else {
-        setStatus('Сервер недоступен — не сохранено. Запусти `npm run dev` и повтори.', '#ffb020');
-      }
-    });
-}
-
-/**
- * Игра серверно-авторитетна, поэтому оверрайд надо доставить именно СЕРВЕРУ (dev-роут
- * `/api/dev/config`, проксируется Vite на :3001) — иначе правки видит только клиент, а
- * статы/бой/лут считает сервер и в игре ничего не меняется. Клиентский путь
- * (BroadcastChannel) оставляем для мгновенного вью/тултипов.
- * ⭐ C-09: тело — поверх загруженного конфига (`liveBody`: не загружен — не шлём вовсе), вкладкам игры — после ответа сервера.
+ * Игра серверно-авторитетна, поэтому оверрайд надо доставить именно СЕРВЕРУ (dev-роут `/api/dev/config`, проксируется Vite на :3001) — иначе
+ * правки видит только клиент. Вкладкам игры — после ответа сервера (C-09). Запрос с авто-повтором на рестарт сервера — `ConfigChannel.push`.
  */
 function pushToServer(overrides: Record<string, unknown>, onOk?: () => void): void {
-  const body = liveBody(overrides);
-  if (!body) return;
-  sendConfig(
-    () => devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-    'Сохранено на сервере (переживёт рестарт) и применено к игре. Balance — сразу; статы монстров/лут — со следующего этажа.',
-    () => { broadcast(overrides); onOk?.(); },
-  );
-  setStatus('Сохранение на сервере (БД, для тестов)…', '#9fb0c0');
+  void channel.push(overrides, onOk);
 }
 
 /** Есть ли файл ассета по url. ТОЛЬКО достоверное отсутствие → false: 404 или HTML-заглушка. Транзиентную ошибку
@@ -1255,7 +1190,7 @@ async function assetExists(url: string): Promise<boolean> {
  * подтверждению удаляет из конфига и сохраняет. Решает «удалил файлы с диска, а в редакторе записи остались».
  */
 async function pruneDeadAssets(): Promise<void> {
-  if (!liveBody({})) return;   // C-09: уборка сохраняет таблицы целиком — только поверх загруженного конфига
+  if (!channel.body({})) return;   // C-09: уборка сохраняет таблицы целиком — только поверх загруженного конфига
   const textures = (data.textures as Record<string, unknown>[]) ?? [];
   const models = (data.models as Record<string, unknown>[]) ?? [];
   const materials = (data.materials as Record<string, unknown>[]) ?? [];
@@ -1391,14 +1326,6 @@ async function runValidation(): Promise<void> {
   showValidationModal(issues);
 }
 
-/** Просит сервер удалить оверрайд ключа (сброс к встроенному дефолту, персистентно). */
-function resetOnServer(key: string): void {
-  // ⚠ `devFetch`, а не голый `fetch`: инструментальные роуты требуют роли admin. Это был ЕДИНСТВЕННЫЙ
-  // вызов `/api/dev/*` в обход токена во всём проекте — то есть кнопка «Сбросить к дефолту» не работала
-  // НИКОГДА, отвечая 401, а сообщение об ошибке списывало это на недоступный сервер.
-  sendConfig(() => devFetch(`/api/dev/config/${encodeURIComponent(key)}`, { method: 'DELETE' }), 'Сброшено к дефолту на сервере.');
-}
-
 function exportJson(): void {
   const blob = new Blob([JSON.stringify(data[current], null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -1436,13 +1363,17 @@ function importJson(): void {
   input.click();
 }
 
+/**
+ * «Сбросить конфиг»: снять оверрайд таблицы на сервере (сброс к файлу данных, переживёт рестарт). ⭐ R22-08: форма, база записи и вкладки игры —
+ * только после ответа сервера и таблицей, которую он собрал (`ConfigChannel.reset`): раньше рабочая копия и вкладки получали встроенные
+ * дефолты ДО ответа, а отказ сервера (422, R21-01) оставлял их такими — и следующее «Применить» слало дефолты поверх правок хозяина.
+ */
 function resetConfig(): void {
-  data[current] = structuredClone((registry.snapshot() as Record<string, unknown>)[current]);
-  bc?.postMessage({ key: current, value: data[current] });
-  resetOnServer(current); // удалить персистентный оверрайд (сброс к дефолту, переживёт рестарт)
-  selectedIndex = 0;
-  render();
-  setStatus('Сброшено к значениям по умолчанию.', '#cbd');
+  const key = current;
+  void channel.reset(key, () => {
+    if (current === key) selectedIndex = 0;
+    render();
+  });
 }
 
 function btn(text: string, onClick: () => void, bg = '#2c2c3a', title = ''): HTMLButtonElement {

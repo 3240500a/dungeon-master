@@ -26,9 +26,16 @@ import {
  *        (R16 C-09, V1);
  *   s7 — два героя одного аккаунта: A выбросил вещь, A и B разом поднимают — поднимает один, вещь ровно в одной строке базы и в леджере
  *        у него (K3, R2-02);
- *   s8 — (E2E 29.09, шестой прогон) забег пати в городе: F5 — «Продолжить» к действующему напарнику (R18-04); «нет» просьбе — подсказка `vote`
- *        с `solo`, «Продолжить без пати» уводит забег просившему, спуск оставшегося за его спиной — отказ, потом `run` с кодом (R19-04, R20-04,
- *        R20-06); «Продолжить», отказанный `run` с кодом держателя, — к его ноде, как `EntryFlow`;
+ *   s8 — (E2E 29.09, шестой прогон; ⭐ D1 — правило общего забега) забег пати в городе: F5 — «Продолжить» к напарнику (правило 1); «нет» на
+ *        спуск — подсказка `vote` с `solo`, «Продолжить без пати» (`leave` и `join{resume, solo}` тем же сокетом) — своя комната на узле забега
+ *        (правило 3); спуск оставшегося — `run` с её кодом, его «Продолжить» — к ней (правило 4); «Продолжить», отказанный `run` с кодом
+ *        держателя, — к его ноде, как `EntryFlow`; ⭐ (E2E 30.09) `join{resume, solo}` БЕЗ права (голоса не было) — к держателю, не своя комната;
+ *   s9 — (E2E 30.09, седьмой прогон; D1) напарник МОЛЧИТ на спуск в городе: через срок голосования (60 с часов живого процесса) — подсказка
+ *        `vote` с `solo`, «Продолжить без пати» — своя комната на узле, молчавший «Продолжить» — к ней (~75 с);
+ *   s10 — (E2E 30.09, седьмой прогон; D1, R23-01, R21-04) гость без забега в городе держателя зовёт спуск, участник «за», другой «нет»: «Соло» — сказавшему
+ *        «за», не гостю и не отказавшему; спуск гостя после «Соло» — `run` с кодом новой комнаты, вход по нему — к пати в подземелье;
+ *   s11 — ТОЛЬКО кластер (E2E 30.09, седьмой прогон; D1): «Соло» с ДРУГОЙ ноды — отказ `run` с кодом держателя (комнаты с забегом там не появилось), тот
+ *        же вход у ноды держателя — своя комната на узле;
  *   drain — ТОЛЬКО кластер (от двух нод): пати (одно тело в бою) и соло посреди подземелья, слив их ноды; сейвы в базе не
  *         меньше увиденного, «Продолжить» сразу — на живой ноде тот же узел забега, и подъём слитой ноды его не сбрасывает.
  *   drainDead — ТОЛЬКО кластер: A погиб в пати, их ноду сливают; статус через гейтвей — «мёртв, оплачено», B продолжает на живой ноде,
@@ -108,9 +115,13 @@ class Conn {
   readonly errors: string[] = [];
   /** ⭐ E2E 29.09 (шестой прогон): отказы целиком — с полями `roomCode` и `solo` (s8). */
   readonly errFrames: Extract<ServerFrame, { t: 'error' }>[] = [];
-  /** Как голосует на `voteStart` (s8: «нет» просьбе напарника); окна голосования — `votes`. */
-  voteYes = true;
+  /** Как голосует на `voteStart` (s8: «нет» просьбе напарника; ⭐ s9: `null` — молчит, вкладка открыта); окна голосования — `votes`. */
+  voteYes: boolean | null = true;
   readonly votes: Extract<ServerFrame, { t: 'voteStart' }>[] = [];
+  /** ⭐ s9 (E2E 30.09, седьмой прогон): концы голосований — `voteEnd` (прошло ли). */
+  readonly voteEnds: boolean[] = [];
+  /** ⭐ s10: сколько «за» у открытого голосования (последний `voteUpdate`). */
+  voteTally = 0;
   readonly died: Extract<ServerFrame, { t: 'died' }>[] = [];
   /**
    * ⭐ E2E 29.09 (шестой прогон): золото из первого сейва ПОСЛЕ первого окна смерти — со штрафом (сейв с ним сервер шлёт за кадром `died`).
@@ -119,13 +130,15 @@ class Conn {
   goldAfterDeath?: number;
   /** Ответы на команды по номеру (D3). */
   readonly results = new Map<number, Extract<ServerFrame, { t: 'cmdResult' }>>();
+  /** ⭐ D1: сколько кадров `joined` пришло этому соединению (вход тем же сокетом после `leave` — новый). */
+  joins = 0;
   private seq = 0;
   private cmdSeq = 0;
   private lastHp = Infinity;
   constructor(readonly name: string) {}
 
   /** `via` — код комнаты, по которому гейтвей выбирает ноду, не входя в комнату (s8: «Продолжить» у держателя забега, как `EntryFlow`). */
-  async open(h: Hero, opts: { roomCode?: string; resume?: boolean; fresh?: boolean } = { fresh: true }, via?: string): Promise<void> {
+  async open(h: Hero, opts: { roomCode?: string; resume?: boolean; fresh?: boolean; solo?: boolean } = { fresh: true }, via?: string): Promise<void> {
     this.ws = new WebSocket(await nodeUrl(h, opts.roomCode ?? via));
     await new Promise<void>((res, rej) => { this.ws.once('open', () => res()); this.ws.once('error', rej); });
     this.ws.on('close', (code) => { this.closeCode = code; });
@@ -146,10 +159,12 @@ class Conn {
     }
     const f = JSON.parse(data.toString()) as ServerFrame;
     switch (f.t) {
-      case 'joined': this.playerId = f.playerId; this.roomCode = f.roomCode; this.save = f.save; this.floor = f.floor; break;
+      case 'joined': this.playerId = f.playerId; this.roomCode = f.roomCode; this.save = f.save; this.floor = f.floor; this.joins++; break;
       case 'areaChanged': this.floor = f.floor; this.world = undefined; break;
       case 'saveUpdate': this.save = f.save; if (this.died.length && this.goldAfterDeath === undefined) this.goldAfterDeath = f.save.gold; break;
-      case 'voteStart': this.votes.push(f); this.send({ t: 'vote', accept: this.voteYes }); break;
+      case 'voteStart': this.votes.push(f); if (this.voteYes !== null) this.send({ t: 'vote', accept: this.voteYes }); break;
+      case 'voteEnd': this.voteEnds.push(f.passed); this.voteTally = 0; break;
+      case 'voteUpdate': this.voteTally = f.yes; break;
       case 'died': this.died.push(f); break;
       case 'error': this.errors.push(`${f.code}: ${f.msg}`); this.errFrames.push(f); break;
       case 'cmdResult': if (f.id !== undefined) this.results.set(f.id, f); break;
@@ -164,6 +179,19 @@ class Conn {
     return this.results.get(id);
   }
   send(frame: unknown): void { if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame)); }
+  /**
+   * ⭐ D1: из комнаты — к своему забегу тем же сокетом, как веб-клиент (`EntryFlow.toEntry`): `leave`, статус забега и вход `opts`
+   * («Продолжить без пати» — `{resume, solo}`). Ответ — новый `joined` (или отказ).
+   */
+  async rejoin(h: Hero, opts: { resume: true; solo?: true } | { roomCode: string }): Promise<void> {
+    const n = this.joins, e = this.errFrames.length;
+    this.send({ t: 'leave' });
+    this.send({ t: 'runStatus', token: h.token, charId: h.charId });
+    this.send({ t: 'join', token: h.token, charId: h.charId, ...opts });
+    this.world = undefined;
+    if (!(await until(() => this.joins > n || this.errFrames.length > e, 10_000))) throw new Error(`${this.name}: нет ответа на вход тем же сокетом`);
+    if (this.joins === n) throw new Error(`${this.name}: вход тем же сокетом отклонён — ${this.errors.slice(-1).join('')}`);
+  }
   input(input: Partial<PlayerInput>): void {
     this.send({ t: 'input', seq: this.seq++, input: { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false, ...input } });
   }
@@ -609,7 +637,7 @@ async function s7(db: pg.Pool): Promise<Outcome> {
   }
 }
 
-/** Действует, как открытая вкладка у живого игрока: ввод с движением (R18-04: кадр ввода без движения действием не считается). */
+/** Открытая вкладка живого игрока: ввод с движением. ⭐ D1: сервер «действие» больше не меряет (держатель забега не отдаёт его отошедшему) — это просто живой клиент. */
 const active = (c: Conn): ReturnType<typeof setInterval> => {
   let k = 0;
   return setInterval(() => c.input({ move: { x: ++k % 2 ? 0.01 : -0.01, y: 0 } }), 200);
@@ -630,13 +658,13 @@ async function resumeLikeClient(c: Conn, h: Hero): Promise<void> {
 }
 
 /**
- * ⭐ s8 — забег пати в городе (E2E 29.09, шестой прогон): R18-04, R19-04, R20-04, R20-06 живьём. A и B прошли узел и вернулись в город (забег
- * припаркован, держит комната A). B перезагрузил вкладку — «Продолжить» к действующему A (R18-04). B зовёт спуск, A отвечает «нет» — подсказка
- * `vote` с `solo` (R19-04, R20-04); B «Продолжить без пати» (`leave`, статус, «Продолжить»): пока он не взял забег, спуск A — отказ `vote`
- * (R20-06), взял — новая комната на узле, спуск A — `run` с её кодом, по коду A — к B.
+ * ⭐ s8 — забег пати в городе (E2E 29.09, шестой прогон; ⭐ D1 — правило общего забега, docs/MULTIPLAYER.md). A и B прошли узел и вернулись в
+ * город (забег припаркован, держит комната A). B перезагрузил вкладку — «Продолжить» к A (правило 1). B зовёт спуск, A отвечает «нет» — подсказка
+ * `vote` с `solo` (правило 3); B «Продолжить без пати» (`leave`, статус и `join{resume, solo}` тем же сокетом) — новая комната на узле забега;
+ * спуск A — `run` с её кодом, «Продолжить» A — к B на узел (правило 4).
  */
 async function s8(): Promise<Outcome> {
-  console.log('\n[s8] забег пати в городе: F5 — к пати (R18-04), «нет» просьбе — забег просившему (R19-04, R20-04), спуск за спиной — отказ (R20-06)');
+  console.log('\n[s8] забег пати в городе: F5 — к пати, «нет» на спуск — «Соло» бесплатно, оставшийся — к нему (D1)');
   const ha = await hero('s8a'), hb = await hero('s8b');
   const A = new Conn('A'), B = new Conn('B');
   await A.open(ha);
@@ -653,16 +681,22 @@ async function s8(): Promise<Outcome> {
     await until(() => !!A.save?.run && !!B.save?.run, 3000);
     const node = A.save?.run?.currentNodeId;
     check(!!node && B.save?.run?.currentNodeId === node, `забег припаркован у обоих (узел ${node})`);
-    // R18-04: B перезагрузил вкладку в городе (чистый уход, грейса нет) — «Продолжить» к действующему A, а не один на узел.
+    // Правило 1: B перезагрузил вкладку в городе (чистый уход, грейса нет) — «Продолжить» к A, а не один на узел.
     clearInterval(keep[1]);
     B.kill();
     await sleep(1500);
     const B2 = new Conn('B2');
     conns.push(B2);
     await resumeLikeClient(B2, hb);
-    check(B2.roomCode === A.roomCode && B2.floor?.area === 'town', `R18-04: «Продолжить» B после F5 — к пати в город (${B2.roomCode}, ${B2.floor?.area})`);
+    check(B2.roomCode === A.roomCode && B2.floor?.area === 'town', `правило 1: «Продолжить» B после F5 — к пати в город (${B2.roomCode}, ${B2.floor?.area})`);
     keep.push(active(B2));
-    // R19-04, R20-04: B просит продолжить забег, A отвечает «нет» — подсказка `vote` с `solo`, пати в городе.
+    // ⭐ E2E 30.09 (седьмой прогон): изменённый клиент — «Соло» без права (голоса за продолжение не было): флаг ничего не даёт, «Продолжить» —
+    // к держателю, забег не раскалывается (иначе любой участник уводил бы узел во вторую комнату рядом с пати — сундуки и босс дважды).
+    await B2.rejoin(hb, { resume: true, solo: true });
+    await until(() => !!B2.me(), 5000);
+    check(B2.roomCode === A.roomCode && B2.floor?.area === 'town',
+      `«Соло» без права (голоса не было) — к держателю в город, забег не расколот (${B2.roomCode}, ${B2.floor?.area})`);
+    // Правило 3: B зовёт спуск, A отвечает «нет» — подсказка `vote` с `solo`, пати в городе.
     A.voteYes = false;
     await sleep(2500);
     const e0 = B2.errFrames.length;
@@ -670,41 +704,241 @@ async function s8(): Promise<Outcome> {
     await until(() => A.votes.length > 0 && B2.errFrames.length > e0, 5000);
     const hint = B2.errFrames.slice(e0).find((f) => f.code === 'vote');
     check(!!hint && hint.solo === true && A.floor?.area === 'town' && B2.floor?.area === 'town',
-      `R19-04: «нет» A — подсказка B: vote, solo ${String(hint?.solo)}, пати в городе`);
-    // «Продолжить без пати»: `leave` по живому сокету, статус забега, «Продолжить».
-    B2.send({ t: 'leave' });
-    await sleep(800);
-    const st = await lobby(hb, 'runStatus', 'runStatus');
-    check(st?.t === 'runStatus' && st.hasRun, `статус забега B: ${JSON.stringify(st)}`);
-    // R20-06: пока B не взял забег — спуск A за его спиной не продолжает его.
+      `правило 3: «нет» A — подсказка B: vote, solo ${String(hint?.solo)}, пати в городе`);
+    // «Продолжить без пати»: `leave`, статус и `join{resume, solo}` тем же сокетом — своя комната, сразу на узле забега, бесплатно.
+    const gold = B2.save?.gold;
+    await B2.rejoin(hb, { resume: true, solo: true });
+    await until(() => !!B2.me(), 5000);
+    check(B2.roomCode !== A.roomCode && B2.floor?.area === 'dungeon' && B2.floor.runNodeId === node && B2.save?.gold === gold,
+      `правило 3: «Соло» B — новая комната ${B2.roomCode}, ${B2.floor?.area}, узел ${B2.floor?.runNodeId}, золото ${B2.save?.gold} (было ${gold})`);
+    // Правило 4: спуск A — `run` с кодом комнаты B; «Продолжить» A — к B на узел.
     A.voteYes = true;
+    await sleep(2500);
     const ea = A.errFrames.length;
     A.send({ t: 'descend', difficultyId: 'normal' });
-    await until(() => A.errFrames.length > ea || A.floor?.area !== 'town', 4000);
-    const handed = A.errFrames.slice(ea).find((f) => f.code === 'vote');
-    check(!!handed && A.floor?.area === 'town', `R20-06: спуск A за спиной ушедшего — отказ vote («${handed?.msg.slice(0, 40) ?? A.floor?.area}…»)`);
+    await until(() => A.errFrames.length > ea, 4000);
+    const run = A.errFrames.slice(ea).find((f) => f.code === 'run');
+    check(!!run && run.roomCode === B2.roomCode, `спуск A — run с кодом ${run?.roomCode ?? '—'} (комната B ${B2.roomCode})`);
+    clearInterval(keep[0]);
+    await A.rejoin(ha, { resume: true });
+    await until(() => !!A.me(), 5000);
+    check(A.roomCode === B2.roomCode && A.floor?.area === 'dungeon', `правило 4: «Продолжить» A — к B на узел (${A.roomCode}, ${A.floor?.area})`);
+    // Ожидаемые отказы: подсказка (`vote`), `run` с кодом (A); прочих быть не должно.
+    const extra = conns.flatMap((c) => c.errFrames.filter((f) => f.code !== 'vote' && !(c === A && f.code === 'run')).map((f) => `${c.name} ${f.code}: ${f.msg}`));
+    check(extra.length === 0, `прочих кадров error: ${extra.join(' | ') || 0}`);
+    return 'done';
+  } finally {
+    for (const t of keep) clearInterval(t);
+    for (const c of conns) await c.leave().catch(() => undefined);
+    noKick(...conns);
+  }
+}
+
+/**
+ * ⭐ s9 — (E2E 30.09, седьмой прогон; D1, правила 2–3) напарник МОЛЧИТ на спуск в городе держателя: вкладка открыта, ввод идёт, а на голос он не
+ * отвечает. Голос вне подземелья живёт `VOTE_TIMEOUT_MS` (60 с) — по сроку он не прошёл: `voteEnd` без перехода, позвавшему подсказка `vote` с
+ * `solo`, и «Продолжить без пати» — своя комната на узле забега, бесплатно; молчавший «Продолжить» — к нему. Срок меряют часы живого процесса
+ * (шаг комнаты), а не поддельные часы юнит-теста, — это и проверяется. Сценарий длинный (~75 с), поэтому свой, а не часть s8.
+ */
+async function s9(): Promise<Outcome> {
+  console.log('\n[s9] забег пати в городе: напарник молчит на спуск — через срок голосования «Соло» (D1, правила 2–3)');
+  const ha = await hero('s9a'), hb = await hero('s9b');
+  const A = new Conn('A'), B = new Conn('B');
+  await A.open(ha);
+  await B.open(hb, { roomCode: A.roomCode });
+  const conns: Conn[] = [A, B];
+  const keep: ReturnType<typeof setInterval>[] = [active(A), active(B)];
+  try {
+    if (!check(B.roomCode === A.roomCode, `B в комнате A (${B.roomCode})`) || !check(await toDungeon(A, [A, B]), 'пати в подземелье')) return 'done';
+    await sleep(2500);   // голос — не раньше `VOTE_COOLDOWN_MS` после перехода
+    A.send({ t: 'return' });
+    if (!(await until(() => A.floor?.area === 'town' && B.floor?.area === 'town', 10_000))) {
+      return retry(`пати не вернулась в город порталом (A ${A.floor?.area}, B ${B.floor?.area}: ${[...A.errors, ...B.errors].join(' | ')})`);
+    }
+    await until(() => !!A.save?.run && !!B.save?.run, 3000);
+    const node = A.save?.run?.currentNodeId;
+    check(!!node && B.save?.run?.currentNodeId === node, `забег припаркован у обоих (узел ${node})`);
+    // Правило 2: B зовёт спуск, A молчит (вкладка открыта — ввод идёт). Срок вышел — голос не прошёл: правило 3.
+    A.voteYes = null;
+    await sleep(2500);
+    const e0 = B.errFrames.length, v0 = A.votes.length, end0 = B.voteEnds.length, t0 = Date.now();
+    B.send({ t: 'descend', difficultyId: 'normal' });
+    const hinted = await until(() => B.errFrames.slice(e0).some((f) => f.code === 'vote'), 80_000);
+    const dt = (Date.now() - t0) / 1000;
+    const hint = B.errFrames.slice(e0).find((f) => f.code === 'vote');
+    check(A.votes.length > v0, 'A видит голосование за спуск (и молчит)');
+    check(hinted && hint?.solo === true && dt >= 55 && dt <= 75 && A.floor?.area === 'town' && B.floor?.area === 'town',
+      `правило 3 по сроку: подсказка B через ${dt.toFixed(1)} с (срок 60): vote, solo ${String(hint?.solo)}, пати в городе`);
+    check(B.voteEnds.slice(end0).length === 1 && B.voteEnds.at(-1) === false, `голосование закрыто без перехода: ${JSON.stringify(B.voteEnds.slice(end0))}`);
+    // «Продолжить без пати» — своя комната на узле забега, бесплатно.
+    const gold = B.save?.gold;
+    await B.rejoin(hb, { resume: true, solo: true });
+    await until(() => !!B.me(), 5000);
+    check(B.roomCode !== A.roomCode && B.floor?.area === 'dungeon' && B.floor.runNodeId === node && B.save?.gold === gold,
+      `«Соло» B — новая комната ${B.roomCode}, ${B.floor?.area}, узел ${B.floor?.runNodeId}, золото ${B.save?.gold} (было ${gold})`);
+    // Молчавший A «Продолжить» — к B на узел (правило 4).
+    clearInterval(keep[0]);
+    await A.rejoin(ha, { resume: true });
+    await until(() => !!A.me(), 5000);
+    check(A.roomCode === B.roomCode && A.floor?.area === 'dungeon', `«Продолжить» A — к B на узел (${A.roomCode}, ${A.floor?.area})`);
+    const extra = conns.flatMap((c) => c.errFrames.filter((f) => !(c === B && f.code === 'vote')).map((f) => `${c.name} ${f.code}: ${f.msg}`));
+    check(extra.length === 0, `прочих кадров error: ${extra.join(' | ') || 0}`);
+    return 'done';
+  } finally {
+    for (const t of keep) clearInterval(t);
+    for (const c of conns) await c.leave().catch(() => undefined);
+    noKick(...conns);
+  }
+}
+
+/**
+ * ⭐ s10 — (E2E 30.09, седьмой прогон; D1, R23-01, R21-04) ГОСТЬ в городе держателя: A и B прошли узел и вернулись (забег держит комната A), G — герой
+ * другого аккаунта БЕЗ забега — вошёл к ним по коду. Спуск зовёт G (в городе держателя — любой, правило 2), B «за», A «нет»: право «Соло» и подсказка —
+ * B (сказал «за» и участник забега), а не G (забега у него нет) и не A (отказал). B «Соло» — своя комната на узле; спуск G в городе A — отказ `run` с
+ * кодом комнаты B, и его кнопка («Войти в комнату …»: `leave`, статус «забега нет», `join{roomCode}` тем же сокетом) — к B в подземелье. A «Продолжить» —
+ * туда же: у забега одна комната.
+ */
+async function s10(): Promise<Outcome> {
+  console.log('\n[s10] гость в городе держателя зовёт спуск, «нет» участника: «Соло» — сказавшему «за», гость — к пати по коду (D1, R23-01, R21-04)');
+  const ha = await hero('s10a'), hb = await hero('s10b'), hg = await hero('s10g');
+  const A = new Conn('A'), B = new Conn('B'), G = new Conn('G');
+  await A.open(ha);
+  await B.open(hb, { roomCode: A.roomCode });
+  const conns: Conn[] = [A, B, G];
+  const keep: ReturnType<typeof setInterval>[] = [active(A), active(B)];
+  try {
+    if (!check(B.roomCode === A.roomCode, `B в комнате A (${B.roomCode})`) || !check(await toDungeon(A, [A, B]), 'пати в подземелье')) return 'done';
+    await sleep(2500);
+    A.send({ t: 'return' });
+    if (!(await until(() => A.floor?.area === 'town' && B.floor?.area === 'town', 10_000))) {
+      return retry(`пати не вернулась в город порталом (A ${A.floor?.area}, B ${B.floor?.area}: ${[...A.errors, ...B.errors].join(' | ')})`);
+    }
+    await until(() => !!A.save?.run && !!B.save?.run, 3000);
+    const node = A.save?.run?.currentNodeId;
+    check(!!node && B.save?.run?.currentNodeId === node, `забег припаркован у A и B (узел ${node})`);
+    await G.open(hg, { roomCode: A.roomCode });
+    keep.push(active(G));
+    check(G.roomCode === A.roomCode && G.floor?.area === 'town' && !G.save?.run, `G без забега — в городе A (${G.roomCode})`);
+    // Правило 2 + R23-01: спуск зовёт G, B «за», A «нет» — «Соло» получает B. «Нет» A — ПОСЛЕ «за» B: право — тем, кто сказал «за» к концу
+    // голосования; «нет», легшее раньше «за» B, закрыло бы голосование, когда «за» у B ещё не было (первый прогон s10 так и лёг — сервер прав).
+    A.voteYes = null;
+    await sleep(2500);
+    const eb = B.errFrames.length, eg = G.errFrames.length, ea = A.errFrames.length, vb = B.voteEnds.length;
+    G.send({ t: 'descend', difficultyId: 'normal' });
+    check(await until(() => A.voteTally >= 2, 4000), `голос G: «за» G и B (${A.voteTally})`);
+    A.send({ t: 'vote', accept: false });
+    await until(() => B.voteEnds.length > vb && B.errFrames.length > eb, 6000);
+    const hintB = B.errFrames.slice(eb).find((f) => f.code === 'vote');
+    check(!!hintB && hintB.solo === true, `R23-01: подсказка «Соло» — B, сказавшему «за» (${hintB ? `vote, solo ${String(hintB.solo)}` : 'нет'})`);
+    check(!G.errFrames.slice(eg).some((f) => f.solo) && !A.errFrames.slice(ea).some((f) => f.solo),
+      `у G (без забега) и A (отказал) права «Соло» нет: ${[...G.errFrames.slice(eg), ...A.errFrames.slice(ea)].map((f) => f.code).join(',') || '—'}`);
+    check([A, B, G].every((c) => c.floor?.area === 'town'), 'все в городе');
+    // B «Соло».
+    await B.rejoin(hb, { resume: true, solo: true });
+    await until(() => !!B.me(), 5000);
+    check(B.roomCode !== A.roomCode && B.floor?.area === 'dungeon' && B.floor.runNodeId === node, `«Соло» B — комната ${B.roomCode}, ${B.floor?.area}, узел ${B.floor?.runNodeId}`);
+    // R21-04: спуск G в городе A — отказ `run` с кодом комнаты B; кнопка — вход по коду.
+    A.voteYes = true;
+    await sleep(2500);
+    const eg2 = G.errFrames.length;
+    G.send({ t: 'descend', difficultyId: 'normal' });
+    await until(() => G.errFrames.length > eg2, 4000);
+    const run = G.errFrames.slice(eg2).find((f) => f.code === 'run');
+    check(!!run && run.roomCode === B.roomCode && G.floor?.area === 'town', `R21-04: спуск G — run с кодом ${run?.roomCode ?? '—'} (комната B ${B.roomCode})`);
+    if (run?.roomCode) {
+      await G.rejoin(hg, { roomCode: run.roomCode });
+      await until(() => !!G.me(), 5000);
+      check(G.roomCode === B.roomCode && G.floor?.area === 'dungeon' && G.floor.runNodeId === node, `G по коду — к B на узел (${G.roomCode}, ${G.floor?.area}, ${G.floor?.runNodeId})`);
+    }
+    clearInterval(keep[0]);
+    await A.rejoin(ha, { resume: true });
+    await until(() => !!A.me(), 5000);
+    check(A.roomCode === B.roomCode && A.floor?.area === 'dungeon', `«Продолжить» A — к B на узел (${A.roomCode}, ${A.floor?.area})`);
+    await sleep(500);
+    const ids = new Set(B.world?.players.map((p) => p.id));
+    check([A, B, G].every((c) => ids.has(c.playerId)), `в комнате забега все трое (${ids.size})`);
+    // Ожидаемые отказы: подсказка B (`vote`), отказы голоса у G и A без `solo` (`vote`), `run` с кодом у G.
+    const extra = conns.flatMap((c) => c.errFrames.filter((f) => f.code !== 'vote' && !(c === G && f.code === 'run')).map((f) => `${c.name} ${f.code}: ${f.msg}`));
+    check(extra.length === 0, `прочих кадров error: ${extra.join(' | ') || 0}`);
+    return 'done';
+  } finally {
+    for (const t of keep) clearInterval(t);
+    for (const c of conns) await c.leave().catch(() => undefined);
+    noKick(...conns);
+  }
+}
+
+/** Живые ноды кластера (служебная ручка: с машины сервера или с ключом чтения метрик, R6-20); одиночный сервер — пусто. */
+async function liveNodes(): Promise<{ id: string; url: string; draining: boolean }[]> {
+  const key = process.env.DM_METRICS_KEY ?? '';
+  const cl = await fetch(`${BASE}/api/cluster`, { headers: key ? { authorization: `Bearer ${key}` } : {} })
+    .then((r) => (r.ok ? r.json() as Promise<{ nodes: { id: string; url: string; draining: boolean }[] }> : undefined)).catch(() => undefined);
+  return cl?.nodes.filter((n) => !n.draining) ?? [];
+}
+
+/**
+ * ⭐ s11 — ТОЛЬКО кластер (E2E 30.09, седьмой прогон; D1, правило 3 + C-05/C-08): «СОЛО» С ДРУГОЙ НОДЫ. Голос B за продолжение не прошёл («нет» A), B закрыл
+ * вкладку и вернулся на ДРУГУЮ ноду (гейтвей ведёт на самую свободную): «Продолжить без пати» там — отказ `run` с кодом держателя, а комнаты с забегом
+ * на чужой ноде не появляется; тот же вход у ноды держателя (`EntryFlow.runHeld` повторяет его с `solo`) — право цело, своя комната на узле. Раньше
+ * живьём этот путь не ходил никто: s8 зовёт «Соло» тем же сокетом, на ноде держателя.
+ */
+async function s11(): Promise<Outcome> {
+  console.log('\n[s11] «Соло» с другой ноды: отказ run с кодом держателя, у его ноды — своя комната на узле (D1, кластер)');
+  if ((await liveNodes()).length < 2) { console.log('    (не кластер или живых нод меньше двух — пропуск)'); return 'done'; }
+  const ha = await hero('s11a'), hb = await hero('s11b');
+  const A = new Conn('A'), B = new Conn('B');
+  await A.open(ha);
+  await B.open(hb, { roomCode: A.roomCode });
+  const conns: Conn[] = [A, B];
+  const keep: ReturnType<typeof setInterval>[] = [active(A), active(B)];
+  try {
+    if (!check(B.roomCode === A.roomCode, `B в комнате A (${B.roomCode})`) || !check(await toDungeon(A, [A, B]), 'пати в подземелье')) return 'done';
+    await sleep(2500);
+    A.send({ t: 'return' });
+    if (!(await until(() => A.floor?.area === 'town' && B.floor?.area === 'town', 10_000))) {
+      return retry(`пати не вернулась в город порталом (A ${A.floor?.area}, B ${B.floor?.area}: ${[...A.errors, ...B.errors].join(' | ')})`);
+    }
+    await until(() => !!A.save?.run && !!B.save?.run, 3000);
+    const node = A.save?.run?.currentNodeId;
+    A.voteYes = false;
+    await sleep(2500);
+    const e0 = B.errFrames.length;
+    B.send({ t: 'descend', difficultyId: 'normal' });
+    await until(() => B.errFrames.length > e0, 5000);
+    check(B.errFrames.slice(e0).some((f) => f.code === 'vote' && f.solo), `«нет» A — у B право «Соло» (${B.errFrames.slice(e0).map((f) => f.code).join(',')})`);
+    // B закрыл вкладку; комната на ДРУГОЙ ноде — ориентир маршрута (гейтвей ведёт к ноде кода, R5-14: первая буква кода — нода).
+    clearInterval(keep[1]);
+    B.kill();
+    const hd = await hero('s11d');
+    let D = new Conn('D');
+    await D.open(hd);
+    for (let i = 0; i < 8 && D.roomCode[0] === A.roomCode[0]; i++) { await D.leave(); D = new Conn('D'); await D.open(hd); }
+    conns.push(D);
+    if (!check(D.roomCode[0] !== A.roomCode[0], `ориентир на другой ноде: ${D.roomCode} (держатель ${A.roomCode})`)) return 'done';
+    await sleep(1500);
     const B3 = new Conn('B3');
     conns.push(B3);
-    await resumeLikeClient(B3, hb);
-    await until(() => !!B3.me(), 5000);
-    check(B3.roomCode !== A.roomCode && B3.floor?.area === 'dungeon' && B3.floor.runNodeId === node,
-      `R19-04: «Продолжить» B — забег ему: новая комната ${B3.roomCode}, ${B3.floor?.area}, узел ${B3.floor?.runNodeId}`);
-    // Спуск A — `run` с кодом комнаты B; по коду A — к B на узел.
+    await B3.open(hb, { resume: true, solo: true }, D.roomCode).catch(() => undefined);
+    const held = B3.errFrames.find((f) => f.code === 'run');
+    check(!B3.save && held?.roomCode === A.roomCode,
+      `«Соло» на чужой ноде (${B3.ws ? new URL(B3.ws.url).port : '—'}) — отказ run с кодом держателя ${held?.roomCode ?? '—'}${B3.save ? `, а вошёл в ${B3.roomCode} (${B3.floor?.area})` : ''}`);
+    B3.ws?.close();
+    // Тот же вход у ноды держателя — право цело: своя комната на узле, забег держатель отпустил.
+    const B4 = new Conn('B4');
+    conns.push(B4);
+    await B4.open(hb, { resume: true, solo: true }, A.roomCode);
+    await until(() => !!B4.me(), 5000);
+    check(B4.roomCode !== A.roomCode && B4.roomCode[0] === A.roomCode[0] && B4.floor?.area === 'dungeon' && B4.floor.runNodeId === node,
+      `у ноды держателя — своя комната ${B4.roomCode}, ${B4.floor?.area}, узел ${B4.floor?.runNodeId}`);
+    A.voteYes = true;
     await sleep(2500);
-    const ea2 = A.errFrames.length;
+    const ea = A.errFrames.length;
     A.send({ t: 'descend', difficultyId: 'normal' });
-    await until(() => A.errFrames.length > ea2, 4000);
-    const run = A.errFrames.slice(ea2).find((f) => f.code === 'run');
-    check(!!run && run.roomCode === B3.roomCode, `спуск A — run с кодом ${run?.roomCode ?? '—'} (комната B ${B3.roomCode})`);
-    clearInterval(keep[0]);
-    await A.leave();
-    const A2 = new Conn('A2');
-    conns.push(A2);
-    await A2.open(ha, { roomCode: B3.roomCode });
-    await until(() => !!A2.me(), 5000);
-    check(A2.roomCode === B3.roomCode && A2.floor?.area === 'dungeon', `A по коду — к B на узел (${A2.roomCode}, ${A2.floor?.area})`);
-    // Ожидаемые отказы: подсказка и отказ за спиной (`vote`), `run` с кодом (A); прочих быть не должно.
-    const extra = conns.flatMap((c) => c.errFrames.filter((f) => f.code !== 'vote' && !(c === A && f.code === 'run')).map((f) => `${c.name} ${f.code}: ${f.msg}`));
+    await until(() => A.errFrames.length > ea, 4000);
+    const run = A.errFrames.slice(ea).find((f) => f.code === 'run');
+    check(!!run && run.roomCode === B4.roomCode, `спуск A — run с кодом ${run?.roomCode ?? '—'} (комната B ${B4.roomCode}): у забега одна комната`);
+    const extra = conns.flatMap((c) => c.errFrames.filter((f) => !(c === B && f.code === 'vote') && !(c === B3 && f.code === 'run') && !(c === A && f.code === 'run'))
+      .map((f) => `${c.name} ${f.code}: ${f.msg}`));
     check(extra.length === 0, `прочих кадров error: ${extra.join(' | ') || 0}`);
     return 'done';
   } finally {
@@ -858,7 +1092,7 @@ async function drain(db: pg.Pool): Promise<Outcome> {
 async function main(): Promise<void> {
   const db = new pg.Pool({ connectionString: PG, max: 2 });
   const all: [string, () => Promise<Outcome>][] = [
-    ['s1', s1], ['s2', s2], ['s3a', () => s3(true)], ['s3b', () => s3(false)], ['s4', s4], ['s5', s5], ['s6', () => s6(db)], ['s7', () => s7(db)], ['s8', s8],
+    ['s1', s1], ['s2', s2], ['s3a', () => s3(true)], ['s3b', () => s3(false)], ['s4', s4], ['s5', s5], ['s6', () => s6(db)], ['s7', () => s7(db)], ['s8', s8], ['s9', s9], ['s10', s10], ['s11', s11],
     ['drain', () => drain(db)], ['drainDead', () => drainDead(db)],
   ];
   try {

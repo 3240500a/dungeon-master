@@ -37,17 +37,25 @@ import { fuzzRng, mixSeed, shrinkOps, type FuzzRng } from './coopLifecycle.fuzzK
  *  5 — никто не застревает: в конце каждый герой проходит «статус → Завершить (если забег) → вход» и стоит в городе; ⭐ C-04: «Продолжить»
  *      припаркованного не сажает в комнату, чей забег — не его (`5-resume-foreign-run`); ⭐ C-05: у забега в сейве всегда есть путь в игру без
  *      штрафа — «Продолжить» входит или отказывает С КОДОМ комнаты, что держит его забег, а на «нет мест» «Соло» — город, забег цел
- *      (`5-resume-dead-end`; проверяется и перед эпилогом, пока комнаты живы; пятый герой — операция `recruit`, из своего потока); ⭐ R17-02: и
- *      продолжить свой забег можно без голоса другого подключённого, если забег не в подземелье: «Продолжить» не сажает живого участника в
- *      город (арену) держателя, где его спуск ждал бы голоса напарника (`5-run-hostage`; раньше стоящий в городе держал чужой забег заложником
- *      до «Забросить»); ⭐ R18-04: но только ОТОШЕДШИЙ держит заложником — город, где подключённый участник забега действует, забег не отдаёт:
- *      вернувшийся после перезагрузки (операция `f5`, из своего потока) садится к нему (`5-resume-split` — забег увезли от действующего напарника,
- *      `5-run-hostage` — посадили к одним отошедшим); ⭐ R19-04: и не к действующему, чью просьбу продолжить забег (спуск из его города) он
- *      отверг «нет» или не принял за `RUN_ASK_MS` (`5-run-hostage`; операция `obstruct` — держатель действует и отвечает «нет» или молчит, из
- *      своего потока; `5-resume-split` — увезли от действующего без такой просьбы); ⭐ R20-02: отказ в счёт, только сказанный позвавшему и свежий
- *      (`RUN_ASK_MS` с того мига), а своя отмена, конец голосования без «нет» другого и возврат к пати просьбу снимают (модель `W.asks` — из входов
- *      комнаты); ⭐ R20-03: спуск при слоте голосования, занятом чужим, — тоже просьба (`obstruct.hog` — держатель зовёт арену снова на каждый её
- *      конец); ⭐ R20-06: город не продолжает забег, отданный ушедшему (`5-ask-wiped`; `obstruct.grab` — оставшийся один зовёт спуск); ⭐ R16 C-09:
+ *      (`5-resume-dead-end`; проверяется и перед эпилогом, пока комнаты живы; пятый герой — операция `recruit`, из своего потока); ⭐ D1: ОДНО
+ *      ПРАВИЛО ОБЩЕГО ЗАБЕГА (docs/MULTIPLAYER.md) вместо частных случаев R17-02…R20-06 — ЖИВОСТЬ: участник, который хочет продолжить свой забег,
+ *      за `WANT_STEPS` шагов клиента по правилу (вне игры — «Продолжить»; в городе — спуск, с арены — «в город»; голос не прошёл —
+ *      «Продолжить без пати»; отказ `run` — «Продолжить») стоит в подземелье этого забега, без «Забросить» и штрафа, как бы ни отвечали
+ *      напарники — «за», «нет» или молча (`5-run-stuck`, `5-run-paid`; операция `want`, из своего потока, и фаза эпилога для каждого героя с
+ *      забегом); исключения — забег кончился, погибший в нём (K1) и пати в подземелье без места (правило 4); ПРАВИЛО: «Продолжить» не собирает
+ *      забег в новой комнате, пока его держит другая (`5-resume-split`), а держатель отпускает забег только «Продолжить без пати» того, чей голос
+ *      за продолжение там не прошёл (подсказка `solo` — модель прав из кадров), или участнику, которому нет места (`5-solo-unearned`; операция
+ *      `solo`, из своего потока); ⭐ R22-05: голос, за который все подключённые, не проваливается (ждёт транзакцию сундука) —
+ *      `5-vote-consented-failed`; перезагрузка в городе (операция `f5`) и держатель, что не хочет идти (операция `obstruct`: действует и отвечает
+ *      «нет» или молчит; `hog` — занимает слот голосования ареной, открывая её снова на каждый конец; `grab` — оставшись один, зовёт спуск), —
+ *      тоже из своих потоков; ⭐ R21-04: гость БЕЗ своего забега, чей спуск в городе отказан `run` с кодом держателя (забег хозяина ведёт другая
+ *      комната), по кнопке вопроса в игре (веб — `EntryFlow.runOffer`: `leave`, статус забега, «забега нет» — `join{roomCode}`) входит в комнату
+ *      этого кода, а не остаётся вне игры (`5-offer-dead-end`; операция `follow`, из своего потока); ⭐ R23-01: и когда слот голосования
+ *      занимает третий — гость без забега (альт) зовёт тем же видом (город — спуск, арена — «в город») снова на каждый конец (операция `reopen`,
+ *      из своего потока): провал даёт «Соло» каждому участнику, сказавшему «за», а не одному позвавшему (`5-run-stuck`); ⭐ R23-02: ЖИВОСТЬ В
+ *      ПОДЗЕМЕЛЬЕ — герой в подземелье своего забега, который хочет дальше, за ограниченное число сверок уходит с узла, когда напарники на связи
+ *      «за» или молчат (`5-node-stuck`; операция `advance`, из своего потока): молчащий к сроку голос не держит — кроме молчащего в опасности и
+ *      одних мёртвых «за» (правило `Room.voteReady`); ⭐ R16 C-09:
  *      экран «Продолжить / Забросить» не врёт о цене — статус забега сказал «погиб в нём, штраф взят» (`dead`) ⇔ «Завершить» с того же
  *      экрана штрафа не берёт (`5-status-promise`; «статус перед Завершить» — флаг `ask` операции `abandon`, из своего потока);
  *  6 — ничего не бросает (исключения команд и кадров, шага комнаты, необработанные отказы) и не виснет: операция и эпилог кончаются за
@@ -68,10 +76,11 @@ import { fuzzRng, mixSeed, shrinkOps, type FuzzRng } from './coopLifecycle.fuzzK
  *      из этого кадра (`client/ui/voteText.ts`), и раньше финал звал «спуском», а принявший уходил в город.
  *
  * Умолчание — фиксированные сиды (полный прогон — секунды). `DM_FUZZ_SEEDS=N` — N сидов подряд с `DM_FUZZ_SEED0` (по умолчанию 1),
- * `DM_FUZZ_OPS` — длина последовательности, `DM_FUZZ_FAULTS=0` — без сбоев базы, `DM_FUZZ_SHRINK=0` — без сжатия,
+ * `DM_FUZZ_OPS` — длина последовательности, `DM_FUZZ_FAULTS=0` — без сбоев базы, `DM_FUZZ_ADMIN=0` — без обгонов администратора
+ * (`adminBump`: ни одно нарушение не прощается корнем `ADMIN-row-wins`, широким — «герой хоть раз обогнан»), `DM_FUZZ_SHRINK=0` — без сжатия,
  * `DM_FUZZ_SHRINK_KNOWN=1` — сжимать и известные корни, `DM_FUZZ_TRACE=1` — печатать операции и состояние после каждой (с
  * `DM_FUZZ_TRACE_LOG=1` — и лог комнаты и менеджера за операцию), `DM_FUZZ_LOG=<файл>` — нарушения сразу в файл (большой прогон),
- * `DM_FUZZ_HEAP=N` — куча каждые N сидов, `DM_FUZZ_SELFTEST=v1|v2|c03|c04|c05|c06|c12|r16c03|c09|r1502|r1502tx|r1601|r1607|r1604|r1702|r1801|r1802|r1804|r1904|r1905|r2002|r2003|r2006` — самопроверка (вернуть исправленный корень —
+ * `DM_FUZZ_HEAP=N` — куча каждые N сидов, `DM_FUZZ_SELFTEST=v1|v2|c03|c04|c05|c06|c12|r16c03|c09|r1502|r1502tx|r1601|r1607|r1604|r1801|r1802|r1905|d1solo|d1timeout|d1unearned|z3dormant|r2301|r2302` — самопроверка (вернуть исправленный корень —
  * фаззер обязан найти),
  * `DM_FUZZ_REPLAY='{"seed":…,"ops":[…]}'` — повтор последовательности. Нарушение печатается с сидом и СЖАТОЙ последовательностью
  * (выбрасываются куски, пока нарушение с той же меткой воспроизводится). Большой прогон — параллельно, диапазонами сидов:
@@ -92,6 +101,11 @@ const FUZZ_TRACE = process.env.DM_FUZZ_TRACE === '1';
 /** `DM_FUZZ_FAULTS=0` — без сбоев базы: весь бюджет операций — на игру (пути без сбоев глубже). */
 const FUZZ_FAULTS = process.env.DM_FUZZ_FAULTS !== '0';
 /**
+ * ⭐ Z: `DM_FUZZ_ADMIN=0` — без обгонов администратора. Корень `ADMIN-row-wins` прощает метки из `ADMIN_ROW_WINS` герою, обогнанному хоть раз
+ * за прогон, до конца прогона, — и может заслонить настоящий корень той же метки. Прогон без них не прощает ничего.
+ */
+const FUZZ_ADMIN = process.env.DM_FUZZ_ADMIN !== '0';
+/**
  * `DM_FUZZ_LOG=<файл>` — строки нарушений (`@@V`) и сжатые отчёты ещё и в файл, СРАЗУ: вывод воркера vitest печатается только в конце теста,
  * и большой прогон, упавший посреди (память, таймаут), терял всё найденное. `DM_FUZZ_HEAP=N` — куча воркера каждые N сидов (с
  * `--expose-gc` — после сборки): рост от сида к сиду — утечка.
@@ -101,22 +115,34 @@ const FUZZ_HEAP = Number(process.env.DM_FUZZ_HEAP ?? 0) || 0;
 /** `DM_FUZZ_SELFTEST=v1|v2` — вернуть исправленный корень (см. `beforeAll`): прогон обязан упасть на его метках. */
 const FUZZ_SELFTEST = process.env.DM_FUZZ_SELFTEST ?? '';
 /**
- * ⭐ R17-02: самопроверка `r1702` (держатель в городе забег не отдаёт) — и из теста: зубы `5-run-hostage` идут в прогоне по умолчанию.
  * ⭐ R18-01 `r1801` — штраф смерти снова только в `onPlayerDeath` (после рассылки мира); R18-02 `r1802` — недолёгший свод комнат не виден входу
- * (`owes` — ложь); R18-04 `r1804` — держатель в городе забег отдаёт и действующему напарнику (`runActive` — ложь). ⭐ R19-04 `r1904` — просьба
- * продолжить забег, отвергнутая или не принятая, не в счёт (`runRefused` — ложь); R19-05 `r1905` — пауза и уход комнаты свод не дописывают.
- * ⭐ R20-02 `r2002` — отказ без срока, и ждущая просьба старше `RUN_ASK_MS` — отказ (как до правки); R20-03 `r2003` — спуск при занятом слоте
- * голосования не просьба; R20-06 `r2006` — город продолжает забег, отданный ушедшему (`runHandedOff` — ложь).
+ * (`owes` — ложь); R19-05 `r1905` — пауза и уход комнаты свод не дописывают. ⭐ D1 (правило общего забега) — и из теста: `d1solo` — держатель
+ * «Соло» не отпускает забег (`handRun` — ложь), `d1timeout` — голосование вне подземелья без срока (`voteExpired` молчит): оба — `5-run-stuck`
+ * (напарник отвечает «нет» или молчит — выхода к забегу нет); `d1unearned` — право «Соло» у всех (`soloRight` — истина): `5-solo-unearned`.
+ * ⭐ R21-04 `r2104` — клиент, как до правки: кнопка «к пати» герою без забега на статус «забега нет» ведёт в лобби без кода (входа нет): `5-offer-dead-end`.
+ * ⭐ Z3 `z3dormant` — спящий замок забега просыпается с вернувшимся участником, как до правки (`Room.dropDormantRun` молчит): `5-resume-split`.
+ * ⭐ R23-01 `r2301` — право «Соло» по провалу голоса снова только позвавшему (и не на его отмену): `5-run-stuck` (гость занимает слот спуском).
+ * ⭐ R23-02 `r2302` — голос в подземелье снова без срока: `5-node-stuck` (напарник на связи молчит).
  */
 const teeth = {
-  r1702: FUZZ_SELFTEST === 'r1702', r1801: FUZZ_SELFTEST === 'r1801', r1802: FUZZ_SELFTEST === 'r1802', r1804: FUZZ_SELFTEST === 'r1804',
-  r1904: FUZZ_SELFTEST === 'r1904', r1905: FUZZ_SELFTEST === 'r1905',
-  r2002: FUZZ_SELFTEST === 'r2002', r2003: FUZZ_SELFTEST === 'r2003', r2006: FUZZ_SELFTEST === 'r2006',
+  r1801: FUZZ_SELFTEST === 'r1801', r1802: FUZZ_SELFTEST === 'r1802', r1905: FUZZ_SELFTEST === 'r1905',
+  d1solo: FUZZ_SELFTEST === 'd1solo', d1timeout: FUZZ_SELFTEST === 'd1timeout', d1unearned: FUZZ_SELFTEST === 'd1unearned',
+  r2104: FUZZ_SELFTEST === 'r2104', z3dormant: FUZZ_SELFTEST === 'z3dormant', r2301: FUZZ_SELFTEST === 'r2301', r2302: FUZZ_SELFTEST === 'r2302',
 };
 function logLine(s: string): void { if (FUZZ_LOG) appendFileSync(FUZZ_LOG, `${s}\n`); }
 vi.setConfig({ testTimeout: FUZZ_SEEDS ? 24 * 3600_000 : 120_000 });
 /** ⭐ R20-03: сколько раз держатель, занимающий слот голосования (`obstruct.hog`), зовёт арену снова на её конец. */
 const HOG_REOPENS = 6;
+/**
+ * ⭐ D1 (живость): сколько шагов клиента по правилу общего забега даётся участнику, чтобы войти в подземелье своего забега (`wantRun`). Худший
+ * честный путь — «Продолжить» → спуск в городе держателя → голос не прошёл → «Продолжить без пати» (с паузами голосований и «занято» — ещё
+ * несколько): 12 — с запасом, а не «сколько угодно».
+ */
+const WANT_STEPS = 12;
+/** ⭐ R23-01: сколько раз тот, кто занимает слот голосования тем же видом (`reopen`), зовёт снова, — дольше, чем живость ждёт (`WANT_STEPS`). */
+const REOPENS = WANT_STEPS + 2;
+/** ⭐ D1: штрафы за брошенный забег («Завершить», похороны) — «без штрафа» живости считает только их (смерть в бою — игра, а не плата). */
+const PAID_SRC: ReadonlySet<string> = new Set(['abandonStored', 'abandonAsDead', 'stored', 'bury', 'buryFled']);
 /** Прогон по умолчанию (полный прогон тестов): сиды и длина — секунды на машине разработчика, без сжатия известного. */
 const DEFAULT_SEEDS = Array.from({ length: 40 }, (_, i) => 1 + i);
 const DEFAULT_OPS = 120;
@@ -340,8 +366,11 @@ class FakeConn implements GameConn {
   roomCode?: string;
   /** Прогон, заведший сокет: кадр сокету чужого (прошлого) прогона не его. */
   run?: number;
-  /** ⭐ C-04: последний кадр лобби сокета — «Продолжить» (`join { resume }`). */
+  /** ⭐ C-04: последний кадр лобби сокета — «Продолжить» (`join { resume }`); ⭐ D1: `solo` — «Продолжить без пати» (`join { resume, solo }`). */
   resume?: boolean;
+  solo?: boolean;
+  /** ⭐ D1: кадры сокета — ещё и сюда (живость, `wantRun`: исход своего шага), мимо обрезки `frames`. */
+  tap?: (f: ServerFrame) => void;
   /** ⭐ R16-04: открытое голосование, как его видит окно сокета: кадр, область комнаты в миг кадра, принято ли (`voteEnd`). */
   vote?: { f: Extract<ServerFrame, { t: 'voteStart' }>; area: string; passed: boolean };
   /**
@@ -370,6 +399,7 @@ class FakeConn implements GameConn {
     if (FUZZ_SELFTEST === 'c09' && f.t === 'runStatus') delete f.dead;   // R16 C-09: статус без «смерть оплачена» — как до правки
     if (FUZZ_SELFTEST === 'r1604' && f.t === 'voteStart') delete f.finish;   // R16-04: финал зовёт «спуском» — как до правки
     this.frames.push(f);
+    this.tap?.(f);
     FakeConn.onFrame?.(this, f);
     if (this.frames.length > 400) this.frames.splice(0, 200);
   }
@@ -394,7 +424,7 @@ type PlayerIn = {
 };
 type MonIn = { id: number; alive: boolean; hp: number; pos: Pt; aiState: string };
 type DropIn = { id: number; kind: string; item?: Item; pos: Pt; owner?: string };
-type ClientIn = { pid: string; userId: string; saveVersion: number; stale: boolean; unsure: string[]; ws: GameConn; activeAt: number };
+type ClientIn = { pid: string; userId: string; saveVersion: number; stale: boolean; unsure: string[]; ws: GameConn };
 type InfoIn = { save: SaveState; userId: string; saveVersion: number; paid: boolean; fled: boolean; fledDescend: boolean; safe?: boolean };
 type RoomIn = Tickable & {
   code: string; area: 'town' | 'dungeon' | 'arena'; depth: number; difficultyId: string;
@@ -415,15 +445,24 @@ type RoomIn = Tickable & {
   };
   setInput(pid: string, input: PlayerInput): void;
   stop(): void;
-  /** V2: комната держит забег (ключ свода). */
+  /** V2: комната держит забег (ключ свода). ⭐ D1: право «Соло» героя на забег здесь; сколько мест занято (без героя). */
   holdsRun(key: string): boolean;
+  soloRight(charId: string, key: string): boolean;
+  seatsTaken(charId: string): number;
+  /** ⭐ R21-04: забег, который продолжил бы спуск из этого города, ведёт другая комната — её код (операция `follow` зовётся чаще там). */
+  parkedRunBusy(): string | undefined;
   /** Накопитель частоты снапшотов: перешагнёт `1/20` — шаг рассылает мир (R18-01, операция `choke`). */
   snapAcc: number;
   step(emit?: boolean): void;
-  /** ⭐ R19-04: голосование комнаты (модель просьб продолжить забег — по нему), продолжение из города ждёт базу. */
-  vote: { kind: string; by: string; yes: Set<string>; no: Set<string> } | null;
+  /**
+   * Голосование комнаты (живость — по нему: чьё, «за» ли герой), продолжение из города ждёт базу. ⭐ R23-02: срок (`until`) и вышел ли он в
+   * подземелье (`lapsed`: молчащие не держат); `finish` — завершение финала.
+   */
+  vote: { kind: string; by: string; yes: Set<string>; no: Set<string>; until?: number; lapsed?: boolean; finish?: boolean } | null;
+  /** ⭐ R23-02: герой в опасности (его целит монстр, урон по времени его добьёт) — единственное, чем молчащий держит голос после срока. */
+  inDanger(p: PlayerIn): boolean;
   resuming: boolean;
-  /** ⭐ R20-02: забег, который комната держит (участник его — тот, чей спуск в городе просьба), и заморозка слива (голосов нет). */
+  /** Забег, который комната держит, и заморозка слива (голосов нет). */
   runLock: string | null; frozen: boolean;
   /** ⭐ R19-05: повтор записи свода по таймеру и пачки свода в пути (`8-ledger-stranded`); запись прогресса героя, сундук узла. */
   ledgerRetry: unknown; ledgerInflight: number;
@@ -507,8 +546,36 @@ type Op =
    * ⭐ R19-05: администратор (отзыв вещи, откат) обгоняет автосейв героя в подземелье — запись в пути, а в комнате открывают сундук узла; отказ
    * по версии снимает сессию (`dropStale('lost')`), последнюю — с паузой комнаты. Из своего потока (`W.bump`).
    */
-  | { k: 'adminBump'; h: number };
+  | { k: 'adminBump'; h: number }
+  /**
+   * ⭐ D1: «Продолжить без пати» веб-клиента — в игре `leave`, статус забега и `join{resume, solo}` тем же сокетом; вне игры — `join{resume, solo}`
+   * новым. Честно — после подсказки `solo`; из своего потока (`W.soloF`) — и без неё (держатель без права забег не отпускает: `5-solo-unearned`).
+   */
+  | { k: 'solo'; h: number }
+  /**
+   * ⭐ D1 (живость): герой хочет продолжить свой забег — клиент по правилу общего забега (`wantRun`), напарники в его комнате отвечают `partner`:
+   * «за», «нет» или молчат (срок голосования). Из своего потока (`W.want`), только когда база здорова (живость — не про сбои).
+   */
+  | { k: 'want'; h: number; partner: Partner }
+  /**
+   * ⭐ R21-04 (живость): герой БЕЗ своего забега в городе зовёт спуск, и на отказ `run` с кодом держателя — кнопка вопроса в игре по правилу клиента
+   * (`followOffer`). Из своего потока (`W.followF`), только когда база здорова.
+   */
+  | { k: 'follow'; h: number }
+  /**
+   * ⭐ R23-01: герой в городе или на арене с кем-то ещё (участник забега или нет — гость, альт) занимает слот голосования ТЕМ ЖЕ видом, что
+   * продолжает забег комнаты: в городе — спуск, на арене — «в город»; и снова на каждый не прошедший конец (`noteFrame`), дольше, чем ждёт
+   * живость (`REOPENS`). Из своего потока (`W.reopenF`).
+   */
+  | { k: 'reopen'; h: number }
+  /**
+   * ⭐ R23-02 (живость в подземелье): герой в подземелье своего забега хочет дальше — у выхода (финал — у портала) зовёт спуск, напарники
+   * отвечают «за» или молчат на связи (`advanceRun`). Из своего потока (`W.advF`), только когда база здорова.
+   */
+  | { k: 'advance'; h: number; partner: 'yes' | 'idle' };
 
+/** ⭐ D1: как напарники в комнате героя отвечают на его голос за продолжение забега (`wantRun`). */
+type Partner = 'yes' | 'no' | 'idle';
 /** `cause` — известный корень (см. `KNOWN`), если нарушение объясняется им; иначе нарушение — новое. */
 interface Violation { inv: string; msg: string; op: number; seed: number; faults: number; cause?: string }
 interface Hero {
@@ -580,19 +647,24 @@ interface W {
   choke: FuzzRng; f5: FuzzRng; ledgerF: FuzzRng;
   /** ⭐ R19-04, R19-05: свои потоки у держателя, что не хочет идти (`obstruct`), и у администратора, обгоняющего запись (`adminBump`). */
   obstruct: FuzzRng; bump: FuzzRng;
-  /** ⭐ R20-03, R20-06: свой поток у держателя, что занимает слот голосования (`obstruct.hog`) и продолжает забег за спиной ушедшего (`grab`). */
+  /** ⭐ R20-03, R20-06: свой поток у держателя, что занимает слот голосования (`obstruct.hog`) и продолжает забег, оставшись один (`grab`). */
   hogF: FuzzRng;
   /** ⭐ R20-03: держатели, что занимают слот голосования ареной (индекс героя → сколько ещё раз откроют её снова на конец голосования). */
   hogs: Map<number, number>;
+  /** ⭐ D1: свои потоки у «Продолжить без пати» (`solo`) и у живости (`want`: кто хочет продолжить, как отвечают напарники). */
+  soloF: FuzzRng; want: FuzzRng;
+  /** ⭐ R21-04: свой поток у гостя без забега, что идёт с пати по кнопке вопроса в игре (`follow`). */
+  followF: FuzzRng;
+  /** ⭐ R23-01, R23-02: свои потоки у того, кто занимает слот голосования тем же видом (`reopen`), и у живости в подземелье (`advance`). */
+  reopenF: FuzzRng; advF: FuzzRng;
+  /** ⭐ R23-01: герои, что занимают слот голосования тем же видом (индекс героя → сколько ещё раз позовут снова на конец голосования). */
+  reopens: Map<number, number>;
   /**
-   * ⭐ R19-04: МОДЕЛЬ ПРОСЬБ продолжить забег в городе держателя (своя, по правилу): спуск из города, позванный участником забега, который комната
-   * держит, — просьба (charId → ключ, когда, отвергнута ли «нет» другого); вход комнаты в узел (пати пошла) их снимает. `voteAsker` — чья просьба
-   * у голосования.
+   * ⭐ D1: МОДЕЛЬ ПРАВ «СОЛО» — ИЗ КАДРОВ (комната → герои): подсказка `solo` герою в этой комнате даёт право; проход голосования (`voteEnd` «прошло»),
+   * вход комнаты в подземелье и отпуск ею забега (`takeRun`, `dropRun`), возвращение героя в комнату (`attach`) и само «Соло» его снимают.
+   * Держатель отпускает забег только тому, у кого право, или кому нет места (`5-solo-unearned`).
    */
-  asks: WeakMap<RoomIn, Map<string, { key: string; at: number; refusedAt?: number }>>;
-  voteAsker: WeakMap<object, string>;
-  /** ⭐ R20-02 (модель): голосования, чьё окно уже открылось (`voteStartFrame` — и вошедшему), и закрытые без перехода (`endVote`). */
-  voteSeen: WeakSet<object>; voteEnded: WeakSet<object>;
+  soloHints: WeakMap<RoomIn, Set<string>>;
   /** ⭐ R18-01: смерти подключённых в тике (не на арене) за операцию — за каждую обязан быть штраф `death` (`3-death-unpaid`). */
   deaths: { charId: string; room: string }[];
   /** ⭐ R15-02: сессии (клиенты комнат), чья прощальная запись легла, — их записи больше не ложатся (`7-write-after-farewell`). */
@@ -611,7 +683,8 @@ interface W {
   ticking: Set<RoomIn>; lobbies: FakeConn[];
   /** Комнаты этого прогона (конструктор ставит комнату на тик): обёртки методов комнаты смотрят только их. */
   born: WeakSet<RoomIn>;
-  pending: { conn: FakeConn; charId: string; t: 'join' | 'runStatus' | 'abandon'; idx: number; at: number; op: number }[];
+  /** Кадры лобби в пути. ⭐ Перепрогон Z3: `solo` — у КАДРА (`join{resume, solo}`), а не у сокета: следующий кадр того же сокета его не затирает. */
+  pending: { conn: FakeConn; charId: string; t: 'join' | 'runStatus' | 'abandon'; idx: number; at: number; op: number; solo: boolean }[];
   /**
    * ⭐ Перепрогон R20 (как у фаззера кластера): кадры «Завершить», которые менеджер сейчас исполняет (герой → сколько), и кончившиеся за
    * операцию: просьба в силе, пока её кадр не кончился, и когда её соединение уже закрыто (сервер доводит начатое).
@@ -649,10 +722,8 @@ interface W {
 let RM: typeof import('./roomManager.js').RoomManager;
 let forgetTownStocks: typeof import('./room.js').forgetTownStocks;
 let runLedgerKey: typeof import('./room.js').runLedgerKey;
-/** ⭐ R18-04: срок бездействия, после которого городская комната отдаёт забег (`Room.runActive`). */
-let RUN_IDLE_MS: number;
-/** ⭐ R19-04: срок, за который пати не приняла просьбу продолжить забег (`Room.runRefused`). */
-let RUN_ASK_MS: number;
+/** ⭐ D1: срок голосования вне подземелья (`Room.voteExpired`) — молчащий напарник спуск не держит. */
+let VOTE_TIMEOUT_MS: number;
 /** ⭐ R19-05: комнаты процесса с недолёгшим сводом забега (`8-ledger-stranded`). */
 let ledgerOwingRooms: () => readonly unknown[];
 let cfg: ConfigRegistry;
@@ -881,7 +952,10 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
       const holder = w.heroes.find((x) => ls.includes(`hero:${x.charId}`)) ?? w.heroes.find((x) => x.charId === w.sunkBy.get(uid));
       // ⭐ R19-05: вещь вернула строка героя, которого обогнал администратор (штраф его памяти строка не видела), — корень у него, где бы вещь ни была.
       const sinker = w.heroes.find((x) => x.charId === w.sunkBy.get(uid));
-      violate(w, '1-sunk-item-back', `вещь ${uid}, взятая стоком (штраф/продажа/земля ушедшего этажа), снова в игре: ${ls.join(', ')}`, sinker && db.bumped.has(sinker.charId) ? sinker : holder);
+      // ⭐ D1 (большой прогон, сид 130083): и строка, откуда вещь вернулась, — у обогнанного: его копия проиграла, выброшенное ею снято с земли
+      // (`forfeitHeld`: вещь — в строке), а вернувшийся («Продолжить») принёс её из строки и выбросил снова — сток «ушло с земли» тут ни при чём.
+      const rowOwner = w.heroes.find((x) => db.bumped.has(x.charId) && !!db.rows.get(x.charId)?.json.includes(uid));
+      violate(w, '1-sunk-item-back', `вещь ${uid}, взятая стоком (штраф/продажа/земля ушедшего этажа), снова в игре: ${ls.join(', ')}`, sinker && db.bumped.has(sinker.charId) ? sinker : rowOwner ?? holder);
     }
   }
   // Штрафы, взятые за операцию (3). ЛЁГ ли штраф: с копии в памяти, которая и есть правда героя, — да (её допишут); со строки базы,
@@ -1069,7 +1143,7 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
     for (const [tier, d] of Object.entries(s.difficultyProgress ?? {})) {
       if (d > (h.depthMax.get(tier) ?? 0)) violate(w, '8-progress-unreached', `${h.charId}: глубина «${tier}» ${d}, а достигнуто подключённым ${h.depthMax.get(tier) ?? 0}`);
       const was = h.progMax.get(tier) ?? 0;
-      if (d < was) violate(w, '8-progress-regress', `${h.charId}: глубина «${tier}» откатилась ${was} → ${d}`);
+      if (d < was) violate(w, '8-progress-regress', `${h.charId}: глубина «${tier}» откатилась ${was} → ${d}`, h);   // ⭐ Z3: с героем — корень `ADMIN-row-wins` находится
       else h.progMax.set(tier, d);
     }
     const run = s.run;
@@ -1137,7 +1211,7 @@ function check(w: W, pre: Map<string, PreState>, op: Op | null): void {
   // 5: кадр лобби без ответа (очередь героя встала).
   for (const p of [...w.pending]) {
     const want = p.t === 'join' ? ['joined', 'error'] : p.t === 'runStatus' ? ['runStatus', 'error'] : ['abandoned', 'error'];
-    if (p.conn.since(p.idx).some((f) => want.includes(f.t))) { w.pending.splice(w.pending.indexOf(p), 1); continue; }
+    if (p.conn.since(p.idx).some((f) => lobbyAnswer(f, want))) { w.pending.splice(w.pending.indexOf(p), 1); continue; }
     if (!p.conn.open) { w.pending.splice(w.pending.indexOf(p), 1); continue; }
     if (now - p.at > 40_000) { violate(w, '5-lobby-unanswered', `кадр «${p.t}» (операция ${p.op}) без ответа ${((now - p.at) / 1000).toFixed(0)} с`); w.pending.splice(w.pending.indexOf(p), 1); }
   }
@@ -1153,6 +1227,16 @@ const tally = (k: string): void => { stats.set(k, (stats.get(k) ?? 0) + 1); };
 function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
   if (c.run !== db.run) return;
   if (f.t === 'joined') c.roomCode = f.roomCode;
+  // ⭐ D1: модель прав «Соло» — подсказка `solo` герою в его комнате даёт право; прошедшее голосование комнаты его снимает (пати пошла вместе).
+  if (c.hero !== undefined && c.roomCode) {
+    const room = rmOf(w).rooms.get(c.roomCode);
+    if (room && f.t === 'error' && f.code === 'vote' && f.solo === true) {
+      let set = w.soloHints.get(room);
+      if (!set) w.soloHints.set(room, (set = new Set()));
+      set.add(w.heroes[c.hero]!.charId);
+    }
+    if (room && f.t === 'voteEnd' && f.passed) w.soloHints.delete(room);
+  }
   // 9 (R16-04): ОКНО ГОЛОСОВАНИЯ ≡ ИСХОД. Окно напарника — текст кадра `voteStart` (`client/ui/voteText.ts`): спуск в подземелье обязан
   // сказать, куда ведёт (финал — `finish`, ребро — узел и его тип), а принятое голосование — вести ровно туда. Раньше кадр финала был
   // без `finish`: окно звало «Спуск на след. этаж?», а принявший уходил в город (и лежавшее на полу финала пропадало).
@@ -1172,6 +1256,19 @@ function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
       queueMicrotask(() => {
         const at = liveAt(w, h);
         if (cur === w && at?.ws === c && at.room.area === 'town' && !at.room.vote) send(w, h, { t: 'arena' });
+      });
+    }
+    // ⭐ R23-01: тот, кто занимает слот голосования ТЕМ ЖЕ видом (`reopen`), зовёт снова — сразу, как голосование не прошло: в городе — спуск, на
+    // арене — «в город». Раньше «Соло» по провалу получал один позвавший — гость без забега держал так участника, сказавшего «за», вечно.
+    const again = c.hero !== undefined ? w.reopens.get(c.hero) : undefined;
+    if (!f.passed && again) {
+      w.reopens.set(c.hero!, again - 1);
+      const h = w.heroes[c.hero!]!;
+      queueMicrotask(() => {
+        const at = liveAt(w, h);
+        if (cur !== w || at?.ws !== c || at.room.vote) return;
+        if (at.room.area === 'town') send(w, h, { t: 'descend' });
+        else if (at.room.area === 'arena') send(w, h, { t: 'return' });
       });
     }
   } else if (f.t === 'joined') c.vote = undefined;
@@ -1360,9 +1457,10 @@ function lobby(w: W, h: Hero, frame: Record<string, unknown>, conn?: FakeConn): 
   ws.hero = h.i;
   ws.run = db.run;
   ws.resume = frame.t === 'join' && frame.resume === true;
+  ws.solo = frame.t === 'join' && frame.solo === true;
   if (!conn) { rmOf(w).handleConnection(ws); w.lobbies.push(ws); }
   const t = frame.t as 'join' | 'runStatus' | 'abandon';
-  w.pending.push({ conn: ws, charId: h.charId, t, idx: ws.frames.length, at: Date.now(), op: w.op });
+  w.pending.push({ conn: ws, charId: h.charId, t, idx: ws.frames.length, at: Date.now(), op: w.op, solo: frame.t === 'join' && frame.solo === true });
   try { ws.push({ ...frame, token: h.token, charId: h.charId }); } catch (e) { violate(w, '6-push-threw', `кадр ${t}: ${String(e)}`); }
   return ws;
 }
@@ -1387,8 +1485,222 @@ function othersVote(w: W, room: RoomIn, h: Hero, others: Others, near: Pt | unde
   });
 }
 const heroOf = (w: W, i: number): Hero => w.heroes[i % w.heroes.length]!;
+/**
+ * ⭐ Перепрогон Z3 (фаззер кластера, сид 61330229): ответ на кадр лобби — кадр из `want` (`joined`/`runStatus`/`abandoned` или `error`), но не
+ * отказ КОМАНДЫ комнаты (`error{cmd}`): подъём или сделка, ждавшие базу, отвечают на тот же сокет, когда герой уже вышел в лобби, — это ответ
+ * комнаты, а не входа.
+ */
+const lobbyAnswer = (f: ServerFrame, want: readonly string[]): boolean => want.includes(f.t) && !(f.t === 'error' && f.code === 'cmd');
 /** Живой игрок между переходами идёт до выхода или алтаря — пауза голосований (R1-03, 1,5 с) у него проходит сама. */
 async function pause(w: W): Promise<void> { await stepAll(w, 48); }
+
+/**
+ * ⭐ D1: «Продолжить без пати» / «Продолжить» веб-клиента из игры (`EntryFlow.toEntry`): `leave` по живому сокету, статус забега и вход — тем же
+ * сокетом; вне игры — вход новым. `solo` — с правом «Соло» (`join{resume, solo}`).
+ */
+async function toRun(w: W, h: Hero, solo: boolean): Promise<FakeConn> {
+  const at = liveAt(w, h);
+  const frame = { t: 'join', resume: true, ...(solo ? { solo: true } : {}) };
+  if (at) {
+    send(w, h, { t: 'leave' });
+    lobby(w, h, { t: 'runStatus' }, at.ws);
+    h.conn = lobby(w, h, frame, at.ws);
+  } else h.conn = lobby(w, h, frame);
+  await drain(3);
+  return h.conn;
+}
+/** ⭐ D1: забег героя по правде (память или строка базы) — ключ свода, погиб ли в нём (K1: «мёртв, оплачено»). */
+function runOfHero(w: W, h: Hero): { key: string; dead: boolean } | null {
+  const t = truthOf(w, h, locate(w));
+  const r = t?.save.run;
+  if (!r?.config) return null;
+  const info = rmOf(w).graceByChar.get(h.charId)?.disconnected.get(h.charId);
+  return { key: runLedgerKey(r.config), dead: r.deadAt !== undefined || !!info?.paid };
+}
+/**
+ * ⭐ D1 ЖИВОСТЬ: ГЕРОЙ `h` ХОЧЕТ ПРОДОЛЖИТЬ СВОЙ ЗАБЕГ — клиент по правилу общего забега (docs/MULTIPLAYER.md; как веб, `EntryFlow`): вне игры —
+ * «Продолжить»; в городе — спуск (открыт чужой спуск — «за»), на арене — «в город»; голос не прошёл (подсказка `solo`) — «Продолжить без пати»;
+ * отказ `run` (забег ведёт другая комната, у героя свой) — «Продолжить»; «занято», пауза голосований — ход времени и снова. Напарники в его
+ * комнате отвечают `partner`: «за» все, «нет» один, или молчат; голос, что и после ответов открыт (молчат, «за» не засчитано), — срок
+ * голосования. За `WANT_STEPS` шагов он обязан стоять в подземелье своего забега (`5-run-stuck`) и не заплатить штрафа за брошенный забег
+ * (`5-run-paid`). Не в счёт: забег кончился по ходу (финал, вайп — продолжать нечего), погибший в нём (K1: ждать пати) и пати в подземелье без
+ * места (правило 4: «нет мест» с кодом — дело вместимости, а не правила).
+ */
+async function wantRun(w: W, h: Hero, partner: Partner): Promise<void> {
+  const run = runOfHero(w, h);
+  if (!run || run.dead) { tally(run ? 'want:dead' : 'want:none'); return; }
+  // Он уже нажал «Завершить» (кадр в очереди или исполняется — сервер доводит начатое): продолжать он не хочет, и штраф — по его просьбе.
+  if (w.pending.some((p) => p.charId === h.charId && p.t === 'abandon') || w.abandonBusy.has(h.charId)) { tally('want:abandoning'); return; }
+  let solo = false;
+  const paid0 = w.penalties.filter((p) => p.charId === h.charId && PAID_SRC.has(p.src)).length;
+  const trace: string[] = [];
+  const done = (): boolean => {
+    const at = liveAt(w, h);
+    return !!at && at.room.area === 'dungeon' && !!at.room.runConfig && runLedgerKey(at.room.runConfig) === run.key;
+  };
+  const paidCheck = (): void => {
+    const paid = w.penalties.filter((p) => p.charId === h.charId && PAID_SRC.has(p.src));
+    if (paid.length > paid0) violate(w, '5-run-paid', `${h.charId}: хотел продолжить забег ${run.key} — и заплатил за брошенный (${paid.slice(paid0).map((p) => p.src).join(', ')}); путь: ${trace.join(' → ')}`, h);
+  };
+  for (let step = 0; step < WANT_STEPS; step++) {
+    if (done()) { tally(`want:ok:${solo ? 'solo' : step ? 'party' : 'there'}`); paidCheck(); return; }
+    const now = runOfHero(w, h);
+    if (!now || now.key !== run.key || now.dead) { tally('want:ended'); paidCheck(); return; }   // забег кончился или он погиб в нём по ходу
+    const at = liveAt(w, h);
+    if (!at) {
+      const ws = await toRun(w, h, false);
+      const f = ws.frames.filter((x) => lobbyAnswer(x, ['joined', 'error'])).at(-1);
+      trace.push(`«Продолжить» → ${f?.t === 'error' ? `${f.code}` : f ? 'вошёл' : '—'}`);
+      if (f?.t === 'error' && f.code === 'full') { tally('want:full'); paidCheck(); return; }   // правило 4: пати в подземелье без места
+      if (f?.t !== 'joined') { await vi.advanceTimersByTimeAsync(20_000); await rmOf(w).retryUnsaved(Date.now()); await drain(3); }
+      continue;
+    }
+    if (at.room.area === 'dungeon') { trace.push(`подземелье ${at.room.code} без его забега — ждём`); await stepAll(w, 150); continue; }
+    const got: ServerFrame[] = [];
+    at.ws.tap = (f) => got.push(f);
+    try {
+      const room = at.room;
+      await pause(w);
+      if (!liveAt(w, h) || liveAt(w, h)!.room !== room) continue;
+      const v = room.vote;
+      // ⭐ R23-01: открыт чужой «в город» — «за» (окно голосования; свой зов — отказ «ответьте на него»), как чужой спуск в городе.
+      if (room.area === 'arena' && v?.kind === 'town' && !v.yes.has(at.pid)) { send(w, h, { t: 'vote', accept: true }); trace.push(`арена ${room.code}: «за» чужой «в город»`); }
+      else if (room.area === 'arena') { send(w, h, { t: 'return' }); trace.push(`арена ${room.code}: «в город»`); }
+      else if (v && v.kind === 'descend' && !v.yes.has(at.pid)) { send(w, h, { t: 'vote', accept: true }); trace.push(`город ${room.code}: «за» чужой спуск`); }
+      else { send(w, h, { t: 'descend' }); trace.push(`город ${room.code}: спуск`); }
+      await drain(3);
+      const mates = w.heroes.filter((x) => x !== h && liveAt(w, x)?.room === room);
+      if (room.vote && partner !== 'idle') {
+        mates.forEach((m, i) => { if (room.vote) send(w, m, { t: 'vote', accept: !(partner === 'no' && i === 0) }); });
+        await drain(3);
+      }
+      if (room.vote && !room.frozen) {   // молчат (или «за» не засчитано) — срок голосования
+        await vi.advanceTimersByTimeAsync(VOTE_TIMEOUT_MS + 1);
+        await drain(3);
+        await stepAll(w, 2);
+      }
+      await drain(3);
+      if (got.some((f) => f.t === 'error' && f.code === 'vote' && f.solo === true)) {
+        trace.push('подсказка «Соло» → «Продолжить без пати»');
+        solo = true;
+        at.ws.tap = undefined;
+        const ws = await toRun(w, h, true);
+        const f = ws.frames.filter((x) => lobbyAnswer(x, ['joined', 'error'])).at(-1);
+        trace.push(f?.t === 'error' ? `отказ ${f.code}` : 'вошёл');
+        if (f?.t === 'error' && f.code === 'full') { paidCheck(); return; }
+        continue;
+      }
+      const runErr = got.find((f): f is Extract<ServerFrame, { t: 'error' }> => f.t === 'error' && f.code === 'run');
+      if (runErr) {
+        trace.push(`отказ run${runErr.roomCode ? ` (${runErr.roomCode})` : ''} → «Продолжить»`);
+        at.ws.tap = undefined;
+        const ws = await toRun(w, h, false);
+        const f = ws.frames.filter((x) => lobbyAnswer(x, ['joined', 'error'])).at(-1);
+        if (f?.t === 'error' && f.code === 'full') { paidCheck(); return; }
+        continue;
+      }
+      const other = got.filter((f) => f.t === 'error').map((f) => (f as { code: string }).code);
+      if (other.length) trace.push(`отказы ${other.join(',')}`);
+    } finally { at.ws.tap = undefined; }
+  }
+  if (done()) { tally(`want:ok:${solo ? 'solo' : 'party'}`); paidCheck(); return; }
+  const at = liveAt(w, h);
+  violate(w, '5-run-stuck', `${h.charId} хочет продолжить забег ${run.key} (напарники: ${partner}) — за ${WANT_STEPS} шагов не в его подземелье (сейчас: ${at ? `${at.room.code}/${at.room.area}` : 'вне игры'}); путь: ${trace.join(' → ')}; операция ${w.opRef ? fmt(w.opRef) : 'эпилог'}`, h);
+  paidCheck();
+}
+
+/** ⭐ R21-04: отказы входа по коду, после которых клиент показывает лобби с этим кодом и причиной («нет мест», комнаты уже нет, «занято», лимит). */
+const FOLLOW_REFUSALS: ReadonlySet<string> = new Set(['full', 'no-room', 'busy', 'rate']);
+/**
+ * ⭐ R21-04 (живость): ГОСТЬ БЕЗ СВОЕГО ЗАБЕГА — С ПАТИ. Он стоит в городе хозяина, чей припаркованный забег держит другая комната (напарник ушёл
+ * «Соло» — правило 3, V2): спуск гостя — отказ `run` с кодом держателя, и клиент по кнопке вопроса в игре (веб — `EntryFlow.runOffer`): `leave` по
+ * живому сокету, статус забега и по ответу — вход: забег есть — `join{resume}` (участник: к держателю, правило 1), нет — `join{roomCode}` (к пати по
+ * коду). Веб до правки на «нет» уводил в лобби без кода: гость, нажавший «Перейти к пати», оставался вне игры — без пати и без причины. Инвариант
+ * `5-offer-dead-end`: после кнопки герой в игре, а если нет — с отказом входа, который клиент показывает причиной (`FOLLOW_REFUSALS`).
+ */
+async function followOffer(w: W, h: Hero): Promise<void> {
+  const at = liveAt(w, h);
+  if (!at || at.room.area !== 'town' || runOfHero(w, h)) { tally('follow:skip'); return; }
+  const got: ServerFrame[] = [];
+  at.ws.tap = (f) => got.push(f);
+  try {
+    await pause(w);
+    if (liveAt(w, h)?.room !== at.room) { tally('follow:moved'); return; }
+    send(w, h, { t: 'descend' });
+    await drain(3);
+  } finally { at.ws.tap = undefined; }
+  const offer = got.find((f): f is Extract<ServerFrame, { t: 'error' }> => f.t === 'error' && f.code === 'run' && !!f.roomCode);
+  if (!offer?.roomCode) { tally('follow:no-offer'); return; }
+  if (liveAt(w, h)?.room !== at.room) { tally('follow:moved'); return; }
+  const code = offer.roomCode;
+  // Кнопка: из комнаты — тем же сокетом, статус забега, и вход — по ответу (его решает клиент, а не прогон).
+  send(w, h, { t: 'leave' });
+  const i0 = at.ws.frames.length;
+  lobby(w, h, { t: 'runStatus' }, at.ws);
+  await drain(3);
+  const st = at.ws.since(i0).find((f): f is Extract<ServerFrame, { t: 'runStatus' }> => f.t === 'runStatus');
+  if (!st) { tally('follow:no-status'); return; }
+  const i1 = at.ws.frames.length;
+  if (st.hasRun) h.conn = lobby(w, h, { t: 'join', resume: true }, at.ws);
+  else if (!teeth.r2104) h.conn = lobby(w, h, { t: 'join', roomCode: code }, at.ws);   // r2104: как до правки — лобби без кода, входа нет
+  await drain(3);
+  const f = at.ws.since(i1).filter((x) => lobbyAnswer(x, ['joined', 'error'])).at(-1);
+  const now = liveAt(w, h);
+  tally(`follow:${st.hasRun ? 'member' : 'guest'}:${now ? (now.room.code === code ? 'party' : 'in') : f?.t === 'error' ? f.code : 'out'}`);
+  if (now || (f?.t === 'error' && FOLLOW_REFUSALS.has(f.code))) return;
+  violate(w, '5-offer-dead-end', `${h.charId} (без забега) нажал «к пати» комнаты ${code} — вне игры ${f?.t === 'error' ? `с отказом «${f.code}»: ${f.msg}` : 'без входа и без причины'}; операция ${w.opRef ? fmt(w.opRef) : 'эпилог'}`, h);
+}
+
+/**
+ * ⭐ R23-02 (ЖИВОСТЬ В ПОДЗЕМЕЛЬЕ): ГЕРОЙ `h` В ПОДЗЕМЕЛЬЕ СВОЕГО ЗАБЕГА ХОЧЕТ ДАЛЬШЕ — у выхода (на финале — у портала) зовёт спуск (открыт чужой
+ * спуск — «за»); напарники на связи отвечают `partner`: «за» — или молчат (вкладка в фоне, отошли, не хотят). Раньше голос в подземелье был без
+ * срока: молчащий держал пати на узле вечно, а «Продолжить» (и «без пати») возвращало в ту же комнату; живость D1 (`wantRun`) этого не видела —
+ * «в подземелье своего забега» для неё успех. Теперь за `WANT_STEPS` сверок (срок голосования, дальше — шаги мира) пати обязана уйти с узла
+ * (`5-node-stuck`). Не в счёт — ровно исключения правила (`Room.voteReady`): молчащий в опасности (голос ждёт, пока она не пройдёт), одни мёртвые
+ * «за» (вперёд ведут живые); и голос, закрытый правилом («нет» ответившего — пати ходит вместе; живые ушли, R14-02).
+ */
+async function advanceRun(w: W, h: Hero, partner: 'yes' | 'idle'): Promise<void> {
+  const run = runOfHero(w, h);
+  const mine = (room: RoomIn): boolean => room.area === 'dungeon' && !!room.runConfig && !!run && runLedgerKey(room.runConfig) === run.key;
+  let at = liveAt(w, h);
+  if (!run || run.dead || !at || !mine(at.room) || !at.p.alive) { tally('advance:skip'); return; }
+  const room = at.room;
+  await pause(w);
+  at = liveAt(w, h);
+  if (!at || at.room !== room || !mine(room) || !at.p.alive || room.frozen) { tally('advance:moved'); return; }
+  const node0 = room.runNodeId;
+  const left = (): boolean => !mine(room) || room.runNodeId !== node0;
+  const node = room.runPlan?.nodes.find((n) => n.id === node0);
+  if (!node) { tally('advance:no-node'); return; }
+  const fin = node.edges.length === 0;
+  const gate = fin ? portals(room)[0] : room.session.world.exits?.[0];
+  if (!gate) { tally('advance:no-gate'); return; }
+  place(at.p, gate);
+  const open = room.vote;
+  if (open?.kind === 'descend' && !open.yes.has(at.pid)) send(w, h, { t: 'vote', accept: true });
+  else if (!open) send(w, h, fin ? { t: 'descend' } : { t: 'descend', targetNodeId: node.edges[0]!.to });
+  await drain(3);
+  if (left()) { tally('advance:ok:now'); return; }
+  const v = room.vote;
+  if (!v || v.kind !== 'descend' || !v.yes.has(at.pid)) { tally('advance:no-vote'); return; }   // слот — у «в город», отказ спуску (пауза, `far`)
+  if (partner === 'yes') {
+    for (const m of w.heroes) if (m !== h && liveAt(w, m)?.room === room) send(w, m, { t: 'vote', accept: true });
+    await drain(3);
+  }
+  // Молчат (или «за» не засчитано — в опасности не у выхода): срок голосования, дальше — шаги мира (опасность проходит сама).
+  for (let step = 0; step < WANT_STEPS && !left() && room.vote === v; step++) {
+    await vi.advanceTimersByTimeAsync(step ? 5_000 : VOTE_TIMEOUT_MS + 1);
+    await drain(3);
+    await stepAll(w, step ? 150 : 2);
+  }
+  if (left()) { tally(`advance:ok:${partner}`); return; }
+  if (room.vote !== v) { tally('advance:closed'); return; }
+  const pl = room.session.world.players;
+  const silentDanger = [...room.clients.keys()].some((pid) => !v.yes.has(pid) && !!pl[pid]?.alive && room.inDanger(pl[pid]!));
+  const living = [...v.yes].some((pid) => room.clients.has(pid) && !!pl[pid]?.alive);
+  if (v.lapsed && (silentDanger || !living)) { tally(silentDanger ? 'advance:waits-danger' : 'advance:waits-dead'); return; }
+  violate(w, '5-node-stuck', `${h.charId} в подземелье своего забега ${run.key} хочет дальше (напарники: ${partner}) — голос ${v.lapsed ? 'после срока' : 'без срока'} держит пати на узле ${node0} (${room.code}): «за» ${v.yes.size} из ${room.clients.size}, молчащих в опасности нет; операция ${w.opRef ? fmt(w.opRef) : 'эпилог'}`, h);
+}
 
 async function exec(w: W, op: Op): Promise<void> {
   w.stepped = false;
@@ -1461,6 +1773,29 @@ async function exec(w: W, op: Op): Promise<void> {
       await drain();
       return;
     }
+    case 'solo': {
+      // ⭐ D1: «Продолжить без пати» — как у веб-клиента (в игре — `leave` и вход тем же сокетом).
+      await toRun(w, heroOf(w, op.h), true);
+      return;
+    }
+    case 'want': await wantRun(w, heroOf(w, op.h), op.partner); return;
+    case 'follow': await followOffer(w, heroOf(w, op.h)); return;
+    case 'reopen': {
+      // ⭐ R23-01: слот голосования — тем же видом, что продолжает забег комнаты (город — спуск, арена — «в город»), и снова на каждый не
+      // прошедший конец (`noteFrame`). Зовёт кто угодно здесь: у гостя без забега спуск продолжает забег комнаты (`parkedHost`).
+      const h = heroOf(w, op.h);
+      const at = liveAt(w, h);
+      if (!at || (at.room.area !== 'town' && at.room.area !== 'arena')) return;
+      w.reopens.set(h.i, REOPENS);
+      if (!at.room.vote) {
+        await pause(w);
+        const now = liveAt(w, h);
+        if (now?.room === at.room && !at.room.vote) send(w, h, at.room.area === 'town' ? { t: 'descend' } : { t: 'return' });
+      }
+      await drain();
+      return;
+    }
+    case 'advance': await advanceRun(w, heroOf(w, op.h), op.partner); return;
     case 'adminBump': {
       // ⭐ R19-05: автосейв героя в пути — строку обгоняет администратор, а в комнате тем временем открывают сундук узла (запись свода — грязная).
       const h = heroOf(w, op.h);
@@ -1874,8 +2209,32 @@ function genOp(w: W, rng: FuzzRng): Op {
   // ⭐ R20-06: держатель, оставшийся в городе один после ухода напарника, продолжает забег сам — из своего потока (`hogF`).
   const alone = town.filter((h) => liveAt(w, h)!.room.clients.size === 1);
   if (alone.length && w.hogF.chance(0.05)) return { k: 'obstruct', h: w.hogF.pick(alone).i, no: false, grab: true };
+  // ⭐ D1: «Продолжить без пати» — из своего потока (`soloF`): чаще тем, кому подсказку уже сказали (есть право), реже — без него.
+  const hinted = live.filter((h) => w.soloHints.get(liveAt(w, h)!.room)?.has(h.charId));
+  if (hinted.length && w.soloF.chance(0.5)) return { k: 'solo', h: w.soloF.pick(hinted).i };
+  if (w.soloF.chance(0.01)) return { k: 'solo', h: w.soloF.pick(hs).i };
+  // ⭐ D1 (живость): герой с забегом хочет его продолжить — из своего потока (`want`); только при здоровой базе (живость — не про сбои).
+  const healthy = !db.faults.length && !db.held.length && db.ledgerDownUntil <= w.op;
+  const runners = healthy ? hs.filter((h) => runOfHero(w, h)) : [];
+  if (runners.length && w.want.chance(0.06)) return { k: 'want', h: w.want.pick(runners).i, partner: w.want.pick(['yes', 'no', 'idle'] as const) };
+  // ⭐ R23-01: кто угодно в городе или на арене с кем-то ещё (гость, альт, участник) занимает слот голосования тем же видом — из своего потока.
+  const crowdOut = [...crowd, ...arena.filter((h) => liveAt(w, h)!.room.clients.size > 1)];
+  if (crowdOut.length && w.reopenF.chance(0.04)) return { k: 'reopen', h: w.reopenF.pick(crowdOut).i };
+  // ⭐ R23-02 (живость в подземелье): герой в подземелье своего забега с напарником хочет дальше, напарники «за» или молчат — из своего потока.
+  const deep = healthy ? dun.filter((h) => {
+    const room = liveAt(w, h)!.room;
+    const r = runOfHero(w, h);
+    return room.clients.size > 1 && !!r && !r.dead && !!room.runConfig && runLedgerKey(room.runConfig) === r.key;
+  }) : [];
+  if (deep.length && w.advF.chance(0.06)) return { k: 'advance', h: w.advF.pick(deep).i, partner: w.advF.pick(['yes', 'idle'] as const) };
+  // ⭐ R21-04 (живость): гость без своего забега в городе, где есть кто-то ещё, идёт с пати — из своего потока (`followF`), при здоровой базе;
+  // чаще — там, где забег хозяина ведёт другая комната (его спуск отказан `run` с её кодом): иначе случайный путь до такого города почти не доходит.
+  const guests = healthy ? crowd.filter((h) => !runOfHero(w, h)) : [];
+  const held = guests.filter((h) => liveAt(w, h)!.room.parkedRunBusy());
+  if (held.length && w.followF.chance(0.5)) return { k: 'follow', h: w.followF.pick(held).i };
+  if (guests.length && w.followF.chance(0.04)) return { k: 'follow', h: w.followF.pick(guests).i };
   // ⭐ R19-05: администратор обгоняет запись героя в подземелье — из своего потока (`bump`).
-  if (dun.length && w.bump.chance(0.02)) return { k: 'adminBump', h: w.bump.pick(dun).i };
+  if (FUZZ_ADMIN && dun.length && w.bump.chance(0.02)) return { k: 'adminBump', h: w.bump.pick(dun).i };
   // ⭐ R18-02: свод забега не пишется (строки героев — пишутся) несколько операций — из своего потока (`ledgerF`).
   if (FUZZ_FAULTS && (dun.length || town.length) && w.ledgerF.chance(0.03)) return { k: 'fault', f: 'ledgerDown', h: null, ops: 2 + w.ledgerF.int(8) };
   const diff = (): number | undefined => (w.aux.chance(0.5) ? w.aux.int(tierIds().length) : undefined);
@@ -1994,6 +2353,14 @@ async function quiesce(w: W): Promise<void> {
       else if (!j.save.run) violate(w, '5-resume-dead-end', `${h.charId}: «Продолжить» — «нет мест», а «Соло» из лобби снял забег`, h);
     });
   }
+  // 5 (D1, ЖИВОСТЬ): КАЖДЫЙ, У КОГО ЗАБЕГ, ЕГО ПРОДОЛЖАЕТ — база здорова, комнаты живы, напарники отвечают как выпало («нет», молчат, «за»):
+  // за `WANT_STEPS` шагов клиента по правилу общего забега он в подземелье своего забега, без «Забросить» (`wantRun`).
+  const pr = fuzzRng(mixSeed(w.seed, 0xd1e));
+  for (const h of w.heroes) {
+    if (!runOfHero(w, h)) continue;
+    const partner = pr.pick(['no', 'idle', 'yes'] as const);
+    await phase({ k: 'want', h: h.i, partner }, () => wantRun(w, h, partner));
+  }
   await phase(null, async () => {
     for (const h of w.heroes) { const at = liveAt(w, h); if (at) at.ws.close(); }
     for (const c of w.lobbies) c.close();
@@ -2098,8 +2465,9 @@ async function run(seed: number, script: Op[] | null, nOps: number, stopAt: stri
     seed, heroes: [], rm: null as unknown as RmIn, rng: fuzzRng(mixSeed(seed, 0x0b5)), aux: fuzzRng(mixSeed(seed, 0xa11)), crew: fuzzRng(mixSeed(seed, 0xc4e)), penaltyCount: new Map(),
     ask: fuzzRng(mixSeed(seed, 0xc09)), asked: null, lag: fuzzRng(mixSeed(seed, 0x1502)), unity: fuzzRng(mixSeed(seed, 0x1601)), shout: fuzzRng(mixSeed(seed, 0x1607)), saidBye: new WeakSet(),
     choke: fuzzRng(mixSeed(seed, 0x1801)), f5: fuzzRng(mixSeed(seed, 0x1804)), ledgerF: fuzzRng(mixSeed(seed, 0x1802)), deaths: [],
-    obstruct: fuzzRng(mixSeed(seed, 0x1904)), bump: fuzzRng(mixSeed(seed, 0x1905)), asks: new WeakMap(), voteAsker: new WeakMap(),
-    voteSeen: new WeakSet(), voteEnded: new WeakSet(), hogF: fuzzRng(mixSeed(seed, 0x2003)), hogs: new Map(),
+    obstruct: fuzzRng(mixSeed(seed, 0x1904)), bump: fuzzRng(mixSeed(seed, 0x1905)), hogF: fuzzRng(mixSeed(seed, 0x2003)), hogs: new Map(),
+    soloF: fuzzRng(mixSeed(seed, 0xd150)), want: fuzzRng(mixSeed(seed, 0xd1a1)), followF: fuzzRng(mixSeed(seed, 0x2104)), soloHints: new WeakMap(),
+    reopenF: fuzzRng(mixSeed(seed, 0x2301)), advF: fuzzRng(mixSeed(seed, 0x2302)), reopens: new Map(),
     ticking, born: new WeakSet(), lobbies: [], pending: [], abandonBusy: new Map(), abandonDone: new Set(), violations: [], seen: new Set(),
     penalties: [], sinks: new Set(), carryGone: new Set(), lastLoc: new Map(), sunkBy: new Map(), sold: new Set(), selling: [], sinkLater: new Set(), concurrent: false, ev: 0, opEv0: 0, recs: new Map(), roomSeen: new WeakMap(), ids: new WeakMap(), idSeq: 0,
     errors: [], cmdFailed0: counters.cmdFailed, frameErrors0: counters.frameErrors, op: -1, opRef: null, stepped: false,
@@ -2186,7 +2554,7 @@ function report(seed: number, v: Violation, ops: Op[]): string {
 beforeAll(async () => {
   ({ RoomManager: RM } = await import('./roomManager.js'));
   const roomMod = await import('./room.js');
-  ({ forgetTownStocks, runLedgerKey, RUN_IDLE_MS, RUN_ASK_MS, ledgerOwingRooms } = roomMod);
+  ({ forgetTownStocks, runLedgerKey, VOTE_TIMEOUT_MS, ledgerOwingRooms } = roomMod);
   // 8: вход комнаты в узел и вход героя в комнату — под наблюдением (достигнутые узлы, `noteReached`).
   const proto = roomMod.Room.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
   const after = (name: string, fn: (room: RoomIn, ret: unknown) => void, pre?: (room: RoomIn) => void): void => {
@@ -2213,8 +2581,8 @@ beforeAll(async () => {
     noteReached(cur, room, [pid as string]);
     // Сейв новой сессии — последняя виденная копия героя: снятая той же операцией (исход записи неизвестен), она и ждёт дописки.
     const save = room.session.world.players[pid as string]?.save;
-    // ⭐ R20-02 (модель просьб): вернулся к пати — отказ его просьбе снят (ждущая — его, пока открыто её голосование).
-    if (save && cur.asks.get(room)?.get(save.charId)?.refusedAt !== undefined) cur.asks.get(room)!.delete(save.charId);
+    // ⭐ D1 (модель прав «Соло»): вернулся в комнату — его право здесь снято.
+    if (save) cur.soloHints.get(room)?.delete(save.charId);
     const h = cur.heroes.find((x) => x.charId === save?.charId);
     if (h && save) h.lastSave = save;
     // R4-04: вошедший в комнату своего забега встаёт на её узел, даже стоящую в городе («отставший встаёт на узел пати», `joinRun`).
@@ -2344,186 +2712,65 @@ beforeAll(async () => {
     }
     return call();
   });
-  // ⭐ R18-04: в комнате действует (за `RUN_IDLE_MS`) подключённый участник забега `key` — по его отметке активности (`Client.activeAt`).
-  const activeHere = (room: RoomIn, key: string): boolean => [...room.clients.values()].some((c) => {
-    const run = room.session.world.players[c.pid]?.save.run?.config;
-    return !!run && runLedgerKey(run) === key && Date.now() - c.activeAt < RUN_IDLE_MS;
-  });
-  // 5 (R17-02): «ПРОДОЛЖИТЬ» ЖИВОГО УЧАСТНИКА — НЕ В ГОРОД ДЕРЖАТЕЛЯ, ГДЕ ЕГО СПУСК ЖДАЛ БЫ ЧУЖОГО ГОЛОСА. К держателю «Продолжить» сажает
-  // обычным входом (`addPlayer`); с забегом в сейве (погибший, K1, входит без него) — только в подземелье: там узел забега и есть пати. В город
-  // или на арену, где уже кто-то подключён, — заложник: спуск ждал голоса каждого (у голосования нет срока), а выход был «Забросить» — штраф.
-  // ⭐ R18-04: заложник — только у ОТОШЕДШИХ: подключённый участник забега, что действует, — пати, и вернувшийся садится к ней.
-  // ⭐ R19-04, R20-02: МОДЕЛЬ ПРОСЬБ (`W.asks`, своя — по правилу, из входов комнаты: спуск, голоса, конец и проход голосования, шаг, вход, взятие и
-  // отпуск забега). Просьба `charId` продолжить забег `key` в силе — отвергнута («нет» другого на её голосование или срок `RUN_ASK_MS` от её
-  // голосования), сказана ему (он был здесь) и свежа: `RUN_ASK_MS` с того мига. Давняя, отменённая, не сказанная — не в счёт (R20-02).
-  const askedOut = (w: W, room: RoomIn, charId: string, key: string): boolean => {
-    const q = w.asks.get(room)?.get(charId);
-    return !!q && q.key === key && q.refusedAt !== undefined && Date.now() - q.refusedAt < RUN_ASK_MS;
-  };
-  const asksOf = (w: W, room: RoomIn): Map<string, { key: string; at: number; refusedAt?: number }> => {
-    let m = w.asks.get(room);
-    if (!m) w.asks.set(room, (m = new Map()));
-    return m;
-  };
-  const charHere = (room: RoomIn, charId: string): boolean => [...room.clients.keys()].some((pid) => room.session.world.players[pid]?.save.charId === charId);
-  // Спуск из города участника забега, который комната держит (`runLock`), — просьба: отказ в силе — в силе дальше; ждущая — срок от своего
-  // голосования (`opened`; ⭐ R20-03: слот занят чужим — с первой); иначе новая.
-  const noteAskM = (w: W, room: RoomIn, pid: string, opened: boolean): string | undefined => {
-    const s = room.session.world.players[pid]?.save;
-    const lock = room.runLock;
-    if (!s?.run?.config || !lock || runLedgerKey(s.run.config) !== lock) return undefined;
-    const m = asksOf(w, room);
-    const q = m.get(s.charId);
-    if (q && askedOut(w, room, s.charId, lock)) q.refusedAt = Date.now();
-    else if (q && q.key === lock && q.refusedAt === undefined) { if (opened) q.at = Date.now(); }
-    else m.set(s.charId, { key: lock, at: Date.now() });
-    return s.charId;
-  };
-  // Пати просьбу не приняла: позвавший здесь — отказ (сказан); ушёл — сказать некому, просьбы нет (его «Продолжить» — к пати, R18-04).
-  const refuseM = (w: W, room: RoomIn, charId: string): void => {
-    const m = w.asks.get(room);
-    const q = m?.get(charId);
-    if (!q) return;
-    if (charHere(room, charId)) q.refusedAt = Date.now(); else m!.delete(charId);
-  };
-  // ⭐ R20-03: спуск при открытом голосовании, за которое он не голосовал «за», — тоже просьба (слот занят чужим: арена, спуск другого).
-  around(proto, 'descend', (self, a, call) => {
+  // ⭐ D1 (модель прав «Соло»): вход комнаты в подземелье и отпуск ею забега снимают права (как `Room.soloOk`).
+  after('takeRun', (room) => { cur?.soloHints.delete(room); });
+  after('dropRun', (room) => { cur?.soloHints.delete(room); });
+  // 5 (D1, правило 1): «ПРОДОЛЖИТЬ» НЕ СОБИРАЕТ ЗАБЕГ В НОВОЙ КОМНАТЕ, ПОКА ЕГО ДЕРЖИТ ДРУГАЯ — в подземелье (V2) и в городе (к ждущей пати: раньше
+  // R17-02 увозил вернувшегося от напарника одного, R18-04–R20-06 латали это частными случаями). Держатель отпускает забег только «Соло» (ниже).
+  around(proto, 'addPlayerResumeRun', (self, a, call) => {
     const room = self as RoomIn;
     const w = cur;
-    const pid = a[0] as string;
-    if (w?.born.has(room) && !room.frozen && room.vote && room.area === 'town' && !room.vote.yes.has(pid)) noteAskM(w, room, pid, false);
-    return call();
-  });
-  // Окно нового голосования за спуск из города — его открыл участник забега: просьба у голосования (`voteAsker`).
-  around(proto, 'voteStartFrame', (self, a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    const v = a[0] as NonNullable<RoomIn['vote']>;
-    if (w?.born.has(room) && !w.voteSeen.has(v)) {
-      w.voteSeen.add(v);
-      if (v.kind === 'descend' && room.area === 'town') {
-        const asker = noteAskM(w, room, v.by, true);
-        if (asker) w.voteAsker.set(v, asker);
-      }
-    }
-    return call();
-  });
-  // «За» чужое голосование — идёт с пати: его просьбы нет. «Нет» на голосование-просьбу: другого — отказ позвавшему, своё (отмена) — просьбы нет.
-  around(proto, 'castVote', (self, a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    const pid = a[0] as string, accept = a[1] as boolean;
-    const v = room.vote;
-    const voter = room.session.world.players[pid]?.save.charId;
-    const r = call();
-    if (!w?.born.has(room) || !v || voter === undefined) return r;
-    const asker = w.voteAsker.get(v);
-    if (accept && v.yes.has(pid) && voter !== asker) w.asks.get(room)?.delete(voter);
-    if (!accept && v.no.has(pid) && room.vote !== v && asker !== undefined) {
-      if (voter !== asker) refuseM(w, room, asker); else w.asks.get(room)?.delete(asker);
-    }
-    return r;
-  });
-  // Голосование-просьба закрыто без перехода (пати изменилась, тир, смена области): ждавшая его просьба снята, сказанный отказ — в силе.
-  around(proto, 'endVote', (self, _a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    const v = room.vote;
-    const r = call();
-    if (w?.born.has(room) && v && room.vote !== v) {
-      w.voteEnded.add(v);
-      const asker = w.voteAsker.get(v);
-      if (asker !== undefined && w.asks.get(room)?.get(asker)?.refusedAt === undefined) w.asks.get(room)?.delete(asker);
-    }
-    return r;
-  });
-  // Голосование-просьба прошло — пати приняла: просьбы нет.
-  around(proto, 'checkVote', (self, _a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    const v = room.vote;
-    const r = call();
-    if (w?.born.has(room) && v && room.vote !== v && !w.voteEnded.has(v)) {
-      const asker = w.voteAsker.get(v);
-      if (asker !== undefined) w.asks.get(room)?.delete(asker);
-    }
-    return r;
-  });
-  // Шаг комнаты (сделанный — не на паузе слива): ждущая просьба старше `RUN_ASK_MS` — отказ (сказан тому, кто здесь); отказ старше срока — снят.
-  around(proto, 'step', (self, _a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    const t0 = counters.ticks;
-    const r = call();
-    const m = w?.born.has(room) && counters.ticks !== t0 ? w.asks.get(room) : undefined;
-    if (w && m) {
-      for (const [charId, q] of [...m]) {
-        if (q.refusedAt === undefined) { if (Date.now() - q.at >= RUN_ASK_MS) refuseM(w, room, charId); }
-        else if (Date.now() - q.refusedAt >= RUN_ASK_MS) m.delete(charId);
-      }
-    }
-    return r;
-  });
-  // ⭐ R20-06: ВЗЯТИЕ ЗАБЕГА ГОРОДОМ — НЕ ЗА СПИНОЙ ТОГО, КОМУ ОН ОТДАН. Город продолжает забег `key`, а его участнику, которого здесь нет, пати
-  // отказала (сказано, свежо) — он ушёл за забегом в «Продолжить»: продолжение стирает отказ, и «Продолжить» ушедшего садит в это подземелье, где
-  // каждый спуск снова ждёт голоса отказавшего (`5-ask-wiped`). Взятие и отпуск забега просьбы снимают.
-  around(proto, 'takeRun', (self, _a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    if (w?.born.has(room) && room.area === 'town' && room.runConfig) {
-      const key = runLedgerKey(room.runConfig);
-      for (const charId of w.asks.get(room)?.keys() ?? []) {
-        if (!charHere(room, charId) && askedOut(w, room, charId, key)) {
-          violate(w, '5-ask-wiped', `комната ${room.code} продолжила забег ${key} из города, а его участнику ${charId}, которого здесь нет, пати отказала и сказала «Продолжить»: его «Продолжить» сядет в это подземелье к отказавшему; операция ${opText(w)}`, heroBy(w, charId));
-        }
-      }
-    }
-    const r = call();
-    if (w?.born.has(room)) w.asks.delete(room);
-    return r;
-  });
-  after('dropRun', (room) => { if (cur?.born.has(room)) cur.asks.delete(room); });
-  around(proto, 'addPlayer', (self, a, call) => {
-    const room = self as RoomIn;
-    const w = cur;
-    const ws = a[0] as FakeConn, save = a[2] as SaveState;
-    if (w?.born.has(room) && ws.resume && save.run?.config && room.area !== 'dungeon' && room.clients.size > 0) {
+    const save = a[2] as SaveState;
+    if (w?.born.has(room) && save.run?.config) {
       const key = runLedgerKey(save.run.config);
-      const idle = !activeHere(room, key);
-      // ⭐ R19-04: и к действующему, чью просьбу продолжить забег здесь пати не приняла: нежелающий идти держал бы забег кадром ввода.
-      if (idle || askedOut(w, room, save.charId, key)) {
-        violate(w, '5-run-hostage', `${save.charId}: «Продолжить» — в ${room.area === 'town' ? 'город' : room.area} комнаты ${room.code} (подключено ${room.clients.size}, ${idle ? 'никто не действует' : 'его просьбу продолжить забег здесь не приняли'}), чей забег ${key} стоит не в подземелье: его спуск ждёт голоса ${idle ? 'отошедших' : 'не желающих идти'}; операция ${opText(w)}`, heroBy(w, save.charId));
-      }
+      const other = [...rmOf(w).rooms.values()].find((r) => r !== room && w.born.has(r) && r.holdsRun(key));   // живые комнаты менеджера
+      if (other) violate(w, '5-resume-split', `${save.charId}: «Продолжить» собрал забег ${key} в новой комнате ${room.code}, а его держит ${other.code} (${other.area}, подключено ${other.clients.size}); операция ${opText(w)}`, heroBy(w, save.charId));
     }
     return call();
   });
-  // 5 (R18-04): ДЕЙСТВУЮЩИЙ НАПАРНИК В ГОРОДЕ ЗАБЕГ НЕ ОТДАЁТ — «Продолжить» вернувшегося (F5, вылет) садит к нему, а не увозит одного на узел.
-  // Зубы R17-02 (`teeth.r1702`): держатель в городе забег не отдаёт — «Продолжить» снова садит в его город; R18-04 (`teeth.r1804`) — отдаёт и
-  // действующему (`runActive` — ложь, ниже).
-  around(proto, 'yieldRun', (self, a, call) => {
-    if (teeth.r1702) return false;
+  // 5 (D1, правило 3): ДЕРЖАТЕЛЬ ОТПУСКАЕТ ЗАБЕГ ТОЛЬКО ЗАСЛУЖЕННОМУ «СОЛО» — герою, чей голос за продолжение здесь не прошёл (модель — подсказка
+  // `solo` ему в этой комнате, `W.soloHints`), и только на «Продолжить без пати» (`join{resume, solo}`); без права — участнику, которому здесь нет
+  // места (голоса не позвать). Простое «Продолжить» забег у держателя не забирает (`5-resume-split`).
+  around(proto, 'dropDormantRun', (_self, _a, call) => (teeth.z3dormant ? undefined : call()));   // зубы Z3 `z3dormant`: спящий замок просыпается
+  around(proto, 'handRun', (self, a, call) => {
     const room = self as RoomIn;
     const w = cur;
-    const key = a[0] as string, charId = a[1] as string | undefined;
-    const active = activeHere(room, key);
-    const asked = !!w && charId !== undefined && askedOut(w, room, charId, key);   // ⭐ R19-04: его просьбу здесь не приняли — забег его
-    const r = call();
-    if (r === true && active && !asked && w?.born.has(room)) {
-      violate(w, '5-resume-split', `комната ${room.code} (${room.area}) отдала забег ${key}, а её подключённый участник действует: вернувшийся уехал от пати один; операция ${opText(w)}`);
+    const [key, charId] = a as [string, string];
+    const full = room.seatsTaken(charId) >= 4;
+    const hinted = !!w?.soloHints.get(room)?.has(charId);
+    const asked = !!w?.pending.some((p) => p.charId === charId && p.t === 'join' && p.solo);
+    const r = teeth.d1solo ? false : call();   // зубы D1 `d1solo`: держатель забег «Соло» не отпускает
+    if (r === true && w?.born.has(room)) {
+      if (!full && !hinted) violate(w, '5-solo-unearned', `${charId}: комната ${room.code} (${room.area}) отпустила забег ${key} без права «Соло» — его голос за продолжение здесь не проваливался, место есть; операция ${opText(w)}`, heroBy(w, charId));
+      else if (!full && !asked) violate(w, '5-resume-split', `${charId}: комната ${room.code} (${room.area}) отпустила забег ${key} простому «Продолжить» (без «Соло»); операция ${opText(w)}`, heroBy(w, charId));
+      w.soloHints.get(room)?.delete(charId);
     }
     return r;
   });
-  around(proto, 'runActive', (_self, _a, call) => (teeth.r1804 ? false : call()));
-  around(proto, 'runRefused', (self, a, call) => {
-    if (teeth.r1904) return false;
-    if (!teeth.r2002) return call();
-    // Зубы R20-02: как до правки — отказ без срока, и ждущая просьба старше `RUN_ASK_MS` — отказ.
-    const q = (self as { asks: Map<string, { key: string; at: number; refusedAt?: number }> }).asks.get(a[0] as string);
-    return !!q && q.key === a[1] && (q.refusedAt !== undefined || Date.now() - q.at >= RUN_ASK_MS);
+  // 5 (⭐ R22-05): ГОЛОС, ЗА КОТОРЫЙ ВСЕ ПОДКЛЮЧЁННЫЕ, НЕ ПРОВАЛИВАЕТСЯ — он ждёт (транзакцию сундука, R1-05), а не отказан: провал даёт позвавшему
+  // «Соло», и забег уходил от согласившихся (`5-vote-consented-failed`).
+  around(proto, 'failVote', (self, a, call) => {
+    const room = self as RoomIn;
+    const w = cur;
+    const v = a[0] as { yes: Set<string>; kind: string };
+    if (w?.born.has(room) && room.clients.size > 0 && v.yes.size >= room.clients.size) {
+      violate(w, '5-vote-consented-failed', `комната ${room.code} (${room.area}): голос «${v.kind}» провален, хотя «за» все подключённые (${v.yes.size}/${room.clients.size}); операция ${opText(w)}`);
+    }
+    return call();
   });
-  around(proto, 'tickAsks', (_self, _a, call) => (teeth.r2002 ? undefined : call()));
-  around(proto, 'noteAsk', (_self, a, call) => (teeth.r2003 && a[1] === false ? undefined : call()));
-  around(proto, 'runHandedOff', (_self, _a, call) => (teeth.r2006 ? false : call()));
+  // Зубы D1: голосование вне подземелья без срока (`d1timeout`), право «Соло» у всех (`d1unearned`).
+  around(proto, 'voteExpired', (_self, _a, call) => (teeth.d1timeout ? undefined : call()));
+  around(proto, 'soloRight', (_self, _a, call) => (teeth.d1unearned ? true : call()));
+  // Зубы R23-01 (`r2301`): право «Соло» по провалу — снова только позвавшему и не на его отмену (как до правки).
+  around(proto, 'failVote', (_self, a, call) => {
+    if (!teeth.r2301) return call();
+    const [v, refuser] = a as [{ by: string; yes: Set<string> }, string | undefined];
+    if (refuser === v.by) return undefined;
+    a[0] = { ...v, yes: new Set([v.by]) };
+    return call();
+  });
+  // Зубы R23-02 (`r2302`): голос в подземелье — снова без срока (как до правки).
+  around(proto, 'voteUntil', (self, _a, call) => (teeth.r2302 && (self as RoomIn).area === 'dungeon' ? undefined : call()));
   // Зубы R19-05 (`teeth.r1905`, уход комнаты — у обёртки `stop` выше): пауза комнаты свод забега не дописывает (как до правки).
   around(proto, 'enterGrace', (_self, _a, call) => {
     teardown = teeth.r1905;
@@ -2731,8 +2978,14 @@ const KNOWN: Record<string, string> = {
    */
   'ADMIN-row-wins': 'строку живого героя обогнал администратор — правда его строка, память сессии проиграла',
 };
-/** ⭐ R19-05: нарушения правил памяти героя, которые обгон администратором снимает (`ADMIN-row-wins`). */
-const ADMIN_ROW_WINS = new Set(['1-sunk-item-back', '3-double-penalty', '3-missing-penalty', '3-safe-penalized', '3-unjustified-penalty', '4-free-restore', '5-status-promise']);
+/**
+ * ⭐ R19-05: нарушения правил памяти героя, которые обгон администратором снимает (`ADMIN-row-wins`). ⭐ D1 (большие прогоны; оба — так же и на
+ * снимке 397980a): `3-dungeon-foreign-run` (сид 101387) — одинокий герой погиб, вайп снял забег в памяти, а строку (со снимком ДО смерти, с
+ * забегом) обогнал администратор; «Продолжить» возвращает его строкой в свою комнату, стоящую на паузе в окне вайпа: правда — строка с забегом;
+ * `8-progress-regress` (сид 140882) — администратор обогнал строку снимком ДО спуска, и глубина сложности, набранная памятью после него, ушла
+ * вместе с проигравшей копией: прогресс сложности — поле строки героя (свод и узлы забега — `8-node-*` — строкой не решаются и сторожатся).
+ */
+const ADMIN_ROW_WINS = new Set(['1-sunk-item-back', '3-double-penalty', '3-dungeon-foreign-run', '3-missing-penalty', '3-safe-penalized', '3-unjustified-penalty', '4-free-restore', '5-status-promise', '8-progress-regress']);
 /** Корень нарушения — известный и ещё не исправленный (`KNOWN`): такое считается, но прогон на нём не падает. */
 function knownCause(c: string | undefined): boolean {
   return c !== undefined && Object.prototype.hasOwnProperty.call(KNOWN, c);
@@ -2915,142 +3168,104 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
     { k: 'descend', h: 1, r: 0, others: 'yes', near: false, pause: true },
     { k: 'join', h: 0, mode: 'resume', r: 0, reuse: false },
   ], '5-resume-dead-end');
-  // ⭐ R17-02: ЗАЛОЖНИК ЗАБЕГА. A и B прошли узел и вернулись в город, A вышел; B стоит в городе и ничего не делает. «Продолжить» A садило его в
-  // город B (держатель забега, V2): спуск ждал голоса B (голосование без срока), «Соло» и спуск — отказ «забег идёт в комнате …», выход —
-  // «Забросить» (штраф смерти). Теперь держатель в городе забег отдаёт: A — в новой комнате на узле забега. Самопроверка `r1702` — город снова держит.
-  // ⭐ R18-04: заложник — ОТОШЕДШИЙ: B ничего не делает дольше `RUN_IDLE_MS` (ход времени), а не стоит рядом, только что проголосовав.
-  const HOSTAGE: Op[] = [
+  // ⭐ D1: ОДНО ПРАВИЛО ОБЩЕГО ЗАБЕГА (docs/MULTIPLAYER.md) — сценарии пяти кругов ревью (R17-02 → R18-04 → R19-04 → R20-02/03/06) повтором. A и B прошли
+  // узел и вернулись в город, B вышел; A стоит в городе (молчит, отвечает «нет», держит слот ареной, остался один), а B хочет продолжить забег
+  // (`want`): «Продолжить» — к A (правило 1), спуск «за» всех (2), не прошёл — «Продолжить без пати» (3): без «Забросить», и забег в подземелье —
+  // в одной комнате (4). Раньше каждый круг латал частный случай («отдать отошедшему», «кроме действующего», просьбы, их сроки и отказы) и ломал
+  // соседний. Самопроверки `d1solo` (держатель «Соло» не отпускает) и `d1timeout` (голосование без срока) — выхода к забегу нет: `5-run-stuck`.
+  const PARTY_BACK: Op[] = [
     { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
     { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
     { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
     { k: 'town', h: 0, others: 'yes', near: true, pause: true },
-    { k: 'leave', h: 0 },
-    { k: 'wait', ms: 130_000 },
-    { k: 'join', h: 0, mode: 'resume', r: 0, reuse: false },
-    { k: 'descend', h: 1, r: 0, others: 'none', near: false, pause: true },
+    { k: 'leave', h: 1 },
   ];
-  fixedRoot('R17-02: напарник стоит в городе — «Продолжить» вышедшего берёт забег в новую комнату, а не ждёт его голоса', 7, HOSTAGE, '5-run-hostage');
-  it('самопроверка R17-02: держатель в городе забег не отдаёт — `5-run-hostage`', async () => {
-    teeth.r1702 = true;
-    try {
-      expect((await replay(7, HOSTAGE)).map((v) => v.inv)).toContain('5-run-hostage');
-    } finally { teeth.r1702 = FUZZ_SELFTEST === 'r1702'; }
-  });
-  // ⭐ R18-04: ПЕРЕЗАГРУЗКА В ГОРОДЕ. A и B вернулись в город, вкладка B перезагрузилась (из города — чистый уход, грейса нет), и «Продолжить» —
-  // после R17-02 его увозило одного в новую комнату на узел, а A, ждущему в городе, спуск отвечал `run`. Теперь — к A. Самопроверка `r1804` —
-  // город отдаёт забег и действующему напарнику.
-  const F5_TOWN: Op[] = [
-    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
-    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
-    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
-    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
-    { k: 'f5', h: 1 },
-    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
-  ];
-  fixedRoot('R18-04: перезагрузка в городе — «Продолжить» садит к ждущему напарнику, а не увозит одного на узел', 7, F5_TOWN, '5-resume-split');
-  it('самопроверка R18-04: город отдаёт забег и действующему напарнику — `5-resume-split`', async () => {
-    teeth.r1804 = true;
-    try {
-      expect((await replay(7, F5_TOWN)).map((v) => v.inv)).toContain('5-resume-split');
-    } finally { teeth.r1804 = FUZZ_SELFTEST === 'r1804'; }
-  });
-  // ⭐ R19-04: ДЕЙСТВУЮЩИЙ ДЕРЖАТЕЛЬ НЕ ХОЧЕТ ИДТИ. A и B вернулись в город, B вышел; A стоит в городе и действует. «Продолжить» B — к A (R18-04);
-  // спуск B A не принимает: молчит дольше `RUN_ASK_MS` (и всё это время действует) или отвечает «нет». B выходит и снова «Продолжить» — раньше
-  // опять в город A (спуск без его голоса не идёт, «Соло» — отказ с его кодом, выход — «Забросить»), теперь забег у B на узле. Самопроверка
-  // `r1904` — просьба не в счёт.
-  const OBSTRUCT = (no: boolean): Op[] => [
-    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
-    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
-    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
-    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
-    { k: 'leave', h: 1 },
-    { k: 'obstruct', h: 0, no: false },
-    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
-    { k: 'descend', h: 1, r: 0, others: no ? 'no' : 'none', near: false, pause: true },
-    ...(no ? [] : [{ k: 'wait', ms: 61_000 }, { k: 'obstruct', h: 0, no: false }] as Op[]),
-    { k: 'leave', h: 1 },
-    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
-  ];
-  fixedRoot('R19-04: действующий держатель молчит на просьбу продолжить забег — «Продолжить» просившего забирает забег, а не садит к нему снова', 7, OBSTRUCT(false), '5-run-hostage');
-  fixedRoot('R19-04: …и отвечает «нет» — сразу', 7, OBSTRUCT(true), '5-run-hostage');
-  it('самопроверка R19-04: просьба, не принятая пати, не в счёт — `5-run-hostage` (молчание и «нет»)', async () => {
-    teeth.r1904 = true;
-    try {
-      expect((await replay(7, OBSTRUCT(false))).map((v) => v.inv)).toContain('5-run-hostage');
-      expect((await replay(7, OBSTRUCT(true))).map((v) => v.inv)).toContain('5-run-hostage');
-    } finally { teeth.r1904 = FUZZ_SELFTEST === 'r1904'; }
-  });
-  // ⭐ R20-02: ДАВНЯЯ ПРОСЬБА. B вернулся к действующему A, позвал спуск, A ответил «нет» («подожди, починюсь»), и несколько минут оба играют в
-  // городе. Вкладка B перезагрузилась — раньше отказ без срока увозил его одного на узел (`5-resume-split`), теперь — к A: отказ в силе
-  // `RUN_ASK_MS` после того, как сказан. Самопроверка `r2002` — отказ без срока, как до правки.
-  const STALE_ASK: Op[] = [
-    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
-    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
-    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
-    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
-    { k: 'leave', h: 1 },
-    { k: 'obstruct', h: 0, no: false },
-    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
-    { k: 'descend', h: 1, r: 0, others: 'no', near: false, pause: true },
-    { k: 'wait', ms: 61_000 }, { k: 'obstruct', h: 0, no: false }, { k: 'obstruct', h: 1, no: false },
-    { k: 'wait', ms: 61_000 }, { k: 'obstruct', h: 0, no: false }, { k: 'obstruct', h: 1, no: false },
-    { k: 'f5', h: 1 },
-  ];
-  fixedRoot('R20-02: отказ, сказанный минуты назад, — перезагрузка садит к напарнику, а не увозит одного', 7, STALE_ASK, '5-resume-split');
-  it('самопроверка R20-02: отказ без срока — `5-resume-split`', async () => {
-    teeth.r2002 = true;
-    try {
-      expect((await replay(7, STALE_ASK)).map((v) => v.inv)).toContain('5-resume-split');
-    } finally { teeth.r2002 = FUZZ_SELFTEST === 'r2002'; }
-  });
-  // ⭐ R20-03: ДЕРЖАТЕЛЬ ЗАНИМАЕТ СЛОТ ГОЛОСОВАНИЯ. A зовёт арену и зовёт снова на каждый её конец; спуск B — отказ «идёт голосование». Раньше
-  // просьба писалась, только открыв своё голосование: B не мог попросить никогда, и «Продолжить» снова садило к A. Теперь спуск B — просьба и при
-  // занятом слоте: через `RUN_ASK_MS` подсказка, «Продолжить» уводит забег. Самопроверка `r2003` — спуск при занятом слоте не просьба.
-  const HOG: Op[] = [
-    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
-    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
-    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
-    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
-    { k: 'leave', h: 1 },
-    { k: 'obstruct', h: 0, no: false },
-    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
-    { k: 'obstruct', h: 0, no: false, hog: true },
-    { k: 'descend', h: 1, r: 0, others: 'none', near: false, pause: true },
-    { k: 'vote', h: 1, yes: false },
-    { k: 'wait', ms: 61_000 },
-    { k: 'obstruct', h: 0, no: false },
-    { k: 'leave', h: 1 },
-    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
-  ];
-  fixedRoot('R20-03: держатель занимает слот голосования ареной — спуск напарника всё равно просьба, «Продолжить» забирает забег', 7, HOG, '5-run-hostage');
-  it('самопроверка R20-03: спуск при занятом слоте не просьба — `5-run-hostage`', async () => {
-    teeth.r2003 = true;
-    try {
-      expect((await replay(7, HOG)).map((v) => v.inv)).toContain('5-run-hostage');
-    } finally { teeth.r2003 = FUZZ_SELFTEST === 'r2003'; }
-  });
-  // ⭐ R20-06: ОТКАЗ ЗА СПИНОЙ. B позвал, A ответил «нет», B ушёл за подсказкой в меню — и A, оставшись в городе один, звал спуск: голос проходил
-  // сразу, продолжение брало забег и стирало отказ, а «Продолжить» B садило в подземелье A. Теперь, пока отказ ушедшему в силе, город этот забег
-  // не продолжает. Самопроверка `r2006` — продолжает (`5-ask-wiped`).
-  const GRAB: Op[] = [
-    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
-    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
-    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
-    { k: 'town', h: 0, others: 'yes', near: true, pause: true },
-    { k: 'leave', h: 1 },
-    { k: 'obstruct', h: 0, no: false },
+  const WANT = (partner: Partner, extra: Op[] = []): Op[] => [...PARTY_BACK, ...extra, { k: 'want', h: 1, partner }];
+  fixedRoot('D1 (R17-02): напарник в городе молчит — голос по сроку не прошёл, «Продолжить без пати» — в подземелье забега', 7, WANT('idle'), '5-run-stuck');
+  fixedRoot('D1 (R19-04): напарник в городе отвечает «нет» — «Продолжить без пати» сразу', 7, WANT('no'), '5-run-stuck');
+  fixedRoot('D1 (V2): напарник «за» — вместе, в одной комнате', 7, WANT('yes'), '5-run-stuck');
+  // R20-03: держатель занимает слот голосования ареной (открывает снова на каждый её конец) — спуск B его «нет» арене и свой голос; «нет» A — «Соло».
+  fixedRoot('D1 (R20-03): держатель держит слот ареной — спуск всё равно зовётся, «нет» — «Соло»', 7,
+    WANT('no', [{ k: 'join', h: 1, mode: 'resume', r: 0, reuse: false }, { k: 'obstruct', h: 0, no: false, hog: true }]), '5-run-stuck');
+  // R18-04: перезагрузка в городе — «Продолжить» к ждущему напарнику (правило 1), а не новая комната одному.
+  fixedRoot('D1 (R18-04): перезагрузка в городе — к ждущему напарнику, забег у пати', 7,
+    [...PARTY_BACK.slice(0, 4), { k: 'f5', h: 1 }, { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true }], '5-resume-split');
+  // R20-06: B ушёл за «Соло», а A, оставшись один, продолжил забег сам — «Соло» B ведёт к нему в подземелье (правило 4), второй комнаты нет.
+  fixedRoot('D1 (R20-06): пока B шёл за «Соло», A один продолжил — «Соло» ведёт к нему', 7, [
+    ...PARTY_BACK,
     { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
     { k: 'descend', h: 1, r: 0, others: 'no', near: false, pause: true },
     { k: 'leave', h: 1 },
     { k: 'obstruct', h: 0, no: false, grab: true },
-    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
-  ];
-  fixedRoot('R20-06: отказ ушедшему держит забег за ним — город не продолжает его за его спиной', 7, GRAB, '5-ask-wiped');
-  it('самопроверка R20-06: город продолжает забег, отданный ушедшему, — `5-ask-wiped`', async () => {
-    teeth.r2006 = true;
+    { k: 'solo', h: 1 },
+  ], '8-run-in-two-rooms');
+  // «Соло» без права (голос не проваливался) — держатель забег не отпускает: к нему, как «Продолжить». Самопроверка `d1unearned` — отпускает.
+  const UNEARNED: Op[] = [...PARTY_BACK, { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false }, { k: 'leave', h: 1 }, { k: 'solo', h: 1 }];
+  fixedRoot('D1: «Соло» без права — к держателю, забег у пати', 7, UNEARNED, '5-solo-unearned');
+  it('самопроверка D1: держатель «Соло» не отпускает — `5-run-stuck` («нет» и молчание)', async () => {
+    teeth.d1solo = true;
     try {
-      expect((await replay(7, GRAB)).map((v) => v.inv)).toContain('5-ask-wiped');
-    } finally { teeth.r2006 = FUZZ_SELFTEST === 'r2006'; }
+      expect((await replay(7, WANT('no'))).map((v) => v.inv)).toContain('5-run-stuck');
+      expect((await replay(7, WANT('idle'))).map((v) => v.inv)).toContain('5-run-stuck');
+    } finally { teeth.d1solo = FUZZ_SELFTEST === 'd1solo'; }
+  });
+  it('самопроверка D1: голосование вне подземелья без срока — `5-run-stuck` (напарник молчит)', async () => {
+    teeth.d1timeout = true;
+    try {
+      expect((await replay(7, WANT('idle'))).map((v) => v.inv)).toContain('5-run-stuck');
+    } finally { teeth.d1timeout = FUZZ_SELFTEST === 'd1timeout'; }
+  });
+  it('самопроверка D1: право «Соло» у всех — `5-solo-unearned`', async () => {
+    teeth.d1unearned = true;
+    try {
+      expect((await replay(7, UNEARNED)).map((v) => v.inv)).toContain('5-solo-unearned');
+    } finally { teeth.d1unearned = FUZZ_SELFTEST === 'd1unearned'; }
+  });
+  // ⭐ R21-04: B ушёл «Соло» (A ответил «нет») — забег A теперь держит комната B в подземелье; в город A по коду входит C без своего забега и зовёт спуск:
+  // отказ `run` с кодом комнаты B, и кнопка вопроса в игре — `leave`, статус («забега нет»), вход по коду: C у пати. Было (веб): лобби без кода.
+  const GUEST: Op[] = [...WANT('no'), { k: 'join', h: 2, mode: 'code', r: 0, reuse: false }, { k: 'follow', h: 2 }];
+  fixedRoot('R21-04: гость без забега в городе держателя — «к пати» ведёт по коду в комнату, что держит забег', 7, GUEST, '5-offer-dead-end');
+  it('самопроверка R21-04: клиент до правки (лобби без кода на «забега нет») — `5-offer-dead-end`', async () => {
+    teeth.r2104 = true;
+    try {
+      expect((await replay(7, GUEST)).map((v) => v.inv)).toContain('5-offer-dead-end');
+    } finally { teeth.r2104 = FUZZ_SELFTEST === 'r2104'; }
+  });
+  // ⭐ R23-01: A и B прошли узел и вернулись в город, B вышел и вернулся «Продолжить» (к A, правило 1); по коду вошёл гость C без забега и занимает
+  // слот голосования спуском (спуск гостя продолжает забег комнаты) — снова на каждый конец. B хочет продолжить: «за» на спуск гостя, A молчит — по
+  // сроку «Соло» B. Было: право — только позвавшему (у гостя забега нет), свой спуск B тонул в чужом голосовании, и B стоял в городе, пока гость
+  // звал. То же на арене держателя с «в город». Самопроверка `r2301` — право снова только позвавшему.
+  const REOPEN = (arena: boolean): Op[] => [
+    ...PARTY_BACK,
+    { k: 'join', h: 2, mode: 'code', r: 0, reuse: false },
+    { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
+    ...(arena ? [{ k: 'arena', h: 0, others: 'yes', pause: true } as Op] : []),
+    { k: 'reopen', h: 2 },
+    { k: 'want', h: 1, partner: 'idle' },
+  ];
+  fixedRoot('R23-01: гость в городе держателя занимает слот спуском снова и снова — «за» участника при молчащем напарнике: «Соло»', 7, REOPEN(false), '5-run-stuck');
+  fixedRoot('R23-01: …и на арене держателя — «в город»', 7, REOPEN(true), '5-run-stuck');
+  it('самопроверка R23-01: право «Соло» по провалу — только позвавшему — `5-run-stuck` (город и арена)', async () => {
+    teeth.r2301 = true;
+    try {
+      expect((await replay(7, REOPEN(false))).map((v) => v.inv)).toContain('5-run-stuck');
+      expect((await replay(7, REOPEN(true))).map((v) => v.inv)).toContain('5-run-stuck');
+    } finally { teeth.r2301 = FUZZ_SELFTEST === 'r2301'; }
+  });
+  // ⭐ R23-02: A и B в подземелье своего забега; B у выхода хочет дальше, A на связи молчит (вкладка в фоне). Было: голос в подземелье без срока —
+  // пати на узле вечно («Продолжить» — в ту же комнату, выход — «Завершить» со штрафом). Самопроверка `r2302` — голос в подземелье снова без срока.
+  const AFK: Op[] = [
+    { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
+    { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
+    { k: 'descend', h: 0, r: 0, others: 'yes', near: false, pause: true },
+    { k: 'advance', h: 1, partner: 'idle' },
+  ];
+  fixedRoot('R23-02: напарник на связи молчит в подземелье — пати уходит с узла по сроку голосования', 7, AFK, '5-node-stuck');
+  it('самопроверка R23-02: голос в подземелье без срока — `5-node-stuck`', async () => {
+    teeth.r2302 = true;
+    try {
+      expect((await replay(7, AFK)).map((v) => v.inv)).toContain('5-node-stuck');
+    } finally { teeth.r2302 = FUZZ_SELFTEST === 'r2302'; }
   });
   // ⭐ R19-05: ПАУЗА КОМНАТЫ С НЕЗАПИСАННЫМ СВОДОМ. Герой один в подземелье; пока его автосейв в пути, строку обгоняет администратор (отзыв вещи),
   // а в комнате открывают сундук узла: запись — отказ по версии, сессия снята (`lost`), комната — на паузе грейса, затем «Завершить» её снимает.
@@ -3086,8 +3301,9 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
     } finally { teeth.r1801 = FUZZ_SELFTEST === 'r1801'; }
   });
   // ⭐ R18-02: СВОД НЕ ЛЁГ — «ПРОДОЛЖИТЬ» НЕ СОБИРАЕТ УЗЕЛ ПО БАЗЕ. A и B прошли узел и вернулись в город, B вышел; свод перестал писаться (строки
-  // героев — пишутся); A один продолжил, открыл сундук, вернулся в город и отошёл. «Продолжить» B собирал узел по базе в новой комнате — сундук закрыт
-  // снова. Теперь недолёгшее дописывается сперва, а не легло — «занято». Самопроверка `r1802` — недолёгшего свода вход не видит.
+  // героев — пишутся); A один продолжил, открыл сундук, вернулся в город и ушёл (комната ушла с недолёгшим сводом). «Продолжить» B (держателя нет —
+  // новая комната, D1 правило 1) собирал узел по базе: сундук закрыт снова. Теперь недолёгшее дописывается сперва, а не легло — «занято».
+  // «Соло» от держателя в городе с недолёгшим сводом — `roomManager.r18server.test.ts`. Самопроверка `r1802` — недолёгшего свода вход не видит.
   const LEDGER_DOWN: Op[] = [
     { k: 'join', h: 0, mode: 'fresh', r: 0, reuse: false },
     { k: 'join', h: 1, mode: 'code', r: 0, reuse: false },
@@ -3099,11 +3315,12 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
     { k: 'chest', h: 0, r: 0 },
     { k: 'chest', h: 0, r: 0.5 },
     { k: 'town', h: 0, others: 'none', near: true, pause: true },
+    { k: 'leave', h: 0 },
     { k: 'wait', ms: 130_000 },
     { k: 'join', h: 1, mode: 'resume', r: 0, reuse: false },
     { k: 'step', n: 3 },
   ];
-  fixedRoot('R18-02: свод не лёг, партнёр в городе отошёл — «Продолжить» не открывает взятый сундук снова', 7, LEDGER_DOWN, '8-node-refarmable');
+  fixedRoot('R18-02: свод не лёг, партнёр ушёл из города — «Продолжить» не открывает взятый сундук снова', 7, LEDGER_DOWN, '8-node-refarmable');
   it('самопроверка R18-02: недолёгший свод комнат не виден входу — `8-node-refarmable`', async () => {
     teeth.r1802 = true;
     try {
@@ -3458,4 +3675,48 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
     { k: 'veteran', h: 3, tier: 0, depth: 10 },
     { k: 'abandon', h: 3, ask: true },
   ], '8-progress-regress');
+  // ── Перепрогон Z3 (30.09, свежие диапазоны 60 430 001…, без сбоев базы), СЕРВЕР — сон замка забега. h1 начал забег в комнате X и вернулся с
+  // ним в город; Unity переподключился (`join{fresh}`: страховка отпустила его из X без штрафа, забег цел) — в X не осталось участников забега,
+  // держание спит (`holdsRun` — ложь, а `runLock` цел). В новой комнате E h1 с h2 продолжили тот же забег (держателя нет — E взяла его), вернулись
+  // в город, h2 вышел, h1 ушёл по коду к другу обратно в X — E ушла и забег отпустила. В X снова участник — и спящий замок ПРОСНУЛСЯ без взятия:
+  // X «держит» забег (город), а менеджер держателя не знает (`runRooms`), и «Продолжить» h2 собрал тот же забег в новой комнате — пати
+  // расколота (`5-resume-split`); в кластере проснувшийся замок продлевался бы ударом поверх строки другой ноды (ИНЦИДЕНТ и снятие копий).
+  // Теперь участник, вошедший в комнату вне подземелья, где держание спит, её замок не будит — комната забег отпускает (`Room.dropDormantRun`):
+  // забег снова берут только спуском или «Продолжить» (взятие с проверкой держателя). Сжато фаззером (сид 60430062, 89 → 12).
+  const DORMANT: Op[] = [
+    { k: 'recruit' },
+    { k: 'join', h: 1, mode: 'fresh', r: 0.3547133249230683, reuse: false },
+    { k: 'descend', h: 1, r: 0.030682347947731614, others: 'yes', near: false, pause: true, diff: 2 },
+    { k: 'town', h: 1, others: 'yes', near: true, pause: true },
+    { k: 'join', h: 3, mode: 'friend', r: 0.8137011132203043, reuse: true },
+    { k: 'unity', h: 1 },
+    { k: 'join', h: 2, mode: 'friend', r: 0.7368370851036161, reuse: false },
+    { k: 'descend', h: 2, r: 0.6944044413976371, others: 'yes', near: false, pause: true, diff: 2 },
+    { k: 'unity', h: 1 },
+    { k: 'town', h: 2, others: 'no', near: false, pause: true },
+    { k: 'leave', h: 2 },
+    { k: 'join', h: 1, mode: 'friend', r: 0.22022115741856396, reuse: false },
+  ];
+  fixedRoot('перепрогон Z3: спящий замок забега не просыпается, когда участник вернулся в комнату, — «Продолжить» не раскалывает пати', 60430062, DORMANT, '5-resume-split');
+  it('самопроверка Z3: спящий замок просыпается (как до правки) — `5-resume-split`', async () => {
+    teeth.z3dormant = true;
+    try {
+      expect((await replay(60430062, DORMANT)).map((v) => v.inv)).toContain('5-resume-split');
+    } finally { teeth.z3dormant = FUZZ_SELFTEST === 'z3dormant'; }
+  });
+  // ⭐ Перепрогон Z3 (сид 60400502, сжато до 5), МОДЕЛЬ ФАЗЗЕРА — сервер прав. Автосейв h1 в подземелье медленный (`slow`), и пока он в пути, его
+  // строку обгоняет администратор (`adminBump`) — снимком ДО спуска; h1 спускается глубже, копия в памяти проигрывает строке (R19-05, по дизайну),
+  // и глубина сложности уходит с ней: 2 → 1. Это корень `ADMIN-row-wins` (метка в `ADMIN_ROW_WINS`, так разобран и сид 140882), но проверка
+  // прогресса звала `violate` без героя — корень не находился, и прогон падал на «неизвестном». Теперь герой передаётся (и в фаззере кластера).
+  it('перепрогон Z3 (модель): откат глубины после обгона строки администратором — корень `ADMIN-row-wins`, а не неизвестное', async () => {
+    const vs = await replay(60400502, [
+      { k: 'join', h: 1, mode: 'fresh', r: 0.8171309705357999, reuse: true },
+      { k: 'descend', h: 1, r: 0.13886011624708772, others: 'yes', near: true, pause: false },
+      { k: 'fault', f: 'slow', h: 1, ops: 3 },
+      { k: 'adminBump', h: 1 },
+      { k: 'descend', h: 1, r: 0.9622417399659753, others: 'none', near: true, pause: true },
+    ]);
+    expect(vs.filter((v) => v.cause !== 'ADMIN-row-wins').map((v) => `${v.inv}: ${v.msg}`), 'все — корня обгона').toEqual([]);
+    expect(vs.map((v) => v.inv), 'путь пройден: глубина откатилась с проигравшей копией').toContain('8-progress-regress');
+  });
 });

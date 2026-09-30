@@ -336,14 +336,16 @@ describe('⭐ перепрогон R15: строка забега сверяет
   type Held = { code: string; hooks: Hooks; stop(): void; holdsRun(key: string): boolean };
   /** Хранилище держаний: `failReleases` — столько отпусков подряд упадут (раздел с базой); `claimLost` — взятие ляжет, а ответ потеряется. */
   function store(): {
-    locks: Map<string, string>; log: string[]; failReleases: number; claimLost: boolean; gate: Promise<void> | null;
+    locks: Map<string, string>; log: string[]; failReleases: number; failClaims: number; claimLost: boolean; gate: Promise<void> | null;
     api: import('./roomManager.js').RunLockStore;
   } {
     const st = {
-      locks: new Map<string, string>(), log: [] as string[], failReleases: 0, claimLost: false, gate: null as Promise<void> | null,
+      locks: new Map<string, string>(), log: [] as string[], failReleases: 0, failClaims: 0, claimLost: false, gate: null as Promise<void> | null,
       api: {
         claim: async (key: string, room: string): Promise<string | null> => {
           if (st.gate) await st.gate;
+          // ⭐ Перепрогон Z4: взятие не дошло до базы (раздел, сбой реестра) — строка не тронута.
+          if (st.failClaims > 0) { st.failClaims--; st.log.push(`claim ${key}@${room} — упало`); throw new Error('нет связи с базой'); }
           st.locks.set(key, room); st.log.push(`claim ${key}@${room}`);
           if (st.claimLost) { st.claimLost = false; throw new Error('ответ на фиксацию потерян'); }
           return null;
@@ -438,6 +440,44 @@ describe('⭐ перепрогон R15: строка забега сверяет
       old.hooks.runDropped('run-d', old);                           // её продолжения нет (все ушли) — «взятое на ожидание назад»
       await turns(10);
       expect(st.locks.get('run-d'), `строка — за держателем, а не за ушедшей (${st.log.join(' → ')})`).toBe(cur.code);
+    } finally { setRunLockStore(null); }
+  });
+
+  // ⭐ ПЕРЕПРОГОН Z4 (фаззер кластера, сид 71220185): то же позднее взятие ушедшей комнаты поверх строки держателя, но переписать строку на
+  // держателя НЕ ДОШЛО (сбой реестра), а держатель, пока ждали удара, забег отпустил (вайп): его отпуск снимает строку только за СВОЕЙ комнатой
+  // (`releaseRun` — «только своё и только за этой комнатой»), и строка за ушедшей жила без продления до простоя — «Продолжить» соседней ноды вело
+  // в комнату, которой нет. Теперь такая строка помнится (`runsStale`): держатель ещё держит — её перепишет продление удара; не держит — удар её снимает.
+  it('перепрогон Z4: строку, переписанную поздним взятием ушедшей комнаты, не удалось вернуть держателю, а он отпустил забег — удар её снимает', async () => {
+    const { setRunLockStore, clusterHooks } = await import('./roomManager.js');
+    const st = store();
+    setRunLockStore(st.api);
+    try {
+      const rm = manager() as unknown as { createRoom(): Held };
+      const old = rm.createRoom();
+      const cur = rm.createRoom();
+      old.stop(); cur.stop();
+      cur.holdsRun = (key: string): boolean => key === 'run-z';   // «Продолжить» героя: забег взяла новая комната
+      cur.hooks.runTaken('run-z', cur);
+      await turns(10);
+      st.locks.set('run-z', old.code);                              // взятие ушедшей (R9-01, `runClaim`) легло поздно — поверх строки держателя
+      st.failClaims = 1;                                            // …а вернуть строку держателю не дошло
+      old.hooks.runDropped('run-z', old);
+      await turns(10);
+      expect(st.locks.get('run-z'), `вставка на держателя упала (${st.log.join(' → ')})`).toBe(old.code);
+      // Держатель ещё держит — удар строку не снимает: её перепишет его же продление (`touchRuns` пишет свою строку за держателем).
+      expect(clusterHooks.heldRuns()).toEqual([{ key: 'run-z', room: cur.code }]);
+      await turns(5);
+      expect(st.locks.get('run-z')).toBe(old.code);
+      // Держатель отпустил забег до удара, что её переписал бы (вайп): его отпуск — за своей комнатой и строку за ушедшей не трогает.
+      cur.holdsRun = (): boolean => false;
+      cur.hooks.runDropped('run-z', cur);
+      await turns(10);
+      expect(st.locks.get('run-z'), 'отпуск держателя — только за его комнатой').toBe(old.code);
+      expect(clusterHooks.heldRuns()).toEqual([]);
+      await turns(5);
+      expect(st.locks.has('run-z'), `строка за ушедшей снята ударом (${st.log.join(' → ')})`).toBe(false);
+      clusterHooks.heldRuns(); await turns(5);
+      expect(st.log.filter((l) => l === `release run-z@${old.code}`), 'снята один раз').toHaveLength(1);
     } finally { setRunLockStore(null); }
   });
 });

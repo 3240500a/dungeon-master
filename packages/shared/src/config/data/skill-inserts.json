@@ -324,7 +324,7 @@
     "id": "ins-ward",
     "name": "Оберег",
     "type": "sigil",
-    "description": "При использовании накрывает бронёй на несколько секунд.",
+    "description": "При использовании накрывает бронёй на несколько секунд — не чаще раза в 14 с (откат печати).",
     "fits": {
       "categories": [
         "attack",
@@ -340,7 +340,7 @@
         "abilityId": "insert-ward",
         "manaCost": 0,
         "resource": "mana",
-        "cooldown": 0,
+        "cooldown": 14,
         "durationSec": 4,
         "buffMods": [
           {
@@ -358,7 +358,7 @@
     "id": "ins-swiftness",
     "name": "Лёгкий шаг",
     "type": "sigil",
-    "description": "При использовании ускоряет на несколько секунд.",
+    "description": "При использовании ускоряет на несколько секунд — не чаще раза в 10.5 с (откат печати).",
     "fits": {
       "categories": [
         "attack",
@@ -374,7 +374,7 @@
         "abilityId": "insert-swiftness",
         "manaCost": 0,
         "resource": "mana",
-        "cooldown": 0,
+        "cooldown": 10.5,
         "durationSec": 3,
         "buffMods": [
           {

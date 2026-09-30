@@ -118,7 +118,7 @@
 - ✅ **Ф2** блок A: LoS-гейт атак/выстрелов (+ перепроверка после замаха) — не стреляют сквозь стену.
 - ✅ **Ф3** блок B: патфайндинг-гибрид (обход стен по `findPath`, прямой ход при LoS) + wall-aware отход.
 - ✅ **Ф4** FSM: flee по `fleeHpPct`, alertDelay, juggernaut-`windupMult`, стрелки-strafe между выстрелами.
-- ✅ **Ф4b** сигнатуры: блинк джиннов (repositionMode=blink), overload конструктов на смерти.
+- ✅ **Ф4b** сигнатуры: блинк джиннов (repositionMode=blink), overload конструктов на смерти (⚠ R21-06: только по героям в прямой видимости от монстра и после наград добившего; новый монстр без фракции — нежить, не конструкт).
 - ✅ **Ф5** биом→фракция (уже был: crypt=undead, caves=beast, dungeon=constructs, labyrinth=demon) + редактор.
 - ✅ **Ф6** тесты (`behavior.test.ts`: резолвер, LoS-гейт, flee, патфайндинг) + verify (4×tsc, vitest, build).
 

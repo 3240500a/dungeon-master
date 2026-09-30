@@ -3,6 +3,7 @@ import {
   WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_QUEST_TEMPLATE_ID_MAX,
   WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, isSafeKey, isWireText,
 } from '../session/wireLimits.js';
+import { buffTimingIssues } from '../formulas/buffTiming.js';
 
 /**
  * zod-схемы всех конфигов — единственный источник истины по ФОРМЕ данных.
@@ -468,6 +469,13 @@ export const balanceSchema = z.object({
    * В конфиге, а не в коде: это главная ручка глубины сборки, её крутит дизайнер.
    */
   skillSocketRanks: z.array(z.number().int().min(1)).max(WIRE_SOCKETS).default([1, 6, 12]),
+  /**
+   * ⭐ D4: ПРАВИЛО ВРЕМЕНИ БАФФА — наименьший отдых, доля действия. Откат временного баффа на КАЖДОМ ранге (узел древа — по рангу, печать
+   * вставки — по рангу донора) не короче `действие × (1 + buffMinRest)`: под баффом не больше 1 / (1 + buffMinRest) времени (0.25 → 80 %).
+   * Строго больше нуля — откат всегда длиннее действия. Проверка — `buffTimingIssues` (`formulas/buffTiming.ts`) поверх баланса, древа и
+   * вставок (`configCrossIssues`): реестр и редактор не пускают бафф, нарушающий правило, и поднять эту ручку выше, чем держат данные.
+   */
+  buffMinRest: z.number().min(0.05).max(10).default(0.25),
   /** Размер сетки инвентаря в клетках. */
   inventory: z
     .object({
@@ -1184,8 +1192,12 @@ export const monstersSchema = z.array(
     name: z.string(),
     /** Активен ли монстр в игре (выключенный не спавнится, но остаётся в редакторе). */
     enabled: z.boolean().default(true),
-    /** Фракция монстра (аффинити классов, профиль поведения, пул гира). */
-    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('monster'),
+    /**
+     * Фракция монстра (аффинити классов, профиль поведения, пул гира). ⚠ R21-06: по умолчанию — нежить, как безопасный дефолт
+     * профиля (`DEFAULT_BEHAVIOR`, без сигнатуры): было `monster` — профиль конструктов со взрывом при смерти (`overload`), и новый
+     * монстр редактора без выбранной фракции молча взрывался. Конструкт — выбором фракции, а не умолчанием.
+     */
+    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('undead'),
     /** Подфракция (чисто визуал + тема аффиксов на магич./рарных, напр. «культ огня»). Пусто = базовая. */
     subfaction: z.string().default(''),
     /** id роли монстра (из monster-roles) — для состава пачек. */
@@ -3103,3 +3115,23 @@ export type ConfigKey = keyof typeof configSchemas;
 export type ConfigShapes = {
   [K in ConfigKey]: z.infer<(typeof configSchemas)[K]>;
 };
+
+/** Нарушение правила поверх нескольких таблиц: таблица, в которой строка-нарушитель, и что не так. */
+export interface ConfigCrossIssue { key: ConfigKey; msg: string }
+
+/** Таблицы, которые читают правила поверх нескольких таблиц (`configCrossIssues`): правка любой из них проверяется ими. */
+export const CONFIG_CROSS_KEYS: readonly ConfigKey[] = ['balance', 'skill-tree', 'skill-inserts'];
+
+/**
+ * ⭐ D4: ПРАВИЛА ПОВЕРХ НЕСКОЛЬКИХ ТАБЛИЦ — то, чего схема одной таблицы не видит. Сегодня одно: время баффа (`buffTimingIssues`) — откат
+ * из древа и вставок, действие по рангу, отдых из баланса. Зовут реестр (`loadAll`/`reload`: файлы, `/api/dev/config`, оверрайды базы — всё
+ * или ничего, как схема) и редактор (`validatedKeys`, до отправки). `get` — разобранная таблица (схемой) или `undefined`, если её нет:
+ * без любой из таблиц правило молчит.
+ */
+export function configCrossIssues(get: (key: ConfigKey) => unknown): ConfigCrossIssue[] {
+  const balance = get('balance') as ConfigShapes['balance'] | undefined;
+  const tree = get('skill-tree') as ConfigShapes['skill-tree'] | undefined;
+  const inserts = get('skill-inserts') as ConfigShapes['skill-inserts'] | undefined;
+  if (!balance || !tree || !inserts) return [];
+  return buffTimingIssues({ balance, 'skill-tree': tree, 'skill-inserts': inserts }).map((i) => ({ key: i.table, msg: `⭐ D4 правило баффа: ${i.msg}` }));
+}
