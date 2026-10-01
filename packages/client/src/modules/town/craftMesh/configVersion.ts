@@ -3,8 +3,12 @@ import type { ConfigRegistry } from '@dm/shared';
 /**
  * Таблицы конфига, из которых строится модель из деталей (`buildCraftMesh`): анатомия, сами детали, тип → база
  * (её стихия красит свечение фокуса), тип читает и `balance`. Правка любой — другая модель при той же подписи.
+ * `craft-materials` — имена ступеней в отказе `resolveParts` (`stepLabel`): сборку с деталью вне окна материалов (вещь старше правки
+ * окна) `meshCtx` проверяет тем же `resolveParts`, и тот читает таблицу ради подписи отказа.
+ * ⚠ U6b: печь GLB сервера (`server/src/craftMesh`) держит ТОЛЬКО эти таблицы и ключует по ним кэш — таблица, которую построитель
+ * начал читать, обязана войти сюда (иначе печь бросает «не загружен»; сторож `server/src/craftMesh/craftMeshBake.test.ts`).
  */
-export const CRAFT_MESH_DEPS = ['items.base', 'weapon-parts', 'weapon-anatomy', 'weapon-types', 'balance'] as const;
+export const CRAFT_MESH_DEPS = ['items.base', 'weapon-parts', 'weapon-anatomy', 'weapon-types', 'balance', 'craft-materials'] as const;
 
 const seen = new WeakMap<ConfigRegistry, { deps: unknown[]; ver: number }>();
 let seq = 0;

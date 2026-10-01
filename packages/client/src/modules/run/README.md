@@ -16,6 +16,15 @@
   «Спуститься: <тип узла>», иначе «Спуститься глубже»). Подпись — ГЕТТЕР: план забега (`app.run`) читается в миг показа, а не на
   постройке области. Сервер шлёт `joined`/`areaChanged` РАНЬШЕ `runPlan`, и раньше на первом узле каждого забега и после (пере)входа все
   выходы развилки подписывались «Спуститься глубже» до смены этажа. Тест — `runExits.test.ts` (и сторож проводки обоих клиентов).
+- `unityWorldGolden.gen.test.ts` — продюсер эталона `__golden__/unity_world.json` для Unity (U5a; копия — `Assets/DM/Net/Tests/
+  unity_world_golden.json`, порт — `Net/WorldRules.cs`, проверка `WorldCheck`): интерактивы области веб-3D (порядок, радиусы, подписи, ближайший
+  и «[E] …»), подписи и рёбра выходов на планах `generateRunPlan`, метки миникарты, цвета сундуков/дропов/снарядов/чисел урона, строки
+  журнала по событиям. Правила `online3d.ts` повторены копией и сторожатся строками исходника — поменяли правило, тест падает.
+- `unityRunUiGolden.gen.test.ts` — продюсер эталона `__golden__/unity_run_ui.json` для Unity (U5b; копия — `Assets/DM/UI/Tests/
+  unity_run_ui_golden.json`, проверка `RunUiCheck`): вопрос голосования (`voteQuestion`), окно смерти по шагам (класс `DeathWindow`), модель
+  алтаря (`difficultyPanel` + `effectiveLevel`/`startChallenge`/`altarModifiers`), раскладка карты забега (`runMapPanel`), камера
+  (`render3d/cameraRig.ts`), затухание стен (лицо стены и формула шейдера `render3d/env3d.ts`, параметры биома `online3d.applyEnvFade`),
+  наблюдение после смерти и Tab (`online3d`). Замыкания и DOM/WebGL повторены копией и сторожатся строками исходника.
 
 ## Контракт с сервером
 - Кадр `runPlan {plan, currentNodeId}` → `App.run` (см. `core/app.ts`). Сбрасывается в городе.

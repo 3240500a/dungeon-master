@@ -15,6 +15,14 @@ export function noteSession(token: string, userId: string): void {
 }
 
 /**
+ * ⭐ R10-04: видел ли процесс живую сессию этого токена (`known.sessions`). Ручке со своим бакетом сети адреса (модель оружия,
+ * `craftMeshRoutes.ts`): знакомый токен его не платит — поток чужих токенов за общим NAT не запирает соседа. Кривой токен — нет.
+ */
+export function knownSession(token: string | null): boolean {
+  return typeof token === 'string' && WIRE_TOKEN_RE.test(token) && known.sessions.get(sessionKey(token)) !== undefined;
+}
+
+/**
  * ⭐ R13-08: ПРОПУСК МАРШРУТА — гейтвей проверил сессию токена (`/api/route`) и говорит об этом ноде адресом, который отдаёт клиенту
  * (`?lp=`). Нода знает живые сессии только со своего старта (`primeKnown`), и токен, выданный позже (вход после деплоя ноды), на её
  * лобби был незнакомым: платил бакет сети адреса ДО базы (R12-05), а поток мусорных токенов тролля за тем же CGNAT держал бакет

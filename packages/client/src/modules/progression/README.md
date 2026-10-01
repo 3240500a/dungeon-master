@@ -55,3 +55,13 @@
   3D) — `xpProgress`: уровень выше потолка — полная, опыт ниже порога после правки кривой — с нуля, а не минусом. Тесты —
   `shared/economy/earned.test.ts`, `shared/formulas/formulas.test.ts`, `server/net/roomManager.d2server.test.ts`, профиль D2 фаззера
   экономики (`progEdit`, `reenter`; I4 `earned`, `earned-held`, `level-drop`, `refund-config`), книга в фаззере правил (I6 `earned`).
+- ⭐ **Эталон паритета Unity — с ВЫВОДА настоящих окон** (`unityStatsGolden.gen.test.ts` → `__golden__/unity_stats.json` → Unity
+  `StatsCheck`; разбор U5/U6): окна веба рисуются в node на поддельном DOM (`unityGoldenDom.testkit.ts`: элементы и SVG, `style.cssText`,
+  `innerHTML`, подсказка `attachTooltip` — посланным `mouseenter`) с настоящим `App` без сети и `GameState` — копий правил почти нет.
+  Снимается: деривы героя целиком (гир, класс брони, мастерства, древо, ауры) и резерв пулов, `xpProgress`, HUD 3D (`hud3d`: полосы, зоны
+  резерва, «(−N)», «этаж · сложность · вызов ур.»), блок атрибутов мастера (`derivedBlock`), лист персонажа (`characterPanel`: блоки, строки
+  ячейками, подсказки), карточки оружия и таблица «в руках → скую» окна ковки (`cardWith`, `compareTable`), предпросмотр верстака
+  (`benchTarget` → `diffStrings`), древо скилов (`renderSkillTree`: свои ветки, ромбы-вставки, подсказки). Случай `caps` — со своими таблицами
+  конфига (`patch`: класс брони сверх потолков бега, атаки и выдержки). Перезапись — `npx vitest run …/unityStatsGolden.gen.test.ts`.
+  Рождённое часами (uuidv7-`uid`, `createdAt` сейва) пишется постоянным по порядку появления — эталон не меняется от прогона к прогону
+  (иначе каждый `npm test` делал копию Unity «устаревшей»).

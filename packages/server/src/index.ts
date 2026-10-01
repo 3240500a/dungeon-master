@@ -33,6 +33,7 @@ import { setDeviceKey } from './net/deviceToken.js';
 import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
 import { installConfigWrites } from './net/configRoutes.js';
+import { installCraftMeshRoute } from './net/craftMeshRoutes.js';
 import { ah, httpErrors, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
@@ -482,6 +483,10 @@ app.get('/api/me', ah(async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Требуется вход' });
   res.json({ userId, username: user.username, role: user.role, via: 'session' });
 }));
+
+// ⭐ U6b: модель оружия из деталей — GLB по подписи вида (`GET /api/craft-mesh.glb`, `net/craftMeshRoutes.ts`): печёт поток печи
+// (`craftMesh/worker.ts`) тем же построителем, что у веба; главный поток `three` не грузит. Нода кластера HTTP API не отдаёт (R10-09).
+if (ROLE !== 'node') installCraftMeshRoute(app, { config });
 
 // ── Статика клиента (прод: ОДИН сервер отдаёт игру + /api + /ws на одном домене) ──────────
 // Регистрируется ПОСЛЕ всех /api-роутов, поэтому их не затирает; WS — на upgrade `/ws`, отдельно.

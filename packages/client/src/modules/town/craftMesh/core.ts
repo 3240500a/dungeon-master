@@ -87,7 +87,13 @@ function surfaceOf(family: string, step: number): { metalness: number; roughness
   }
 }
 
-/** Кэш материалов на одну сборку: одна и та же пара «семья × ступень» — один объект. */
+const hex6 = (c: number): string => c.toString(16).padStart(6, '0');
+
+/**
+ * Кэш материалов на одну сборку: одна и та же пара «семья × ступень» — один объект.
+ * Имя материала — `семья:ступень` (у светящегося фокуса — `:glow=rrggbb`), у мелочи вне лестниц — `fixed:rrggbb`: по нему
+ * Unity ставит СВОЙ материал на модель из GLB сервера (`GET /api/craft-mesh.glb`, CRAFT_WEAPONS.md §21.1). Вебу имя не нужно.
+ */
 export class MatCache {
   private map = new Map<string, THREE.Material>();
   of(family: string, step: number, glow = 0): THREE.Material {
@@ -99,6 +105,7 @@ export class MatCache {
       const surf = surfaceOf(family, s);
       const mm = new THREE.MeshStandardMaterial({ color, ...surf });
       if (family === 'focus') { mm.emissive.setHex(glow || color); mm.emissiveIntensity = glow ? 0.55 : 0.2; }
+      mm.name = glow ? `${family}:${s}:glow=${hex6(glow)}` : `${family}:${s}`;
       m = mm;
       this.map.set(key, m);
     }
@@ -107,7 +114,7 @@ export class MatCache {
   fixed(color: number, metalness = 0, roughness = 0.7): THREE.Material {
     const key = `fixed|${color}|${metalness}|${roughness}`;
     let m = this.map.get(key);
-    if (!m) { m = new THREE.MeshStandardMaterial({ color, metalness, roughness }); this.map.set(key, m); }
+    if (!m) { m = new THREE.MeshStandardMaterial({ color, metalness, roughness }); m.name = `fixed:${hex6(color)}`; this.map.set(key, m); }
     return m;
   }
   dispose(): void { for (const m of this.map.values()) m.dispose(); this.map.clear(); }
