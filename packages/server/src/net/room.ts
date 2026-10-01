@@ -5109,15 +5109,30 @@ export class Room implements Tickable {
     // ровно однажды (на входе на этаж) и исчезает только со смертью, поэтому список знакомых
     // растёт монотонно и чистится сменой этажа.
     const fresh = snap.monsters.filter((m) => !this.known.has(m.id));
-    if (fresh.length) {
+    const infoOf = (list: typeof snap.monsters): Extract<ServerFrame, { t: 'monsterInfo' }>['monsters'] => {
       const live = new Map(this.session.world.monsters.map((m) => [m.id, m]));
-      const info = fresh
+      return list
         .map((m) => live.get(m.id))
         .filter((m): m is NonNullable<typeof m> => !!m)
         .map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y }));
+    };
+    if (fresh.length) {
+      const info = infoOf(fresh);
       if (info.length) this.broadcast({ t: 'monsterInfo', monsters: info });
-      for (const m of fresh) this.known.add(m.id);
     }
+    // ⭐ ВОШЕДШИЙ НА ЖИВОЙ ЭТАЖ (реконнект, «Продолжить», вход по коду) — определения ВСЕХ, кто уже здесь: список знакомых — на комнату,
+    // и тех, кого комната знала до его входа, рассылка новых ему не пришлёт никогда. Раньше они оставались у него без определения —
+    // веб их не рисовал вовсе, Unity — капсулами до конца этажа. Перед его первым (полным) кадром, тем же порядком «сначала определения».
+    let knownMsg: string | undefined;
+    for (const c of this.clients.values()) {
+      if (!c.ws.open || c.baselined) continue;
+      if (knownMsg === undefined) {
+        const known = infoOf(snap.monsters.filter((m) => this.known.has(m.id)));
+        knownMsg = known.length ? JSON.stringify({ t: 'monsterInfo', monsters: known } satisfies ServerFrame) : '';
+      }
+      if (knownMsg) c.ws.send(knownMsg);
+    }
+    for (const m of fresh) this.known.add(m.id);
 
     // Полный кадр: по расписанию, при первом кадре комнаты — и лениво, если кто-то подключился
     // и ещё не имеет базиса.
