@@ -749,20 +749,6 @@ export function warpStanceFeet(human: Humanoid, target: readonly [readonly [numb
 
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
-/** Компенсация A-стойки бинда ФБХ для ПРОЦЕДУРНОЙ реконструкции: её ik() считает «поворот бедра 0 = нога прямо вниз», а бинд
- *  splay-ит наружу → доворачиваем БЕДРО внутрь на human.legAdduct, нога вертикальна, стопы в планты. Компонентно к Z бедра.
- *  ⚠ `scale`=вес гейта (legMag): АВТОРСКАЯ idle-поза сделана НА бинде (Позы-таб рисует её БЕЗ аддукта) — ей компенсация НЕ нужна,
- *  иначе её сводит ýже, чем автор видел (баг «узкая стойка в игре/локо»). Поэтому аддукт масштабируем: idle(m=0)=0 (ширина автора),
- *  гейт(m=1)=полный (реконструкция компенсирована). measureStancePlants аддукт НЕ зовёт → планты = авторская ширина. */
-export function applyLegAdduct(human: Humanoid, scale = 1): void {
-  const at = (human.legAdduct ?? 0) * scale;                  // splay бедра (hip→колено) × вес гейта
-  const kc = at - (human.legAdductKnee ?? 0) * scale;         // коррекция колена = splayБедра − splayГолени: доворот бедра УЖЕ
-  if (Math.abs(at) < 1e-4 && Math.abs(kc) < 1e-4) return;     // повернул голень (она ребёнок) → на колене добираем только разницу,
-  const lu = human.bones.get('LeftUpperLeg'), ru = human.bones.get('RightUpperLeg');   // чтобы голень стала ПАРАЛЛЕЛЬНА бедру (как у базового = прямая нога).
-  const ll = human.bones.get('LeftLowerLeg'), rl = human.bones.get('RightLowerLeg');
-  if (lu) lu.rotation.z -= at; if (ru) ru.rotation.z += at;   // бедро: Left splay +X → −Z сводит вертикально (риг: Left на +X, см. [[humanoid-rig-mirror]])
-  if (ll) ll.rotation.z += kc; if (rl) rl.rotation.z -= kc;   // колено: голень ∥ бедру → нога вертикальна В ЛЮБОМ сгибе колена
-}
 /**
  * РАЗВОД БЁДЕР: колени наружу (+) или внутрь (−) при НЕПОДВИЖНОЙ стопе.
  *
@@ -793,7 +779,7 @@ export function applyHipSplay(human: Humanoid, l: number, r: number): void {
  * качанием», ноги держат направление, которое им дал IK.
  *
  * ⚠ Ставится ПОСЛЕ `blendBone`, а не внутрь него: бленд с авторской стойкой разбавил бы компенсацию,
- * а таз повёрнут жёстко. Тот же приём, что у `applyLegAdduct` и `applyHipSplay`.
+ * а таз повёрнут жёстко. Тот же приём, что у `applyHipSplay`.
  * ⚠ `twistTorso` ниже по потоку работает через `rotateY` (композиция), поэтому наш X/Z переживает её.
  * ⚠ Смещение самих ТАЗОБЕДРЕННЫХ СУСТАВОВ этим не убрать (2.73 ед при крене 0.3) — это и есть крен;
  * его отрабатывают ноги, стопу переставляет заземление.
@@ -1209,10 +1195,8 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // уходил под пол на перекате (замер: до −1.567, ниже нуля 59 кадров из 300). Теперь у него свой
   // канал (`GAIT.toeOff`), а знак ЗАМЕРЕН по высоте кости, а не выведен.
   blendBone(human, 'LeftToes', [t.toeCurlL, 0, 0], idle, m); blendBone(human, 'RightToes', [t.toeCurlR, 0, 0], idle, m);
-  // Аддукт масштабируем ТОЛЬКО когда idle АВТОРИТ ноги (тогда idle m=0 = авторская ширина, гейт m=1 = компенсирован). Без
-  // авторских ног (монстры/процедурка, idle не задаёт LeftUpperLeg) ноги ВСЕГДА реконструкция → аддукт полный (иначе splay бинда).
-  applyLegAdduct(human, (idle && idle['LeftUpperLeg']) ? m : 1);
-  applyHipSplay(human, t.hipSplayL * m, t.hipSplayR * m);   // развод бёдер — поверх аддукта, тем же приёмом
+  // (Компенсации развала бинда `applyLegAdduct` больше нет: риг и модель приводятся к прямым ногам в ресте — `legCanon.ts`.)
+  applyHipSplay(human, t.hipSplayL * m, t.hipSplayR * m);   // развод бёдер
   // ТОРС/ШЕЯ держат idle-стойку при ПОВОРОТЕ НА МЕСТЕ: блендим к гейту по МГНОВЕННОЙ скорости (armMag=0 стоя/крутясь), а не по
   // legMag (=1 на подшаге) — иначе спина разгибалась/клонило назад при развороте. При движении (armMag→1) — гейт-наклон. Скрутка
   // к прицелу (applyTorsoTwist) и head-look-at идут ОТДЕЛЬНО поверх этого.

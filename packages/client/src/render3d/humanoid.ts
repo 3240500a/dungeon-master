@@ -5,6 +5,7 @@
  * Масштаб: TILE=32u=1 м, рост ~1.9 м. Имена костей — Unity (`LeftUpperArm` и т.д.) для карты ретаргета.
  */
 import * as THREE from 'three';
+import { canonLegOffsets } from './legCanon.js';
 import { lenMult, pelvisHeight, girthMult, boneScaleOf, boneRegion, type BodyProfile, type BoneScale } from './bodyProfile.js';
 
 /** Геометрия кисти: [отступ пястной кости от запястья, длины трёх фаланг]. Пальцы идут вдоль +X (наружу). */
@@ -112,11 +113,6 @@ export interface Humanoid {
   setHipsWorldY(y: number): void;
   /** Мировая высота таза (обратная к setHipsWorldY). */
   hipsWorldY(): number;
-  /** Приведение БЕДРА (рад, splay бедра hip→колено) и КОЛЕНА (legAdductKnee, splay голени колено→лодыжка) для компенсации
-   *  A-стойки бинда ФБХ: нога splay-ит наружу посегментно, поза-система считает «поворот 0 = прямо вниз». Гейт/стойка
-   *  доворачивают оба сустава → нога вертикальна В ЛЮБОМ сгибе (один hip-доворот не хватает при согнутом колене). 0 у процедурных. */
-  legAdduct: number;
-  legAdductKnee: number;
   /** Подъём стопы (юниты): смещение цели заземления/стойки вверх, чтобы ПОДОШВА МЕША (не кость-лодыжка) легла на пол.
    *  У атласа лодыжка выше процедурной (FOOT_Y=1.5) → без подъёма стопы меша тонут. Per-персонаж из pe_phys.footLift;
    *  читают measureStancePlants (standY) и footIk.groundFeet (цель = пол + SOLE + footLift) → редактор ≡ игра. 0 у процедурных. */
@@ -297,7 +293,11 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   // ДЛИНА/НАПРАВЛЕНИЕ звеньев. boneOffsets (ВЕКТОР rest-офсета из ФБХ) — приоритет: наш скелет ПОВТОРЯЕТ геометрию
   // модели 1:1 (направление+длина; чинит «раскоряку» — узкий-вниз хип ФБХ, а не широкий как у boneScale-скаляра).
   // Нет офсета кости → фолбэк base × boneScale-скаляр. Профиль (lenMult) — морф поверх. Таз — высота (заземление).
-  const bsc = opts.boneScale, bo = opts.boneOffsets;
+  // ⭐⭐ НОГИ — В КАНОН (07.10, `legCanon.canonLegOffsets`): колено под бедром, лодыжка под коленом, носок вперёд; длины модели.
+  // Модель приводится к тому же канону поправкой реста (`makeRetargetRig` → `legCanonFix`), так что «ноль поворотов» у рига и у
+  // меша — одни и те же прямые ноги. Раньше риг ПОВТОРЯЛ отклонения бинда (у рыцаря колено +3°, носок наружу 23.6°), и они
+  // садились в каждый кадр любого клипа; частичная компенсация `legAdduct` (только боковой развал) снята вместе с причиной.
+  const bsc = opts.boneScale, bo = canonLegOffsets(opts.boneOffsets);
   // Ф15.2: ЗАМЕРЕННЫЙ офсет берётся КАК ЕСТЬ. Раньше у осевой цепи (спина→шея→голова) обнулялся forward-Z,
   // чтобы CC-бинд с наклоном головы не читался как горб — но обнуление РЕЖЕТ ДЛИНУ: (0, 4.63, 2.4) длиной
   // 5.21 превращалось в 4.63, минус 11%, и конформ переносил это укорочение на саму модель.
@@ -385,21 +385,12 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   const restPos = new Map<string, THREE.Vector3>();
   for (const [nm, g] of bones) { restQuat.set(nm, g.quaternion.clone()); restPos.set(nm, g.position.clone()); }
 
-  // Углы приведения ПОСЕГМЕНТНО: бедро = наклон бедра (hip→колено) от вертикали, колено = наклон голени (колено→лодыжка).
-  // ФБХ A-стойка splay-ит оба звена (~10°/7°); один hip-доворот верно верт-т ТОЛЬКО прямую ногу, при сгибе колена звенья
-  // расходятся → нужен доворот и колена. Компенсируем каждое в СВОЁМ суставе (см. applyLegAdduct). 0 если нет boneOffsets.
-  let legAdduct = 0, legAdductKnee = 0;
-  if (bo) {
-    const ll = bo['LeftLowerLeg'], lf = bo['LeftFoot'];
-    if (ll) { const y = -(ll[1] ?? 0); if (y > 1e-3) legAdduct = Math.atan2(ll[0] ?? 0, y); }        // splay бедра (hip→колено)
-    if (lf) { const y = -(lf[1] ?? 0); if (y > 1e-3) legAdductKnee = Math.atan2(lf[0] ?? 0, y); }     // splay голени (колено→лодыжка)
-  }
   // Приведение РУК НЕ компенсируем в рантайме: модели биндятся в T-позе (руки горизонт, как ожидают клипы). A-позный бинд
   // недопустим — 46° доворота от бинда скин не тянет чисто (корёжит). Требование: экспортить скелет в T-позе (см. README ретаргета).
 
   const hips = bones.get('Hips')!;
   return {
-    root, bones, meshes, joints, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0, hips,
+    root, bones, meshes, joints, boneNames: table.map((b) => b.name), restQuat, footLift: 0, hips,
     hipsRest: restPos.get('Hips')!.clone(),
     // ⚠ СОБСТВЕННАЯ ВЫСОТА — ТОЛЬКО У РИГА ИЗ МОДЕЛИ. Там подошва модели стоит на нуле по построению
     // (высота таза замерена от рут-кости), поэтому мировая высота кости-лодыжки И ЕСТЬ искомый пол.

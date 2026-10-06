@@ -100,11 +100,13 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
       arm: between(hdir('LeftUpperArm', 'LeftLowerArm'), new THREE.Vector3(1, 0, 0)),
       finger: between(hdir('LeftIndexProximal', 'LeftIndexIntermediate'), hdir('LeftHand', 'LeftIndexProximal')),
     };
-    for (const k of ['thigh', 'shin', 'arm', 'finger'] as const) {
+    for (const k of ['arm', 'finger'] as const) {
       expect(our[k], `${k}: наш риг обязан повторить модель (модель ${src[k].toFixed(2)}°)`).toBeCloseTo(src[k], 0.3);
     }
-    // Свести замер к одному месту: приведение ног считается ИЗ МОДЕЛИ, а не назначено нами.
-    expect(h.legAdduct * DEG, 'legAdduct = splay бедра САМОЙ МОДЕЛИ').toBeCloseTo(src.thigh, 1);
+    // ⭐⭐ НОГИ — КАНОН, А НЕ КОПИЯ БИНДА (07.10): бедро и голень вертикально при любом развале модели (`canonLegOffsets`);
+    // меш приводится к той же позе поправкой реста (`legRestFix`). Иначе отклонение бинда садилось в каждый кадр клипа.
+    expect(our.thigh, `бедро вертикально (у модели ${src.thigh.toFixed(2)}°)`).toBeLessThan(1e-3);
+    expect(our.shin, `голень вертикально (у модели ${src.shin.toFixed(2)}°)`).toBeLessThan(1e-3);
   });
 
   it('⭐ ПОДОШВА САМА ВСТАЁТ НА ПОЛ: высота таза берётся от корня арматуры', () => {

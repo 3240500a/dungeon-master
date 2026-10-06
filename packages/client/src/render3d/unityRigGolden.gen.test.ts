@@ -45,6 +45,7 @@ import { findTwistChains, driveTwistChains } from './twistBones.js';
 import { parseModel, skeletonBoneNames } from './modelAssets.js';
 import { createModelSkin, resolveCharacterModel, classifySubmesh, type AssetConfig } from './modelSkin.js';
 import { buildHumanoid } from './humanoid.js';
+import { legCanonFix, legCanonPoints, type LegCanonPoints, type V3 } from './legCanon.js';
 import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
 
 type Spec = { name: string; bone?: boolean; mesh?: boolean; pos?: [number, number, number]; box?: [number, number, number]; kids?: Spec[] };
@@ -439,10 +440,39 @@ describe('эталон карты костей и атласа для Unity', ()
       got.forEach(([, gn], i) => expect(Math.abs((gn as number) - (want[i]![1] as number)), String(want[i]![0])).toBeLessThan(1e-3));
     }
 
+    // ⭐ РЕСТ НОГ МОДЕЛИ (07.10, `legCanon.ts`): точки суставов (мировые, кадр Y-вверх, лицом +Z) → поправки реста. Unity
+    // `LegCanon.Fix` получает те же точки (свои, переведённые в кадр веба зеркалом X) и обязан выдать те же кватернионы.
+    const legCanon: { label: string; points: LegCanonPoints; fix: Record<string, number[]> }[] = [];
+    {
+      const g = await parseModel(glb.buf.slice(0), 'glb');
+      const mp = mergeBoneMap(autoBoneMap(skeletonBoneNames(g)), stored, g);
+      g.rotation.set(upAxisAngle(g, mp), 0, 0); g.updateMatrixWorld(true);
+      const by = boneIndex(g);
+      const pts = legCanonPoints((our) => by.get(mp[our] ?? ''));
+      const fix = legCanonFix(pts);
+      expect(Object.keys(fix).length, 'у рыцаря поправлены все кости ног').toBe(8);
+      legCanon.push({ label: 'knight_06 (поза узлов)', points: pts, fix });
+      // синтетика: нога «как у рыцаря» (развал, сгиб, носок наружу), зеркало X (Unity), носок за 45°, ноги без носка/колена
+      const leg = (side: 1 | -1, toeDeg: number, mx: number): Record<string, V3> => {
+        const s = side * mx, a = toeDeg * Math.PI / 180 * side;
+        const u: V3 = [4 * s, 30, 0], k: V3 = [u[0] + 0.5 * s, 16, 0.6], f: V3 = [k[0] - 0.6 * s, 2, -0.4];
+        return { u, k, f, t: [f[0] + Math.sin(a) * 5 * mx, 0.5, f[2] + Math.cos(a) * 5] };
+      };
+      const synth = (toeDeg: number, mx: number): LegCanonPoints => {
+        const L = leg(1, toeDeg, mx), Rr = leg(-1, toeDeg, mx);
+        return { uL: L.u, kL: L.k, fL: L.f, tL: L.t, uR: Rr.u, kR: Rr.k, fR: Rr.f, tR: Rr.t };
+      };
+      const add = (label: string, p: LegCanonPoints): void => { legCanon.push({ label, points: p, fix: legCanonFix(p) }); };
+      add('синтетика: носок наружу 23.6°', synth(23.6, 1));
+      add('синтетика: зеркало X (Unity)', synth(23.6, -1));
+      add('синтетика: носок 60° — стопу не трогать', synth(60, 1));
+      { const p = synth(10, 1); delete p.tL; delete p.kR; add('синтетика: без левого носка и правого колена', p); }
+    }
+
     const golden = {
-      note: 'Эталон паритета Unity ↔ веб: карта костей модели (autoBoneMap/mergeBoneMap/boneIndex), доворот к Y-up, выбор атласа, видимость деталей и масштаб, твист-кости (findTwistChains/driveTwistChains). Генерит packages/client/src/render3d/unityRigGolden.gen.test.ts.',
+      note: 'Эталон паритета Unity ↔ веб: карта костей модели (autoBoneMap/mergeBoneMap/boneIndex), доворот к Y-up, выбор атласа, видимость деталей и масштаб, твист-кости (findTwistChains/driveTwistChains), рест ног модели (legCanonFix). Генерит packages/client/src/render3d/unityRigGolden.gen.test.ts.',
       ourBones: [...OUR_BONES], ourFingers: [...OUR_FINGERS],
-      autoMap, trees, upAxis, models, classify, atlas, atlasSynthetic, span, twist,
+      autoMap, trees, upAxis, models, classify, atlas, atlasSynthetic, span, twist, legCanon,
     };
     const dir = join(HERE, '__golden__');
     mkdirSync(dir, { recursive: true });

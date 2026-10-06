@@ -9,6 +9,7 @@
  * Затем в локаль цели: targetLocal = parentTargetWorld⁻¹ · targetWorld. Разница bind-поз учтена R_restTarget.
  */
 import * as THREE from 'three';
+import { legCanonFix, legCanonPoints } from './legCanon.js';
 import { findTwistChains, driveTwistChains, twistReport, type TwistChain } from './twistBones.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { mapFingerBones, allFingerBones, FINGER_CHAINS, FINGER_SEGMENTS } from './boneNames.js';
@@ -557,7 +558,8 @@ export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, str
  * −0.024, носок −8° (его автор подкручивал руками). После: 0.000 / 0.000 / < 1°, и вперёд-высота стопы Kubold
  * 0.06 → 0.001.
  *
- * Что делаем: 1) бедро и голень — точно в наш канон (вертикаль), без порога; 2) СТОПА — ТОЛЬКО ПО РЫСКУ вокруг
+ * Что делаем: 1) бедро и голень — точно в наш канон (вертикаль), без порога, стопа при этом СОХРАНЯЕТ мировую ориентацию
+ * (стоит плашмя, как в ресте; меняется угол голеностопа); 2) СТОПА — ТОЛЬКО ПО РЫСКУ вокруг
  * вертикали тела: носок вперёд, тангаж не трогаем (он геометрия: у актёра лодыжка выше, см. `FULL_AIM_CHILD`) —
  * правило Unity «Enforce T-Pose» для стоп (planeNormal = up). Доворот больше `FOOT_YAW_MAX_DEG` — не трогаем
  * (это уже не рест, а странный файл). Вызывать ДО снятия реста (`makeBakeRig`), после `skeleton.pose()`.
@@ -582,8 +584,16 @@ export function canonRestLegs(root: THREE.Object3D, boneMap: Record<string, stri
     const a = bone(s + 'UpperLeg'), b = bone(s + 'LowerLeg');
     if (a && b) out.thighDeg[i] = wp(b).sub(wp(a)).normalize().angleTo(up.clone().negate()) * 180 / Math.PI;
   });
+  // ⚠ Стопа за голенью НЕ поворачивается: выпрямление колена наклонило бы стоящую плашмя стопу (меняется угол голеностопа).
+  const footW = (['Left', 'Right'] as const).map((s) => { const f = bone(s + 'Foot'); return f ? f.getWorldQuaternion(new THREE.Quaternion()) : null; });
   enforceTPose(root, boneMap, LEG_AIM_CHILD, 0);
   root.updateMatrixWorld(true);
+  (['Left', 'Right'] as const).forEach((s, i) => {
+    const f = bone(s + 'Foot'), w = footW[i];
+    if (!f || !w) return;
+    const pw = f.parent ? f.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+    f.quaternion.copy(pw.invert().multiply(w)); f.updateMatrixWorld(true);
+  });
   const hl = bone('LeftUpperLeg'), hr = bone('RightUpperLeg');
   if (!hl || !hr) return out;
   // перёд тела: (левое бедро − правое) × вверх — у нашего канона Left* на +X, вверх +Y, перёд +Z
@@ -645,6 +655,14 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   const restW = new Map<string, THREE.Quaternion>();   // bind мировой кватернион цели (оффсет, считается ОДИН РАЗ)
   const bake = (targetName: string): void => { const b = byName.get(targetName); if (b) restW.set(targetName, b.getWorldQuaternion(new THREE.Quaternion())); };
   for (const t of Object.values(boneMap)) bake(t);
+  // ⭐⭐ РЕСТ НОГ МОДЕЛИ — В КАНОН (`legCanon.ts`): «ноль поворотов куклы» = прямые ноги и носок вперёд на ЛЮБОЙ модели, ровно как
+  // у рига (`canonLegOffsets`). Поправка ложится на рест (`R' = Q · R`), а не на кости: по позе узлов ниже ищутся твист-цепи.
+  const legFix = legCanonFix(legCanonPoints((our) => byName.get(boneMap[our] ?? '')));
+  const fixRest = (our: string): void => {
+    const q = legFix[our], t = boneMap[our], r = t ? restW.get(t) : undefined;
+    if (q && r) r.premultiply(new THREE.Quaternion(q[0], q[1], q[2], q[3]));
+  };
+  for (const our of Object.keys(legFix)) fixRest(our);
   let hipRestY = 0; { const h = boneMap['Hips'] && byName.get(boneMap['Hips']); if (h) hipRestY = h.getWorldPosition(new THREE.Vector3()).y; }
   // ТВИСТ-КОСТИ модели (CC: `..._UpperarmTwist01/02`, `ForearmTwist`, `ThighTwist`, `CalfTwist`). Снимаются ЗДЕСЬ,
   // в бинд-позе: доли и оси берутся из фактических позиций. Их нет — массив пуст, поведение как раньше.
@@ -685,7 +703,7 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
     targetBoneNames: () => [...byName.keys()],
     twistBones: () => twistReport(twistChains),   // диагностика: какие твисты найдены и с какой долей
     targetBone: (our) => byName.get(boneMap[our] ?? '') ?? null,   // импортная кость по нашему имени
-    setBone(our, targetName) { boneMap[our] = targetName; bake(targetName); },
+    setBone(our, targetName) { boneMap[our] = targetName; bake(targetName); fixRest(our); },
     // ⚠ Своё — да, общую модель ковки — нет (R1-23): на кисти атласа висит оружие куклы (`hostWeaponOnHand`), а
     // геометрию модели из деталей держат все куклы с тем же видом. Снос рига идёт и на КАЖДОЙ смене брони.
     dispose() { disposeOwnGeometry(loaded); },

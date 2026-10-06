@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildHumanoid } from './humanoid.js';
-import { applyLegAdduct } from './poseRuntime.js';
 import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
 
 /**
@@ -69,23 +68,17 @@ describe('resolvePlayerLook — разбор один, источники раз
 });
 
 describe('чем именно «коробило ноги» — замер, а не описание', () => {
-  it('БЕЗ boneOffsets компенсация развала ног РАВНА НУЛЮ — сводить нечего', () => {
-    // `legAdduct` извлекается ИЗ офсетов бинда. Нет офсетов — нет и числа, и `applyLegAdduct` становится
-    // пустой операцией: ноги остаются расставленными, а меш ждёт, что их свели. Ровно эта же ошибка была
-    // поймана в Unity-порту («широкие ноги = отложенный legAdduct»).
-    const bare = buildHumanoid({});
-    expect(bare.legAdduct).toBe(0);
-  });
-
-  it('С boneOffsets развал извлекается и ноги встают вертикально', () => {
+  it('⭐⭐ С развалом бинда в офсетах ноги рига ВСЁ РАВНО прямые — канон ног, длины модели (07.10, `canonLegOffsets`)', () => {
+    // Раньше риг повторял развал бинда, и его добирал `applyLegAdduct` — только боковой и почти выключенный в «только клипы».
+    // Теперь «ноль поворотов» = прямые ноги и у рига, и у меша (рест модели правится той же поправкой — `legRest.ts`).
     const h = buildHumanoid({ boneOffsets: SPLAYED() });
-    expect(h.legAdduct).toBeGreaterThan(0.05);
-    applyLegAdduct(h);
     h.root.updateMatrixWorld(true);
     const p = (n: string): THREE.Vector3 => h.bones.get(n)!.getWorldPosition(new THREE.Vector3());
-    const dir = p('LeftLowerLeg').sub(p('LeftUpperLeg')).normalize();
-    expect(dir.y).toBeLessThan(-0.98);
-    expect(Math.abs(dir.x)).toBeLessThan(0.03);
+    for (const [a, b] of [['LeftUpperLeg', 'LeftLowerLeg'], ['LeftLowerLeg', 'LeftFoot']] as const) {
+      const dir = p(b).sub(p(a)).normalize();
+      expect(dir.y, `${a}→${b} вертикально`).toBeLessThan(-0.99999);
+    }
+    expect(p('LeftLowerLeg').distanceTo(p('LeftUpperLeg')), 'длина бедра — модели').toBeCloseTo(Math.hypot(1.8, 14, 0.3), 9);
   });
 
   it('скелет без офсетов и с офсетами — РАЗНАЯ геометрия, расхождение видно числом', () => {

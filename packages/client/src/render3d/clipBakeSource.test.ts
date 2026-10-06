@@ -701,8 +701,11 @@ describe('clipBaker — рест ног источника (буква А, но�
     // Left* на +X: наружу у левой — поворот вокруг +Z, у правой — вокруг −Z; носок наружу — вокруг ±Y
     b('LeftUpperLeg').quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), SPREAD);
     b('RightUpperLeg').quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -SPREAD);
-    b('LeftFoot').quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), TOE);
-    b('RightFoot').quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -TOE);
+    // стопа в ресте стоит ПЛАШМЯ (как у настоящей A-позы): её мировой поворот — только рыск носка, развал бедра голеностоп гасит
+    const flat = (thigh: number, toe: number): THREE.Quaternion =>
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), thigh).invert().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), toe));
+    b('LeftFoot').quaternion.copy(flat(SPREAD, TOE));
+    b('RightFoot').quaternion.copy(flat(-SPREAD, -TOE));
     root.updateMatrixWorld(true);
     const got = fix ? canonRestLegs(root, map) : null;
     const bake = makeBakeRig(root, map);
