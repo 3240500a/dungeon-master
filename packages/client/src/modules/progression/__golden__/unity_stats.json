@@ -204,6 +204,18 @@
     "repairMaterials": {
      "consumable": 6,
      "main": 2
+    },
+    "exchange": {
+     "enabled": true,
+     "give": 3,
+     "get": 2,
+     "goldPerUnit": [
+      5,
+      12,
+      30,
+      60,
+      120
+     ]
     }
    },
    "respecCost": 500,
@@ -39223,7 +39235,7 @@
     "rarity": "common",
     "stepMin": 2,
     "stepMax": 5,
-    "family": "",
+    "family": "trim",
     "tags": {
      "tips": "horn-nocks"
     },
@@ -39289,7 +39301,7 @@
     "rarity": "uncommon",
     "stepMin": 3,
     "stepMax": 5,
-    "family": "",
+    "family": "trim",
     "tags": {
      "tips": "siyah",
      "plates": "four"
@@ -39312,7 +39324,7 @@
     "rarity": "rare",
     "stepMin": 3,
     "stepMax": 5,
-    "family": "",
+    "family": "trim",
     "tags": {
      "tips": "siyah",
      "plates": "seven"
@@ -42927,7 +42939,7 @@
     "strike": {
      "name": "Рога",
      "name2h": "",
-     "family": "stave",
+     "family": "wood",
      "stepNames": [],
      "tags": [
       {
@@ -43032,7 +43044,7 @@
     "head": {
      "name": "Концы и накладки",
      "name2h": "",
-     "family": "stave",
+     "family": "wood",
      "stepNames": [],
      "tags": [
       {
@@ -43128,7 +43140,7 @@
     "strike": {
      "name": "Дуга",
      "name2h": "",
-     "family": "stave",
+     "family": "iron",
      "stepNames": [],
      "tags": []
     },
@@ -43432,7 +43444,7 @@
     "strike": {
      "name": "Навершие",
      "name2h": "",
-     "family": "focus",
+     "family": "trim",
      "stepNames": [],
      "tags": [
       {
@@ -43680,7 +43692,7 @@
     "strike": {
      "name": "Навершие",
      "name2h": "",
-     "family": "focus",
+     "family": "trim",
      "stepNames": [],
      "tags": [
       {
@@ -46903,61 +46915,6 @@
     "sellPrice": 15
    },
    {
-    "id": "stave-1",
-    "enabled": true,
-    "name": "Вязовое плечо",
-    "family": "stave",
-    "tier": 1,
-    "usedFor": "weapon",
-    "note": "Лучшее европейское дерево для лука после тиса. Прощает ошибки мастера, но слабее тиса и набирает влагу.",
-    "icon": "",
-    "sellPrice": 1
-   },
-   {
-    "id": "stave-2",
-    "enabled": true,
-    "name": "Тисовый стан",
-    "family": "stave",
-    "tier": 2,
-    "usedFor": "weapon",
-    "note": "Природный слоёный материал: заболонь работает на растяжение, ядро на сжатие. Редок и капризен.",
-    "icon": "",
-    "sellPrice": 2
-   },
-   {
-    "id": "stave-3",
-    "enabled": true,
-    "name": "Рог и жила",
-    "family": "stave",
-    "tier": 3,
-    "usedFor": "weapon",
-    "note": "Составной лук: ядро, рог на животе, сухожилие на спинке. Та же сила при вдвое меньшей длине — но сырость расклеивает.",
-    "icon": "",
-    "sellPrice": 5
-   },
-   {
-    "id": "stave-4",
-    "enabled": true,
-    "name": "Китовый ус",
-    "family": "stave",
-    "tier": 4,
-    "usedFor": "weapon",
-    "note": "Композитная дуга, усиленная усом вместо части рога — такие дуги XV века есть в музейных собраниях.",
-    "icon": "",
-    "sellPrice": 10
-   },
-   {
-    "id": "stave-5",
-    "enabled": true,
-    "name": "Пружинная сталь",
-    "family": "stave",
-    "tier": 5,
-    "usedFor": "weapon",
-    "note": "Стальная дуга арбалета — и стальной лук тоже был: индо-персидский каман. Не боится дождя, но руками уже не взвести.",
-    "icon": "",
-    "sellPrice": 15
-   },
-   {
     "id": "trim-1",
     "enabled": true,
     "name": "Чёрное железо",
@@ -47009,61 +46966,6 @@
     "tier": 5,
     "usedFor": "weapon",
     "note": "Огневое ртутное золочение: золото сплавлено с основой. Ремесленное предание говорит, что золотильщики жили недолго.",
-    "icon": "",
-    "sellPrice": 15
-   },
-   {
-    "id": "focus-1",
-    "enabled": true,
-    "name": "Стеклянная паста",
-    "family": "focus",
-    "tier": 1,
-    "usedFor": "weapon",
-    "note": "Римские цветные пасты, подделывавшие самоцветы. Льётся в форму и дёшева — но мутна и трескается от жара.",
-    "icon": "",
-    "sellPrice": 1
-   },
-   {
-    "id": "focus-2",
-    "enabled": true,
-    "name": "Гагат",
-    "family": "focus",
-    "tier": 2,
-    "usedFor": "weapon",
-    "note": "Чёрный камень траура из Уитби: электризуется от трения, лёгок и тёпл. Это ископаемый уголь — мягок и горюч.",
-    "icon": "",
-    "sellPrice": 2
-   },
-   {
-    "id": "focus-3",
-    "enabled": true,
-    "name": "Обсидиан",
-    "family": "focus",
-    "tier": 3,
-    "usedFor": "weapon",
-    "note": "Вулканическое стекло ацтекских гадальных зеркал. Берёт зеркальную полировку — и крошится от удара.",
-    "icon": "",
-    "sellPrice": 5
-   },
-   {
-    "id": "focus-4",
-    "enabled": true,
-    "name": "Горный хрусталь",
-    "family": "focus",
-    "tier": 4,
-    "usedFor": "weapon",
-    "note": "Krystallos — «лёд»: Плиний считал его вечно замёрзшей водой. Прозрачен насквозь, но колется по спайности.",
-    "icon": "",
-    "sellPrice": 10
-   },
-   {
-    "id": "focus-5",
-    "enabled": true,
-    "name": "Янтарь",
-    "family": "focus",
-    "tier": 5,
-    "usedFor": "weapon",
-    "note": "Натёртый янтарь притягивает — от его греческого имени произошло слово «электричество». Мягок, горит, и его везут с Балтики.",
     "icon": "",
     "sellPrice": 15
    },
@@ -47421,11 +47323,6 @@
       "materialId": "cloth-1",
       "min": 2,
       "max": 3
-     },
-     {
-      "materialId": "stave-1",
-      "min": 0,
-      "max": 1
      }
     ]
    },
@@ -47440,11 +47337,6 @@
       "materialId": "hide-1",
       "min": 2,
       "max": 3
-     },
-     {
-      "materialId": "stave-1",
-      "min": 0,
-      "max": 1
      }
     ]
    },
@@ -47541,7 +47433,7 @@
       "max": 2
      },
      {
-      "materialId": "focus-1",
+      "materialId": "trim-1",
       "min": 0,
       "max": 1
      }
@@ -47555,7 +47447,7 @@
     "slot": "amulet",
     "yields": [
      {
-      "materialId": "focus-1",
+      "materialId": "trim-1",
       "min": 1,
       "max": 2
      },
@@ -59250,7 +59142,7 @@
     },
     "craftPaid": [
      {
-      "id": "focus-4",
+      "id": "trim-4",
       "n": 96
      },
      {
@@ -60559,7 +60451,7 @@
     },
     "craftPaid": [
      {
-      "id": "stave-2",
+      "id": "wood-2",
       "n": 24
      },
      {
@@ -60571,7 +60463,7 @@
       "n": 12
      },
      {
-      "id": "stave-2",
+      "id": "wood-2",
       "n": 12
      }
     ]
@@ -60908,7 +60800,7 @@
     },
     "craftPaid": [
      {
-      "id": "stave-5",
+      "id": "iron-5",
       "n": 96
      },
      {
@@ -61316,7 +61208,7 @@
     },
     "craftPaid": [
      {
-      "id": "stave-5",
+      "id": "iron-5",
       "n": 96
      },
      {
@@ -268017,7 +267909,7 @@
     },
     "craftPaid": [
      {
-      "id": "focus-2",
+      "id": "trim-2",
       "n": 24
      },
      {

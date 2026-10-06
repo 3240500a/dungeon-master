@@ -5,7 +5,7 @@
 
 | Ключ | Файл | Назначение | Основные поля |
 |---|---|---|---|
-| balance | data/balance.json | глобальный баланс | xpTable (кап ~90; 0, 0, дальше строго растёт, числа конечные ≥ 0 — R20-05; оверрайд из базы старше R20-05 при сборке приводится — `upgradeXpTable`, D2; правка касается только будущих уровней — выданное герой помнит в `save.earned`), pointsPerLevel, masteryPointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, passiveRespecCostPct (комиссия сброса мастерства = доля вложенного золота), **skillRespecCostPerPoint** (комиссия сброса скилов = золото за вложенное очко), inventory(cols,rows), autoPickup[], passiveRankCostMult, **buffMinRest** (⭐ D4: отдых баффа — доля действия; откат баффа на каждом ранге ≥ действие × (1 + buffMinRest), > 0) |
+| balance | data/balance.json | глобальный баланс | xpTable (кап ~90; 0, 0, дальше строго растёт, числа конечные ≥ 0 — R20-05; оверрайд из базы старше R20-05 при сборке приводится — `upgradeXpTable`, D2; правка касается только будущих уровней — выданное герой помнит в `save.earned`), pointsPerLevel, masteryPointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices (⭐ `exchange {enabled, give, get, goldPerUnit[5]}` — обмен сырья у кузнеца: тот же сорт другой семьи, `get` ≤ `give`, золото за полученную единицу по сорту, ≥ 1), respecCost, passiveRespecCostPct (комиссия сброса мастерства = доля вложенного золота), **skillRespecCostPerPoint** (комиссия сброса скилов = золото за вложенное очко), inventory(cols,rows), autoPickup[], passiveRankCostMult, **buffMinRest** (⭐ D4: отдых баффа — доля действия; откат баффа на каждом ранге ≥ действие × (1 + buffMinRest), > 0) |
 | classes | data/classes.json | стартовые классы (архетипы) | id, name, startAttributes (целые ≥ 0, R18-07; герой помнит их копией — правка строки старых героев не догоняет; оверрайд из базы старше R18-07 с дробью или минусом при сборке приводится вниз до целого, не ниже нуля — `upgradeStoredOverride`, R20-08), startWeaponId, sprite, affinity[], derived (per-класс масштаб HP/маны/выносливости от атрибутов) |
 | items.base | data/items-base.json | базы предметов | id, slot (incl. belt), weaponType?, baseStats, requirements, itemLevel, gridW, gridH |
 | affixes | data/affixes.json | префиксы/суффиксы | id, kind, stat, tiers[min,max,ilvl] |
@@ -65,8 +65,11 @@ HTML-редактор пишет изменённый JSON обратно и в�
   принятый сборкой с инцидентом, запирал сохранение древа скилов, а нарушение баффа — ступеней и сырья. Целиком (`loadAll`) — всё нарушенное.
   Тексты инцидентов — по правилу (`CONFIG_CROSS_CORE`: что делает ядро, пока правило нарушено). Сборка говорит вслух и о дрейфе экономики
   разбора (`economyDrift`): нет эссенции, рецепт не равен файлу, потолка лавки нет среди ступеней. Оверрайд `craft-materials`, сохранённый до
-  эссенции (без её строки), приводится при сборке: строки файла дописываются, цены — файла, галки и имена хозяина остаются. Сторожа —
-  `shared/config/crossRules.test.ts`, `server/configEconomy.test.ts`, `editor/configChannel.crossScope.test.ts`.
+  эссенции (без её строки), приводится при сборке: строки файла дописываются, цены — файла, галки и имена хозяина остаются. ⭐ Оверрайды,
+  сохранённые до снятия «Плеч» и «Фокуса» (06.10), — тоже: `craft-materials` без строк `stave-*`/`focus-*`, `weapon-anatomy` и `weapon-parts` —
+  семья как в файле (у таблицы деталей, где ни одна деталь концов лука не знает своей семьи, — Прибор роговых ноков и накладок из файла),
+  `salvage-rules` и `monster-gear` — выход в преемника того же сорта (у брони побочные Плечи сняты). Сторожа —
+  `shared/config/crossRules.test.ts`, `server/configEconomy.test.ts`, `editor/configChannel.crossScope.test.ts`, `shared/economy/retiredMaterials.test.ts`.
 - **Запись** (`/api/dev/config`, `/api/dev/config-file`, `server/net/configRoutes.ts`) проверяется строго поверх того же кандидата — над тем,
   что соберёт пересборка, а не над файлами старта (`live.trial`): сервер, редактор (`ConfigChannel.validated` — над загруженным живым) и
   пересборка проверяют одно и то же; отказ цитирует живые числа (отдых хозяина, а не файла). Проба — в очереди записей вместе с записью.

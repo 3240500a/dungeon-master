@@ -201,6 +201,18 @@
     "repairMaterials": {
       "consumable": 6,
       "main": 2
+    },
+    "exchange": {
+      "enabled": true,
+      "give": 3,
+      "get": 2,
+      "goldPerUnit": [
+        5,
+        12,
+        30,
+        60,
+        120
+      ]
     }
   },
   "respecCost": 500,

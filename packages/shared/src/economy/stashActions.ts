@@ -5,6 +5,7 @@ import { type AccountStash, STASH_VERSION } from '../types/stash.js';
 import { cellFree, packInventory, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import { isSafeKey, normalizeCraftNonces, normalizeJournal } from '../formulas/craft.js';
 import { mendBrokenUniques, type ActionResult } from './townActions.js';
+import { migrateRetiredInStash } from './retiredMaterials.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции над ОБЩИМ (на аккаунт) городским сундуком — чистые, для сервера.
@@ -25,7 +26,8 @@ export function stashTabCount(reg: ConfigRegistry): number {
 /**
  * Приводит сундук к валидному виду под текущий конфиг: гарантирует ≥N вкладок (добивает
  * пустыми), лечит битые/наложенные позиции в каждой вкладке (`packInventory`), чистит журнал
- * кузнеца и ключи заявок на ковку, снимает «сломано» со старых уников (R7-19). НЕ удаляет лишние вкладки при
+ * кузнеца и ключи заявок на ковку, снимает «сломано» со старых уников (R7-19), ⭐ переносит сырьё снятых семей «Плечи» и «Фокус» в тот
+ * же сорт Дерева и Прибора (`migrateRetiredInStash`: кошелёк и вкладки, без потерь, повторно — ничего). НЕ удаляет лишние вкладки при
  * уменьшении конфига — анти-потеря предметов. Мутирует и возвращает stash.
  */
 export function sanitizeStash(reg: ConfigRegistry, stash: AccountStash): AccountStash {
@@ -33,6 +35,8 @@ export function sanitizeStash(reg: ConfigRegistry, stash: AccountStash): Account
   const need = stashTabCount(reg);
   if (!Array.isArray(stash.tabs)) stash.tabs = [];
   while (stash.tabs.length < need) stash.tabs.push([]);
+  if (!stash.materials || typeof stash.materials !== 'object' || Array.isArray(stash.materials)) stash.materials = {};
+  migrateRetiredInStash(stash, reg.get('craft-materials'), reg.get('balance').inventory.materialStack);
   for (const tab of stash.tabs) packInventory(tab, dims);
   for (const tab of stash.tabs) mendBrokenUniques(tab);   // R7-19: сломанный уник старого сейва — цел
   cleanWallet(stash);

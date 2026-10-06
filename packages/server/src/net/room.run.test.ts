@@ -3085,3 +3085,86 @@ describe('Room — раунд 5: здоровье, добивание стату
     expect(JSON.stringify(ws.last('joined')!.save).length, 'в кадр входа уходит маленький сейв').toBeLessThan(20_000);
   });
 });
+
+/**
+ * ⭐ ОБМЕН СЫРЬЯ У КУЗНЕЦА (06.10, `forgeExchange`): схема провода (D11), место — город (Ф3.1), лимит кузницы (D12), согласие (`maxGold`,
+ * `maxMaterials` — у сервера обязательно, `minYield`), сейв и сундук ОДНОЙ транзакцией (D7/D8). Любой отказ — до траты: ни память, ни база
+ * не изменились. Старые id («Плечи», «Фокус») — чистый отказ.
+ */
+describe('Room — обмен сырья у кузнеца', () => {
+  async function exchangeSetup(userId: string): Promise<ReturnType<typeof makeRoom>> {
+    const r = makeRoom(userId);
+    await settle();
+    bagMaterials(r.save, { 'iron-3': 5 });
+    seedStash(userId, emptyJournal(), { 'iron-3': 10, 'wood-3': 1 });
+    r.save.gold = 1000;
+    limits.forgeCmd.reset(userOf(r.pid));
+    r.ws.frames.length = 0;
+    return r;
+  }
+  const honest = { cmd: 'forgeExchange', from: 'iron-3', to: 'wood', n: 9, maxGold: 180, maxMaterials: { 'iron-3': 9 }, minYield: { 'wood-3': 6 } } as const;
+
+  it('⭐ сперва сумка, потом сундук; полученное — в сундук; золото; одна запись «exchange»; итоговая строка в ответе', async () => {
+    const { room, ws, pid, save } = await exchangeSetup('user-exch-flow');
+    const w0 = db.writes.length;
+    await room.handleCmd(pid, honest, 1);
+    const r = ws.last('cmdResult')!;
+    expect(r, JSON.stringify(r)).toMatchObject({ id: 1, cmd: 'forgeExchange', ok: true });
+    expect(r.summary).toMatch(/^Обмен: отдано .* → получено .* \(в сундук\) · 180 золота$/);
+    expect(carriedMaterials(save.inventory)['iron-3'] ?? 0, 'стопка сумки ушла первой').toBe(0);
+    expect(save.gold).toBe(820);
+    expect(db.stashes.get('user-exch-flow')!.data.materials).toEqual({ 'iron-3': 6, 'wood-3': 7 });
+    expect(db.writes.slice(w0)).toEqual([{ kind: 'stash', charId: save.charId, reason: 'exchange' }]);
+    expect(ws.last('stash')!.materials).toEqual({ 'iron-3': 6, 'wood-3': 7 });
+  });
+
+  it('согласие: без `maxMaterials` (клиент старых правил), дороже показанного, меньше обещанного — «Цена изменилась…», база цела', async () => {
+    const { room, ws, pid, save } = await exchangeSetup('user-exch-consent');
+    const snap = dbSnap('user-exch-consent', save.charId);
+    const mem = JSON.stringify(save);
+    const { maxMaterials: _m, ...noMats } = honest;
+    for (const [i, cmd] of [noMats, { ...honest, maxGold: 179 }, { ...honest, minYield: { 'wood-3': 7 } }].entries()) {
+      await room.handleCmd(pid, cmd, 10 + i);
+      const r = ws.last('cmdResult')!;
+      expect(r.ok, JSON.stringify(cmd)).toBe(false);
+      expect(r.reason!.startsWith(PRICE_CHANGED), r.reason).toBe(true);
+    }
+    expect(dbSnap('user-exch-consent', save.charId)).toBe(snap);
+    expect(JSON.stringify(save)).toBe(mem);
+  });
+
+  it('старые id (снятые «Плечи», «Фокус»), эссенция, мусор на проводе — чистый отказ, без исключения и без траты', async () => {
+    const { room, ws, pid, save } = await exchangeSetup('user-exch-old');
+    const snap = dbSnap('user-exch-old', save.charId);
+    const cmds: unknown[] = [
+      { ...honest, from: 'stave-3', maxMaterials: { 'stave-3': 9 } },
+      { ...honest, to: 'focus', minYield: { 'focus-3': 6 } },
+      { ...honest, from: ESSENCE_ID, maxMaterials: { [ESSENCE_ID]: 9 } },
+      { ...honest, n: 0 }, { ...honest, n: 1.5 }, { ...honest, n: 2_000_000 }, { ...honest, extra: 1 }, { cmd: 'forgeExchange', from: 'iron-3' },
+    ];
+    for (const [i, cmd] of cmds.entries()) {
+      limits.forgeCmd.reset(userOf(pid));
+      await room.handleCmd(pid, cmd, 20 + i);
+      const r = ws.last('cmdResult')!;
+      expect(r.ok, JSON.stringify(cmd)).toBe(false);
+      expect(r.reason, JSON.stringify(cmd)).toBeTruthy();
+    }
+    expect(dbSnap('user-exch-old', save.charId)).toBe(snap);
+  });
+
+  it('Ф3.1: из подземелья не меняют — отказ до всякой траты; D12: лимит кузницы общий', async () => {
+    const { room, ws, pid, save } = await exchangeSetup('user-exch-place');
+    room.descend(pid);
+    await settle();
+    const snap = dbSnap('user-exch-place', save.charId);
+    await room.handleCmd(pid, honest, 31);
+    expect(ws.last('cmdResult')).toMatchObject({ id: 31, ok: false });
+    expect(ws.last('cmdResult')!.reason).toMatch(/только в городе/);
+    expect(dbSnap('user-exch-place', save.charId)).toBe(snap);
+
+    const t = await exchangeSetup('user-exch-rate');
+    for (let i = 0; i < 5; i++) await t.room.handleCmd(t.pid, { ...honest, n: 3, maxGold: 60, maxMaterials: { 'iron-3': 3 }, minYield: { 'wood-3': 2 } }, 40 + i);
+    await t.room.handleCmd(t.pid, honest, 46);
+    expect(t.ws.last('cmdResult')).toMatchObject({ id: 46, ok: false, reason: 'Слишком часто' });
+  });
+});

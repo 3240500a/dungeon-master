@@ -22,7 +22,7 @@ import { newBotSave } from '../sim/playerBot.js';
 import { generateMonster } from '../formulas/monstergen.js';
 
 /**
- * ⭐ D18 (К2): в игре все 40 материалов — прибор, плечи, фокус и ступени 4–5 включены. Сторож того, что
+ * ⭐ D18 (К2): в игре все материалы — прибор и ступени 4–5 включены (с 06.10 их 30: «Плечи» и «Фокус» сняты). Сторож того, что
  * включение НИЧЕГО не сдвинуло у старых потребителей флага `enabled`:
  * - цена улучшения и починки (`materialLadder`) берёт ступени 1–3 по редкости — те же, что и раньше;
  * - разбор по правилу (броня, `salvageFromItem`) у вещи t0 — первый сорт, сырьё с монстров (`salvageFromMonster`) — только первый сорт
@@ -51,9 +51,9 @@ const MAX: SalvageRng = { int: (_a, b) => b, chance: () => true };
 const MIN: SalvageRng = { int: (a) => a, chance: () => false };
 const RARITIES: Rarity[] = ['normal', 'magic', 'rare'];
 
-describe('D18: все 40 материалов в игре, старые потребители не сдвинулись', () => {
-  it('включены все 40 (и эссенция), у «старого» реестра — ровно прежние 15', () => {
-    expect(live.get('craft-materials').filter((m) => m.enabled && m.id !== ESSENCE_ID)).toHaveLength(40);
+describe('D18: все 30 материалов в игре, старые потребители не сдвинулись', () => {
+  it('включены все 30 (и эссенция), у «старого» реестра — ровно прежние 15', () => {
+    expect(live.get('craft-materials').filter((m) => m.enabled && m.id !== ESSENCE_ID)).toHaveLength(30);
     expect(live.get('craft-materials').find((m) => m.id === ESSENCE_ID)?.enabled).toBe(true);
     expect(old15.get('craft-materials').filter((m) => m.enabled)).toHaveLength(15);
   });
@@ -108,10 +108,10 @@ describe('D18: все 40 материалов в игре, старые потр
   });
 
   it('⭐ F2: с монстров падает сырьё ВЕРХНИХ гнёзд — семьи деталей его оружия, всегда I сорт', () => {
-    // Семьи гнёзд классов — из анатомии (прибор, плечи, фокус): что носит, то и даёт (docs/ECONOMY.md).
+    // Семьи гнёзд классов — из анатомии (прибор; «Плечи» и «Фокус» сняты 06.10): что носит, то и даёт (docs/ECONOMY.md).
     const gear = live.get('monster-gear');
     const known = (id: string): boolean => live.get('craft-materials').some((c) => c.id === id && c.enabled);
-    const UPPER = ['trim', 'stave', 'focus'];
+    const UPPER = ['trim'];
     let carriers = 0;
     for (const g of gear) {
       if (g.kind !== 'weapon') continue;
@@ -168,7 +168,7 @@ describe('D18: все 40 материалов в игре, старые потр
         for (let s = p.stepMin; s <= p.stepMax; s++) used.add(materialId(partFamily(anat, p.slot, p), s));
       }
     }
-    for (const m of live.get('craft-materials').filter((x) => ['iron', 'wood', 'stave', 'trim', 'focus'].includes(x.family))) {
+    for (const m of live.get('craft-materials').filter((x) => ['iron', 'wood', 'trim'].includes(x.family))) {
       expect(used.has(m.id), m.id).toBe(true);
     }
   });

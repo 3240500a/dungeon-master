@@ -4,7 +4,7 @@ import { normalizeAngle } from '../world/fastMath.js';
 import type { ClientFrame, TownCommand } from './netTypes.js';
 import type { PlayerInput } from './session.js';
 import {
-  ALLOC_ATTR_MAX, WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_MATERIALS_MAX,
+  ALLOC_ATTR_MAX, WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_EXCHANGE_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_MATERIALS_MAX,
   WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN, isWireText,
 } from './wireLimits.js';
 
@@ -128,6 +128,8 @@ export const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('forgeEnchant'), uid, rarity: z.enum(['magic', 'rare']), maxGold, maxMaterials, cfgRev, build }).strict(),
   // R3-11: эскиз — на деталь по id конфига; можно ли, решает ядро (`sketchAction`).
   z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId, cfgRev, build }).strict(),
+  // ⭐ Обмен сырья у кузнеца: что отдать (id), во что (семья), сколько; можно ли и почём — решает ядро (`forgeExchange`).
+  z.object({ cmd: z.literal('forgeExchange'), from: cfgId, to: cfgId, n: z.number().int().min(1).max(WIRE_EXCHANGE_MAX), maxGold, maxMaterials, minYield, cfgRev, build }).strict(),
   z.object({ cmd: z.literal('depositMaterials') }).strict(),
   z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield, cfgRev, build }).strict(),
   // R11-02: цель — только вторая рука (дуал-вилд, щит); без неё — родной слот вещи. Встанет ли — решает ядро (`equip`).

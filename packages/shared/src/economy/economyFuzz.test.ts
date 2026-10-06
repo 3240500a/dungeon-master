@@ -290,6 +290,48 @@ describe('⚠ R17-03: фаззер — правка цен форм ёмкост
 });
 
 /**
+ * ⭐ ОБМЕН СЫРЬЯ У КУЗНЕЦА (06.10, `economy/exchange.ts`) — свой профиль весов: обмен, добыча сырья, сдача в сундук, перекладка, продажа и
+ * конфиг чаще прочего. Шаг обмена берёт то, что есть (сумка + сундук), и во что угодно — со снятыми id («Плечи», «Фокус»), эссенцией и
+ * чужими семьями ради отказов; согласие — честное, устаревшее, мусор. Инварианты общие: отказ ничего не трогает (I1), золото и сырьё
+ * сдвигаются ровно на расчёт карточки (I4), согласие не нарушено, гросбух (I5) — «обменял» не растит ценность аккаунта (продажа
+ * полученного не окупает золота обмена).
+ */
+describe('⭐ фаззер — обмен сырья у кузнеца', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  const EXCH: Partial<Record<OpKind, number>> = {
+    exchange: 14, lootMats: 10, loot: 3, deposit: 3, stashMove: 2, sell: 4, gold: 3, config: 3, clientSync: 2, forgeSalvage: 3, craft: 2, upgrade: 2,
+  };
+  it('24 цепочки по 70 шагов: ни одного нарушения; обмены и проходили, и отказывали', () => {
+    const hits: string[] = [];
+    let ok = 0, refused = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 70, EXCH), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      ok += out.stats.exchange?.ok ?? 0;
+      refused += out.stats.exchange?.no ?? 0;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    expect(ok, 'обмены проходят').toBeGreaterThan(20);
+    expect(refused, 'и отказывают (снятые id, эссенция, согласие, нехватка)').toBeGreaterThan(20);
+  });
+  it('⭐ у сторожа есть зубы: обмен, давший на единицу больше расчёта, ловится I4', () => {
+    const want = 'I4:mats-range:exchange';
+    const got = new Set<string>();
+    const bug = (w: import('./fuzz/economyFuzz.js').FuzzWorld, op: Op, res: { ok: boolean }): void => {
+      if (op.k !== 'exchange' || !res.ok) return;
+      const m = w.stash.materials!;
+      const id = Object.keys(m).find((x) => x !== 'ench-essence');
+      if (id) m[id] = (m[id] ?? 0) + 1;
+    };
+    for (let seed = 1; seed <= 40 && !got.has(want); seed++) {
+      const out = runOps(seed, genOps(seed, 70, EXCH), { ...hooks, afterRun: bug }, want);
+      if (out.found) got.add(violationKey(out.found));
+    }
+    expect([...got], `ждали ${want}`).toContain(want);
+  });
+});
+
+/**
  * ⚠ R23-04: МНОЖИТЕЛЬ ЦЕНЫ РЕДКОСТИ ВНИЗ ДО НУЛЯ — свой профиль весов (шаг `priceEdit`): покупка, продажа, прилавок заново, добыча и правка
  * чаще прочего. Схема пускает `rarities.priceMult` от 0, оценка вещи — `round(… × priceMult)`: ниже ≈ 0.026 зелье прилавка стоило 0, а
  * сдавалось за 1 — прилавок раскупался без гроша и сдавался в плюс, на каждый заход в город. Сторожа два: цена прилавка (`shopArbitrage`:

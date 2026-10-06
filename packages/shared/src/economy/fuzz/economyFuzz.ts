@@ -32,7 +32,8 @@ import { acceptQuest, ensureMainQuest, generateBoard, trackFloor, trackObjective
 import { newCharacterSave } from '../newCharacter.js';
 import { applyDeathPenalty } from '../death.js';
 import { gainXp } from '../progression.js';
-import { canAffordBoth, giveMaterialsTo, type MaterialCost } from '../materials.js';
+import { availableMaterials, canAffordBoth, giveMaterialsTo, type MaterialCost } from '../materials.js';
+import { exchangeQuote, forgeExchange } from '../exchange.js';
 import { ESSENCE_ID } from '../../formulas/salvage.js';
 
 /**
@@ -79,7 +80,7 @@ export type OpKind =
   | 'stashMove' | 'deposit' | 'equip' | 'unequip' | 'useConsumable' | 'moveBelt' | 'moveItem' | 'allocAttr' | 'respec'
   | 'allocPassive' | 'respecPassives' | 'allocSkill' | 'respecSkills' | 'acceptQuest' | 'ensureMain' | 'questProgress' | 'turnIn'
   | 'death' | 'loot' | 'lootMats' | 'gold' | 'xp' | 'config' | 'restock' | 'clientSync' | 'newHero' | 'classEdit' | 'progEdit' | 'reenter'
-  | 'priceEdit';
+  | 'priceEdit' | 'exchange';
 
 /** Шаг цепочки: вид, чей герой (0/1), сид его бросков. */
 export interface Op { k: OpKind; h: 0 | 1; s: number }
@@ -100,6 +101,8 @@ export const OP_WEIGHTS: Record<OpKind, number> = {
   // ⚠ R23-04: множитель цены редкости ВНИЗ, до нуля (`rarities.priceMult`), — свой профиль. Здесь — 0: он дешевит и золото кузницы
   // (`forgeGold`), а правки конфига общего профиля нарочно «игроку хуже» (`configPlan`) — иначе гросбух мерил бы баланс цен подъёма.
   priceEdit: 0,
+  // ⭐ Обмен сырья у кузнеца (06.10) — свой профиль (`economyFuzz.test.ts`): здесь 0, чтобы цепочки прочих профилей не сдвинулись.
+  exchange: 0,
 };
 
 /** Цепочка шагов из сида: виды по весам, от состояния не зависит (сжатие это и требует). */
@@ -1112,6 +1115,34 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
         kind: 'town', cmd: { cmd: 'stashMove', uid, dst, x: at.x, y: at.y },
         run: () => asRes(stashMove(reg, s, w.stash, uid, dst, at.x, at.y)),
         spec: () => ({}),
+      };
+    }
+    case 'exchange': {
+      // ⭐ Обмен сырья у кузнеца: то, что есть (сумка + сундук), во что угодно — и снятые id, эссенция, чужие семьи ради отказов.
+      const have = availableMaterials(s.inventory, w.stash.materials ?? {});
+      const held = Object.keys(have).filter((id) => (have[id] ?? 0) > 0 && id !== ESSENCE_ID);
+      const from = held.length && r.chance(0.85) ? r.pick(held) : r.pick(['stave-2', 'focus-4', ESSENCE_ID, 'iron-9']);
+      const fams = [...new Set(reg.get('craft-materials').map((m) => m.family))];
+      const to = r.chance(0.9) ? r.pick(fams) : r.pick(['stave', 'focus', 'nope']);
+      const n = r.chance(0.75) ? Math.max(1, Math.min(have[from] ?? 1, r.int(1, 90))) : r.int(1, 500);
+      const q = exchangeQuote(reg, from, to, n);
+      const shown = (): ReturnType<typeof exchangeQuote> => exchangeQuote(w.view, from, to, n);
+      const maxGold = payConsent(r, () => { const v = shown(); return v.get > 0 ? v.gold : undefined; });
+      const maxMaterials = mapConsent(r, () => { const v = shown(); return v.get > 0 ? { [v.from]: v.spend } : null; }, -1);
+      const minYield = mapConsent(r, () => { const v = shown(); return v.get > 0 && v.to ? { [v.to]: v.get } : null; }, 1);
+      return {
+        desc: `обмен ${from} → ${to} ×${n}: ${q.ok ? `${q.spend} → ${q.to} ${q.get} за ${q.gold}з` : q.reason}, согласие ${maxGold} ${JSON.stringify(maxMaterials)} ${JSON.stringify(minYield)}`,
+        kind: 'town',
+        cmd: {
+          cmd: 'forgeExchange', from, to, n, ...(maxGold !== undefined ? { maxGold } : {}),
+          ...(maxMaterials !== undefined ? { maxMaterials } : {}), ...(minYield !== undefined ? { minYield } : {}),
+        },
+        run: () => asRes(forgeExchange(reg, s, w.stash, from, to, n, maxGold, maxMaterials, minYield)),
+        spec: () => ({
+          gold: { h, delta: -q.gold, maxPay: maxGold },
+          mats: { gain: { [q.from]: { min: -q.spend, max: -q.spend }, ...(q.to ? { [q.to]: { min: q.get, max: q.get } } : {}) }, maxSpend: maxMaterials, minGain: minYield },
+          extra: () => (q.ok ? null : `обмен прошёл там, где расчёт отказывал: ${q.reason}`),
+        }),
       };
     }
     case 'deposit':

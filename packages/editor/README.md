@@ -98,12 +98,13 @@
 (`formulas/craft.ts`, `craftType.ts`, `craftCard.ts`, действия — `economy/townActions.ts`), своих формул во вкладке нет.
 
 ⭐ **Калькулятор (`gameHarness.ts`) исполняет ковку тем же ядром, что сервер.** `applyCmd` знает `craft`,
-`forgeEnchant`, `forgeSketch` (R3-11), `forgeSalvage` и `salvage` (`craftAction` / `enchantAction` / `sketchAction` /
+`forgeEnchant`, `forgeSketch` (R3-11), `forgeSalvage`, `salvage` и ⭐ `forgeExchange` (обмен сырья, `economy/exchange.ts`) (`craftAction` / `enchantAction` / `sketchAction` /
 `forgeSalvage` / `fieldSalvage` над сейвом и сундуком моста; бинд — `setBinding(reg, …)`, та же проверка «только атака
 или выученная активка», R3-02) и на КАЖДУЮ команду отвечает кадром `cmdResult`, как сервер (синхронно — `app.request`
 регистрирует ждущего до отправки). Команда, которую мост не исполняет (лавка, квесты), — ответ «Калькулятор эту команду не
 исполняет», а не молчание. Флаг
-`balance.craft.live` мост, как и песочница, не проверяет: это стенд.
+`balance.craft.live` мост, как и песочница, не проверяет: это стенд. ⭐ Сейв и сундук моста проходят тот же переезд
+сырья снятых семей «Плечи» и «Фокус» (06.10), что вход героя на сервере (`migrateRetiredInSave`, `sanitizeStash`).
 
 ⭐ **R7-15: мост — `App` БЕЗ СЕРВЕРА (`new App({ offline: true })`).** Конфиг моста — ровно данные инструмента
 (песочница ковки — со своими оверрайдами: «Лестница блока», «Грань дальнего боя»; калькулятор — рабочая копия редактора,

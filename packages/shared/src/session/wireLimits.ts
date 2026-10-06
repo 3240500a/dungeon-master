@@ -38,6 +38,9 @@ export const WIRE_RUN_MODIFIERS_MAX = 32;
  */
 export const WIRE_MATERIALS_MAX = 32;
 
+/** Единиц сырья в одной команде обмена (`forgeExchange.n`): больше не лежит ни у кого, а число в кадре — не «сколько влезет». */
+export const WIRE_EXCHANGE_MAX = 1_000_000;
+
 /** Вкладок сундука: номер на проводе — 0 … WIRE_STASH_TABS − 1 (`stashMove.dst`). */
 export const WIRE_STASH_TABS = 32;
 

@@ -54,6 +54,8 @@ const SCOPE: Record<TownCommand['cmd'], CmdScope> = {
   forgeEnchant: 'town',
   // Эскиз открывает деталь в журнале кузнеца — журнал в сундуке аккаунта, у кузнеца (R3-11).
   forgeSketch: 'town',
+  // Обмен сырья — у кузнеца: тратит сумку и сундук аккаунта, а сундук в подземелье не открыт (и мост «обменял на этаже» обнулял бы риск ноши).
+  forgeExchange: 'town',
   depositMaterials: 'town',
   stashOpen: 'town',
   stashMove: 'town',

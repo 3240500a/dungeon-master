@@ -157,8 +157,8 @@ const LEN = env('DM_FUZZ_ROOM_LEN', 60);
 type RoomKind = 'drop' | 'pickup' | 'fault' | 'race' | 'persist' | 'crash' | 'stale' | 'carry';
 type RoomOp = { k: OpKind | RoomKind; h: 0 | 1; s: number };
 /** Общие шаги (без `restock`: сток катает сама комната по сроку; без `newHero`: герой комнаты — живая сессия) и свои — по весам. */
-function genRoomOps(seed: number, len: number): RoomOp[] {
-  const base = genOps(seed, len, { ...OP_WEIGHTS, restock: 0, newHero: 0 });
+function genRoomOps(seed: number, len: number, extra: Partial<Record<OpKind, number>> = {}): RoomOp[] {
+  const base = genOps(seed, len, { ...OP_WEIGHTS, restock: 0, newHero: 0, ...extra });
   const r = createRng((seed * 40503) >>> 0 || 3);
   return base.map((op): RoomOp => {
     const x = r.next();
@@ -462,6 +462,25 @@ describe('⭐ B2 (сервер): фаззер экономики через Room
     if (process.env.DM_FUZZ_ROOM_OUT) writeFileSync(process.env.DM_FUZZ_ROOM_OUT, JSON.stringify({ from: FROM, seeds: SEEDS, len: LEN, stats, found: [...found.values()] }, null, 1));
     const unknown = [...found.keys()].filter((k) => !knownRoom(k));
     expect(unknown, lines.join('\n\n')).toEqual([]);
+  });
+
+  /**
+   * ⭐ ОБМЕН СЫРЬЯ (06.10) ЧЕРЕЗ КОМНАТУ: тот же фаззер с шагом обмена (в общем профиле его вес 0 — чтобы цепочки не сдвинулись). Команда
+   * `forgeExchange` — по проводу схемой, в городе, транзакцией «сейв + сундук», под лимитом кузницы; сбои записи и гонки двух героев
+   * аккаунта (`fault`, `race`) — те же. Инварианты общие: отказ ничего не трогает, сырьё и золото — ровно по расчёту, в базе вещь одна.
+   */
+  it('обмен сырья у кузнеца: цепочки с шагом обмена через Room.handleCmd', async () => {
+    const found = new Map<string, Hit>();
+    let ok = 0;
+    for (let seed = FROM; seed < FROM + SEEDS; seed++) {
+      const out = await runRoom(seed, genRoomOps(seed, LEN, { exchange: 14, lootMats: 10 }));
+      ok += out.stats.exchange?.ok ?? 0;
+      for (const h of out.hits) if (!found.has(h.key)) found.set(h.key, h);
+      for (const r of rooms.splice(0)) r.stop();
+    }
+    const lines = [...found.values()].map((h) => [`✗ ${h.key} — сид ${h.seed}, шаг ${h.at}`, `  ${h.v.inv}/${h.v.code}: ${h.v.msg}`, ...h.log.map((l) => `    ${l}`)].join('\n'));
+    expect([...found.keys()].filter((k) => !knownRoom(k)), lines.join('\n\n')).toEqual([]);
+    expect(ok, 'обмены проходят и через комнату').toBeGreaterThan(0);
   });
 
   /**

@@ -257,6 +257,11 @@ export function buildBow(ctx: MeshCtx): THREE.Group {
   const tipLen = H * TIP_LEN[tip]! * (tip === 'siyah' ? byAxis(pH.axis, 0.9, 1.06) : 1);
   const limbLen = Math.max(10, H - rs.half - tipLen - capLen);
   const staveM = ctx.mat('strike'), gripM = ctx.mat('grip'), bindM = ctx.mat('bind'), headM = ctx.mat('head');
+  // ⭐ Концы и накладки лука — Дерево или Прибор ПО ДЕТАЛИ (06.10, вместо снятых «Плеч»). У «приборной» детали (роговые ноки, накладки
+  // сиях) само ухо — дерево рогов, а Прибор ступени (чёрное железо … золочёный) — на ноках и накладках: «деревянные концы, позолоченные
+  // накладки». У деревянной — как прежде: ухо из материала концов, ноки и накладки — рог и кость.
+  const fitted = pH.family === 'trim';
+  const earM = fitted ? staveM : headM;
   const hide = ctx.matOf('hide', pG.step);
   const bone = ctx.fixed(BONE, 0, 0.45);
 
@@ -369,7 +374,7 @@ export function buildBow(ctx: MeshCtx): THREE.Group {
       flat = !!lim.flatBack;
       // Роговой нок: колпачок-«пулька» с канавкой под петлю тетивы.
       const cl = capLen, rb = Math.max(thE, wdE) * 0.5 + 0.25;
-      const cap = lathe([[rb * 0.9, 1.2], [rb, 0], [rb * 1.06, -0.18 * cl], [rb * 0.74, -0.32 * cl], [rb * 0.74, -0.44 * cl], [rb * 0.98, -0.54 * cl], [rb * 0.8, -0.78 * cl], [rb * 0.34, -0.96 * cl], [0.02, -cl]], ctx.fixed(HORN, 0, 0.35), 12);
+      const cap = lathe([[rb * 0.9, 1.2], [rb, 0], [rb * 1.06, -0.18 * cl], [rb * 0.74, -0.32 * cl], [rb * 0.74, -0.44 * cl], [rb * 0.98, -0.54 * cl], [rb * 0.8, -0.78 * cl], [rb * 0.34, -0.96 * cl], [0.02, -cl]], fitted ? headM : ctx.fixed(HORN, 0, 0.35), 12);
       const P = last(tp.pts), a = last(tp.ang);
       extras.push(at(cap, P[0], P[1], 0, 0, 0, a + Math.PI / 2));
       nockC = [P[0] + Math.cos(a) * cl * 0.38, P[1] + Math.sin(a) * cl * 0.38];
@@ -417,13 +422,13 @@ export function buildBow(ctx: MeshCtx): THREE.Group {
       flat = !!lim.flatBack;
     }
   }
-  both(g.head, sweep(tp.pts, tth, twd, headM, { pow: tpow, flatBack: flat, sides: flat ? 10 : 8 }), ...extras);
+  both(g.head, sweep(tp.pts, tth, twd, earM, { pow: tpow, flatBack: flat, sides: flat ? 10 : 8 }), ...extras);
 
   // Костяные накладки гуннского набора. 4 [Ирзи] — пара концевых на каждом ухе (обе щеки), ухо
   // целиком одето в белую кость и перетянуто тёмной жилой по краям накладок. 7 [Кум-Дарья] — те же
   // 4 концевые + 3 срединные на рукояти: две боковые «ланцетом» и одна по животу.
   if (plates === 'four' || plates === 'seven') {
-    const plateM = ctx.fixed(PLATE_BONE, 0, 0.4);
+    const plateM = fitted ? headM : ctx.fixed(PLATE_BONE, 0, 0.4);
     const sinew = ctx.fixed(SINEW, 0, 0.8);
     const i0 = Math.max(1, tp.u.findIndex((u) => u >= 0.16));
     const i1 = Math.min(tp.pts.length - 1, nockI + 1);

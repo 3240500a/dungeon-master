@@ -207,6 +207,11 @@ export type TownCommand =
    * НЕОТКРЫТОГО типа эскиз не открывает (`sketchable`). R3-11: раньше эскизы копились, а потратить их было нечем.
    */
   | { cmd: 'forgeSketch'; variantId: string; cfgRev?: string; build?: string }
+  /**
+   * ⭐ Обмен сырья у кузнеца (`economy/exchange.ts`): отдать `n` единиц `from` — получить тот же сорт семьи `to` по курсу и за золото
+   * (`balance.forgePrices.exchange`). Согласие: `maxGold` — золото карточки, `maxMaterials` — сколько она возьмёт, `minYield` — сколько даст.
+   */
+  | { cmd: 'forgeExchange'; from: string; to: string; n: number; maxGold?: number; maxMaterials?: Record<string, number>; minYield?: Record<string, number>; cfgRev?: string; build?: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
   | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string; build?: string }
   /**

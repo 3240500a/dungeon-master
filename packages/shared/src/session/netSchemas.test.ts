@@ -127,7 +127,7 @@ describe('схема команд города', () => {
    */
   const EVERY: Record<TownCommand['cmd'], true> = {
     buy: true, sell: true, forgeUpgrade: true, forgeReroll: true, forgeRepair: true, depositMaterials: true,
-    forgeSalvage: true, craft: true, forgeEnchant: true, forgeSketch: true, salvage: true, equip: true, unequip: true, allocAttr: true, respec: true,
+    forgeSalvage: true, craft: true, forgeEnchant: true, forgeSketch: true, forgeExchange: true, salvage: true, equip: true, unequip: true, allocAttr: true, respec: true,
     respecPassives: true, respecSkills: true, allocPassive: true, allocSkill: true, socketInsert: true,
     socketClear: true, useConsumable: true, moveBelt: true, moveItem: true, stashOpen: true, stashMove: true,
     bind: true, pickup: true, drop: true, acceptQuest: true, turnInQuest: true,
@@ -345,6 +345,7 @@ describe('⚠ R3-02 / R3-14: строки провода без U+0000 и неп
     { cmd: 'forgeSalvage', uid: 'u1' }, { cmd: 'forgeRepair', uid: 'u1' },
     { cmd: 'craft', nonce: 'nonce-0001', input: { weaponClass: 'sword', hands: 1, parts: { strike: pick('blade-a'), grip: pick('grip-a'), bind: pick('bind-a'), head: pick('head-a') } } },
     { cmd: 'forgeEnchant', uid: 'u1', rarity: 'magic' }, { cmd: 'forgeSketch', variantId: 'blade-a' },
+    { cmd: 'forgeExchange', from: 'iron-3', to: 'wood', n: 9 },
     { cmd: 'salvage', uid: 'u1' }, { cmd: 'equip', uid: 'u1' }, { cmd: 'equip', uid: 'u1', slot: 'offhand' }, { cmd: 'unequip', slot: 'weapon' },
     { cmd: 'allocAttr', attr: 'strength' }, { cmd: 'allocPassive', nodeId: 'n1' }, { cmd: 'allocSkill', nodeId: 'n1' },
     { cmd: 'socketInsert', nodeId: 'n1', slot: 0, insertId: 'fire' }, { cmd: 'socketClear', nodeId: 'n1', slot: 0 },

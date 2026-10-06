@@ -24,6 +24,7 @@ import { addToInventory } from '../inventory/grid.js';
 import type { BuildPolicy } from '../sim/types.js';
 import { emptyStash, sanitizeStash } from '../economy/stashActions.js';
 import { availableMaterials, materialItem, type MaterialCost } from '../economy/materials.js';
+import { migrateRetiredInSave } from '../economy/retiredMaterials.js';
 import { normalizeJournal } from '../formulas/craft.js';
 import { shopBuyPrice, shopSellPrice, SHOP_CONSUMABLE_STOCK, shopConsumableIds } from '../economy/townActions.js';
 import type { AccountStash } from '../types/stash.js';
@@ -190,6 +191,8 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const biomes = reg.get('biomes');
 
   const save = settings.save ? structuredClone(settings.save) : newBotSave(reg, settings.classId);
+  // Сейв из базы (вкладка сима, `sim-cli --char`) мог лечь до снятия «Плеч» и «Фокуса» — как вход героя на сервере (`RoomManager.sanitize`).
+  if (settings.save) migrateRetiredInSave(save, reg.get('craft-materials'), reg.get('balance').inventory.materialStack);
   const profile = classProfileAttr(reg, settings.classId);
   const session = new GameSession(reg, settings.seed, settings.difficultyId);
   const p = session.addPlayer('p1', save);

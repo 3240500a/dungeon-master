@@ -74,12 +74,14 @@ describe('печь GLB модели из деталей', () => {
     expect(len).toBeLessThan(200);
   });
 
-  it('свечение фокуса — в имени материала (Unity ставит свой материал, цвет стихии не теряется)', async () => {
+  it('свечение навершия — в имени материала (Unity ставит свой материал, цвет стихии не теряется)', async () => {
+    // 06.10: навершие посоха и жезла — Прибор (снятый «Фокус» светился сам), свечение стихии — на материале навершия любой семьи.
     const hands = familiesOf(reg, 'staff')[0]!;
     const { scene } = await load((await bakeCraftGlb(bakeReg, 'staff', hands, defaultParts(reg, 'staff', hands, 3)!, { look: 'x', rev: 'r' }))!);
     const names = new Set<string>();
     scene.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) names.add((m.material as THREE.Material).name); });
-    expect([...names].some((x) => /^focus:[1-5]:glow=[0-9a-f]{6}$/.test(x)), [...names].join(', ')).toBe(true);
+    expect([...names].some((x) => /^trim:[1-5]:glow=[0-9a-f]{6}$/.test(x)), [...names].join(', ')).toBe(true);
+    expect([...names].some((x) => /^(focus|stave):/.test(x)), 'снятых семей в материалах нет').toBe(false);
   });
 
   it('⚠ печь читает только таблицы модели (CRAFT_MESH_DEPS): иначе правка чужой таблицы не сменила бы ключ кэша', async () => {

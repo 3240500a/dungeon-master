@@ -158,10 +158,10 @@ describe('benchActions — цена построчно', () => {
       const it0 = { ...itemFromBaseId(reg.get('items.base'), baseId, reg.get('item-tiers'), 'drop')!, uid: `sv-${baseId}` };
       const sv = benchActions(reg, it0, 99999, [], RICH).find((x) => x.id === 'salvage')!;
       expect(sv.enabled, baseId).toBe(true);
-      // Кожа 0–2 и побочные Плечи 0–1 (китовый ус кожаной брони — после рецензии 06.10 узкие семьи ковки идут и с брони).
+      // Кожа 0–2 (побочные Плечи кожаной брони сняты 06.10 вместе с семьёй).
       const name = (id: string): string => reg.get('craft-materials').find((m) => m.id === id)!.name;
-      expect(sv.lines[0]!.text, `${baseId}: было — ни строки выхода`).toBe(`+ ${name('hide-1')} 0–2 · + ${name('stave-1')} 0–1`);
-      expect(sv.minYield).toEqual({ 'hide-1': 0, 'stave-1': 0 });
+      expect(sv.lines[0]!.text, `${baseId}: было — ни строки выхода`).toBe(`+ ${name('hide-1')} 0–2`);
+      expect(sv.minYield).toEqual({ 'hide-1': 0 });
       expect(sv.avgYield, 'R9-04: у дробного выхода низ правку не видит — среднее видит').toEqual(salvageMean(reg, it0, false));
       expect(sv.avgYield!['hide-1']).toBeCloseTo(1, 9);
     }

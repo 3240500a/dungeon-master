@@ -56,8 +56,10 @@ export function meshCtx(reg: ConfigRegistry, weaponClass: string, hands: number,
   return {
     cls: weaponClass, hands, baseId: base?.id ?? '', parts: views, glow,
     tag: (slot, key) => views[slot].tags[key] ?? '',
-    mat: (slot) => mats.of(views[slot].family, views[slot].step, views[slot].family === 'focus' ? glow : 0),
-    matOf: (family, step) => mats.of(family, step, family === 'focus' ? glow : 0),
+    // Свечение стихии — у НАВЕРШИЯ магического оружия (ударное гнездо жезла и посоха), из какой бы семьи оно ни было: с 06.10 оно Прибор
+    // (был снятый «Фокус»), и камень навершия светится по стихии базы поверх металла ступени.
+    mat: (slot) => mats.of(views[slot].family, views[slot].step, slot === 'strike' ? glow : 0),
+    matOf: (family, step) => mats.of(family, step, 0),
     fixed: (color, metalness, roughness) => mats.fixed(color, metalness, roughness),
   };
 }

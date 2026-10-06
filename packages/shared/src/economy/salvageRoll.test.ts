@@ -176,10 +176,10 @@ describe('⚠ R9-04: согласие на выход разбора видит 
   });
 
   it('⭐ вилка мелкой вещи в поле — «0–1», а не пустая: пояс, перчатки; у кузнеца — «0–2»', () => {
-    // Кожаная броня даёт и побочные Плечи (китовый ус, «0–1» в правиле): у мелкой вещи — «0–1» и у кузнеца, и в поле.
-    expect(salvageRange(reg, belt, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 }, 'stave-1': { min: 0, max: 1 } } });
-    expect(salvageRange(reg, gloves, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 }, 'stave-1': { min: 0, max: 1 } } });
-    expect(salvageRange(reg, belt, false)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 2 }, 'stave-1': { min: 0, max: 1 } } });
+    // Кожаная броня — одна Кожа (побочные Плечи сняты 06.10 вместе с семьёй).
+    expect(salvageRange(reg, belt, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 } } });
+    expect(salvageRange(reg, gloves, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 } } });
+    expect(salvageRange(reg, belt, false)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 2 } } });
     const sw = salvageRange(reg, sword, true);
     expect(sw.ok).toBe(true);
     expect(Object.keys(sw.range).length, 'у обычного меча в поле вилка по каждой детали').toBeGreaterThan(0);

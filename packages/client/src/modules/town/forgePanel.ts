@@ -5,6 +5,8 @@ import { COLORS, button, mk, tabsBar } from '../../ui/kit.js';
 import { shopCategory, type ShopCat } from './shopCats.js';
 import { renderShopGrid } from './shopGrid.js';
 import { forgeBench } from './forgeBench.js';
+import { forgeExchangeView } from './forgeExchangeView.js';
+import type { ExchangeSel } from './forgeExchange.js';
 import { markStaleBuild, reloadPage } from '../../net/staleBuild.js';
 
 /** Модуль вкладки «Ковка» — грузится один раз на страницу, при первом открытии вкладки. */
@@ -25,6 +27,7 @@ let craftTabFailed = false;
  *  • Ковка — оружие из деталей (docs/CRAFT_WEAPONS.md §17): окно `craftPanel` с игровым хозяином и
  *    3D-стендом. Тяжёлое, поэтому грузится динамическим `import()` (`forgeCraftTab.ts`). Пока в конфиге
  *    `balance.craft.live` выключен, сервер ковку отклоняет — и вкладка говорит это, окна не грузя.
+ *  • Обмен — сырьё одной семьи на тот же сорт другой по курсу и за золото (`forgeExchangeView.ts`, ядро `economy/exchange.ts`).
  *  • Купить — магазин оружия/брони: 3 вкладки (ближний/дальний бой, броня), сетка «как инвентарь» (см. shopGrid).
  * Режим/вкладка/выбранная вещь живут в замыкании фабрики (переживают перерисовку панели).
  * Зелья — в лавке (shopPanel).
@@ -49,7 +52,10 @@ export const forgePanel: PanelFactory = (app, ui) => {
   // ⭐ Инвентарь открывается ВМЕСТЕ с кузницей: на верстак вещь кладут из сумки, и окно без неё
   // бесполезно. `DomUi` держит несколько окон одновременно — своего механизма не нужно.
   ui.openPanel('inventory');
-  let mode: 'work' | 'craft' | 'buy' = 'work';
+  let mode: 'work' | 'craft' | 'exchange' | 'buy' = 'work';
+  // Выбор вкладки «Обмен» и итог последнего обмена — здесь же, по той же причине, что и вещь верстака.
+  let exch: ExchangeSel = { from: null, to: null, n: 0 };
+  let exchNote = '';
   let tab: ShopCat = 'melee';
   // ⚠ Выбранная вещь живёт ЗДЕСЬ, а не в `render`: тело окна перерисовывается на каждое
   // `state:changed` — то есть на каждую подобранную монету, — и слот очищался бы сам собой.
@@ -68,11 +74,18 @@ export const forgePanel: PanelFactory = (app, ui) => {
         body.appendChild(head);
 
         body.appendChild(tabsBar(
-          [['work', '🔨 Работа'], ['craft', '⚒ Ковка'], ['buy', '🛒 Купить']] as const,
+          [['work', '🔨 Работа'], ['craft', '⚒ Ковка'], ['exchange', '⇄ Обмен'], ['buy', '🛒 Купить']] as const,
           mode, (k) => { mode = k; draw(); }));
 
         if (mode === 'buy') drawBuy();
         else if (mode === 'craft') drawCraft();
+        else if (mode === 'exchange') {
+          // Без сундука обмен видит только сумку — сказать это (R2-34), как у верстака.
+          if (stashLost()) body.append(lostNote('Сундук не загрузился', 'Сырьё из сундука не учтено — обмен видит только сумку.'));
+          body.appendChild(forgeExchangeView(app, {
+            sel: exch, setSel: (sel) => { exch = sel; }, note: exchNote, setNote: (n) => { exchNote = n; },
+          }));
+        }
         else {
           // Без сундука верстак считает только сумку — сказать это, а не молча гасить карточки (R2-34).
           if (stashLost()) body.append(lostNote('Сундук не загрузился', 'Сырьё из сундука не учтено — цены ниже видят только сумку.'));

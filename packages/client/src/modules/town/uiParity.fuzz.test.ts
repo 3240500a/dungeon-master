@@ -335,7 +335,8 @@ const FIXED: Known[] = [
     repro: [
       { seed: 4, ops: [op('respec', 404)], key: /^parity:enabled-refused:respec:После сброса/ },
       { seed: 3, ops: [op('respec', 404)], key: /^parity:enabled-refused:respec:После сброса/ },
-      { seed: 1, ops: [op('bench', 1043863146), op('craft', 419498659), op('goldEdge', 501493848), op('respec', 1035640358)], key: /^parity:enabled-refused:respec:После сброса/ },
+      // 06.10: прежняя цепочка сида 1 (через верстак и ковку) после снятия «Плеч» и «Фокуса» катит другие броски — пересжата фаззером (`DM_FUZZ_SELFTEST=r1907`).
+      { seed: 1, ops: [op('bagFill', 1907932303), op('respec', 1035640358)], key: /^parity:enabled-refused:respec:После сброса/ },
     ],
   },
   {

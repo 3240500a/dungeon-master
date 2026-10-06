@@ -1,6 +1,7 @@
 import { ATTRIBUTES } from '../types/attributes.js';
 import { buffTimingIssues } from '../formulas/buffTiming.js';
 import { ESSENCE_ID } from '../formulas/salvage.js';
+import { RETIRED_FAMILIES, liveFamily, retiredSuccessor } from '../economy/retiredMaterials.js';
 import { configSchemas, type ConfigKey, type ConfigShapes } from './schemas.js';
 import { defaultConfigData } from './defaults.js';
 
@@ -22,7 +23,8 @@ export interface StoredOverrideLive { get<K extends ConfigKey>(key: K): ConfigSh
  * Здесь приводится только то, что новая схема сузила: старт класса — вниз до целого, не ниже нуля (дробную долю очка не вложить никогда,
  * минус — не атрибут); ⭐ D2 — кривая опыта `balance.xpTable`, сохранённая до R20-05 (`upgradeXpTable`); ⭐ D4 — откат баффа (узел древа,
  * печать вставки), короче правила времени баффа (`upgradeBuffTiming`: поверх `live` — итогового кандидата сборки, R21-01); ⭐ сырьё
- * `craft-materials`, сохранённое до эссенции и цен D4 (`upgradeCraftMaterials`). Прочее не трогается — не прошедшее
+ * `craft-materials`, сохранённое до эссенции и цен D4 (`upgradeCraftMaterials`); ⭐ снятые 06.10 семьи «Плечи» и «Фокус» в `craft-materials`,
+ * `weapon-anatomy`, `weapon-parts`, `salvage-rules`, `monster-gear` (`dropRetiredMaterials` и соседи). Прочее не трогается — не прошедшее
  * схему пропускается, как прежде (инцидентом). Зовёт
  * только сборка живого конфига из базы (`server/configLive.ts`) и починка базы (`db:repair`): новая запись из редактора и файл данных
  * идут строгой схемой, мимо этого, — дробь там по-прежнему отказ.
@@ -32,7 +34,15 @@ export interface StoredOverrideLive { get<K extends ConfigKey>(key: K): ConfigSh
 export function upgradeStoredOverride(key: string, value: unknown, live?: StoredOverrideLive): { value: unknown; fixes: string[] } {
   if (key === 'balance') return upgradeBalance(value);
   if (key === 'skill-tree' || key === 'skill-inserts') return upgradeBuffTiming(key, value, live);
-  if (key === 'craft-materials') return upgradeCraftMaterials(value);
+  if (key === 'craft-materials') {
+    const a = upgradeCraftMaterials(value);
+    const b = dropRetiredMaterials(a.value);
+    return b.fixes.length ? { value: b.value, fixes: [...a.fixes, ...b.fixes] } : a;
+  }
+  if (key === 'weapon-anatomy') return upgradeRetiredAnatomy(value);
+  if (key === 'weapon-parts') return upgradeRetiredParts(value);
+  if (key === 'salvage-rules') return upgradeRetiredYields(value, 'yields', true);
+  if (key === 'monster-gear') return upgradeRetiredYields(value, 'salvageTo', false);
   if (key !== 'classes' || !Array.isArray(value)) return { value, fixes: [] };
   const fixes: string[] = [];
   const rows = value.map((row: unknown, i) => {
@@ -85,6 +95,123 @@ function upgradeCraftMaterials(value: unknown): { value: unknown; fixes: string[
     rows.push(structuredClone(f));
     fixes.push(`craft-materials: + «${String(rowId(f))}» из файла (таблица сохранена до него)`);
   }
+  return fixes.length ? { value: rows, fixes } : { value, fixes: [] };
+}
+
+/**
+ * ⭐ СНЯТЫЕ СЕМЬИ «ПЛЕЧИ» И «ФОКУС» (06.10, `economy/retiredMaterials.ts`) В ОВЕРРАЙДАХ БАЗЫ. Оверрайд — таблица целиком, и сохранённая до
+ * снятия держит их строки: сырьё `stave-*` / `focus-*` (у игроков его больше нет — переехало в Дерево и Прибор), гнёзда анатомии из этих
+ * семей (лук, арбалет, жезл и посох просили бы сырьё, которого нет ни у кого, — класс не куётся), выход разбора и тел монстров в них
+ * (единицы пропадали бы молча). Приводится к правилу файла, вслух в лог; `db:repair -- --fix` записывает в базу. Сервер хозяина стартует
+ * без ручных шагов. Таблица без снятых семей — как есть (второй проход ничего не находит).
+ */
+const isRetiredFamily = (f: unknown): f is string => typeof f === 'string' && Object.prototype.hasOwnProperty.call(RETIRED_FAMILIES, f);
+const rowIdOf = (r: unknown): unknown => (r && typeof r === 'object' ? (r as { id?: unknown }).id : undefined);
+const fileRows = (key: string): Record<string, unknown>[] => {
+  const f = (defaultConfigData as Record<string, unknown>)[key];
+  return Array.isArray(f) ? (f as Record<string, unknown>[]) : [];
+};
+
+/** `craft-materials`: строки снятых семей — долой (их сырьё у игроков уже в преемнике того же сорта). */
+function dropRetiredMaterials(value: unknown): { value: unknown; fixes: string[] } {
+  if (!Array.isArray(value)) return { value, fixes: [] };
+  const fixes: string[] = [];
+  const rows = value.filter((row: unknown) => {
+    const id = rowIdOf(row);
+    const fam = row && typeof row === 'object' ? (row as { family?: unknown }).family : undefined;
+    const to = typeof id === 'string' ? retiredSuccessor(id) : undefined;
+    if (!to && !isRetiredFamily(fam)) return true;
+    fixes.push(`craft-materials: − «${String(id)}» (семья «${String(fam)}» снята — сырьё игроков переехало в «${to ?? liveFamily(String(fam))}» того же сорта)`);
+    return false;
+  });
+  return fixes.length ? { value: rows, fixes } : { value, fixes: [] };
+}
+
+/** `weapon-anatomy`: семья гнезда из снятых — семья того же гнезда в файле (лук — Дерево, арбалет — Железо, жезл и посох — Прибор). */
+function upgradeRetiredAnatomy(value: unknown): { value: unknown; fixes: string[] } {
+  if (!Array.isArray(value)) return { value, fixes: [] };
+  const file = new Map(fileRows('weapon-anatomy').map((r) => [rowIdOf(r), r]));
+  const fixes: string[] = [];
+  const rows = value.map((row: unknown) => {
+    if (!row || typeof row !== 'object') return row;
+    let next: Record<string, unknown> | undefined;
+    for (const slot of ['strike', 'grip', 'bind', 'head'] as const) {
+      const g = (row as Record<string, unknown>)[slot];
+      const fam = g && typeof g === 'object' ? (g as { family?: unknown }).family : undefined;
+      if (!isRetiredFamily(fam)) continue;
+      const fg = file.get(rowIdOf(row))?.[slot] as { family?: unknown } | undefined;
+      const to = typeof fg?.family === 'string' && fg.family && !isRetiredFamily(fg.family) ? fg.family : liveFamily(fam);
+      (next ??= { ...(row as Record<string, unknown>) })[slot] = { ...(g as Record<string, unknown>), family: to };
+      fixes.push(`weapon-anatomy.${String(rowIdOf(row))}.${slot}.family: ${fam} → ${to} (семья снята)`);
+    }
+    return next ?? row;
+  });
+  return fixes.length ? { value: rows, fixes } : { value, fixes: [] };
+}
+
+/**
+ * `weapon-parts`: своя семья детали из снятых — как у той же детали в файле (или преемник). ⭐ И КОНЦЫ ЛУКА: снятие Плеч дало концам и
+ * накладкам лука выбор «Дерево или Прибор по детали» (в файле роговые ноки и накладки сиях — Прибор). Таблица, сохранённая ДО этого, не
+ * знает своей семьи ни у одной детали концов лука — тогда детали, которым файл дал семью, берут её из файла (иначе у хозяина концы лука
+ * только деревянные). Хозяину, которому нужны деревянные, достаточно поставить детали явное `wood`: таблица со своей семьёй хоть у одной
+ * детали концов лука считается сохранённой после правила и не трогается.
+ */
+function upgradeRetiredParts(value: unknown): { value: unknown; fixes: string[] } {
+  if (!Array.isArray(value)) return { value, fixes: [] };
+  const file = new Map(fileRows('weapon-parts').map((r) => [rowIdOf(r), r]));
+  const famOf = (r: unknown): unknown => (r && typeof r === 'object' ? (r as { family?: unknown }).family : undefined);
+  const bowHead = (r: unknown): boolean => {
+    const x = r as { slot?: unknown; classes?: unknown } | null | undefined;
+    return !!x && typeof x === 'object' && x.slot === 'head' && Array.isArray(x.classes) && x.classes.includes('bow');
+  };
+  const preRule = !value.some((r: unknown) => bowHead(r) && typeof famOf(r) === 'string' && famOf(r) !== '');
+  const fixes: string[] = [];
+  const rows = value.map((row: unknown) => {
+    if (!row || typeof row !== 'object') return row;
+    const fam = famOf(row);
+    const f = file.get(rowIdOf(row));
+    const ff = famOf(f);
+    if (isRetiredFamily(fam)) {
+      const to = typeof ff === 'string' && ff && !isRetiredFamily(ff) ? ff : liveFamily(fam);
+      fixes.push(`weapon-parts.${String(rowIdOf(row))}.family: ${fam} → ${to} (семья снята)`);
+      return { ...(row as Record<string, unknown>), family: to };
+    }
+    if (preRule && bowHead(row) && bowHead(f) && (fam === undefined || fam === '') && typeof ff === 'string' && ff) {
+      fixes.push(`weapon-parts.${String(rowIdOf(row))}.family: «» → ${ff} (концы и накладки лука — Дерево или Прибор по детали, как в файле)`);
+      return { ...(row as Record<string, unknown>), family: ff };
+    }
+    return row;
+  });
+  return fixes.length ? { value: rows, fixes } : { value, fixes: [] };
+}
+
+/**
+ * `salvage-rules` (`yields`) и `monster-gear` (`salvageTo`): выход в снятое сырьё — в преемника того же сорта (кольцо и амулет: Фокус →
+ * Прибор; тела с луками и арбалетами: Плечи → Дерево; с жезлами и посохами: Фокус → Прибор). У брони (правило `kind: armor`) побочные
+ * Плечи 0–1 сняты вовсе, как в файле: кожа и стёганка Дерева не дают.
+ */
+function upgradeRetiredYields(value: unknown, field: 'yields' | 'salvageTo', dropArmorStave: boolean): { value: unknown; fixes: string[] } {
+  if (!Array.isArray(value)) return { value, fixes: [] };
+  const key = field === 'yields' ? 'salvage-rules' : 'monster-gear';
+  const fixes: string[] = [];
+  const rows = value.map((row: unknown) => {
+    if (!row || typeof row !== 'object') return row;
+    const ys = (row as Record<string, unknown>)[field];
+    if (!Array.isArray(ys)) return row;
+    const armor = dropArmorStave && (row as { kind?: unknown }).kind === 'armor';
+    let touched = false;
+    const next: unknown[] = [];
+    for (const y of ys) {
+      const id = y && typeof y === 'object' ? (y as { materialId?: unknown }).materialId : undefined;
+      const to = typeof id === 'string' ? retiredSuccessor(id) : undefined;
+      if (!to) { next.push(y); continue; }
+      touched = true;
+      if (armor && String(id).startsWith('stave-')) { fixes.push(`${key}.${String(rowIdOf(row))}: − ${String(id)} (побочные Плечи брони сняты)`); continue; }
+      fixes.push(`${key}.${String(rowIdOf(row))}: ${String(id)} → ${to} (семья снята)`);
+      next.push({ ...(y as Record<string, unknown>), materialId: to });
+    }
+    return touched ? { ...(row as Record<string, unknown>), [field]: next } : row;
+  });
   return fixes.length ? { value: rows, fixes } : { value, fixes: [] };
 }
 

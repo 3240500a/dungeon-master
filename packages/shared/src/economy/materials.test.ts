@@ -76,11 +76,11 @@ describe('секция конфига craft-materials', () => {
   /** Сырьё — без эссенции: у неё своя семья и одна строка. */
   const mats = all.filter((m) => m.id !== ESSENCE_ID);
 
-  it('восемь семей по пять сортов (docs/CRAFT_WEAPONS.md §10) и одна эссенция своей семьёй', () => {
-    expect(mats).toHaveLength(40);
+  it('шесть семей по пять сортов (docs/CRAFT_WEAPONS.md §10; «Плечи» и «Фокус» сняты 06.10) и одна эссенция своей семьёй', () => {
+    expect(mats).toHaveLength(30);
     const byFamily = new Map<string, number>();
     for (const m of mats) byFamily.set(m.family, (byFamily.get(m.family) ?? 0) + 1);
-    expect([...byFamily.keys()].sort()).toEqual(['cloth', 'focus', 'hide', 'iron', 'plate', 'stave', 'trim', 'wood']);
+    expect([...byFamily.keys()].sort()).toEqual(['cloth', 'hide', 'iron', 'plate', 'trim', 'wood']);
     for (const [, n] of byFamily) expect(n).toBe(5);
     const ess = all.filter((m) => m.family === ESSENCE_FAMILY);
     expect(ess.map((m) => m.id)).toEqual([ESSENCE_ID]);
@@ -98,10 +98,10 @@ describe('секция конфига craft-materials', () => {
     expect(ess.sellPrice).toBeLessThanOrEqual(5);
   });
 
-  it('⭐ в игре все 40 материалов и эссенция: разбор отдаёт все пять сортов (по ступени вещи), прибор, плечи, фокус', () => {
+  it('⭐ в игре все 30 материалов и эссенция: разбор отдаёт все пять сортов (по ступени вещи), прибор', () => {
     // Раньше жили 15: склад рисовал три столбца «обычные / магические / редкие», и полки, которые ничто не
     // наполняет, были бы враньём. Разбор отдаёт сорт рецепта ступени вещи — им наполняются все пять сортов (D18, К2).
-    expect(mats.filter((m) => m.enabled)).toHaveLength(40);
+    expect(mats.filter((m) => m.enabled)).toHaveLength(30);
     expect(all.find((m) => m.id === ESSENCE_ID)?.enabled).toBe(true);
   });
 

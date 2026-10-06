@@ -135,3 +135,56 @@ describe('⭐ слой файлов — всеми правилами повер
     expect(text).not.toMatch(/зажимает откаты/);
   });
 });
+
+/**
+ * ⭐ ОВЕРРАЙДЫ, СОХРАНЁННЫЕ ДО СНЯТИЯ «ПЛЕЧ» И «ФОКУСА» (06.10, D5): сервер хозяина стартует без ручных шагов — сборка приводит все пять
+ * таблиц (`upgradeStoredOverride`), ни одна не пропущена, инцидентов нет; `db:repair -- --fix` пишет приведённое, и следующая сборка
+ * ничего не приводит.
+ */
+describe('⭐ оверрайды до снятия «Плеч» и «Фокуса» — сервер стартует сам', () => {
+  type Row = Record<string, unknown>;
+  const clone = <T>(k: string): T => structuredClone((defaultConfigData as Record<string, unknown>)[k]) as T;
+  function oldOverrides(): Record<string, unknown> {
+    const mats = clone<Row[]>('craft-materials');
+    for (const fam of ['stave', 'focus']) for (let g = 1; g <= 5; g++) mats.push({ id: `${fam}-${g}`, enabled: true, name: `${fam} ${g}`, family: fam, tier: g, usedFor: 'weapon', icon: '', note: '', sellPrice: [1, 2, 5, 10, 15][g - 1] });
+    const anat = clone<Row[]>('weapon-anatomy');
+    for (const [cls, slot, fam] of [['bow', 'strike', 'stave'], ['bow', 'head', 'stave'], ['crossbow', 'strike', 'stave'], ['wand', 'strike', 'focus'], ['staff', 'strike', 'focus']]) {
+      ((anat.find((a) => a.id === cls)!)[slot!] as Row).family = fam;
+    }
+    const parts = clone<Row[]>('weapon-parts');
+    for (const p of parts) if (p.slot === 'head' && (p.classes as string[]).includes('bow')) p.family = '';
+    const rules = clone<Row[]>('salvage-rules');
+    (rules.find((r) => r.id === 'a-leather')!.yields as Row[]).push({ materialId: 'stave-1', min: 0, max: 1 });
+    ((rules.find((r) => r.id === 'jewelry-amulet')!.yields as Row[])[0]!).materialId = 'focus-1';
+    const gear = clone<Row[]>('monster-gear');
+    ((gear.find((r) => r.id === 'u-bow')!.salvageTo as Row[])[1]!).materialId = 'stave-1';
+    ((gear.find((r) => r.id === 'u-wand')!.salvageTo as Row[])[2]!).materialId = 'focus-1';
+    return { 'craft-materials': mats, 'weapon-anatomy': anat, 'weapon-parts': parts, 'salvage-rules': rules, 'monster-gear': gear };
+  }
+  const KEYS = ['craft-materials', 'monster-gear', 'salvage-rules', 'weapon-anatomy', 'weapon-parts'];
+
+  it('кандидат: все пять легли, приведённое — вслух, снятых семей в живом конфиге нет', () => {
+    const c = buildCandidate(files(), oldOverrides());
+    expect(c.applied.sort()).toEqual(KEYS);
+    expect(c.skipped).toEqual([]);
+    expect(c.crossLeft).toEqual([]);
+    expect(Object.keys(c.fixes).sort()).toEqual(KEYS);
+    expect(JSON.stringify(KEYS.map((k) => c.raw[k]))).not.toMatch(/"(stave|focus)(-\d)?"/);
+    expect(c.reg.get('weapon-anatomy').find((a) => a.id === 'bow')!.strike.family).toBe('wood');
+    expect(c.reg.get('weapon-parts').find((p) => p.id === 'bw-tp-siyah7')!.family, 'накладки лука — Прибор, как в файле').toBe('trim');
+  });
+
+  it('живой конфиг собирается без инцидента; `db:repair -- --fix` пишет приведённое — следующая сборка ничего не приводит', async () => {
+    const rows = oldOverrides();
+    const said: string[] = [];
+    const live = liveConfig({
+      config: new ConfigRegistry(), readOverrides: async () => structuredClone(rows), deleteOverride: async (k) => { delete rows[k]; },
+      changed: () => undefined, log: () => undefined, warn: (s) => { said.push(s); }, incident: (s) => { said.push(s); },
+    });
+    await live.rebuild();
+    expect(said.filter((s) => s.includes('ИНЦИДЕНТ'))).toEqual([]);
+    const rep = await repairOverrides({ overrides: rows, fix: true, out: () => undefined, write: async (k, v) => { rows[k] = v; } });
+    expect(rep.upgraded.sort()).toEqual(KEYS);
+    expect(buildCandidate(files(), rows).fixes).toEqual({});
+  });
+});

@@ -7,3 +7,5 @@ export * from './questLogic.js';
 export * from './newCharacter.js';
 export * from './death.js';
 export * from './materials.js';
+export * from './retiredMaterials.js';
+export * from './exchange.js';

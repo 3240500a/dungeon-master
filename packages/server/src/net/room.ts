@@ -4,7 +4,7 @@ import {
   GameSession, spawnPacksEl, floorChallengeLevel, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, pickRunModifiers, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   itemFromBaseId, createRng, rngFrom, rollShopGear,
-  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
+  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, forgeExchange, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
   craftAction, enchantAction, sketchAction, fullJournal, legacyGateOpen, serverMaterialsConsent, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor, pruneBoardQuests,
@@ -238,13 +238,14 @@ type TxOutcome = CmdOutcome & { unchanged?: boolean };
 type TxResult = CmdOutcome & { early?: boolean };
 
 /** D12: команды со своим лимитом частоты — каждая стоит броска, генерации и записи в базу (эскиз — чтения и записи сундука). */
-const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', 'forgeSalvage', 'salvage', 'forgeSketch']);
+const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', 'forgeSalvage', 'salvage', 'forgeSketch', 'forgeExchange']);
 /**
  * ⭐ R12-13: команды, читающие сундук аккаунта из базы (`withAccount` и открыть сундук), — под потолком чтений сундука на аккаунт
  * (`limits.stashRead`). Новая команда через `withAccount` — сюда же.
  */
 const STASH_READ_CMDS: ReadonlySet<string> = new Set([
   'stashOpen', 'stashMove', 'depositMaterials', 'forgeUpgrade', 'forgeRepair', 'forgeReroll', 'forgeSalvage', 'craft', 'forgeEnchant', 'forgeSketch',
+  'forgeExchange',
 ]);
 /** D13: отказ ковки и зачарования, пока кузнец не открыт (`balance.craft.live`). Разбор работает и так. */
 const CRAFT_CLOSED = 'Кузнец ещё не куёт';
@@ -265,7 +266,7 @@ if (craftJournalNote) console.warn(`[room] ${craftJournalNote}`);
  */
 const TRANSACTED_CMDS: ReadonlySet<string> = new Set([
   'forgeUpgrade', 'forgeRepair', 'forgeReroll', 'forgeSalvage', 'depositMaterials', 'stashMove', 'stashOpen',
-  'craft', 'forgeEnchant', 'forgeSketch',
+  'craft', 'forgeEnchant', 'forgeSketch', 'forgeExchange',
 ]);
 /**
  * Команды, которые меняют МИР рядом с сейвом (земля, сущность игрока). Откат одного сейва после
@@ -2382,6 +2383,11 @@ export class Room implements Tickable {
       case 'forgeUpgrade': return this.withAccount(c, pid, 'forge', (st) => forgeUpgrade(this.cfg, save, command.uid, walletOf(st), command.maxGold, serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard });
       case 'forgeRepair': return this.withAccount(c, pid, 'forge', (st) => forgeRepair(this.cfg, save, command.uid, walletOf(st), command.maxGold, serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard });
       case 'depositMaterials': return this.withAccount(c, pid, 'stash', (st) => depositMaterials(save, walletOf(st)));
+      // ⭐ ОБМЕН СЫРЬЯ (`forgeExchange`): тратит сумку, потом сундук, кладёт в кошелёк сундука и берёт золото — сейв и сундук ОДНОЙ
+      // транзакцией, как вся кузница. Согласие — как у подъёма: `maxGold`, `maxMaterials` (нет — «ни на какое сырьё»), `minYield`.
+      // Своя причина (`exchange`): журнал вещей и лог видят обмен, а не автосейв. Частота — под лимитом кузницы (D12).
+      case 'forgeExchange': return this.withAccount(c, pid, 'exchange', (st) => forgeExchange(this.cfg, save, st, command.from, command.to, command.n,
+        command.maxGold, serverMaterialsConsent(command.maxMaterials), command.minYield), { guard });
       // ⭐ Перекатка тратит ЭССЕНЦИЮ (§6.2), а её недостающее — из кошелька сундука: сейв и сундук ОДНОЙ транзакцией, как у подъёма
       // (прежде — только сейв, `withSave`). Причина своя (D9), иначе журнал вещей записал бы её «автосейвом». `maxMaterials` — эссенция
       // карточки (R8-14): больше неё ядро не возьмёт.

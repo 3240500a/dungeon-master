@@ -3,7 +3,7 @@ import { randomInt } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
   packInventory, applyDeathPenalty, validateInput, clientFrameSchema, ROOM_CODE_LEN, ROOM_CODE_ALPHABET, mendBrokenUniques,
-  foldRunRecords, runRecords, putRunRecords, settleEarned,
+  foldRunRecords, runRecords, putRunRecords, settleEarned, migrateRetiredInSave,
   type ConfigRegistry, type ClientFrame, type SaveState, type RunNodeState,
 } from '@dm/shared';
 import { getSession, getCharacter, getRunLedger } from '../db/db.js';
@@ -1691,6 +1691,9 @@ export class RoomManager {
   private sanitize(save: SaveState): SaveState {
     save.level = Math.max(1, Math.floor(save.level) || 1);
     save.gold = Math.max(0, Math.floor(save.gold));
+    // ⭐ Сырьё снятых семей «Плечи» и «Фокус» — в тот же сорт Дерева и Прибора (стеки сумки сливаются в пределах стека, оплата ковки —
+    // по строке на гнездо, старый кошелёк героя — суммой). Без потерь; повторный вход ничего не находит. Записывается первой же записью.
+    migrateRetiredInSave(save, this.cfg.get('craft-materials'), this.cfg.get('balance').inventory.materialStack);
     // Одноразовое лечение битой/налагающейся раскладки старых сейвов: сохраняет валидные
     // позиции, переставляет только сломанные. Дальше раскладку держит валидной сервер (moveItem).
     packInventory(save.inventory, this.cfg.get('balance').inventory);

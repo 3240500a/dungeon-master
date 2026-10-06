@@ -192,7 +192,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     expect(save.gold).toBe(1000);
   });
 
-  it('семьи — от деталей вещи: лук качается Плечами, Деревом и Тканью (а не одним Деревом прежних правил), латы — пластинами', () => {
+  it('семьи — от деталей вещи: лук качается Деревом и Тканью по деталям (рога, древко, тетива, концы), латы — пластинами', () => {
     const t0 = (baseId: string, rarity: Item['rarity'] = 'normal'): Item => shapeFoundWeapon(reg, generateItem(
       reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
       { dropBias: 1, itemLevel: 1, baseId, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rarity,
@@ -200,8 +200,9 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
       createRng(3)));
     const bowBase = reg.get('items.base').find((b) => b.kind === 'weapon' && b.weaponClass === 'bow')!;
     const bow = upgradeCost(reg, t0(bowBase.id, 'magic'));
-    // t0 → t1: плечи-удар II ×3, древко I ×2, тетива I ×1, плечи-навершие I ×1 + расходник 20 плеч I.
-    expect(bow).toEqual({ 'stave-2': 3, 'wood-1': 2, 'cloth-1': 1, 'stave-1': 1 + price.upgradeMaterials.consumable });
+    // t0 → t1: рога II ×3, древко I ×2, тетива I ×1, концы I ×1 (у этого лука — деревянные) + расходник 20 дерева I. С 06.10 рога и концы
+    // лука — Дерево («Плечи» сняты), у «приборных» концов (ноки, накладки) — Прибор.
+    expect(bow).toEqual({ 'wood-2': 3, 'wood-1': 2 + 1 + price.upgradeMaterials.consumable, 'cloth-1': 1 });
     const plateBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.armorClass === 'plate' && b.slot === 'chest')!;
     // Нагрудник — верх правила (3) нижнего сорта рецепта целевой ступени + расходник той же семьи.
     expect(upgradeCost(reg, t0(plateBase.id))).toEqual({ 'plate-1': 3 + price.upgradeMaterials.consumable });

@@ -139,8 +139,9 @@ describe('⭐ узкие семьи ковки — не только с оруж
   /**
    * Прибор (обвязка и оголовье почти у всех классов — 96 из 240 единиц ковки t5/t6), Плечи (лук и арбалет), Фокус (жезл и посох) и Ткань
    * (тетива) шли только с разбора оружия своего класса, и ковка t5/t6 упиралась в них в 2–6 раз дольше железа. Теперь у каждой семьи ковки
-   * есть источник среди брони, щитов и украшений: кольцо — прибор, амулет — фокус, щит — побочный прибор, кожаная и стёганая броня —
-   * побочные Плечи (китовый ус), латы и кольчуга — побочная Ткань (поддоспешник).
+   * есть источник среди брони, щитов и украшений: кольцо и амулет — прибор, щит — побочный прибор, латы и кольчуга — побочная Ткань
+   * (поддоспешник). ⭐ 06.10: «Плечи» и «Фокус» сняты (лук — Дерево, арбалетная дуга — Железо, навершие — Прибор), побочных Плеч у
+   * кожаной и стёганой брони больше нет.
    */
   it('у каждой семьи, которую тратит ковка, есть источник вне оружия', () => {
     const used = new Set<string>();
@@ -153,8 +154,8 @@ describe('⭐ узкие семьи ковки — не только с оруж
     for (const f of used) expect(fromGear.has(f), `семья «${f}» идёт только с оружия своего класса`).toBe(true);
   });
 
-  it('кольцо — прибор, амулет — фокус (в сорт ступени), украшение железа больше не даёт', () => {
-    for (const [baseId, fam] of [['ring', 'trim'], ['amulet', 'focus']] as const) {
+  it('кольцо и амулет — прибор (в сорт ступени; Фокус снят 06.10), украшение железа больше не даёт', () => {
+    for (const [baseId, fam] of [['ring', 'trim'], ['amulet', 'trim']] as const) {
       const base = reg.get('items.base').find((b) => b.kind === 'jewelry' && b.slot === baseId)!;
       const it = found(base.id, 5, 'normal');
       const r = salvageRange(reg, it, false).range;
@@ -172,6 +173,8 @@ describe('⭐ узкие семьи ковки — не только с оруж
       const yields = rule.yields ?? [];
       const must = new Set(yields.filter((y) => y.min > 0).map((y) => family(y.materialId)));
       const optional = yields.filter((y) => y.min <= 0).map((y) => family(y.materialId)).filter((f) => !must.has(f));
+      // 06.10: у кожаной и стёганой брони побочных Плеч больше нет (семья снята) — побочный выход есть у лат, кольчуги и щитов.
+      if (rule.kind === 'armor' && (rule.armorClass === 'leather' || rule.armorClass === 'quilted')) { expect(optional, base.id).toEqual([]); continue; }
       expect(optional.length, `${base.id}: у правила есть побочный выход`).toBeGreaterThan(0);
       for (const id of Object.keys(upgradeCost(reg, it))) expect(optional.includes(family(id)), `${base.id}: ${id} в цене подъёма`).toBe(false);
       n++;

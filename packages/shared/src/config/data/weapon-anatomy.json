@@ -1400,7 +1400,7 @@
     "keySlot": "strike",
     "strike": {
       "name": "Рога",
-      "family": "stave",
+      "family": "wood",
       "tags": [
         {
           "key": "limbs",
@@ -1470,7 +1470,7 @@
     },
     "head": {
       "name": "Концы и накладки",
-      "family": "stave",
+      "family": "wood",
       "tags": [
         {
           "key": "tips",
@@ -1538,7 +1538,7 @@
     "keySlot": "grip",
     "strike": {
       "name": "Дуга",
-      "family": "stave",
+      "family": "iron",
       "tags": []
     },
     "grip": {
@@ -1716,7 +1716,7 @@
     "keySlot": "grip",
     "strike": {
       "name": "Навершие",
-      "family": "focus",
+      "family": "trim",
       "tags": [
         {
           "key": "silhouette",
@@ -1870,7 +1870,7 @@
     "keySlot": "grip",
     "strike": {
       "name": "Навершие",
-      "family": "focus",
+      "family": "trim",
       "tags": [
         {
           "key": "silhouette",

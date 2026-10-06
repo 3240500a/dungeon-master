@@ -149,3 +149,42 @@ describe('⭐ вкладка «Ковка» при открытой ковке �
     expect(f.body.text()).not.toContain('листает журнал');
   });
 });
+
+/**
+ * ⭐ ВКЛАДКА «⇄ ОБМЕН» (06.10): стопка → семья → «⇄ Обменять» уходит командой `forgeExchange` с согласием карточки и ЖДЁТ ответа; пока
+ * ждёт — кнопка «⏳», ответ — строкой над вкладкой (итог сервера).
+ */
+describe('⭐ вкладка «⇄ Обмен» кузницы', () => {
+  const G = globalThis as unknown as { document?: unknown };
+  beforeEach(() => { G.document = { createElement: (t: string) => new El(t), body: new El('body') }; });
+  afterEach(() => { delete G.document; });
+
+  it('выбор стопки и семьи → команда с согласием, ожидание ответа, итог строкой', async () => {
+    const f = fakeForge(base);
+    const app = f.app as unknown as { net: { connected: boolean }; nextCmdId: () => number; stash: unknown; state: { save: { gold: number } } };
+    app.net = { connected: true };
+    app.nextCmdId = () => 77;
+    app.stash = { tabs: [], cols: 20, rows: 12, tabCount: 2, materials: { 'iron-3': 12 }, forgeJournal: undefined };
+    app.state.save.gold = 1000;
+    f.render();
+    f.body.button('Обмен')!.click();
+    expect(f.body.text()).toContain('Курс: 3 → 2');
+    const chip = (s: string): El => f.body.all().find((e) => e.tag === 'div' && e.textContent.startsWith(s))!;
+    chip(`${base.get('craft-materials').find((m) => m.id === 'iron-3')!.name} ×12`).click();
+    f.render();
+    chip('Дерево:').click();
+    f.render();
+    expect(f.body.text()).toContain('Получишь:');
+    f.body.button('Обменять')!.click();
+    const sent = f.requests.find((c) => c.cmd === 'forgeExchange');
+    expect(sent).toEqual({ cmd: 'forgeExchange', from: 'iron-3', to: 'wood', n: 3, maxGold: 60, maxMaterials: { 'iron-3': 3 }, minYield: { 'wood-3': 2 } });
+    f.render();
+    expect(f.body.button('Кузнец меняет'), 'в полёте — «⏳»').toBeDefined();
+    // Первая ожидающая — запрос сундука на открытии; вторая — обмен.
+    await f.reply(null);
+    await f.reply({ t: 'cmdResult', id: 77, cmd: 'forgeExchange', ok: true, summary: 'Обмен: отдано … → получено …' });
+    f.render();
+    expect(f.body.text()).toContain('⇄ Обмен: отдано');
+    expect(f.body.button('Обменять'), 'кнопка снова живая').toBeDefined();
+  });
+});

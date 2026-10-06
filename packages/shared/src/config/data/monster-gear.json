@@ -170,7 +170,7 @@
         "max": 2
       },
       {
-        "materialId": "stave-1",
+        "materialId": "wood-1",
         "min": 1,
         "max": 2
       }
@@ -207,7 +207,7 @@
         "max": 1
       },
       {
-        "materialId": "stave-1",
+        "materialId": "wood-1",
         "min": 1,
         "max": 2
       }
@@ -297,7 +297,7 @@
         "max": 1
       },
       {
-        "materialId": "focus-1",
+        "materialId": "trim-1",
         "min": 1,
         "max": 2
       }
@@ -328,7 +328,7 @@
         "max": 1
       },
       {
-        "materialId": "focus-1",
+        "materialId": "trim-1",
         "min": 1,
         "max": 2
       }
@@ -424,7 +424,7 @@
         "max": 1
       },
       {
-        "materialId": "focus-1",
+        "materialId": "trim-1",
         "min": 1,
         "max": 2
       }
@@ -456,7 +456,7 @@
         "max": 1
       },
       {
-        "materialId": "focus-1",
+        "materialId": "trim-1",
         "min": 1,
         "max": 2
       }
@@ -493,7 +493,7 @@
         "max": 1
       },
       {
-        "materialId": "stave-1",
+        "materialId": "wood-1",
         "min": 1,
         "max": 2
       }

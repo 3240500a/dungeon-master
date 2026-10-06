@@ -64,10 +64,8 @@ export type Builder = (ctx: MeshCtx) => THREE.Group;
 export const FAMILY_TINT: Record<string, number[]> = {
   iron: [0x6b5a4e, 0x86837c, 0xa3aab0, 0x8f9aa8, 0xd2d8de],   // болотное → кричное → уклад → дамаск → булат
   wood: [0xb08a5a, 0xa98b62, 0x7a5638, 0x3a2e26, 0x6a5238],   // сосна → ясень → граб → морёный дуб → клееное
-  stave: [0x8a6a44, 0xa0522d, 0xd8c8a0, 0x4a4a46, 0x9aa2aa],  // вяз → тис → рог и жила → китовый ус → сталь
   // Воронёная сталь — синевато-серая, а не почти чёрная: на тёмном фоне превью гарда и обух иначе теряются.
   trim: [0x3a3a3c, 0x9c6b30, 0x4a5f78, 0xc8ccd2, 0xd4af37],   // чёрное железо → бронза → воронёная → серебро → золото
-  focus: [0x7fb3a8, 0x151515, 0x2a1f35, 0xe8f0ff, 0xe8a33a],  // паста → гагат → обсидиан → хрусталь → янтарь
   hide: [0x8a6a4a, 0x6b4a2e, 0x4a3220, 0x3a2418, 0xc9c8c0],   // сыромять → дублёная → варёная → кордован → скат
   cloth: [0xb8a888, 0xd0c0a0, 0xe8e0c8, 0xf0ead8, 0xe0d6f0],  // пенька → жила → лён → шёлк → морской шёлк
   plate: [0x6b5a4e, 0x86837c, 0xa3aab0, 0x9aa6b4, 0xd2d8de],
@@ -79,8 +77,6 @@ function surfaceOf(family: string, step: number): { metalness: number; roughness
   switch (family) {
     case 'iron': case 'plate': return { metalness: 0.75 + 0.2 * k, roughness: 0.62 - 0.4 * k };
     case 'trim': return { metalness: step === 1 ? 0.6 : 0.9, roughness: 0.5 - 0.3 * k };
-    case 'stave': return step === 5 ? { metalness: 0.85, roughness: 0.3 } : { metalness: 0, roughness: 0.6 - 0.2 * k };
-    case 'focus': return step === 4 ? { metalness: 0, roughness: 0.05, transparent: true, opacity: 0.55 } : { metalness: 0.1, roughness: 0.25 - 0.15 * k };
     case 'hide': return { metalness: 0, roughness: 0.9 - 0.2 * k };
     case 'cloth': return { metalness: 0, roughness: 0.85 };
     default: return { metalness: 0, roughness: 0.8 - 0.2 * k }; // wood
@@ -91,7 +87,7 @@ const hex6 = (c: number): string => c.toString(16).padStart(6, '0');
 
 /**
  * Кэш материалов на одну сборку: одна и та же пара «семья × ступень» — один объект.
- * Имя материала — `семья:ступень` (у светящегося фокуса — `:glow=rrggbb`), у мелочи вне лестниц — `fixed:rrggbb`: по нему
+ * Имя материала — `семья:ступень` (у светящегося навершия — `:glow=rrggbb`), у мелочи вне лестниц — `fixed:rrggbb`: по нему
  * Unity ставит СВОЙ материал на модель из GLB сервера (`GET /api/craft-mesh.glb`, CRAFT_WEAPONS.md §21.1). Вебу имя не нужно.
  */
 export class MatCache {
@@ -104,7 +100,8 @@ export class MatCache {
       const color = FAMILY_TINT[family]?.[s - 1] ?? 0x888888;
       const surf = surfaceOf(family, s);
       const mm = new THREE.MeshStandardMaterial({ color, ...surf });
-      if (family === 'focus') { mm.emissive.setHex(glow || color); mm.emissiveIntensity = glow ? 0.55 : 0.2; }
+      // Свечение стихии (навершие жезла и посоха): эмиссия поверх цвета ступени — металл Прибора читается, камень светится.
+      if (glow) { mm.emissive.setHex(glow); mm.emissiveIntensity = 0.45; }
       mm.name = glow ? `${family}:${s}:glow=${hex6(glow)}` : `${family}:${s}`;
       m = mm;
       this.map.set(key, m);

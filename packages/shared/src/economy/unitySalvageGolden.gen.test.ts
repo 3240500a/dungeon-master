@@ -29,6 +29,7 @@ import { newCharacterSave } from './newCharacter.js';
 import { materialItem } from './materials.js';
 import { itemOriginNote, salvagePreview } from './salvagePreview.js';
 import { upgradedItem } from './townActions.js';
+import { exchangeQuote, exchangeTargets } from './exchange.js';
 import type { CraftParts, Item } from '../types/items.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -158,6 +159,21 @@ function journalsFor(item: Item): { name: string; j: CraftJournal | null }[] {
 /** Имя ступени по id — резолвер строки происхождения (`itemOriginNote`), как его ставит клиент из `item-tiers`. */
 const tierName = (id: string): string | undefined => reg.get('item-tiers').find((t) => t.id === id)?.name;
 
+/**
+ * ⭐ ОБМЕН СЫРЬЯ У КУЗНЕЦА (06.10, `economy/exchange.ts`) — расчёт карточки для порта Unity: цели каждой стопки (с причинами) и расчёт
+ * «что уйдёт, что придёт, почём, почему нельзя» на сетке «откуда × куда × сколько × есть × золото». Unity повторяет `exchangeQuote` по этому.
+ */
+function exchangeCases(): { targets: { from: string; out: unknown }[]; quotes: { from: string; to: string; n: number; have?: Record<string, number>; gold?: number; out: ReturnType<typeof exchangeQuote> }[] } {
+  const froms = ['iron-1', 'iron-3', 'wood-5', 'hide-2', 'cloth-4', 'plate-1', 'trim-3', 'ench-essence', 'stave-2', 'focus-4'];
+  const tos = ['iron', 'wood', 'trim', 'hide', 'cloth', 'plate', 'ench', 'stave', 'focus'];
+  const quotes: { from: string; to: string; n: number; have?: Record<string, number>; gold?: number; out: ReturnType<typeof exchangeQuote> }[] = [];
+  for (const from of froms) for (const to of tos) for (const n of [1, 2, 3, 10]) quotes.push({ from, to, n, out: exchangeQuote(reg, from, to, n) });
+  for (const [have, gold] of [[{ 'iron-3': 8 }, 10_000], [{ 'iron-3': 30 }, 100], [{ 'iron-3': 30 }, 180]] as const) {
+    quotes.push({ from: 'iron-3', to: 'wood', n: 9, have, gold, out: exchangeQuote(reg, 'iron-3', 'wood', 9, have, gold) });
+  }
+  return { targets: froms.map((from) => ({ from, out: exchangeTargets(reg, from) })), quotes };
+}
+
 describe('unitySalvageGolden — продюсер эталона карточки разбора (пишет __golden__/unity_salvage.json)', () => {
   it('генерит эталон и пишет на диск', () => {
     const cases = items().map((item) => {
@@ -213,13 +229,15 @@ describe('unitySalvageGolden — продюсер эталона карточк�
               live: b.craft.live, tierFromParts: b.craft.tierFromParts, formMult: b.craft.formMult, rarityWeight: b.craft.rarityWeight,
               cost: b.craft.cost, melt: b.craft.melt, salvage: b.craft.salvage, journal: b.craft.journal, foundEvenness: b.craft.foundEvenness,
             },
-            forgePrices: { upgradeReqDiscount: b.forgePrices.upgradeReqDiscount },
+            forgePrices: { upgradeReqDiscount: b.forgePrices.upgradeReqDiscount, exchange: b.forgePrices.exchange },
           };
         })(),
       },
       fullJournal: fullJournal(reg),
       cases,
+      exchange: exchangeCases(),
     };
+    expect(golden.exchange.quotes.some((q) => q.out.ok) && golden.exchange.quotes.some((q) => !q.out.ok), 'обмен: и годные, и отказы').toBe(true);
     const dir = join(HERE, '__golden__');
     mkdirSync(dir, { recursive: true });
     // uid вещей, рождённых часами (стартовый набор, скованные), — постоянными по порядку появления: эталон не меняется от прогона к прогону.

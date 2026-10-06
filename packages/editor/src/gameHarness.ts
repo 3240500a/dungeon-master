@@ -1,6 +1,7 @@
 import {
   allocAttr, equip, unequip, allocActive, allocPassive, socketInsert, socketClear, respec, respecSkills, respecPassives, moveInventoryItem, moveToBelt, debuffLabel,
-  setBinding, craftAction, enchantAction, sketchAction, forgeSalvage, fieldSalvage, createRng, emptyStash,
+  setBinding, craftAction, enchantAction, sketchAction, forgeSalvage, fieldSalvage, forgeExchange, createRng, emptyStash, sanitizeStash,
+  migrateRetiredInSave,
   type AccountStash, type SaveState, type TownCommand,
 } from '@dm/shared';
 import { App } from '@dm/client/core/app.js';
@@ -28,11 +29,14 @@ export function makeHarness(data: Record<string, unknown>, save: SaveState, onCh
   app.config.loadAll(data, { cross: false });   // ⭐ R22-01: читатель данных инструмента (правило D4 — у записи)
   harnessData.set(app, JSON.stringify(data));
   refreshResolvers(app);
+  // Сейв героя из базы или старой песочницы мог лечь до снятия «Плеч» и «Фокуса» — тем же переездом, что вход героя на сервере.
+  migrateRetiredInSave(save, app.config.get('craft-materials'), app.config.get('balance').inventory.materialStack);
   save.gold = 9_999_999; // калькулятор не гейтит по золоту (комиссии респеков/аллокаций покрыты)
   const gs = new GameState(save);
   app.state = gs; // сеттер подключает провайдеры дерайва/скиллов из конфига
   gs.hp = gs.derived().maxHp; gs.mana = gs.derived().maxMana; gs.stamina = gs.derived().maxStamina;
-  const st = stash ?? emptyStash(app.config);
+  // Сундук — как его читает сервер (`sanitizeStash`: вкладки, кошелёк, журнал, переезд снятых семей сырья).
+  const st = stash ? sanitizeStash(app.config, stash) : emptyStash(app.config);
   app.sendCmd = (cmd: TownCommand, id = app.nextCmdId()): number => {
     const r = applyCmd(app, gs, cmd, st);
     onChange();
@@ -88,6 +92,8 @@ function applyCmd(app: App, gs: GameState, cmd: TownCommand, stash: AccountStash
     case 'forgeSketch': return sketchAction(reg, stash, cmd.variantId);   // R3-11: то же ядро, что у сервера
     case 'forgeSalvage': return forgeSalvage(reg, s, stash, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);   // R8-14, R9-04: как сервер
     case 'salvage': return fieldSalvage(reg, s, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);
+    // Обмен сырья — тем же ядром, что у сервера, над сумкой и сундуком моста (согласие `maxMaterials` обязательно, как у сервера).
+    case 'forgeExchange': return forgeExchange(reg, s, stash, cmd.from, cmd.to, cmd.n, cmd.maxGold, cmd.maxMaterials ?? {}, cmd.minYield);
     case 'allocAttr': return allocAttr(s, cmd.attr, cmd.n);
     case 'equip': return equip(reg, s, cmd.uid, cmd.slot);   // R11-02: вторая рука, как сервер
     case 'unequip': return unequip(reg, s, cmd.slot);

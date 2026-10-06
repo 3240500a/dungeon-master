@@ -201,7 +201,8 @@ const SRC: [string, string][] = [
   // вкладка кузницы (forgeCraftTab.ts, forgePanel.ts)
   [TAB, "return ok(cls) ? cls : ok('sword') ? 'sword' : reg.get('weapon-anatomy').map((a) => a.id).find(ok) ?? 'sword';"],
   [TAB, "const ok = (c: string | undefined): c is string => !!c && !!anatomyOf(reg, c) && forgeableFamilies(reg, c).length > 0;"],
-  [FORGE, "[['work', '🔨 Работа'], ['craft', '⚒ Ковка'], ['buy', '🛒 Купить']] as const,"],
+  // ⭐ 06.10: вкладка «⇄ Обмен» (обмен семьи сырья у кузнеца) — в Unity `ForgeExchangeView` (окно сверяет `ExchangeCheck` своим эталоном).
+  [FORGE, "[['work', '🔨 Работа'], ['craft', '⚒ Ковка'], ['exchange', '⇄ Обмен'], ['buy', '🛒 Купить']] as const,"],
   [FORGE, "body.append(note('Кузнец ещё не куёт', 'Ковка из деталей откроется позже. Разбор у кузнеца уже пополняет каталог: тип и детали любого оружия, снаряжение.'"],
   [FORGE, "+ (sketches > 0 ? ` Эскизов: ${sketches} — здесь откроешь ими детали на выбор, когда кузнец начнёт ковать.` : '')));"],
   [FORGE, "body.append(stashLoad === 'wait' ? note('Кузнец листает журнал…', '')"],
