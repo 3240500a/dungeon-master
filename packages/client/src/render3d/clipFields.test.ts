@@ -41,6 +41,8 @@ const SAMPLE: Record<string, unknown> = {
   idleEnds: true, idleEndsFrom: 'combat',
   rootYaw: true, rootPos: true,
   bakeSpeed: 120, bakeRev: 3, bakeId: 1758300000000,
+  tempoRef: { speed: 121.104, stride: 96.915, rev: 1, from: 'mocap' },   // ⭐ темп по шагу: точка отсчёта
+  tempoSpeed: 85.418,          // и темп правленого шага — потеряй, и стопы снова поедут
   bakeSrc: 'mocap',            // ⭐ источник клипа: захват против нашего запекателя — от него зависит вердикт аудита
   upperPure: true,
   swingRef: { RightUpperArm: [0.11, 0.22, 0.33], LeftUpperArm: [-0.11, -0.22, -0.33] } as Pose,

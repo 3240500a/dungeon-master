@@ -10,7 +10,7 @@ import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import type { BuildScale } from './humanoid.js';   // ⭐ телосложение: те же чистые функции, что у редактора
 import { makeFidgetState, stepIdleBreak, type FidgetState } from './idleFidget.js';
 import { IDLE_BREAK_DEF, type FidgetCfg, type IdleBreakCfg } from './animConfig.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, clipTempoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections, clipChannelAt } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
@@ -3418,8 +3418,9 @@ export class PosePlayer {
          * часы `clipPhase += 2π·spd·dt/cycle` пошли бы втрое медленнее: ноги переступают едва-едва, пока
          * земля уезжает. ЗАМЕР на сшитом `walk_fwd` из мокапа: клип 2.60 с при цикле 1.00 с — темп ×0.38.
          * У обычного цикличного клипа `loopStart = 0`, `loopEnd = dur`, то есть формула та же бит в бит.
+         * ⭐⭐ ТЕМП — ПО ШАГУ (`clipTempoSpeed`): правленый шаг несёт свой темп (`tempoSpeed`), нетронутый — скорость съёма.
          */
-        const cycle = mixed((c) => { const sc = clipSections(c); return bakedLocoSpeed(c) * ((sc.loopEnd - sc.loopStart) || clipDur(c) || 1); }) ?? 0;
+        const cycle = mixed((c) => { const sc = clipSections(c); return clipTempoSpeed(c) * ((sc.loopEnd - sc.loopStart) || clipDur(c) || 1); }) ?? 0;
         if (cycle > 1e-3) this.clipPhase += (2 * Math.PI) * spd * dt / cycle;
         // ⭐ ДОЛЯ ОПОРЫ — ТА, С КОТОРОЙ КЛИП СНЯТ: ось планировщика на СКОРОСТИ ЗАПЕКАНИЯ клипа, а не на текущей скорости.
         // Чистый набор (40 / 120 при speedWalk ≥ 40, speedRun ≤ 120) даёт ровно dutyWalk / dutyRun, и смесь равна

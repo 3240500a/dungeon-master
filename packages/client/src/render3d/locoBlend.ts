@@ -56,6 +56,13 @@ export const bakedLocoSpeed = (c: { name: string; bakeSpeed?: number }): number 
     ? c.bakeSpeed
     : (/^run_/.test(c.name) ? LEGACY_RUN : LEGACY_WALK) * LOCO_BAKE_MAXSPD;
 /**
+ * ⭐⭐ ТЕМП ЧАСОВ (u/с): `tempoSpeed`, если шаг клипа правили после съёма (его пишет редактор, `strideTempo.syncClipTempo`:
+ * шаг короче — темп чаще в ту же пропорцию), иначе скорость съёма `bakedLocoSpeed`. Доля опоры и всё остальное читают
+ * именно `bakedLocoSpeed` — правка шага меняет только темп.
+ */
+export const clipTempoSpeed = (c: { name: string; bakeSpeed?: number; tempoSpeed?: number }): number =>
+  typeof c.tempoSpeed === 'number' && Number.isFinite(c.tempoSpeed) && c.tempoSpeed > 0 ? c.tempoSpeed : bakedLocoSpeed(c);
+/**
  * ⭐ ВЕС БЕГА КЛИПОВ ПО СКОРОСТИ (u/с): 0 до 40, линейно, 1 с 80 и выше — по решению автора (см. выше).
  * Это ось `sb` бленда клипов в режиме «только клипы»; к оси планировщика (`speedWalk/speedRun` = 40/115) она
  * отношения не имеет: у планировщика на 80 было бы sb 0.533, и игра никогда не видела бы бег целиком.

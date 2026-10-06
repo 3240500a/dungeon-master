@@ -57,7 +57,7 @@ import {
   type GXKnobs, type GamePoseContent,
 } from './poseRuntime.js';
 import { GAIT, ASYM, COMBAT } from './gaitKnobs.js';
-import { BASE_GAIT_CHAR, locoPhaseU } from './locoBlend.js';
+import { BASE_GAIT_CHAR, locoPhaseU, bakedLocoSpeed } from './locoBlend.js';
 import { pickAttack, ATTACK_VARY } from './attackPick.js';
 import { type Pose, type Clip, type MarkEvent } from './clipModel.js';
 import { groundFeet } from './footIk.js';
@@ -161,6 +161,19 @@ function staleOverlay(rich: Store): Overlay {
     if (/^turn_[LR]_\d+$/.test(c.name)) patch.push([i, { character: 'archive' }]);
   });
   return { base: 'rich', keys: {}, patch, add: [] };
+}
+/**
+ * `tempo` поверх `stand`: шаг ходьбы и бега вперёд ПРАВИЛИ после съёма (`strideTempo.syncClipTempo`) — часы идут по
+ * `tempoSpeed` (`clipTempoSpeed`), а не по скорости съёма: ходьба шире (темп ×1.25), бег короче (×0.8).
+ */
+function tempoOverlay(stand: Store): Overlay {
+  const patch: [number, Record<string, unknown>][] = [];
+  stand.pe_clips.forEach((c, i) => {
+    if (c.character !== 'warrior') return;
+    const k = c.name === 'run_fwd' ? 0.8 : c.name === 'walk_fwd' ? 1.25 : 0;
+    if (k) patch.push([i, { tempoSpeed: Math.round(bakedLocoSpeed(c as { name: string; bakeSpeed?: number }) * k * 1000) / 1000 }]);
+  });
+  return { base: 'stand', keys: {}, patch, add: [] };
 }
 /** `warp` поверх `stand`: доворот таза под ход включён ручкой персонажа, остальное — как у стенда. */
 function warpOverlay(stand: Store): Overlay {
@@ -334,7 +347,7 @@ interface Seg {
 }
 /** `yaw0` — курс на старте (таз снапнут на прицел); `fb` — донор контента (монстр → воин); `breaks` — редкие вставки включены (игровая кукла). */
 interface Scn {
-  id: string; store: 'stand' | 'rich' | 'stale' | 'warp' | 'atk' | 'calm' | 'idle' | 'atk3' | 'owner'; char: string; weapon: string;
+  id: string; store: 'stand' | 'rich' | 'stale' | 'warp' | 'atk' | 'calm' | 'idle' | 'atk3' | 'owner' | 'tempo'; char: string; weapon: string;
   rig?: 'knight' | 'slim' | 'scaled'; idlePhase?: number; yaw0?: number;
   fb?: string; breaks?: boolean; segs: Seg[];
   /** Подъём стопы рига (pe_phys.footLift, юниты): высота стоя без `__hipsD` и цель заземления. */
@@ -375,6 +388,8 @@ const SCN: Scn[] = [
   { id: 'ramp120_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [...ramp(100, 120), { n: 20, vx: 0, vz: 120 }] },
   { id: 'flip80_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [{ n: 50, vx: 80, vz: 0 }, { n: 50, vx: -80, vz: 0 }] },
   { id: 'combat80_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [{ n: 30, vx: 0, vz: 80 }, { n: 60, vx: 0, vz: 80, combat: true }] },
+  // ⭐ темп по шагу: правленые шаг ходьбы и бега — часы по `tempoSpeed` (смесь колонок на 60, бег целиком на 80)
+  { id: 'tempo_fwd60_80_axe', store: 'tempo', char: 'warrior', weapon: 'axe', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 60, vx: 0, vz: 60 }, { n: 60, vx: 0, vz: 80 }] },
   { id: 'fwd80_none', store: 'stand', char: 'warrior', weapon: 'none', idlePhase: 2.5, segs: [{ n: 20, vx: 0, vz: 0 }, { n: 90, vx: 0, vz: 80 }] },
   { id: 'mage_fwd80', store: 'stand', char: 'mage', weapon: 'staff', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 90, vx: 0, vz: 80 }, { n: 20, vx: 0, vz: 0 }] },
   { id: 'knight_fwd80_axe', store: 'stand', char: 'warrior', weapon: 'axe', rig: 'knight', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 100, vx: 0, vz: 80 }] },
@@ -562,7 +577,9 @@ describe('эталон G2 локомоции, поворотов и действ
     const rich = applyOverlay(stand, ov);
     const ovStale = staleOverlay(rich);
     const ovWarp = warpOverlay(stand);
-    const stores: Record<string, Store> = { stand, rich, stale: applyOverlay(rich, ovStale), warp: applyOverlay(stand, ovWarp) };
+    const ovTempo = tempoOverlay(stand);
+    expect(ovTempo.patch.length, 'у стенда нет ходьбы/бега вперёд воина — сценарию темпа нечего проверять').toBeGreaterThan(0);
+    const stores: Record<string, Store> = { stand, rich, stale: applyOverlay(rich, ovStale), warp: applyOverlay(stand, ovWarp), tempo: applyOverlay(stand, ovTempo) };
     const ovAtk = atkOverlay(rich);
     stores.atk = applyOverlay(rich, ovAtk);
     const ovCalm = calmOverlay(stores.atk);
@@ -794,7 +811,7 @@ describe('эталон G2 локомоции, поворотов и действ
     const golden = {
       note: 'Эталон G2 паритета Unity ↔ веб: локомоция, повороты и слот действия (удары, состояния, вставки, метки) клипами («только клипы») покадрово, заземление стоп показа (groundFeet), разная частота кадра — настоящий PosePlayer веба через стенд parityHarness на закреплённом контенте. Генерит packages/client/src/render3d/unityAnimFramesGolden.gen.test.ts.',
       dt: DT, bones: BONES,
-      stores: { stand, rich: { keys: ov.keys, patch: ov.patch, add: ov.add }, stale: ovStale, warp: ovWarp, atk: ovAtk, calm: ovCalm, idle: ovIdle, atk3: ovAtk3, owner: ovOwner },
+      stores: { stand, rich: { keys: ov.keys, patch: ov.patch, add: ov.add }, stale: ovStale, warp: ovWarp, tempo: ovTempo, atk: ovAtk, calm: ovCalm, idle: ovIdle, atk3: ovAtk3, owner: ovOwner },
       rigs: RIGS, groundBones: GROUND_BONES,
       scenarios,
     };

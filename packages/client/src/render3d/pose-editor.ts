@@ -27,6 +27,7 @@ import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type 
 import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType , idleEndsSource, carryMarks, marksInRange, loopMarksInRange, type MarkEvent } from './clipModel.js';
 import { markSfx } from './animSfx.js';   // звук меток — тот же, что в игре (шаги, взмах): слышно прямо при разметке
 import { bakedLocoSpeed } from './locoBlend.js';
+import { syncClipTempo, tempoNote } from './strideTempo.js';   // темп цикла по шагу: правка ключей двигает темп
 import { clampClip, clampSummary } from './clipClamp.js';   // ⭐ пределы суставов: та же функция, что на импорте
 import { MASK_PARTS, type MaskPart } from './boneMask.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
@@ -1792,6 +1793,9 @@ function putClip(c: Clip, onExisting: 'replace' | 'rename' | 'ask' = 'ask'): Cli
   return c;
 }
 function saveLib(): void {
+  // ⭐⭐ ТЕМП ПО ШАГУ — ОДИН ШОВ НА ВСЕ ПУТИ ПРАВКИ (ключи, импорт, копия, вставка): шаг клипа хода изменился → темп
+  // в ту же пропорцию (`strideTempo.ts`). Нетронутый клип не меняется.
+  syncClipTempo(library);
   // Превью импорта живёт В БИБЛИОТЕКЕ (чтобы даром получить скраб/таймлайн/призрака), но наружу его пускать нельзя.
   const out = library.filter((c) => c.name !== IMPORT_PREVIEW);
   // СТОРОЖ ДУБЛЕЙ. Сохранять не мешаем — иначе уже накопленные копии заблокировали бы работу целиком,
@@ -4060,6 +4064,8 @@ function clipSection(): void {
    */
   const bakeFieldsOf = (c: Clip): Partial<Clip> => ({
     ...(c.bakeSpeed ? { bakeSpeed: c.bakeSpeed } : {}),
+    ...(c.tempoRef ? { tempoRef: { ...c.tempoRef } } : {}),
+    ...(c.tempoSpeed ? { tempoSpeed: c.tempoSpeed } : {}),
     ...(c.bakeRev ? { bakeRev: c.bakeRev } : {}),
     ...(c.bakeId ? { bakeId: c.bakeId } : {}),
     ...(c.hipsYawW ? { hipsYawW: [...c.hipsYawW], ...(c.hipsYawDeg ? { hipsYawDeg: c.hipsYawDeg } : {}) } : {}),
@@ -4917,6 +4923,9 @@ function bakeGaitSection(): void {
       // и при проигрывании вес стойки ложится ВТОРОЙ раз — мах под мечом был 10 % вместо 20 (см. `Clip.upperPure`).
       else if (have.bakeSpeed !== undefined && !have.upperPure) { mark.textContent += ' ⚠ со стойкой в руках — перезапеки'; mark.style.color = '#e0b050'; mark.title = 'Клип снят до 19.09: стойка впечена в руки клипа и при проигрывании применяется дважды. После перезапекания мах вырастет (вес кладётся один раз) — поправь веса слоёв на вкладке «Тест».'; }
     }
+    // Шаг правили после съёма — часы идут по нему (`strideTempo.ts`); видно, что правка подхватилась.
+    const tn = have ? tempoNote(have, (id) => allChars().find((x) => x.id === id)?.name ?? id) : null;
+    if (tn) { mark.textContent += ` · ${tn}`; mark.style.color = '#9ae6a0'; mark.title = 'Темп цикла считается по шагу клипа: шаг короче — ноги переступают чаще, стопа не едет.'; }
     row.append(cb, name, speed, mark);
     listBox.append(row);
   };
@@ -6421,6 +6430,10 @@ function saveAtk(): void { try { localStorage.setItem('pe_attacks', JSON.stringi
   if (clipsCh) saveLib();
   if (atkCh) saveAtk();
   if (locoCh) saveLoco();
+})();
+(function syncTempo(): void {   // темп по шагу: точки отсчёта у старых клипов хода + темп правленых (идемпотентно)
+  const ch = syncClipTempo(library);
+  if (ch.length) { console.info('[темп по шагу] обновлено:', ch.join(', ')); saveLib(); }
 })();
 (function stripFingerKeys(): void {
   // Ф17: фаланги больше НЕ хранятся в клипах (канал хвата — единственный источник). Старые записи

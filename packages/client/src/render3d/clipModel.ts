@@ -81,6 +81,9 @@ export interface Keyframe {
    *  едет за ключом при ретайминге и переживает прореживание. */
   marks?: Mark[];
 }
+/** Точка отсчёта темпа по шагу (см. `Clip.tempoRef`): скорость, при которой шаг был верным, и сам шаг на кукле замера. */
+export interface TempoRef { speed: number; stride: number; rev: number; from?: string }
+
 export interface Clip {
   name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[];
   /** Первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у `hit_`). */
@@ -108,6 +111,18 @@ export interface Clip {
    * Нет поля — клип снят до 17.09, скорость берётся по имени легаси-долями (50.4 / 102). Повороты и стойки — без поля.
    */
   bakeSpeed?: number;
+  /**
+   * ⭐⭐ ТЕМП ПО ШАГУ (06.10): точка отсчёта — на какой скорости (u/с) шаг клипа был ВЕРНЫМ и какой он тогда был
+   * (`stride` — скорость опорной стопы на стандартной кукле, `strideTempo.measureStride`, ревизия замера `rev`).
+   * Ставит редактор сам (`syncClipTempo`): при съёме — от `bakeSpeed`, у клипа без неё — от одноимённого клипа
+   * другого набора (`from` — его персонаж). Правка ключей меняет шаг, и темп идёт в ту же пропорцию.
+   */
+  tempoRef?: TempoRef;
+  /**
+   * ⭐⭐ ТЕМП ЦИКЛА (u/с), если шаг ПРАВИЛИ после съёма: `tempoRef.speed × шаг_сейчас / tempoRef.stride`. Читают часы
+   * «только клипы» (`clipTempoSpeed`) вместо `bakeSpeed`. Нет поля — шаг не менялся, часы берут `bakeSpeed` бит-в-бит.
+   */
+  tempoSpeed?: number;
   /**
    * ⭐ РЕВИЗИЯ ЗАПЕКАНИЯ клипа хода (`LOCO_BAKE_REV` в `poseRuntime.ts`). 2 — кардинальный клип: снят без доворота таза
    * и со свежим состоянием доворота. Нет поля при `bakeSpeed` — клип снят с доворотом (страйфы шли под ±126° к тазу).
@@ -639,6 +654,14 @@ export function freeClipNameIn(list: readonly { name: string; character: string;
   return n;
 }
 
+/** Точка отсчёта темпа — только целая (обе скорости положительные, ревизия числом); битую отбрасываем, редактор пересоберёт. */
+function validTempoRef(r: unknown): TempoRef | undefined {
+  const o = r as TempoRef | undefined;
+  const pos = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
+  if (!o || typeof o !== 'object' || !pos(o.speed) || !pos(o.stride) || typeof o.rev !== 'number') return undefined;
+  return { speed: o.speed, stride: o.stride, rev: o.rev, ...(typeof o.from === 'string' ? { from: o.from } : {}) };
+}
+
 export function migrateClip(c0: unknown): Clip {
   const c = c0 as Clip & { keys: (Keyframe | Pose)[] };
   const keys: Keyframe[] = (c.keys ?? []).map((k, i) => {
@@ -655,6 +678,9 @@ export function migrateClip(c0: unknown): Clip {
     // Скорость запекания: без неё перезапечённый на 40/120 клип прочитался бы легаси-скоростью (50.4/102) — длина
     // цикла ходьбы +26 %, бега −15 %, и стопы поехали бы. Битое число не тащим: `bakedLocoSpeed` его всё равно отбросит.
     bakeSpeed: typeof c.bakeSpeed === 'number' && Number.isFinite(c.bakeSpeed) && c.bakeSpeed > 0 ? c.bakeSpeed : undefined,
+    // Темп по шагу: потеряй точку отсчёта — правленый шаг снова пойдёт по скорости съёма, и стопы поедут на разницу.
+    tempoRef: validTempoRef(c.tempoRef),
+    tempoSpeed: typeof c.tempoSpeed === 'number' && Number.isFinite(c.tempoSpeed) && c.tempoSpeed > 0 ? c.tempoSpeed : undefined,
     // Ревизия запекания: потеряй её на чтении — перезапечённый страйф снова считался бы старым (сектора доворота не включатся).
     bakeRev: typeof c.bakeRev === 'number' && Number.isFinite(c.bakeRev) ? c.bakeRev : undefined,
     // Номер съёма: потеряй его — и редактор перестанет видеть, что набор «таз открыт» снят СТАРОЙ походкой.
