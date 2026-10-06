@@ -545,6 +545,68 @@ export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, str
   loaded.rotation.copy(r0); loaded.updateMatrixWorld(true);
 }
 
+/**
+ * ⭐⭐ РЕСТ НОГ ИСТОЧНИКА — В НАШ, ВСЕГДА (07.10, жалоба «пингвин, ноги проходят друг через друга»).
+ *
+ * Обратный ретаргет переносит МИРОВУЮ ДЕЛЬТУ кости от её реста (`W_наш = W_ист · R_рест⁻¹`), поэтому любое
+ * отличие реста источника от нашего садится в КАЖДЫЙ кадр постоянным слагаемым. У мокапов ноги в ресте стоят
+ * «буквой А» (MoCapCentral 2.8°, Kubold 2.1° наружу) и носки развёрнуты наружу (6–9°). Порог приведения
+ * (`TPOSE_THRESHOLD_DEG` 15°) это пропускал — и клип получал ноги, сведённые к середине на эти градусы, и носки,
+ * повёрнутые внутрь. ЗАМЕР (средняя ошибка «наш − источник», доли длины ноги / градусы): трусца MoCapCentral —
+ * колено −0.028, стопа −0.045, носок −6°: стопы бегут по одной линии и задевают друг друга; бег Kubold — стопа
+ * −0.024, носок −8° (его автор подкручивал руками). После: 0.000 / 0.000 / < 1°, и вперёд-высота стопы Kubold
+ * 0.06 → 0.001.
+ *
+ * Что делаем: 1) бедро и голень — точно в наш канон (вертикаль), без порога; 2) СТОПА — ТОЛЬКО ПО РЫСКУ вокруг
+ * вертикали тела: носок вперёд, тангаж не трогаем (он геометрия: у актёра лодыжка выше, см. `FULL_AIM_CHILD`) —
+ * правило Unity «Enforce T-Pose» для стоп (planeNormal = up). Доворот больше `FOOT_YAW_MAX_DEG` — не трогаем
+ * (это уже не рест, а странный файл). Вызывать ДО снятия реста (`makeBakeRig`), после `skeleton.pose()`.
+ * Возвращает, на сколько поправили (для отчёта импорта): угол бедра Л/П от вертикали и разворот носка Л/П (плюс — наружу), градусы.
+ */
+export const LEG_AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
+  LeftUpperLeg: 'LeftLowerLeg', LeftLowerLeg: 'LeftFoot', RightUpperLeg: 'RightLowerLeg', RightLowerLeg: 'RightFoot',
+};
+export const FOOT_YAW_MAX_DEG = 45;
+export function canonRestLegs(root: THREE.Object3D, boneMap: Record<string, string>): { thighDeg: [number, number]; toeYawDeg: [number, number] } {
+  const byName = new Map<string, THREE.Object3D>(boneIndex(root));
+  if (byName.size === 0) root.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
+  const bone = (our: string): THREE.Object3D | undefined => byName.get(boneMap[our] ?? '');
+  const wp = (o: THREE.Object3D): THREE.Vector3 => o.getWorldPosition(new THREE.Vector3());
+  const out = { thighDeg: [0, 0] as [number, number], toeYawDeg: [0, 0] as [number, number] };
+  // угол бедра от канона ДО правки — для отчёта (как его увидит импорт)
+  root.updateMatrixWorld(true);
+  const hips = bone('Hips'), head = bone('Head') ?? bone('Neck');
+  if (!hips || !head) return out;
+  const up = wp(head).sub(wp(hips)).normalize();
+  (['Left', 'Right'] as const).forEach((s, i) => {
+    const a = bone(s + 'UpperLeg'), b = bone(s + 'LowerLeg');
+    if (a && b) out.thighDeg[i] = wp(b).sub(wp(a)).normalize().angleTo(up.clone().negate()) * 180 / Math.PI;
+  });
+  enforceTPose(root, boneMap, LEG_AIM_CHILD, 0);
+  root.updateMatrixWorld(true);
+  const hl = bone('LeftUpperLeg'), hr = bone('RightUpperLeg');
+  if (!hl || !hr) return out;
+  // перёд тела: (левое бедро − правое) × вверх — у нашего канона Left* на +X, вверх +Y, перёд +Z
+  const fwd = wp(hl).sub(wp(hr)).cross(up).normalize();
+  (['Left', 'Right'] as const).forEach((s, i) => {
+    const f = bone(s + 'Foot'), t = bone(s + 'Toes');
+    if (!f || !t) return;
+    root.updateMatrixWorld(true);
+    const v = wp(t).sub(wp(f)), len = v.length();
+    v.addScaledVector(up, -v.dot(up));
+    if (len < 1e-6 || v.length() < 0.2 * len) return;   // носок смотрит в пол — рыска не определить
+    v.normalize();
+    const ang = Math.atan2(v.clone().cross(fwd).dot(up), v.dot(fwd));   // со знаком вокруг `up`: от носка к перёду
+    out.toeYawDeg[i] = (i === 0 ? -ang : ang) * 180 / Math.PI;   // плюс — носок НАРУЖУ у обеих стоп
+    if (Math.abs(ang) * 180 / Math.PI > FOOT_YAW_MAX_DEG) return;
+    const qw = new THREE.Quaternion().setFromAxisAngle(up, ang).multiply(f.getWorldQuaternion(new THREE.Quaternion()));
+    const pw = f.parent ? f.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+    f.quaternion.copy(pw.invert().multiply(qw));
+    f.updateMatrixWorld(true);
+  });
+  return out;
+}
+
 /** Собрать ретаргет-риг из загруженной сцены (glTF/FBX) + карты костей. `scale` нормализует размер (наш TILE=32u=1м).
  *  `source` (опц.) — КОНФОРМ: длины звеньев импорта подгоняются под длины скелета source (наш риг с профилем) →
  *  повороты ложатся 1:1, меш морфится под пропорции source, контакты (стопы/кисти) совпадают. */

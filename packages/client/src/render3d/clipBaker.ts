@@ -11,7 +11,7 @@
  */
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { makeBakeRig, autoBoneMap, enforceTPose, FULL_AIM_CHILD, OUR_BONES, OUR_FINGERS, type BakeRig } from './retarget3d.js';
+import { makeBakeRig, autoBoneMap, enforceTPose, canonRestLegs, FULL_AIM_CHILD, OUR_BONES, OUR_FINGERS, type BakeRig } from './retarget3d.js';
 import { boneWeight, partWeight, setPartWeight, maskFromBody, hasPart, type BoneMask } from './boneMask.js';
 import { rigSignature, isStaticBake, type ImportReport, type BakeStats } from './clipImport.js';
 import { slerpEuler, setHipsOffset, setRootMotion, ERROR_POS_KEYS, POS_DEG_PER_UNIT } from './clipModel.js';
@@ -338,6 +338,8 @@ export async function openBakeSource(file: File, boneMap?: Record<string, string
   // Ставим ИСТОЧНИК в канон-T (руки ±X) ПЕРЕД снятием rest: обратный ретаргет считает дельты ОТ rest-позы. Если rest =
   // кадр-0/A-поза (частый случай анимационных ФБХ) → дельты рук огромные от нашей T → «тело в T, руки мельницей».
   enforceTPose(root, map, FULL_AIM_CHILD);
+  // ⭐⭐ Ноги — в наш рест ВСЕГДА (порог 15° пропускал «букву А» 2–3° и развёрнутые носки, см. `canonRestLegs`).
+  const legFix = canonRestLegs(root, map);
   const restAfter = { arm: restDir(root, byName, map, 'LeftUpperArm', 'LeftLowerArm'), leg: restDir(root, byName, map, 'LeftUpperLeg', 'LeftLowerLeg') };
 
   // Нормализация Z-up→Y-up (CC/AccuRIG): обратный ретаргет наследует канон-фрейм нашего рига (Y-up/+Z).
@@ -369,7 +371,7 @@ export async function openBakeSource(file: File, boneMap?: Record<string, string
     unmapped: (OUR_BONES as readonly string[]).filter((b) => !map[b]),
     fingers: OUR_FINGERS.filter((b) => map[b]).length,
     tracks: anim0.tracks.map((t) => t.name).slice(0, 24),
-    restBefore, restAfter,
+    restBefore, restAfter, legFix,
   };
   return { fileName: file.name, root, loaded, animations, boneMap: map, bake, report, signature: rigSignature(allBones), restore };
 }

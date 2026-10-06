@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { makeBakeRig, parentOfOur, OUR_BONES, enforceTPose, FULL_AIM_CHILD } from './retarget3d.js';
+import { makeBakeRig, parentOfOur, OUR_BONES, enforceTPose, FULL_AIM_CHILD, canonRestLegs } from './retarget3d.js';
 import { bakeFromSource, type BakeSource } from './clipBaker.js';
 import { hipsOffset, type Pose } from './clipModel.js';
 import { presetMask, setPartWeight, type BoneMask } from './boneMask.js';
@@ -684,5 +684,62 @@ describe('enforceTPose — стопы не трогаем, руки трогае
     expect(t['LeftFoot'], '⚠ стопа не приводится к канону: у источника это ГЕОМЕТРИЯ (лодыжка на подушечке), а не поза').toBeUndefined();
     expect(t['RightFoot']).toBeUndefined();
     expect(t['LeftLowerArm'], 'руки приводить надо').toBe('LeftHand');
+  });
+});
+
+/**
+ * ⭐⭐ РЕСТ НОГ ИСТОЧНИКА ПРИВОДИТСЯ К НАШЕМУ ВСЕГДА (`canonRestLegs`, 07.10). Жалоба: трусца MoCapCentral — «пингвин, ноги
+ * проходят друг через друга», и Kubold «чуть пингвинил, стопы подкручивал руками». Причина — рест «буквой А» (2–3°) и носки
+ * наружу (6–9°): порог приведения 15° их пропускал, и обратный ретаргет вычитал их из каждого кадра.
+ */
+describe('clipBaker — рест ног источника (буква А, носки наружу)', () => {
+  const SPREAD = 3 * Math.PI / 180, TOE = 8 * Math.PI / 180;
+  /** Близнец с рестом «буквой А» и носками наружу; кадр — ноги ровно вниз и носки вперёд (поворот кости = единица). */
+  function spreadSource(fix: boolean): { src: BakeSource; fix: ReturnType<typeof canonRestLegs> | null } {
+    const { root, map } = twinSource();
+    const b = (n: string): THREE.Object3D => root.getObjectByName('s_' + n)!;
+    // Left* на +X: наружу у левой — поворот вокруг +Z, у правой — вокруг −Z; носок наружу — вокруг ±Y
+    b('LeftUpperLeg').quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), SPREAD);
+    b('RightUpperLeg').quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -SPREAD);
+    b('LeftFoot').quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), TOE);
+    b('RightFoot').quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -TOE);
+    root.updateMatrixWorld(true);
+    const got = fix ? canonRestLegs(root, map) : null;
+    const bake = makeBakeRig(root, map);
+    const snap: { o: THREE.Object3D; q: THREE.Quaternion; p: THREE.Vector3 }[] = [];
+    root.traverse((o) => snap.push({ o, q: o.quaternion.clone(), p: o.position.clone() }));
+    const id = (n: string): THREE.QuaternionKeyframeTrack => new THREE.QuaternionKeyframeTrack(`s_${n}.quaternion`, [0, 1], [0, 0, 0, 1, 0, 0, 0, 1]);
+    const anim = clipOf(['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'].map(id));
+    const src: BakeSource = {
+      fileName: 'spread.fbx', root, loaded: root, animations: [anim], boneMap: map, bake, signature: 'spread',
+      report: { file: 'spread.fbx', animations: [], bones: snap.length, dupNames: [], mapped: [...OUR_BONES], unmapped: [], fingers: 0, tracks: [], restBefore: { arm: '', leg: '' }, restAfter: { arm: '', leg: '' } },
+      restore() { for (const s of snap) { s.o.quaternion.copy(s.q); s.o.position.copy(s.p); } root.updateMatrixWorld(true); },
+    };
+    return { src, fix: got };
+  }
+  /** Боковой вынос стопы от бедра (юниты, плюс — наружу) и разворот носка (градусы, плюс — наружу), левая нога. */
+  function leftLeg(p: Pose): { foot: number; toe: number } {
+    const H = rigWith(p);
+    const w = (n: string): THREE.Vector3 => H.bones.get(n)!.getWorldPosition(new THREE.Vector3());
+    const t = w('LeftToes').sub(w('LeftFoot'));
+    return { foot: w('LeftFoot').x - w('LeftUpperLeg').x, toe: Math.atan2(t.x, t.z) * 180 / Math.PI };
+  }
+
+  it('⭐ с приведением: ноги источника «вертикально, носки вперёд» = наши ноги вертикально, носки вперёд', () => {
+    const { src, fix } = spreadSource(true);
+    expect(fix!.thighDeg[0]).toBeCloseTo(3, 1);
+    expect(fix!.toeYawDeg[0]).toBeCloseTo(8, 1);
+    expect(fix!.toeYawDeg[1], 'плюс — наружу у ОБЕИХ стоп').toBeCloseTo(8, 1);
+    const r = bakeFromSource(src, { ...OPTS, animationIndex: 0, name: 'n' });
+    const l = leftLeg(lastPose(r.clip.keys));
+    expect(Math.abs(l.foot)).toBeLessThan(0.01);
+    expect(Math.abs(l.toe)).toBeLessThan(0.1);
+  });
+  it('без приведения — ошибка на всю «букву А» и разворот носка (сторож: тест видит болезнь)', () => {
+    const { src } = spreadSource(false);
+    const r = bakeFromSource(src, { ...OPTS, animationIndex: 0, name: 'n' });
+    const l = leftLeg(lastPose(r.clip.keys));
+    expect(l.foot, 'стопа уехала ВНУТРЬ').toBeLessThan(-0.5);
+    expect(l.toe, 'носок развёрнут ВНУТРЬ').toBeLessThan(-7);
   });
 });

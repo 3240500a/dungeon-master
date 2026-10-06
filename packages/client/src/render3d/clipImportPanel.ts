@@ -419,6 +419,8 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       `костей ${r.bones}${r.dupNames.length ? `  ⚠ дубли имён: ${r.dupNames.length}` : ''}   риг ${src.signature}`,
       `смаплено ${r.mapped.length}/${OUR_BONES.length}${r.unmapped.length ? '  ⚠ нет: ' + r.unmapped.join(', ') : ''}   пальцы ${r.fingers}/30`,
       `rest до/после T-позы:  рука ${r.restBefore.arm} → ${r.restAfter.arm}   нога ${r.restBefore.leg} → ${r.restAfter.leg}`,
+      // ⭐ что выпрямили в ресте ног (`canonRestLegs`): «буква А» и носки наружу иначе ушли бы в каждый кадр
+      ...(r.legFix ? [`рест ног выпрямлен:  бёдра ${r.legFix.thighDeg.map((v) => v.toFixed(1)).join(' / ')}° от вертикали, носки ${r.legFix.toeYawDeg.map((v) => (v >= 0 ? '+' : '') + v.toFixed(1)).join(' / ')}° (плюс — наружу) → 0`] : []),
     ];
     diag.textContent = lines.join('\n');
   }

@@ -34,6 +34,8 @@ export interface ImportReport {
   /** Направление руки/ноги ДО и ПОСЛЕ приведения к T-позе (в T: рука [±1,0,0], нога [0,−1,0]). */
   restBefore: { arm: string; leg: string };
   restAfter: { arm: string; leg: string };
+  /** Поправка реста ног источника (`canonRestLegs`): угол бедра от вертикали и рыск носка Л/П до правки, градусы. */
+  legFix?: { thighDeg: [number, number]; toeYawDeg: [number, number] };
 }
 /** Что вышло из ОДНОГО запекания — меняется на каждое переключение галки. */
 export interface BakeStats {
