@@ -1180,7 +1180,7 @@ export async function startOnline3d(): Promise<void> {
     for (const it of interactables) { const d = Math.hypot(it.x - smoothX, it.y - smoothZ); if (d <= it.radius && d < best) { near = it; best = d; } }
     const eDown = keys.has('KeyE');
     if (near) { if (hint) hint.textContent = `[E] ${near.label}`; if (eDown && !eWasDown) near.run(); }
-    else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Space/Alt — действия · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';
+    else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Q/Alt — действия · Пробел — уклонение · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';
     eWasDown = eDown;
   }
 

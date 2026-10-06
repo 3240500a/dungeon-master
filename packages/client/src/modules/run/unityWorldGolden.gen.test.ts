@@ -54,7 +54,7 @@ const SRC: [string, string][] = [
   // подсказка [E] и метки миникарты
   [ONLINE3D, 'for (const it of interactables) { const d = Math.hypot(it.x - smoothX, it.y - smoothZ); if (d <= it.radius && d < best) { near = it; best = d; } }'],
   [ONLINE3D, 'if (near) { if (hint) hint.textContent = `[E] ${near.label}`; if (eDown && !eWasDown) near.run(); }'],
-  [ONLINE3D, "else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Space/Alt — действия · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';"],
+  [ONLINE3D, "else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Q/Alt — действия · Пробел — уклонение · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';"],
   [ONLINE3D, "kind: /спуст|подземель|глубже|город|заверш/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc'"],
   // снаряды, дропы, числа урона
   [ONLINE3D, "const tint = pr.owner === 'monster' ? 0xff8080 : dmgColorNum(pr.dom);"],
@@ -83,7 +83,7 @@ const TOWN_NPCS = [
   { cx: 14, cy: 4, label: 'Доска квестов', panel: 'quests', tint: 0xd0c060 },
   { cx: 17, cy: 4, label: 'Сундук', panel: 'stash', tint: 0xc99a48 },
 ];
-const HINT_IDLE = 'WASD — идти · ЛКМ/ПКМ/Shift/Space/Alt — действия · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';
+const HINT_IDLE = 'WASD — идти · ЛКМ/ПКМ/Shift/Q/Alt — действия · Пробел — уклонение · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';
 const LOG_COLOR = { 'dmg-out': '#e6ddc9', 'dmg-in': '#c85a48', kill: '#dca94b', xp: '#8aa84a', gold: '#dca94b', loot: '#7fa8d0', system: '#8f897c' };
 
 /** Интерактив, как его видит эталон: что делает [E] (`act` + аргумент) и где. Подпись выхода — на миг показа (план). */
