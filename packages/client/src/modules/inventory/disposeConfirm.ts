@@ -1,12 +1,8 @@
 import {
-  craftTiers, emptyJournal, partById, salvageIntoJournal, salvageMean, salvageRange, salvageYield, sketchable, typeOfItem,
-  type ConfigRegistry, type CraftJournal, type Item, type SalvageRng,
+  salvageJournalGains, salvageMean, salvageRange, type ConfigRegistry, type CraftJournal, type Item,
 } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { askInGame } from '../../ui/kit.js';
-
-/** Бросок для выбора ПУТИ разбора: путь от кубика не зависит, выход здесь не нужен. */
-const NO_ROLL: SalvageRng = { int: (a) => a, chance: () => false };
 
 /**
  * ЧТО СПРОСИТЬ, ПРЕЖДЕ ЧЕМ ВЕЩЬ ИСЧЕЗНЕТ — чистое решение, без DOM (docs/CRAFT_WEAPONS.md §12.2, §17).
@@ -33,26 +29,8 @@ const NO_ROLL: SalvageRng = { int: (a) => a, chance: () => false };
  * (1 из 8…) вопросом не зовём: он копится любым разбором найденного у кузнеца — вопрос висел бы на каждой вещи.
  */
 export function journalGainsOf(reg: ConfigRegistry, item: Item, journal: CraftJournal | null | undefined): string[] {
-  // Скованное журнал знает (его сковали из открытого), уникальное кузнец не разбирает вовсе.
-  if (item.parts || item.kind !== 'weapon' || item.rarity === 'unique') return [];
-  // Журнал пополняет только разбор ПО ДЕТАЛЯМ — ровно то условие, по которому его зовёт `forgeSalvage`.
-  if (salvageYield(reg, item, NO_ROLL, false).source !== 'parts') return [];
-  // Журнала нет (кадр сундука не пришёл) — честнее считать всё неизвестным: лишний вопрос дешевле ловушки.
-  const j = journal ?? emptyJournal();
-  const u = salvageIntoJournal(reg, j, item);
-  const base = u.newBase ? reg.get('items.base').find((b) => b.id === item.baseId) : undefined;
-  const tiers = craftTiers(reg);
-  const tier = u.tierUp ? tiers[u.journal.tierHi] : undefined;
-  const need = reg.get('balance').craft.journal.mythicSalvages;
-  const sketch = u.sketch && reg.get('weapon-parts').some((p) => p.enabled !== false && sketchable(reg, u.journal, p.id));
-  return [
-    ...(base ? [`тип «${base.name}»`] : []),
-    ...u.unlocked.map((id) => `деталь «${partById(reg, id)?.name ?? id}»`),
-    ...(u.newType ? [`кодекс «${typeOfItem(reg, item)?.name ?? u.newType}»`] : []),
-    ...(tier ? [`ступень «${tier.name}» — потолок ковки`] : []),
-    ...(u.mythic && j.mythic < need ? [`мифик к воротам ${tiers.at(-1)?.id ?? 't6'} (${j.mythic + 1} из ${need})`] : []),
-    ...(sketch ? ['эскиз — деталь на выбор'] : []),
-  ];
+  // Одно правило с карточкой разбора у кузнеца (`salvageJournalPreview`): обе строки — из `salvageJournalGains` (@dm/shared).
+  return salvageJournalGains(reg, item, journal);
 }
 
 /** Где вещь исчезает: разбор в поле, разбор (переплавка) у кузнеца, продажа. */
