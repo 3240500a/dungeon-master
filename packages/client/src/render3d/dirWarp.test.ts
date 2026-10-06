@@ -82,17 +82,20 @@ describe('доворот таза: чистая функция', () => {
     expect(settle(0, 0, ...vel(-135)) / D).toBeCloseTo(45, 3);
   });
 
-  it('⭐ ГИСТЕРЕЗИС на ±45°: сектор держится до 45° + SECTOR_HYST с той стороны, откуда пришли, и не щёлкает на дрожи', () => {
+  it('⭐ ГИСТЕРЕЗИС на ±45° ОДНОСТОРОННИЙ: «вперёд/назад» держится до 45° + SECTOR_HYST, бок отдаёт их сразу, дрожь не щёлкает', () => {
     const H = SECTOR_HYST / D;
     const go = (deg: number, from: DirWarp): DirWarp => settleW(0, 0, ...vel(deg), CFG, TWIST, from);
     // Подошли к 50° СПЕРЕДИ (с 30°) — всё ещё «вперёд» (порог 45 + 10), доворот упёрся в 50.
     const fromFwd = go(50, go(30, { ...DIR_WARP0 }));
     expect(fromFwd.sector).toBe(0);
     expect(fromFwd.warp / D).toBeCloseTo(50, 3);
-    // Подошли к 40° СБОКУ (с 90°) — всё ещё strafe_R: доворот −50.
+    // ⭐⭐ Подошли к 40° СБОКУ (с 90°) — уже «вперёд» с доворотом +40 (решение автора 07.10: бок не держится против
+    // «вперёд/назад»; раньше strafe_R держался до 35° с доворотом −50). Ровно на 45° — ничья, тоже «вперёд»; на 46° — бок.
     const fromSide = go(40, go(90, { ...DIR_WARP0 }));
-    expect(fromSide.sector).toBe(1);
-    expect(fromSide.warp / D).toBeCloseTo(-50, 3);
+    expect(fromSide.sector).toBe(0);
+    expect(fromSide.warp / D).toBeCloseTo(40, 3);
+    expect(go(45, go(90, { ...DIR_WARP0 })).sector).toBe(0);
+    expect(go(46, go(90, { ...DIR_WARP0 })).sector).toBe(1);
     // За порогом — перебрасывается.
     expect(go(45 + H + 1, go(30, { ...DIR_WARP0 })).sector).toBe(1);
     expect(go(45 - H - 1, go(90, { ...DIR_WARP0 })).sector).toBe(0);
@@ -106,7 +109,8 @@ describe('доворот таза: чистая функция', () => {
     expect(flips).toBe(0);
     // На ±135 — то же, с обеих сторон.
     expect(go(128, go(170, { ...DIR_WARP0 })).sector).toBe(2);
-    expect(go(142, go(100, { ...DIR_WARP0 })).sector).toBe(1);
+    expect(go(142, go(100, { ...DIR_WARP0 })).sector, 'бок отдаёт «назад» сразу, как оно ближе').toBe(2);
+    expect(go(132, go(100, { ...DIR_WARP0 })).sector).toBe(1);
     expect(go(142, go(170, { ...DIR_WARP0 })).sector).toBe(2);
   });
 

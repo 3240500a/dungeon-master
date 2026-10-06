@@ -1959,10 +1959,15 @@ export function stepTorsoLead(
  * опорной стопы 65 % скорости, ошибка направления +20°, верх груди 19° от прицела. Сектора — см. README.
  *
  * ОГРАНИЧИТЕЛИ, и все обязательны:
- *  1. СЕКТОР С ГИСТЕРЕЗИСОМ `SECTOR_HYST` на границах ±45°/±135°, но ТОЛЬКО ПОКА ИДЁМ (`moving` прошлого кадра,
- *     как `bWasMovingLastUpdate` у Lyra): встали — сектор забыт, следующий старт берёт ближайший. Иначе он
+ *  1. СЕКТОР С ГИСТЕРЕЗИСОМ `SECTOR_HYST`, но ТОЛЬКО ПОКА ИДЁМ (`moving` прошлого кадра, как
+ *     `bWasMovingLastUpdate` у Lyra): встали — сектор забыт, следующий старт берёт ближайший. Иначе он
  *     залипал через остановку — тот же класс утечки, что флаг «назад» между запеканиями (замер: 60° → стоп →
  *     35° шёл сектором R с доворотом −45 на весь забег).
+ *     ⭐⭐ ГИСТЕРЕЗИС ОДНОСТОРОННИЙ (07.10, решение автора): держится только сектор ВАЖНЕЕ соседа — вперёд/назад
+ *     важнее диагоналей, диагонали важнее страйфа (`SECTOR_CLASS`). К более важному ход переходит сразу, как
+ *     только оно стало не дальше текущего. Жалоба: «бежал боком, повернул на диагональ — он доворачивает
+ *     страйф, а не берёт вперёд»: симметричный гистерезис держал страйф до 35° от «вперёд» (доворот −45°).
+ *     Теперь на четырёх клипах: из бока в «вперёд» — на 45°, из «вперёд» в бок — на 55° (как было).
  *  2. НИЧЬЯ РОВНО НА ±45°/±135° — ЯВНОЕ ПРАВИЛО, зеркальное по знаку и одинаковое в JS и C#: `|d|` сравнивается
  *     с 45°/135° с допуском, ничья отдаётся оси вперёд/назад (`nearestWarpSector`). Не `Math.round` — он
  *     ломал зеркальность (+135 → назад, −135 → L) и в C# округляет половину к чётному.
@@ -2005,9 +2010,10 @@ export const SECTOR_HYST = 10 * Math.PI / 180;
 export const SECTOR_AXIS: readonly number[] = [0, Math.PI / 2, Math.PI, -Math.PI / 2, Math.PI / 4, 3 * Math.PI / 4, -3 * Math.PI / 4, -Math.PI / 4];
 /** Кому отдаётся ничья между осями (меньше — главнее): вперёд, назад, диагонали, бок — зеркально по знаку. */
 const SECTOR_PRIO: readonly number[] = [0, 3, 1, 3, 2, 2, 2, 2];
-/** Набор — ровно четыре основных направления: тогда сектора считаются ПРЕЖНИМ кодом, бит-в-бит. */
-const isCardinalSet = (av: readonly WarpSector[]): boolean =>
-  av.length === 4 && av.includes(0) && av.includes(1) && av.includes(2) && av.includes(3);
+/** Важность сектора для гистерезиса (меньше — важнее): вперёд/назад 0, диагонали 1, бок 2. */
+const SECTOR_CLASS: readonly number[] = [0, 2, 0, 2, 1, 1, 1, 1];
+/** Четыре основных сектора — оси доворота, когда набор не передан (планировщик, клипов нет). */
+const CARDINAL_SECTORS: readonly WarpSector[] = [0, 1, 2, 3];
 /** Ближайшая ось ИЗ ТЕХ, ЧТО ЕСТЬ (`av`); ничья — по `SECTOR_PRIO`, дальше — порядок списка. */
 export function nearestAvailSector(d: number, av: readonly WarpSector[]): WarpSector {
   let best = av[0]!, bestE = Infinity, bestP = 99;
@@ -2017,17 +2023,17 @@ export function nearestAvailSector(d: number, av: readonly WarpSector[]): WarpSe
   }
   return best;
 }
-/** Половина зазора от оси `s` до соседней оси набора В СТОРОНУ хода `d` (одна ось — π): граница удержания сектора. */
-function halfGapToward(s: WarpSector, d: number, av: readonly WarpSector[]): number {
-  const a0 = SECTOR_AXIS[s]!, side = wrapPi(d - a0) >= 0 ? 1 : -1;
-  let g = 2 * Math.PI;
-  for (const t of av) {
-    if (t === s) continue;
-    let r = wrapPi(SECTOR_AXIS[t]! - a0) * side;
-    if (r <= 1e-12) r += 2 * Math.PI;
-    if (r < g) g = r;
-  }
-  return g >= 2 * Math.PI ? Math.PI : g / 2;
+/**
+ * Сектор кадра с ОДНОСТОРОННИМ гистерезисом: кандидат — ближайшая ось набора; более важный кандидат (`SECTOR_CLASS`)
+ * берётся сразу, менее важный или равный — только когда он ближе текущего больше чем на 2·`SECTOR_HYST` (у соседних
+ * осей это ровно прежнее «за границу на `SECTOR_HYST`»). Встали или текущей оси нет в наборе — просто ближайшая.
+ */
+export function pickWarpSector(prevSector: WarpSector, prevMoving: boolean, d: number, av: readonly WarpSector[]): WarpSector {
+  const cand = nearestAvailSector(d, av);
+  if (!prevMoving || !av.includes(prevSector) || cand === prevSector) return cand;
+  if (SECTOR_CLASS[cand]! < SECTOR_CLASS[prevSector]!) return cand;
+  const eCur = Math.abs(wrapPi(d - SECTOR_AXIS[prevSector]!)), eCand = Math.abs(wrapPi(d - SECTOR_AXIS[cand]!));
+  return eCur - eCand > 2 * SECTOR_HYST ? cand : prevSector;
 }
 /** Допуск ничьей на границе сектора (рад). Отдаёт ничью оси вперёд/назад — зеркально по знаку. */
 const SECTOR_TIE = 1e-6;
@@ -2048,15 +2054,11 @@ export function stepDirWarp(
   const moving = Math.hypot(vx, vz) > MOVE_EPS_WARP;
   if (cfg.on > 0.5 && moving) {
     const d = wrapPi(Math.atan2(vx, vz) - rootYaw);
-    const av = cfg.avail;
-    if ((cfg.sectors ?? true) && av && av.length && !isCardinalSet(av)) {
+    if (cfg.sectors ?? true) {
       // ⭐⭐ ОСИ НАБОРА (07.10): доворачиваем к ближайшему направлению, КЛИП КОТОРОГО ЕСТЬ, — хоть два, хоть восемь.
       // Не дотянулся потолком `warpMax` — остаток доедает бленд пары, а нет пары — стопы едут (решение автора).
-      // Гистерезис тот же, но граница — половина зазора до соседней оси набора (у четырёх осей это ровно 45°).
-      if (!prev.moving || !av.includes(sector) || Math.abs(wrapPi(d - SECTOR_AXIS[sector]!)) > halfGapToward(sector, d, av) + SECTOR_HYST) sector = nearestAvailSector(d, av);
-    } else if (cfg.sectors ?? true) {
-      // Гистерезис — только на ходу: после остановки сектор выбирается заново, без памяти.
-      if (!prev.moving || Math.abs(wrapPi(d - SECTOR_AXIS[sector]!)) > Math.PI / 4 + SECTOR_HYST) sector = nearestWarpSector(d);
+      // Гистерезис — только на ходу и только в пользу более важного сектора (`pickWarpSector`).
+      sector = pickWarpSector(sector, prev.moving, d, cfg.avail && cfg.avail.length ? cfg.avail : CARDINAL_SECTORS);
     } else {
       // ⚠ ФЛАГ «НАЗАД» ПОМНИТСЯ ЧЕРЕЗ ОСТАНОВКУ — это ПРЕЖНЕЕ поведение, и трогать его тут нельзя: ветка живёт
       // ровно для неперезапечённых наборов, которым обещано «как было». Забывание флага на старте (как у секторов)
