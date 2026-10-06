@@ -46,7 +46,9 @@ export function renderCraftTab(app: App, body: HTMLElement): void {
   const reg = app.config;
   const who = `${app.auth?.userId ?? ''}|${app.state?.save.charId ?? ''}`;
   if (who !== owner) { st = null; owner = who; }
-  if (!st) st = initialCraftState(reg, startClass(app));
+  const host = gameCraftHost(app);
+  // Ступень нового окна — не выше потолка журнала (`journalDefaultStep`): после первого разбора t0 окно не встаёт красным.
+  if (!st) st = initialCraftState(reg, startClass(app), undefined, host.journal());
   const row = mk('div', 'display:flex;gap:10px;align-items:flex-start');
   const winBox = mk('div', 'flex:1;min-width:0');
   const side = mk('div', `flex:0 0 ${STAND.width + 18}px`);
@@ -62,7 +64,7 @@ export function renderCraftTab(app: App, body: HTMLElement): void {
     resumePreview3d();
   };
   // После ответа сервера — перерисовать всю кузницу: новый сейв уже пришёл, а окно ждало только итога.
-  winBox.append(craftWindow(app, gameCraftHost(app), st, () => app.bus.emit('state:changed', {}), show3d));
+  winBox.append(craftWindow(app, host, st, () => app.bus.emit('state:changed', {}), show3d));
   row.append(winBox, side);
   body.append(row);
   resumePreview3d(); // стенд снова на странице (перерисовка, возврат на вкладку) — зажечь цикл

@@ -211,3 +211,27 @@ describe('⚠ R17-03: зачарование формы без цены — ок
     expect(magic.textContent).toMatch(/· \d+ з\./);
   });
 });
+
+/**
+ * ⭐ 06.10: «разобрал топор у кузнеца — детали не открылись». После первого разбора вещи ступени t0 журнал куёт только t0, а окно
+ * вставало на эталонную «ст. 2» (это ступень вещи t2): красное «Кузнец ещё не работал со ступенью Крепкий» и погашенная «Ковать» —
+ * при открытых деталях. Новое окно с журналом встаёт на ступень, которую журнал куёт (`journalDefaultStep`); без журнала — 2.
+ */
+describe('⭐ ступень нового окна — не выше потолка журнала', () => {
+  const t0 = { ...fullJournal(reg), tierHi: 0, mythic: 0 };
+  const reasonOf = (st: CraftWindowState, j: typeof t0): string => {
+    normalizeCraftState(reg, st, j);
+    return craftWeapon(reg, inputOf(st), { journal: j, materialsOn: true }).reason ?? '';
+  };
+  it('первый разбор t0: окно топора встаёт без «Кузнец ещё не работал со ступенью…»; без журнала было бы с ним', () => {
+    expect(reasonOf(initialCraftState(reg, 'axe', 1), t0), 'контроль: прежнее окно (ст. 2) упирается в потолок').toMatch(/не работал со ступенью/);
+    const st = initialCraftState(reg, 'axe', 1, t0);
+    expect(reasonOf(st, t0), 'окно с журналом t0 обязано ковать').not.toMatch(/не работал со ступенью/);
+    expect(CRAFT_SLOT_LIST.map((s) => st.parts[s].step).every((k) => k <= 2)).toBe(true);
+  });
+  it('потолок ≥ t2 и песочница (без журнала) — прежняя эталонная ступень 2', () => {
+    const t2 = { ...fullJournal(reg), tierHi: 2, mythic: 0 };
+    expect(initialCraftState(reg, 'sword', 1, t2).parts).toEqual(initialCraftState(reg, 'sword', 1).parts);
+    expect(initialCraftState(reg, 'sword', 1, fullJournal(reg)).parts).toEqual(initialCraftState(reg, 'sword', 1).parts);
+  });
+});

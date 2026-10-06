@@ -1,6 +1,6 @@
 import {
   CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, bladeStats, clampStep,
-  craftFits, craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
+  craftFits, craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, journalTierCap, keySlotOf, keyVariantsByBase, makePlayerModel,
   FORM_UNPRICED, partById, rangeLabel, rolledFormMult, sketchable, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
@@ -125,12 +125,29 @@ function blankParts(): CraftParts {
 }
 
 /**
- * Начальное состояние: эталонные детали из кричного железа (ступень 2). Семейство не задано — первое, которое кузнец
- * куёт (V-B3-06); не куётся ни одно — гнёзда пустые, окно скажет почему.
+ * ⭐ СТУПЕНЬ НОВОГО ОКНА ПО ЖУРНАЛУ (06.10): эталонная 2 (кричное железо), но не выше той, что журнал разрешает ковать
+ * (`journalTierCap`). Жалоба владельца «разобрал топор — детали не открылись»: после первого разбора вещи ступени t0 детали
+ * открыты, а окно вставало на «ст. 2» (это ступень вещи t2) с красным «Кузнец ещё не работал со ступенью Крепкий» и погашенной
+ * «Ковать» — успех выглядел провалом. Ступень вещи из одной ступени материала k — `tierOfSteps`; журнал без единого разбора
+ * (потолок −1) — самая нижняя, 1 (ковать всё равно нечего: закрыт тип).
  */
-export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', hands?: number): CraftWindowState {
+export function journalDefaultStep(reg: ConfigRegistry, j: CraftJournal): number {
+  const cap = journalTierCap(reg, j);
+  const all = (k: number): Record<CraftSlot, { step: number }> => ({ strike: { step: k }, grip: { step: k }, bind: { step: k }, head: { step: k } });
+  let k = 2;
+  while (k > 1 && tierOfSteps(reg, all(k)).tier > cap) k--;
+  return k;
+}
+
+/**
+ * Начальное состояние: эталонные детали из кричного железа (ступень 2). Семейство не задано — первое, которое кузнец
+ * куёт (V-B3-06); не куётся ни одно — гнёзда пустые, окно скажет почему. С журналом (игра) — ступень не выше его потолка
+ * (`journalDefaultStep`); без журнала (песочница: открыто всё) — 2, как было.
+ */
+export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', hands?: number, journal?: CraftJournal): CraftWindowState {
   const h = hands ?? forgeableFamilies(reg, weaponClass)[0] ?? familiesOf(reg, weaponClass)[0] ?? 1;
-  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, 2) ?? blankParts(), crafted: null, message: '' };
+  const step = journal ? journalDefaultStep(reg, journal) : 2;
+  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, step) ?? blankParts(), crafted: null, message: '' };
 }
 
 /**
@@ -364,7 +381,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:${busy ? 'default' : 'pointer'};font-size:12px;border:1px ${idle ? 'dashed' : 'solid'} ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : busy || idle ? '#4a4a4a' : COLORS.text}`, a.name);
       if (idle) b.title = IDLE_CLASS;
       b.disabled = busy;
-      b.addEventListener('click', () => { if (on || st.busy) return; Object.assign(st, initialCraftState(reg, a.id)); draw(); });
+      b.addEventListener('click', () => { if (on || st.busy) return; Object.assign(st, initialCraftState(reg, a.id, undefined, j)); draw(); });
       clsRow.append(b);
     }
     root.append(clsRow);
@@ -376,7 +393,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
         const b = mk('button', chip(h === st.hands, busy), h === 2 ? 'Двуручное' : 'Одноручное');
         if (!defaultParts(reg, st.weaponClass, h, 2)) { b.style.borderStyle = 'dashed'; b.title = IDLE_FAMILY; }   // V-B3-06
         b.disabled = busy;
-        b.addEventListener('click', () => { if (h === st.hands || st.busy) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw(); });
+        b.addEventListener('click', () => { if (h === st.hands || st.busy) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h, j)); draw(); });
         famRow.append(b);
       }
       root.append(famRow);

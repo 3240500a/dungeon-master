@@ -97,6 +97,12 @@ const SRC: [string, string][] = [
   [PANEL, "root.append(mk('div', `color:${COLORS.dim};font-size:11.5px;margin-bottom:10px`, fams[0] === 2 ? 'Семейство одно: двуручное' : 'Семейство одно: одноручное'));"],
   [PANEL, 'const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 };'],
   [PANEL, 'const pv = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials });'],
+  // ⭐ 06.10: ступень нового окна по журналу (`journalDefaultStep`) — её зовут кнопки класса и семейства тем же журналом окна
+  [PANEL, 'let k = 2;'],
+  [PANEL, 'while (k > 1 && tierOfSteps(reg, all(k)).tier > cap) k--;'],
+  [PANEL, 'const step = journal ? journalDefaultStep(reg, journal) : 2;'],
+  [PANEL, 'Object.assign(st, initialCraftState(reg, a.id, undefined, j)); draw();'],
+  [PANEL, 'Object.assign(st, initialCraftState(reg, st.weaponClass, h, j)); draw();'],
   [PANEL, 'const why = idle || pv.reason;'],
   [PANEL, "type?.ok ? type.name : '—'"],
   [PANEL, '`${tiers[tier]?.id} ${tiers[tier]?.name}`'],
@@ -431,6 +437,15 @@ const JOURNALS: Record<string, CraftJournal> = (() => {
   };
 })();
 
+/**
+ * ⭐ 06.10: журналы ТОЛЬКО для начального состояния окна по журналу (`journalDefaultStep`) — потолок t0 (первый разбор «Убогой»
+ * вещи — случай жалобы владельца) и t2. Отдельно от `JOURNALS`, чтобы не сдвигать случайные выборки остальных разделов.
+ */
+const INIT_JOURNALS: Record<string, CraftJournal> = (() => {
+  const full = fullJournal(reg);
+  return { t0: { ...full, tierHi: 0, mythic: 0 }, t2: { ...full, tierHi: 2, mythic: 0 } };
+})();
+
 /** Кошельки: богатый (всё по 1000), пустой, частичный (по 10 первых ступеней). */
 const WALLETS: Record<string, Record<string, number>> = {
   rich: Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 1000])),
@@ -598,6 +613,10 @@ function stateCases() {
     for (const hands of [undefined, ...familiesOf(reg, cls), 3]) {
       const init = initialCraftState(reg, cls, hands);
       out.push({ op: 'init', cls, hands: hands ?? null, out: snap(init) });
+      // ⭐ 06.10: окно игры открывается с журналом — ступень не выше его потолка (`journalDefaultStep`)
+      for (const [jn, jj] of [...Object.entries(JOURNALS), ...Object.entries(INIT_JOURNALS)]) {
+        out.push({ op: 'init', cls, hands: hands ?? null, journal: jn, out: snap(initialCraftState(reg, cls, hands, jj)) });
+      }
       for (const jn of Object.keys(JOURNALS)) {
         const st = initialCraftState(reg, cls, hands);
         const before = snap(st);
@@ -1092,7 +1111,7 @@ describe('unityCraftGolden — продюсер эталона окна ковк
           };
         })(),
       },
-      journals: JOURNALS,
+      journals: { ...JOURNALS, ...INIT_JOURNALS },
       wallets: WALLETS,
       bags: BAGS,
       families,
