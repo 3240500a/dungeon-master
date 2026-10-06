@@ -1,4 +1,5 @@
 import { vecLen, wrapAngle, normalizeAngle } from '../world/fastMath.js';
+import { moveDirMult } from '../formulas/moveDir.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
 import type { Item, AttackType, ConsumableUse } from '../types/items.js';
@@ -647,7 +648,7 @@ export class GameSession {
     const len = input ? vecLen(input.move.x, input.move.y) : 0;
     let want = { x: 0, y: 0 };
     if (input && moveMult > 0 && len > 0) {
-      const speed = snap.derived.moveSpeed * pm.moveMult * moveMult;
+      const speed = snap.derived.moveSpeed * pm.moveMult * moveMult * moveDirMult(this.cfg.get('balance').moveDir, input.move.x, input.move.y, p.facing);
       want = { x: (input.move.x / len) * speed, y: (input.move.y / len) * speed };
     }
     // ⭐ ИНЕРЦИЯ (`balance.moveInertia`): скорость едет к желаемой с ускорением, а не прыгает.

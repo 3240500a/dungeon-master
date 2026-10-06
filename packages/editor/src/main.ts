@@ -125,7 +125,7 @@ const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
  */
 const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Прогрессия и мощь', keys: ['xpTable', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
-  { title: 'Бой и физика', keys: ['melee', 'dodge', 'knockdown', 'weaponAttrScaling', 'twoHandedPowerMult', 'twoHandReqMult', 'versatile', 'maxTotalRequirement', 'affinityDamageBonus', 'moveSpeedBase', 'moveInertia', 'camera', 'collision', 'weight'] },
+  { title: 'Бой и физика', keys: ['melee', 'dodge', 'knockdown', 'weaponAttrScaling', 'twoHandedPowerMult', 'twoHandReqMult', 'versatile', 'maxTotalRequirement', 'affinityDamageBonus', 'moveSpeedBase', 'moveInertia', 'moveDir', 'camera', 'collision', 'weight'] },
   { title: 'Скилы и вставки', keys: ['skillSocketRanks'] },
   { title: 'Монстры', keys: ['monsterXpGrowth', 'uniqueXpMult', 'monsterScaling'] },
   { title: 'Лут', keys: ['loot', 'autoPickup', 'salvage'] },

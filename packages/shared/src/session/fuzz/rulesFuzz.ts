@@ -181,6 +181,9 @@ function buildReg(): ConfigRegistry {
       pot(BUFF_POTIONS[1], { heal: 40, buffMods: [{ stat: 'maxHp', kind: 'flat', value: 60 }, { stat: 'maxMana', kind: 'flat', value: 30 }], buffDurationSec: 4 }),
     ],
   });
+  // Скорость по направлению хода (07.10) — выключена: сжатые перепрогоны (R21-06 и др.) записаны по прежним позициям.
+  // Потолок скорости сторожа верен и с ней (множитель ≤ 1 по схеме).
+  reg.reload({ balance: { ...reg.get('balance'), moveDir: { ...reg.get('balance').moveDir, enabled: false } } });
   return reg;
 }
 

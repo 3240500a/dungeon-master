@@ -101,6 +101,14 @@
     "accel": 900,
     "decel": 300
   },
+  "moveDir": {
+    "enabled": true,
+    "fwd": 1,
+    "fwdSide": 1,
+    "side": 0.8,
+    "backSide": 0.8,
+    "back": 0.75
+  },
   "camera": {
     "minDist": 120,
     "maxDist": 360,
