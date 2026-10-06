@@ -20,7 +20,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, ConfigRegistry, FORM_UNPRICED, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, buildCraftShell,
+  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, ConfigRegistry, ESSENCE_ID, FORM_UNPRICED, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, buildCraftShell,
   bladeStats, clampStep, craftFits, craftMissing, craftTiers, craftWeapon, createRng, debuffLabel, defaultParts, describeCost, describeItem,
   emptyJournal, enchantCost, enchantItem, enchantMaterials, enchantSlots, familiesOf, finishOf, fullJournal, generateItem, itemFromBaseId, keySlotOf,
   keyVariantsByBase, materialItem, partById, rangeLabel, rolledFormMult, sketchable, slotName, slotSuffix, statusKindOf, stepLabel,
@@ -989,7 +989,7 @@ function hostCases() {
   return out;
 }
 
-/** Раздел `tooltips`: `describeItem` по вещам игры — каждая база любой редкости, ступени, сломанные, перекатанные, сырьё, зелья. */
+/** Раздел `tooltips`: `describeItem` по вещам игры — каждая база любой редкости, ступени, сломанные, перекатанные, сырьё, эссенция, зелья. */
 function tooltipCases() {
   const out: unknown[] = [];
   const bal = reg.get('balance');
@@ -1005,6 +1005,8 @@ function tooltipCases() {
   }
   for (const c of craftedItems()) out.push(c.item);
   out.push(materialItem(reg.get('craft-materials')[3]!, 17, 'mat-1'));
+  // Стопка эссенции: «Валюта чар · в стеке 2», а не «Сырьё · …» (эссенция — не сырьё, валюта чар); имя — строкой выше, из конфига.
+  out.push(materialItem(reg.get('craft-materials').find((m) => m.id === ESSENCE_ID)!, 2, 'mat-ess'));
   return out.map((it, i) => ({ item: noUid(it as Item), uid: `t-${i}`, out: tip(it as Item) }));
 }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  CRAFT_SLOT_LIST, ConfigRegistry, baseTierRange, craftTiers, craftWeapon, createRng, defaultParts, emptyJournal, fullJournal,
+  CRAFT_SLOT_LIST, ConfigRegistry, FIELD_SALVAGE_FULL, STARTER_FIELD, baseTierRange, craftTiers, craftWeapon, createRng, defaultParts, emptyJournal, fullJournal,
   generateItem, newBotSave, partsOf, salvageIntoJournal, salvageMean, salvageRange, shapeFoundWeapon, sketchable, tierIndexOfItem, typeOfItem,
   type CraftJournal, type Item,
 } from '@dm/shared';
@@ -202,10 +202,20 @@ describe('⭐ fieldSalvageLines — карточка разбора в поле 
     expect(lines.at(-1)!.text).toMatch(/^У кузнеца сырья и эссенции втрое больше/);
   });
 
-  it('стартовый набор в поле — отказ с причиной первой строкой после заголовка', () => {
-    const lines = fieldSalvageLines(reg, starter(), emptyJournal());
-    expect(lines[1]).toMatchObject({ tone: 'warn' });
-    expect(lines[1]!.text).toMatch(/^Стартовый набор сырья не даёт/);
+  it('стартовый набор в поле — отказ: ТОЛЬКО «Разобрать нельзя» и причина, без строк «что вышло бы» (как верстак кузницы)', () => {
+    // ⚠ Было: заголовок «Разобрать здесь (30 %)» и четыре строки под причиной — «Эскиз: копит только разбор у кузнеца (меч 0/8)» у вещи,
+    // которую в поле не разобрать вовсе.
+    expect(fieldSalvageLines(reg, starter(), emptyJournal())).toEqual([
+      { text: 'Разобрать нельзя', tone: 'title' }, { text: STARTER_FIELD, tone: 'warn' },
+    ]);
+  });
+
+  it('отказ извне («сумка полна» — карточка разбор считает возможным): заголовок «Разобрать нельзя», причина и карточка целиком', () => {
+    const it0 = { ...found(), rarity: 'magic' as const };
+    const full = fieldSalvageLines(reg, it0, emptyJournal(), FIELD_SALVAGE_FULL);
+    const card = fieldSalvageLines(reg, it0, emptyJournal());
+    expect(full.slice(0, 2)).toEqual([{ text: 'Разобрать нельзя', tone: 'title' }, { text: FIELD_SALVAGE_FULL, tone: 'warn' }]);
+    expect(full.slice(2), 'что вышло бы, освободи место, — правда').toEqual(card.slice(1));
   });
 });
 

@@ -10,6 +10,8 @@ import { itemTooltipHtml, setItemLabelResolvers } from './itemView.js';
  * плашкой, не строкой сетки; подсказки говорят откуда, куда и почём (D4: всё сырьё и эссенция продаются).
  */
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
+/** Строки подсказки текстом: по строке на `<div>`, без разметки. */
+const textLines = (html: string): string[] => html.split('</div>').map((x) => x.replace(/<[^>]+>/g, '')).filter(Boolean);
 
 describe('materialsModel — склад сырья', () => {
   const m = materialsModel(reg, { 'iron-1': 40, 'hide-4': 2, [ESSENCE_ID]: 7 }, []);
@@ -104,6 +106,30 @@ describe('подсказка вещи — сырьё цветом сорта и 
     expect(html).toContain('Железо · V сорт');
     expect(html).toContain('Продажа: 15 за штуку');
     expect(materialNote(reg, materialItem(reg.get('craft-materials').find((x) => x.id === ESSENCE_ID)!, 1, 'e'))?.color).toBe(ESSENCE_HEX);
+    expect(textLines(html).slice(0, 3)).toEqual([st.name, 'Сырьё · в стеке 3', 'Сдаётся в сундук, тратится у кузнеца']);
+  });
+
+  it('⭐ стопка эссенции: имя из конфига, «Валюта чар · в стеке N» (имя не повторено), откуда, куда, цена — и ни «Сырьё», ни «Не сырьё»', () => {
+    const d = reg.get('craft-materials').find((x) => x.id === ESSENCE_ID)!;
+    const s = reg.get('balance').salvage;
+    const html = itemTooltipHtml(materialItem(d, 2, 'e'));
+    expect(html).toContain(`color:${ESSENCE_HEX}`);
+    // Было: «Сырьё · в стеке 2» (describeItem) и строкой ниже «Не сырьё — валюта чар» (materialNote) — подсказка спорила сама с собой.
+    expect(textLines(html)).toEqual([
+      d.name,
+      'Валюта чар · в стеке 2',
+      'Сдаётся в сундук, тратится у кузнеца',
+      `Откуда: разбор у кузнеца найденных вещей и наград — магическая ${(s.essence as Record<string, number>).magic}, редкая ${(s.essence as Record<string, number>).rare}; в поле — ${Math.round(s.fieldYield * 100)} %`,
+      'Купленное, стартовое, вещи прежней версии и переплавка эссенции не дают',
+      'Куда: зачарование скованной вещи и перекатка свойств',
+      `Продажа: ${d.sellPrice} за штуку`,
+    ]);
+    expect(textLines(html).slice(3)).toContain('Откуда: разбор у кузнеца найденных вещей и наград — магическая 1, редкая 2; в поле — 30 %');
+    // Имя — только первой строкой (из конфига): строка вида его не повторяет и не держит зашитым («Чародейская эссенция · валюта чар» было).
+    expect(textLines(html).filter((l) => l.includes(d.name))).toEqual([d.name]);
+    expect(textLines(itemTooltipHtml(materialItem({ ...d, name: 'Пыль чар' }, 2, 'e'))).slice(0, 2)).toEqual(['Пыль чар', 'Валюта чар · в стеке 2']);
+    // Плашка склада стоит под сеткой сырья — там «не сырьё» и остаётся (и сколько где лежит).
+    expect(materialsModel(reg, { [ESSENCE_ID]: 4 }, []).essence!.tip.slice(0, 2)).toEqual([d.name, 'Не сырьё — валюта чар']);
   });
 
   it('купленная, поднятая кузнецом, вещь прежней версии — строкой; находка — молча', () => {

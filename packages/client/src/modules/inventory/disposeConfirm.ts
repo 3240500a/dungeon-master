@@ -1,5 +1,6 @@
 import {
-  salvageJournalGains, salvageMean, salvagePreview, salvageRange, type ConfigRegistry, type CraftJournal, type Item, type SalvageCardLine,
+  FIELD_SALVAGE_FULL, canSalvageItem, fieldSalvageFits, salvageJournalGains, salvageMean, salvagePreview, salvageRange,
+  type ConfigRegistry, type CraftJournal, type Item, type SalvageCardLine,
 } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { askInGame } from '../../ui/kit.js';
@@ -36,19 +37,51 @@ export function journalGainsOf(reg: ConfigRegistry, item: Item, journal: CraftJo
  * заголовок, «Сырьё: ≈ …», «Эссенция: ≈ 0–1 / нет — почему», эскиз и мягкая подсказка «у кузнеца втрое больше…». Строки КАТАЛОГА нет:
  * разбор в поле каталог не пишет вовсе (решение владельца D2) — что потеряешь, говорит подсказка и вопрос перед разбором. Всё — из
  * `salvagePreview` (те же функции, что у разбора сервера); своих правил здесь нет.
+ * Подсказка погашенного пункта «Разобрать нельзя: …» (`fieldSalvageEntry`) — отсюда же, заголовком «Разобрать нельзя» («Переплавить нельзя»
+ * у скованной — глагол карточки), а не «Разобрать здесь (30 %)»:
+ * - разбор НЕВОЗМОЖЕН (`salvagePreview().ok` — нет: стартовый набор, уник, «ничего не дал бы»…) — ТОЛЬКО заголовок и причина, как у верстака
+ *   кузницы (`benchActions`: `lines: can.ok ? four : [причина]`). ⚠ Было: и тут четыре строки «что вышло бы» — у отказа они лгали
+ *   («Эссенция: нет — материал выключен» у уника, «Эскиз: копит только разбор у кузнеца (меч 0/8)» у стартового меча);
+ * - разбор возможен, но мешает то, чего карточка сама не знает (сумка полна — `fieldSalvageFits`, приходит `refusal`), — причина после
+ *   заголовка и карточка целиком: что вышло бы, освободи место, — правда.
  */
-export function fieldSalvageLines(reg: ConfigRegistry, item: Item, journal: CraftJournal | null | undefined): { text: string; tone: SalvageCardLine['tone'] | 'title' | 'hint' }[] {
+export function fieldSalvageLines(
+  reg: ConfigRegistry, item: Item, journal: CraftJournal | null | undefined, refusal?: string,
+): { text: string; tone: SalvageCardLine['tone'] | 'title' | 'hint' }[] {
   const c = salvagePreview(reg, item, journal, true);
   const line = (l: SalvageCardLine): { text: string; tone: SalvageCardLine['tone'] } => ({ text: `${l.label}: ${l.text}`, tone: l.tone });
+  const no = `${c.verb === 'melt' ? 'Переплавить' : 'Разобрать'} нельзя`;
+  if (!c.ok) return [{ text: no, tone: 'title' }, { text: c.reason ?? refusal ?? 'нельзя', tone: 'warn' }];
   return [
-    { text: c.title, tone: 'title' },
-    ...(c.ok ? [] : [{ text: c.reason ?? 'нельзя', tone: 'warn' as const }]),
+    { text: refusal ? no : c.title, tone: 'title' },
+    ...(refusal ? [{ text: refusal, tone: 'warn' as const }] : []),
     line(c.materials),
     line(c.essence),
     ...(c.catalog ? [line(c.catalog)] : []),
     ...(c.sketch ? [line(c.sketch)] : []),
     ...(c.hint ? [{ text: c.hint[0]!.toUpperCase() + c.hint.slice(1), tone: 'hint' as const }] : []),
   ];
+}
+
+/**
+ * ⭐ ПУНКТ «РАЗОБРАТЬ» МЕНЮ ПРЕДМЕТА В ПОЛЕ — одно решение для меню инвентаря (`inventoryPanel.ts`) и эталона Unity (`unity_panels.json`,
+ * `menu`): можно — «Разобрать здесь (30 %)»; нельзя — пункт ОСТАЁТСЯ, погашенный, с причиной в подписи («Разобрать нельзя: …», как
+ * «Надеть нельзя: …»), а подсказка — из карточки разбора в поле (`fieldSalvageLines`: «Разобрать нельзя» и почему). Причины — все отказы
+ * разбора в поле (`canSalvageItem` — тот же ответ, что у сервера): стартовый набор (`STARTER_FIELD`), уник, «ничего не дал бы», переплавка
+ * ни с чем; и место — сырьё лучшего броска не ляжет в сумку (`fieldSalvageFits`, V-B3-04).
+ * ⚠ Было: при отказе `canSalvageItem` пункт молча пропадал — стартовый меч в подземелье разбирать «не предлагалось» без объяснения.
+ * Зелья и сырьё (`null`): разбор к ним не относится вовсе — пункт «нельзя» висел бы на каждой склянке и стопке.
+ */
+export interface FieldSalvageEntry { label: string; ok: boolean; reason?: string }
+export function fieldSalvageEntry(reg: ConfigRegistry, inventory: readonly Item[], item: Item): FieldSalvageEntry | null {
+  if (item.kind === 'consumable' || item.kind === 'material') return null;
+  const can = canSalvageItem(reg, item, true);
+  if (!can.ok) {
+    const reason = can.reason ?? 'Эту вещь не из чего разбирать';
+    return { label: `Разобрать нельзя: ${reason}`, ok: false, reason };
+  }
+  if (!fieldSalvageFits(reg, inventory, item)) return { label: 'Разобрать нельзя: сумка полна', ok: false, reason: FIELD_SALVAGE_FULL };
+  return { label: `Разобрать здесь (${Math.round(reg.get('balance').salvage.fieldYield * 100)} %)`, ok: true };
 }
 
 /** Где вещь исчезает: разбор в поле, разбор (переплавка) у кузнеца, продажа. */

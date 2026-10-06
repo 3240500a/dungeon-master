@@ -127,20 +127,25 @@ function cellTip(reg: ConfigRegistry, d: { id: string; name: string; family: str
   return lines;
 }
 
-/** Подсказка эссенции: откуда (разбор у кузнеца найденных магических и редких, в поле — доля), куда (чары), где лежит, цена. */
-function essenceTip(reg: ConfigRegistry, d: { name: string; sellPrice: number }, stash: number, hand: number): string[] {
+/** Откуда эссенция (разбор у кузнеца найденных магических и редких, в поле — доля), чьи вещи её не дают и куда идёт (чары). */
+function essenceAbout(reg: ConfigRegistry): string[] {
   const s = reg.get('balance').salvage;
   const e = s.essence as Record<string, number>;
-  const lines = [
-    d.name,
-    'Не сырьё — валюта чар',
+  return [
     `Откуда: разбор у кузнеца найденных вещей и наград — магическая ${e.magic ?? 0}, редкая ${e.rare ?? 0}; в поле — ${Math.round(s.fieldYield * 100)} %`,
     'Купленное, стартовое, вещи прежней версии и переплавка эссенции не дают',
     'Куда: зачарование скованной вещи и перекатка свойств',
-    `В сундуке ${stash}`,
   ];
+}
+
+/** Цена продажи строкой — общая для сырья и эссенции. */
+const saleLine = (price: number): string => (price > 0 ? `Продажа: ${price} за штуку` : 'Не продаётся');
+
+/** Подсказка плашки эссенции склада: имя, «не сырьё — валюта чар» (плашка стоит под сеткой сырья), откуда, куда, где лежит, цена. */
+function essenceTip(reg: ConfigRegistry, d: { name: string; sellPrice: number }, stash: number, hand: number): string[] {
+  const lines = [d.name, 'Не сырьё — валюта чар', ...essenceAbout(reg), `В сундуке ${stash}`];
   if (hand > 0) lines.push(`В сумке ${hand} — часть потеряешь при смерти`);
-  lines.push(d.sellPrice > 0 ? `Продажа: ${d.sellPrice} за штуку` : 'Не продаётся');
+  lines.push(saleLine(d.sellPrice));
   return lines;
 }
 
@@ -187,16 +192,15 @@ export function materialsModel(reg: ConfigRegistry, stashWallet: Record<string, 
 
 /**
  * Подсказка СТОПКИ сырья в сумке (§15.4): «семья · сорт», откуда, куда, цена — та же, что у клетки склада; цвет имени — цвет сорта.
+ * Эссенция — откуда, куда, цена; вид («Валюта чар · в стеке N») говорит первая строка `describeItem` над этими
+ * строками. ⚠ Было: там стояло «Сырьё · в стеке N», а здесь — «Не сырьё — валюта чар»: подсказка одной стопки спорила сама с собой.
  * Не сырьё или материала нет в конфиге — `null`.
  */
 export function materialNote(reg: ConfigRegistry, item: Pick<Item, 'kind' | 'materialId'>): { color: string; lines: string[] } | null {
   if (item.kind !== 'material' || !item.materialId) return null;
   const d = reg.get('craft-materials').find((m) => m.id === item.materialId);
   if (!d) return null;
-  if (d.family === ESSENCE_FAMILY) {
-    const tip = essenceTip(reg, d, 0, 0);
-    return { color: ESSENCE_HEX, lines: tip.filter((l, i) => i > 0 && !/^В (сундуке|сумке) /.test(l)) };
-  }
+  if (d.family === ESSENCE_FAMILY) return { color: ESSENCE_HEX, lines: [...essenceAbout(reg), saleLine(d.sellPrice)] };
   const tip = cellTip(reg, d, 0, 0, forgeFamilies(reg).has(d.family));
   return { color: gradeHex(d.tier), lines: tip.filter((l, i) => i > 0 && !/^В (сундуке|сумке) /.test(l)) };
 }

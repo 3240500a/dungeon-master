@@ -89,18 +89,24 @@ function itemEl(item: Item, h: GridHandlers): HTMLElement {
 
 // ── Контекст-меню (общее для инвентаря/сундука) ──────────────────────────────
 let openMenu: HTMLElement | null = null;
-/** Пункт меню: подпись, действие и (опц.) подсказка HTML при наведении — карточка «что выйдет» у «Разобрать здесь». */
-export interface MenuOption { label: string; run: () => void; tip?: () => string }
+/**
+ * Пункт меню: подпись, действие и (опц.) подсказка HTML при наведении — карточка «что выйдет» у «Разобрать здесь».
+ * `disabled` — пункт-пояснение «… нельзя: почему» (как у Unity `DmMenu`: пункт без действия — серым): тусклый, на клик не отвечает,
+ * подсказка остаётся — она и объясняет.
+ */
+export interface MenuOption { label: string; run: () => void; tip?: () => string; disabled?: boolean }
 export function showContextMenu(x: number, y: number, options: MenuOption[]): void {
   openMenu?.remove();
   const menu = mk('div',
     `position:fixed;left:${x}px;top:${y}px;z-index:10001;background:${COLORS.panel2};` +
     `border:1px solid ${COLORS.borderHi};border-radius:6px;padding:4px;min-width:150px;box-shadow:0 6px 20px rgba(0,0,0,0.5)`);
   for (const opt of options) {
-    const b = mk('div', `padding:6px 10px;cursor:pointer;border-radius:4px;font-size:13px;color:${COLORS.text}`, opt.label);
-    b.addEventListener('mouseenter', () => (b.style.background = COLORS.border));
-    b.addEventListener('mouseleave', () => (b.style.background = 'transparent'));
-    b.addEventListener('click', () => { close(); opt.run(); });
+    const b = mk('div', `padding:6px 10px;cursor:${opt.disabled ? 'default' : 'pointer'};border-radius:4px;font-size:13px;color:${opt.disabled ? COLORS.dim : COLORS.text}`, opt.label);
+    if (!opt.disabled) {
+      b.addEventListener('mouseenter', () => (b.style.background = COLORS.border));
+      b.addEventListener('mouseleave', () => (b.style.background = 'transparent'));
+      b.addEventListener('click', () => { close(); opt.run(); });
+    }
     if (opt.tip) attachTooltip(b, opt.tip);
     menu.appendChild(b);
   }

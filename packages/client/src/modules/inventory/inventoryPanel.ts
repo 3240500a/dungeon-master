@@ -8,8 +8,7 @@ import { rarityHex } from '../loot/rarity.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { GLYPH, getHeld, beginHold, clearHeld, dropCell, resolveHeldOnClose, setLastPointer } from './heldItem.js';
 import { renderGrid, showContextMenu, type MenuOption } from './gridView.js';
-import { canSalvageItem, fieldSalvageFits } from '@dm/shared';
-import { fieldSalvageLines, salvageInField } from './disposeConfirm.js';
+import { fieldSalvageEntry, fieldSalvageLines, salvageInField } from './disposeConfirm.js';
 
 /**
  * Инвентарь + пупсик экипировки. Раскладка (item.pos) АВТОРИТЕТНА НА СЕРВЕРЕ: клиент только
@@ -133,29 +132,25 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
       ]
     : item.broken
       // Сломанное не предлагаем надеть вовсе: сервер всё равно откажет, а пункт меню врал бы.
-      ? [{ label: 'Сломано — к кузнецу', run: () => {} }]
+      ? [{ label: 'Сломано — к кузнецу', run: () => {}, disabled: true }]
       : !item.slot
         ? []   // не носится (сырьё): «Надеть» сервер отказал бы всегда
         : wear
-          ? [{ label: `Надеть нельзя: ${wear}`, run: () => {} }]
+          ? [{ label: `Надеть нельзя: ${wear}`, run: () => {}, disabled: true }]
           : [{ label: 'Надеть', run: () => { app.sendCmd({ cmd: 'equip', uid: item.uid }); } }];
   actions.push({ label: 'Выбросить', run: () => app.sendCmd({ cmd: 'drop', uid: item.uid }) });
   // Разбор НА МЕСТЕ: выход меньше, чем у кузнеца, зато нести ничего не надо и при смерти
   // не потеряешь. В городе пункта нет — там кузница выгоднее всегда (docs/ECONOMY.md, ч3).
   if (app.state!.area !== 'town') {
-    const can = canSalvageItem(app.config, item, true);
-    const pct = Math.round(app.config.get('balance').salvage.fieldYield * 100);
     // Перед разбором — вопросы (`disposeConfirm`): скованное спрашивает дважды, найденное с деталью,
     // которой нет в журнале кузнеца, — предупреждает, что поле её не откроет (§12.2). ⚠ Вопрос — В ИГРЕ, а не
     // `window.confirm`: рядом монстры, и замороженная страница оставила бы героя под ударами (R1-14).
     // ⭐ V-B3-04: и место — сырьё лучшего броска ляжет в сумку (`fieldSalvageFits`, то же правило у сервера). Иначе пункт
     // предлагал разбор, игрок отвечал на оба вопроса о скованной вещи — и сервер отказывал «Сумка полна».
-    if (can.ok && fieldSalvageFits(app.config, app.state!.save.inventory, item)) {
-      actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); }, tip: () => fieldSalvageTip(app, item) });
-    } else if (can.ok) {
-      // Разбирается, но некуда — сказать, а не молча убрать пункт (как «Сломано — к кузнецу»).
-      actions.push({ label: 'Разобрать нельзя: сумка полна', run: () => {} });
-    }
+    // Нельзя (стартовый набор, уник, сумка полна…) — пункт погашен и говорит почему, а не пропадает молча (`fieldSalvageEntry`).
+    const entry = fieldSalvageEntry(app.config, app.state!.save.inventory, item);
+    if (entry?.ok) actions.push({ label: entry.label, run: () => { void salvageInField(app, item); }, tip: () => fieldSalvageTip(app, item) });
+    else if (entry) actions.push({ label: entry.label, run: () => {}, disabled: true, tip: () => fieldSalvageTip(app, item, entry.reason) });
   }
   showContextMenu(x, y, actions);
 }
@@ -163,10 +158,12 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
 /**
  * ⭐ §15.2: подсказка пункта «Разобрать здесь» — карточка разбора в поле (`fieldSalvageLines`): что выйдет («≈», «0–1»), эссенция,
  * эскиз и «у кузнеца втрое больше…». Без неё пункт меню обещал «30 %» неизвестно чего. Каталога в ней нет — поле его не пишет (D2).
+ * У погашенного «Разобрать нельзя: …» — заголовок «Разобрать нельзя» и причина; у «сумка полна» (`refusal`: её карточка сама не знает) —
+ * и карточка целиком (что вышло бы, освободи место).
  */
-function fieldSalvageTip(app: App, item: Item): string {
+function fieldSalvageTip(app: App, item: Item, refusal?: string): string {
   const color = { title: COLORS.text, gain: COLORS.good, dim: COLORS.dim, warn: COLORS.accent, hint: COLORS.info } as const;
-  return fieldSalvageLines(app.config, item, app.stash?.forgeJournal).map((l, i) =>
+  return fieldSalvageLines(app.config, item, app.stash?.forgeJournal, refusal).map((l, i) =>
     `<div style="color:${color[l.tone]}${i === 0 ? ';font-weight:bold;margin-bottom:3px' : ''}">${l.text}</div>`).join('');
 }
 

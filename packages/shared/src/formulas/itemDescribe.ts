@@ -1,6 +1,7 @@
 import type { Item } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import { DEFAULT_GRIP, gripAdjust, isVersatile, type GripTuning } from './versatile.js';
+import { ESSENCE_ID } from './salvage.js';
 
 /**
  * ЕДИНЫЙ форматтер описания предмета (без DOM/Phaser) — используется и игрой (клиентский itemView),
@@ -58,6 +59,12 @@ export interface ItemLabels {
   skill: (id: string) => string;
   dmgShort: (dt: string) => string;
 }
+
+/**
+ * Вид стопки ЭССЕНЦИИ в подсказке (вместо «Сырьё» у прочих материалов): «Валюта чар · в стеке N». Имени материала здесь нет: его говорит
+ * первая строка подсказки (имя вещи из `craft-materials`), а повтор зашитым текстом разошёлся бы с конфигом при первом же переименовании.
+ */
+export const ESSENCE_KIND = 'Валюта чар';
 
 /** Подпись слота после имени (расходники — без слота). */
 export function slotSuffix(item: Item): string {
@@ -135,8 +142,11 @@ export function weaponSpeedOf(item: Pick<Item, 'baseStats'>): number {
 export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   if (item.kind === 'consumable') return consumableLines(item).map((text) => ({ text, affix: false }));
   // Материал: ни статов, ни требований — только сколько и на что годится.
+  // ⚠ Эссенция — НЕ сырьё (валюта чар, своя семья вне лестницы сортов): строкой «Сырьё · в стеке 2» над «Не сырьё — валюта чар» подсказка
+  // стопки противоречила сама себе. Вид у неё свой (`ESSENCE_KIND`); откуда, куда и цена — строками `materialNote` клиента, как у сырья.
   if (item.kind === 'material') {
-    return [{ text: `Сырьё · в стеке ${item.count ?? 1}`, affix: false },
+    const kind = item.materialId === ESSENCE_ID ? ESSENCE_KIND : 'Сырьё';
+    return [{ text: `${kind} · в стеке ${item.count ?? 1}`, affix: false },
             { text: 'Сдаётся в сундук, тратится у кузнеца', affix: false }];
   }
   const out: ItemLine[] = [];

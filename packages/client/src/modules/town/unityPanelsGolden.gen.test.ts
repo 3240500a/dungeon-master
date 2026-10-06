@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   ATTRIBUTES, ALLOC_ATTR_MAX, CRAFT_SLOT_LIST, ESSENCE_ID, ConfigRegistry, activeToggleInfos, attrRespecRefund, baseTierRange, canEnchantItem,
-  STARTER_FIELD, UNIQUE_NO_SALVAGE, canRepairItem, canSalvageItem, carriedMaterials, equipRefusal, craftTiers, craftWeapon, createRng, debuffIcon, debuffLabel, enchantCost, enchantItem,
+  FIELD_SALVAGE_FULL, STARTER_FIELD, UNIQUE_NO_SALVAGE, canRepairItem, canSalvageItem, carriedMaterials, equipRefusal, craftTiers, craftWeapon, createRng, debuffIcon, debuffLabel, enchantCost, enchantItem,
   enchantMaterials, rerollMaterials,
   fieldSalvageFits, fullJournal, emptyJournal, generateBoard, generateItem, insertById, insertFits, insertRank, insertUnlocked,
   itemFromBaseId, keySlotOf, keyVariantsByBase, materialItem, newCharacterSave, partsOf, questRival, repairCost, resolveActive,
@@ -31,7 +31,7 @@ import {
   type Attribute, type CraftJournal, type CraftParts, type DebuffKind, type Item, type QuestDef, type SalvageRng, type SaveState,
 } from '@dm/shared';
 import { benchActions, benchTarget, benchTargetLabel } from './forgeActions.js';
-import { disposePrompts, fieldSalvageLines, journalGainsOf } from '../inventory/disposeConfirm.js';
+import { disposePrompts, fieldSalvageEntry, fieldSalvageLines, journalGainsOf } from '../inventory/disposeConfirm.js';
 import { materialNote, materialsModel } from '../inventory/materialsModel.js';
 import { attrAllocCommands } from '../progression/allocAttrs.js';
 import { elementOf } from '../skills/skillIcon.js';
@@ -91,15 +91,16 @@ const SRC: [string, string][] = [
   // меню предмета (inventoryPanel.ts)
   [INV, "{ label: 'Выпить', run: () => app.sendCmd({ cmd: 'useConsumable', uid: item.uid }) },"],
   [INV, "{ label: 'В пояс', run: () => app.sendCmd({ cmd: 'moveBelt', uid: item.uid }) },"],
-  [INV, "? [{ label: 'Сломано — к кузнецу', run: () => {} }]"],
-  [INV, '? [{ label: `Надеть нельзя: ${wear}`, run: () => {} }]'],
+  [INV, "? [{ label: 'Сломано — к кузнецу', run: () => {}, disabled: true }]"],
+  [INV, '? [{ label: `Надеть нельзя: ${wear}`, run: () => {}, disabled: true }]'],
   [INV, ": [{ label: 'Надеть', run: () => { app.sendCmd({ cmd: 'equip', uid: item.uid }); } }];"],
   [INV, "actions.push({ label: 'Выбросить', run: () => app.sendCmd({ cmd: 'drop', uid: item.uid }) });"],
   [INV, "if (app.state!.area !== 'town') {"],
-  [INV, "const pct = Math.round(app.config.get('balance').salvage.fieldYield * 100);"],
-  [INV, 'actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); }, tip: () => fieldSalvageTip(app, item) });'],
-  [INV, 'return fieldSalvageLines(app.config, item, app.stash?.forgeJournal).map((l, i) =>'],
-  [INV, "actions.push({ label: 'Разобрать нельзя: сумка полна', run: () => {} });"],
+  // пункт разбора в поле — настоящая функция (`fieldSalvageEntry`, disposeConfirm.ts): «Разобрать здесь» или погашенный «Разобрать нельзя: …»
+  [INV, 'const entry = fieldSalvageEntry(app.config, app.state!.save.inventory, item);'],
+  [INV, 'if (entry?.ok) actions.push({ label: entry.label, run: () => { void salvageInField(app, item); }, tip: () => fieldSalvageTip(app, item) });'],
+  [INV, 'else if (entry) actions.push({ label: entry.label, run: () => {}, disabled: true, tip: () => fieldSalvageTip(app, item, entry.reason) });'],
+  [INV, 'return fieldSalvageLines(app.config, item, app.stash?.forgeJournal, refusal).map((l, i) =>'],
   // задания (questLogPanel.ts)
   [QUESTS, "? '<span style=\"color:#8aa84a\">выполнено</span>'"],
   [QUESTS, "? '<span style=\"color:#8f897c\">сдано</span>'"],
@@ -572,27 +573,26 @@ function materialsCases() {
 
 // ── Меню предмета инвентаря (inventoryPanel.ts) ─────────────────────────────────────────────────
 function menuCases(items: Item[]) {
-  const pct = Math.round(reg.get('balance').salvage.fieldYield * 100);
   const s0 = newCharacterSave(reg, 'warrior', 'golden', 'golden');
   const out = [];
   for (const [k, item] of items.entries()) {
-    if (k % 3 !== 0 && item.kind !== 'consumable' && item.kind !== 'material') continue;   // треть вещей хватает: меню решают те же правила
+    // Треть вещей хватает: меню решают те же правила. Зелья, сырьё и каждая вещь с отказом разбора в поле — все: пункт «Разобрать нельзя: …».
+    if (k % 3 !== 0 && item.kind !== 'consumable' && item.kind !== 'material' && canSalvageItem(reg, item, true).ok) continue;
     const bagItem = { ...item, pos: { x: 9, y: 5 } };
     for (const [bagName, bag] of [['alone', [bagItem]], ['full', fullBag([bagItem])]] as [string, Item[]][]) {
       const save: SaveState = { ...s0, inventory: bag, attributes: { strength: 40, dexterity: 40, intelligence: 40, vitality: 40 } };
       for (const town of [true, false]) {
         const wear = item.slot ? reqRefusal(save, item) : null;
-        const labels: string[] = item.kind === 'consumable' ? ['Выпить', 'В пояс']
-          : item.broken ? ['Сломано — к кузнецу'] : !item.slot ? [] : wear ? [`Надеть нельзя: ${wear}`] : ['Надеть'];
-        labels.push('Выбросить');
-        if (!town) {
-          const can = canSalvageItem(reg, item, true);
-          if (can.ok && fieldSalvageFits(reg, save.inventory, bagItem)) labels.push(`Разобрать здесь (${pct} %)`);
-          else if (can.ok) labels.push('Разобрать нельзя: сумка полна');
-        }
-        // ⭐ §15.2: подсказка пункта «Разобрать здесь» — карточка разбора в поле (без строки каталога, D2), журнала нет — как пустой.
-        const tip = !town && labels.at(-1)?.startsWith('Разобрать здесь') ? fieldSalvageLines(reg, item, null) : null;
-        out.push({ uid: item.uid, bag: bagName, town, attributes: save.attributes, labels, ...(tip ? { tip } : {}) });
+        // Пункт и живой ли он: пункт-пояснение («Сломано…», «Надеть нельзя: …», «Разобрать нельзя: …») погашен — у Unity действие `null`.
+        const rows: [string, boolean][] = item.kind === 'consumable' ? [['Выпить', true], ['В пояс', true]]
+          : item.broken ? [['Сломано — к кузнецу', false]] : !item.slot ? [] : wear ? [[`Надеть нельзя: ${wear}`, false]] : [['Надеть', true]];
+        rows.push(['Выбросить', true]);
+        const entry = town ? null : fieldSalvageEntry(reg, save.inventory, bagItem);
+        if (entry) rows.push([entry.label, entry.ok]);
+        // ⭐ §15.2: подсказка пункта разбора — карточка разбора в поле (без строки каталога, D2), журнала нет — как пустой; у погашенного —
+        // «Разобрать нельзя» и причина; «сумка полна» (карточка сама не знает — `refusal`) — причина и карточка целиком.
+        const tip = entry ? fieldSalvageLines(reg, item, null, entry.reason) : null;
+        out.push({ uid: item.uid, bag: bagName, town, attributes: save.attributes, labels: rows.map((r) => r[0]), live: rows.map((r) => r[1]), ...(tip ? { tip } : {}) });
       }
     }
   }
@@ -714,6 +714,20 @@ describe('unityPanelsGolden — продюсер эталона панелей (
     expect(materials.cases[2]!.view.essence?.hand).toBe(17);
     expect(v1.rule).toBe('Разбор: сырьё — по ступени вещи, эссенция — по редкости, детали — в каталог (у кузнеца)');
     expect(materials.notes.every((n) => n.note && n.note.lines.length > 2)).toBe(true);
+    // Стопка эссенции: вид говорит `describeItem` («Валюта чар · в стеке N»), здесь — откуда, куда, цена, без «Не сырьё».
+    expect(materials.notes.find((n) => n.id === ESSENCE_ID)!.note!.lines.some((l) => /сырь/i.test(l))).toBe(false);
+    // Отказ разбора в поле — пунктом с причиной и подсказкой, а не пропавшим пунктом: стартовый набор, уник, сумка полна.
+    const menu = menuCases(items.map((c) => c.item));
+    for (const r of [STARTER_FIELD, UNIQUE_NO_SALVAGE, 'сумка полна'])
+      expect(menu.some((m) => m.labels.at(-1) === `Разобрать нельзя: ${r}` && m.live.at(-1) === false && m.tip), `меню: ${r}`).toBe(true);
+    // Подсказка погашенного — заголовок по отказу («… нельзя», не «Разобрать здесь (30 %)»); разбор невозможен — только он и причина из
+    // подписи (как верстак кузницы), «сумка полна» — причина и карточка целиком (разбор возможен, мешает место).
+    for (const m of menu.filter((x) => x.live.at(-1) === false && x.labels.at(-1)!.startsWith('Разобрать нельзя: '))) {
+      const why = m.labels.at(-1)!.slice('Разобрать нельзя: '.length);
+      expect(m.tip![0]!.text, m.uid).toMatch(/^(Разобрать|Переплавить) нельзя$/);
+      if (why === 'сумка полна') expect(m.tip!.length > 2 && m.tip![1]!.text === FIELD_SALVAGE_FULL, m.uid).toBe(true);
+      else expect(m.tip!.slice(1), m.uid).toEqual([{ text: why, tone: 'warn' }]);
+    }
     const golden = {
       note: 'Эталон паритета Unity ↔ веб для недостающих панелей (U6a). Генерит packages/client/src/modules/town/unityPanelsGolden.gen.test.ts.',
       config: {
@@ -753,7 +767,7 @@ describe('unityPanelsGolden — продюсер эталона панелей (
       attrs,
       quests,
       materials,
-      menu: menuCases(items.map((c) => c.item)),
+      menu,
       belt: beltCases(),
       debuffs: debuffCases(),
       auras: auraCases(),
