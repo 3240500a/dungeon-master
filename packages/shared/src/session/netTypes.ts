@@ -174,7 +174,8 @@ export interface WorldSnapshot {
 // ⭐ R5-15: `maxGold` у платных команд — цена в золоте, которую показала игроку карточка. Сервер берёт по СВОЕМУ конфигу
 // и при цене выше показанной отказывает до траты («Цена изменилась: N золота», `priceRaised`). Нет поля — как раньше.
 // R6-16: и у покупки в лавке, и у узла мастерства; у продажи — `minGold`: лавка даёт меньше показанного — отказ.
-// ⭐ R8-14: и сырьё — `maxMaterials` (ковка, улучшение, починка: больше показанного — отказ), и выход разбора — `minYield`
+// ⭐ R8-14: и сырьё — `maxMaterials` (ковка, улучшение, починка, а с §6.2 — эссенция перекатки и зачарования: больше показанного —
+// отказ), и выход разбора — `minYield`
 // (нижняя граница вилки «от–до»: меньше — отказ, вещь цела). id материала → число; нет поля — как раньше.
 // R9-04: у разборов ещё `avgYield` — средний выход карточки (`salvageMean`): низ дробной доли — 0 при любой правке выхода.
 // ⭐ V-B3-07: у команд кузницы, скупки и разбора (`CONFIG_CONSENT_CMDS`) — `cfgRev`, ревизия конфига, с которого нарисовано окно
@@ -184,7 +185,8 @@ export type TownCommand =
   | { cmd: 'buy'; uid: string; maxGold?: number }
   | { cmd: 'sell'; uid: string; minGold?: number; cfgRev?: string; build?: string }
   | { cmd: 'forgeUpgrade'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
-  | { cmd: 'forgeReroll'; uid: string; maxGold?: number; cfgRev?: string; build?: string }
+  /** Перекатка свойств: золото и эссенция (§6.2) — из сумки, недостающее из сундука. */
+  | { cmd: 'forgeReroll'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
   /** Починка сломанного трофея: снимает флаг за золото и материалы. */
   | { cmd: 'forgeRepair'; uid: string; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
   /** Сдать всё сырьё из сумки в общий сундук аккаунта. */
@@ -198,8 +200,8 @@ export type TownCommand =
    * `{id, step}` четырёх гнёзд, хват и доводка: базу, имя, ступень и цену сервер выводит сам.
    */
   | { cmd: 'craft'; nonce: string; input: CraftInput; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
-  /** Зачаровать СКОВАННУЮ обычную вещь из сумки до магической или редкой — за золото (§13). */
-  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number; cfgRev?: string; build?: string }
+  /** Зачаровать СКОВАННУЮ обычную вещь из сумки до магической или редкой — за золото (§13) и эссенцию (§6.2). */
+  | { cmd: 'forgeEnchant'; uid: string; rarity: 'magic' | 'rare'; maxGold?: number; maxMaterials?: Record<string, number>; cfgRev?: string; build?: string }
   /**
    * Потратить эскиз (жалость разбора, §12): открыть в журнале аккаунта выбранную деталь `variantId`. Ключевую форму
    * НЕОТКРЫТОГО типа эскиз не открывает (`sketchable`). R3-11: раньше эскизы копились, а потратить их было нечем.
@@ -354,10 +356,11 @@ export type ServerFrame =
    * поэтому к приходу ответа у клиента уже новый сейв. `id` — номер из кадра `cmd` (если он был и
    * валиден); `cmd` — имя команды (у невалидной — как прислали, обрезанное); `uid` — вещь, которую
    * команда создала (ковка; на повтор ключа заявки — та же, что в первый раз) или переделала
-   * (зачарование); `unlocked` — что открылось в журнале кузнеца (разбор найденного у кузнеца).
+   * (зачарование); `unlocked` — что впервые открылось в каталоге кузнеца (разбор у кузнеца); ⭐ `summary` — итоговая строка разбора
+   * («Получено: … · Каталог: …», у кузнеца и в поле): есть ВСЕГДА у удачного разбора, даже когда нового в каталоге нет.
    * Старый кадр `error` на отказ остаётся — его читают прежние клиенты.
    */
-  | { t: 'cmdResult'; id?: number; cmd: string; ok: boolean; reason?: string; uid?: string; unlocked?: string[] }
+  | { t: 'cmdResult'; id?: number; cmd: string; ok: boolean; reason?: string; uid?: string; unlocked?: string[]; summary?: string }
   /**
    * Отказ. ⭐ C-05, C-08: `roomCode` — у отказа «Продолжить», чей забег ведёт другая комната (V2): `run` — она на другой ноде кластера, `full` —
    * в её пати нет мест. Клиент идёт по нему к ноде держателя (`join { resume }` там) или показывает лобби с этим кодом, а не только строку.

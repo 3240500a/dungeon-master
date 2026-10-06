@@ -9,9 +9,10 @@ import { newBotSave } from '../sim/playerBot.js';
 import { parseTownCommand } from '../session/netSchemas.js';
 import {
   allocPassive, buyItem, craftAction, enchantAction, fieldSalvage, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade,
-  passiveRespecFee, repairCost, respec, respecPassives, respecSkills, salvageRange, sellItem, shopBuyPrice, shopSellPrice, skillRespecFee,
-  upgradeCost,
+  passiveRespecFee, repairCost, respec, respecPassives, respecSkills, salvageMean, salvageRange, sellItem, shopBuyPrice, shopSellPrice, skillRespecFee,
+  upgradeCost, enchantMaterials, rerollMaterials,
 } from './townActions.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
 import { emptyStash } from './stashActions.js';
 import type { AccountStash } from '../types/stash.js';
 import type { CraftParts, Item } from '../types/items.js';
@@ -120,7 +121,7 @@ describe('⭐ R5-15: платные команды кузницы и сброс�
     const c = craftAction(after, save, stash, 'pc-nonce-ench', INPUT, createRng(3));
     const item = save.inventory.find((i) => i.uid === c.uid)!;
     consent(enchantCost(before, item, 'rare'), enchantCost(after, item, 'rare'),
-      (maxGold) => enchantAction(after, save, item.uid, 'rare', createRng(5), maxGold), save);
+      (maxGold) => enchantAction(after, save, item.uid, 'rare', createRng(5), maxGold, stash.materials), save, stash);
   });
 
   it('⭐ улучшение, перекатка, починка', () => {
@@ -129,8 +130,9 @@ describe('⭐ R5-15: платные команды кузницы и сброс�
     consent(forgeGold(before, up.inventory[0]!, 'upgrade'), forgeGold(after, up.inventory[0]!, 'upgrade'),
       (maxGold) => forgeUpgrade(after, up, 'pc-item', w1, maxGold), up, w1);
     const rr = hero(); rr.inventory = [found()];
+    const w3 = wallet();
     consent(forgeGold(before, rr.inventory[0]!, 'reroll'), forgeGold(after, rr.inventory[0]!, 'reroll'),
-      (maxGold) => forgeReroll(after, rr, 'pc-item', createRng(9), maxGold), rr);
+      (maxGold) => forgeReroll(after, rr, 'pc-item', createRng(9), maxGold, w3), rr, w3);
     const fx = hero(); fx.inventory = [found(true)];
     const w2 = wallet();
     consent(forgeGold(before, fx.inventory[0]!, 'repair'), forgeGold(after, fx.inventory[0]!, 'repair'),
@@ -150,12 +152,12 @@ describe('⭐ R5-15: платные команды кузницы и сброс�
   it('цена ниже показанной — не отказ; без `maxGold` (Unity, старая вкладка) — как раньше; кривой `maxGold` — отказ', () => {
     const cheap = hero(); cheap.inventory = [found()];
     const real = forgeGold(before, cheap.inventory[0]!, 'reroll');
-    expect(forgeReroll(before, cheap, 'pc-item', createRng(1), real * 2).ok).toBe(true);
+    expect(forgeReroll(before, cheap, 'pc-item', createRng(1), real * 2, wallet()).ok).toBe(true);
     const legacy = hero(); legacy.inventory = [found()];
-    expect(forgeReroll(after, legacy, 'pc-item', createRng(1)).ok).toBe(true);
+    expect(forgeReroll(after, legacy, 'pc-item', createRng(1), undefined, wallet()).ok).toBe(true);
     const bad = hero(); bad.inventory = [found()];
     const snap = frozen(bad);
-    expect(forgeReroll(after, bad, 'pc-item', createRng(1), Number.NaN).ok).toBe(false);
+    expect(forgeReroll(after, bad, 'pc-item', createRng(1), Number.NaN, wallet()).ok).toBe(false);
     expect(frozen(bad)).toBe(snap);
   });
 });
@@ -258,15 +260,18 @@ describe('⚠ R6-16: мастерство, покупка и продажа — 
  */
 describe('⚠ R8-14: сырьё и выход разбора — по тому, что показала карточка', () => {
   type Bal = {
-    craft: { cost: { units: Record<string, number> }; salvage: { units: Record<string, number> } };
+    craft: { cost: { units: Record<string, number>; essence: Record<string, number> }; salvage: { units: Record<string, number> } };
     forgePrices: { upgradeMaterials: Record<string, number>; repairMaterials: Record<string, number> };
   };
   const was = regWith();
   const dearer = regWith((d) => {
     const b = d.balance as unknown as Bal;
     b.craft.cost.units = { strike: 24, grip: 12, bind: 12, head: 12 };
-    b.forgePrices.upgradeMaterials = { tier1: 40, tier2: 10, tier3: 4 };
-    b.forgePrices.repairMaterials = { tier1: 30, tier2: 4, tier3: 2 };
+    // §7: основа подъёма вдвое (верх вилки разбора ×2), расходник 40; починка — 30 I + 4 главного сорта.
+    b.forgePrices.upgradeMaterials = { baseShare: 2, consumable: 40 };
+    b.forgePrices.repairMaterials = { consumable: 30, main: 4 };
+    // §6.2: эссенция чар и перекатки дороже.
+    b.craft.cost.essence = { base: 4, perTier: 3, rareMult: 2, rerollShare: 0.5 };
   });
   const leaner = regWith((d) => { (d.balance as unknown as Bal).craft.salvage.units = { strike: 1, grip: 1, bind: 0, head: 0 }; });
   const heroIn = (r: ConfigRegistry): SaveState => { const s = newBotSave(r, r.get('classes')[0]!.id); s.gold = 1_000_000; return s; };
@@ -311,6 +316,37 @@ describe('⚠ R8-14: сырьё и выход разбора — по тому, 
     }
   });
 
+  it('⭐ §6.2: перекатка и зачарование — эссенция карточки старого конфига (золото то же): отказ байт в байт; по новой — проходит', () => {
+    // Перекатка найденной магической.
+    const rr = heroIn(dearer); rr.inventory = [found()];
+    const w = walletIn(dearer);
+    const it0 = rr.inventory[0]!;
+    const shownR = rerollMaterials(was, it0), realR = rerollMaterials(dearer, it0);
+    expect(realR[ESSENCE_ID]!, 'правка подняла эссенцию перекатки').toBeGreaterThan(shownR[ESSENCE_ID]!);
+    const gold = forgeGold(dearer, it0, 'reroll');
+    const snap = frozen(rr, w);
+    const r = forgeReroll(dearer, rr, 'pc-item', createRng(1), gold, w, shownR);
+    expect(r.ok, 'было бы: молча брал больше эссенции').toBe(false);
+    expect(r.reason).toMatch(/^Цена изменилась: /);
+    expect(frozen(rr, w), 'отказ до траты').toBe(snap);
+    const ok = forgeReroll(dearer, rr, 'pc-item', createRng(1), gold, w, realR);
+    expect(ok.ok, ok.reason).toBe(true);
+    expect(w[ESSENCE_ID]).toBe(999 - realR[ESSENCE_ID]!);
+    // Зачарование скованной до редкой.
+    const save = heroIn(dearer), stash = stashIn(dearer);
+    const c = craftAction(dearer, save, stash, 'pc-ess-0001', INPUT, createRng(3));
+    const item = save.inventory.find((i) => i.uid === c.uid)!;
+    const shownE = enchantMaterials(was, item, 'rare'), realE = enchantMaterials(dearer, item, 'rare');
+    expect(realE[ESSENCE_ID]!).toBeGreaterThan(shownE[ESSENCE_ID]!);
+    const eGold = enchantCost(dearer, item, 'rare');
+    const eSnap = frozen(save, stash);
+    const e = enchantAction(dearer, save, item.uid, 'rare', createRng(5), eGold, stash.materials, shownE);
+    expect(e.ok).toBe(false);
+    expect(e.reason).toMatch(/^Цена изменилась: /);
+    expect(frozen(save, stash)).toBe(eSnap);
+    expect(enchantAction(dearer, save, item.uid, 'rare', createRng(5), eGold, stash.materials, realE).ok).toBe(true);
+  });
+
   it('⭐ разбор у кузнеца и в поле: вилка старого конфига, выход меньше — отказ, вещь цела; по новой — разбор', () => {
     const it0 = found();
     const shown = mins(was, it0, false), real = mins(leaner, it0, false);
@@ -323,11 +359,12 @@ describe('⚠ R8-14: сырьё и выход разбора — по тому, 
     expect(r.reason).toMatch(/^Цена изменилась: /);
     expect(frozen(save, stash)).toBe(snap);
     expect(forgeSalvage(leaner, save, stash, 'pc-item', createRng(1), real).ok).toBe(true);
+    // В поле низ вилки у оружия — 0 при любой правке (3 единицы × 0.3 < 1; надбавки редкости больше нет): правку видит СРЕДНЕЕ (R9-04).
     const field = heroIn(leaner); field.inventory = [{ ...it0 }];
     const fSnap = frozen(field);
-    expect(fieldSalvage(leaner, field, 'pc-item', createRng(1), mins(was, it0, true)).ok).toBe(false);
+    expect(fieldSalvage(leaner, field, 'pc-item', createRng(1), mins(was, it0, true), salvageMean(was, it0, true)!).ok).toBe(false);
     expect(frozen(field)).toBe(fSnap);
-    expect(fieldSalvage(leaner, field, 'pc-item', createRng(1), mins(leaner, it0, true)).ok).toBe(true);
+    expect(fieldSalvage(leaner, field, 'pc-item', createRng(1), mins(leaner, it0, true), salvageMean(leaner, it0, true)!).ok).toBe(true);
   });
 
   it('сырья меньше показанного, выход больше обещанного — не отказ; без полей (Unity, старая вкладка) — как раньше; кривые — отказ', () => {

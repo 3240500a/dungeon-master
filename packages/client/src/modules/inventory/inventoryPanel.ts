@@ -7,9 +7,9 @@ import { itemTooltipHtml } from './itemView.js';
 import { rarityHex } from '../loot/rarity.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { GLYPH, getHeld, beginHold, clearHeld, dropCell, resolveHeldOnClose, setLastPointer } from './heldItem.js';
-import { renderGrid, showContextMenu } from './gridView.js';
+import { renderGrid, showContextMenu, type MenuOption } from './gridView.js';
 import { canSalvageItem, fieldSalvageFits } from '@dm/shared';
-import { salvageInField } from './disposeConfirm.js';
+import { fieldSalvageLines, salvageInField } from './disposeConfirm.js';
 
 /**
  * Инвентарь + пупсик экипировки. Раскладка (item.pos) АВТОРИТЕТНА НА СЕРВЕРЕ: клиент только
@@ -126,7 +126,7 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
   // ⭐ R16-08: «Надеть» — по решению сервера (`equipRefusal`: требования после смены, всё надетое, место под снятое). Откажет — пункт
   // говорит почему и ничего не шлёт (как «Разобрать нельзя»); раньше команда уходила, и отказ был виден только в логе игры.
   const wear = item.slot ? equipRefusal(app.config, app.state!.save, item.uid) : null;
-  const actions: { label: string; run: () => void }[] = item.kind === 'consumable'
+  const actions: MenuOption[] = item.kind === 'consumable'
     ? [
         { label: 'Выпить', run: () => app.sendCmd({ cmd: 'useConsumable', uid: item.uid }) },
         { label: 'В пояс', run: () => app.sendCmd({ cmd: 'moveBelt', uid: item.uid }) },
@@ -151,13 +151,23 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
     // ⭐ V-B3-04: и место — сырьё лучшего броска ляжет в сумку (`fieldSalvageFits`, то же правило у сервера). Иначе пункт
     // предлагал разбор, игрок отвечал на оба вопроса о скованной вещи — и сервер отказывал «Сумка полна».
     if (can.ok && fieldSalvageFits(app.config, app.state!.save.inventory, item)) {
-      actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); } });
+      actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); }, tip: () => fieldSalvageTip(app, item) });
     } else if (can.ok) {
       // Разбирается, но некуда — сказать, а не молча убрать пункт (как «Сломано — к кузнецу»).
       actions.push({ label: 'Разобрать нельзя: сумка полна', run: () => {} });
     }
   }
   showContextMenu(x, y, actions);
+}
+
+/**
+ * ⭐ §15.2: подсказка пункта «Разобрать здесь» — карточка разбора в поле (`fieldSalvageLines`): что выйдет («≈», «0–1»), эссенция,
+ * эскиз и «у кузнеца втрое больше…». Без неё пункт меню обещал «30 %» неизвестно чего. Каталога в ней нет — поле его не пишет (D2).
+ */
+function fieldSalvageTip(app: App, item: Item): string {
+  const color = { title: COLORS.text, gain: COLORS.good, dim: COLORS.dim, warn: COLORS.accent, hint: COLORS.info } as const;
+  return fieldSalvageLines(app.config, item, app.stash?.forgeJournal).map((l, i) =>
+    `<div style="color:${color[l.tone]}${i === 0 ? ';font-weight:bold;margin-bottom:3px' : ''}">${l.text}</div>`).join('');
 }
 
 /** Берёт предмет из сетки НА КУРСОР — визуально; из сейва НЕ удаляем (перекладку сделает сервер). */

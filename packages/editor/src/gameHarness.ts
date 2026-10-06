@@ -6,6 +6,7 @@ import {
 import { App } from '@dm/client/core/app.js';
 import { GameState } from '@dm/client/core/gameState.js';
 import { setItemLabelResolvers } from '@dm/client/modules/inventory/itemView.js';
+import { materialNote } from '@dm/client/modules/inventory/materialsModel.js';
 import { setDamageTypeMeta } from '@dm/client/core/damageTypes.js';
 import { setRarityMeta } from '@dm/client/modules/loot/rarity.js';
 
@@ -42,6 +43,8 @@ export function makeHarness(data: Record<string, unknown>, save: SaveState, onCh
       ...(r.reason !== undefined ? { reason: r.reason } : {}),
       ...(r.uid !== undefined ? { uid: r.uid } : {}),
       ...(r.unlocked !== undefined ? { unlocked: r.unlocked } : {}),
+      // §15.2: итоговая строка разбора («Получено: … · Каталог: …») — как у сервера (`room.ts` `answer`).
+      ...(typeof r.summary === 'string' ? { summary: r.summary } : {}),
     });
     return id;
   };
@@ -66,7 +69,7 @@ export function followHarness(app: App, data: Record<string, unknown>): boolean 
 }
 
 /** Итог команды моста — те же поля, что у ответа сервера (`cmdResult`). */
-interface HarnessOutcome { ok: boolean; reason?: string; uid?: string; unlocked?: string[] }
+interface HarnessOutcome { ok: boolean; reason?: string; uid?: string; unlocked?: string[]; summary?: string }
 
 /** Бросок моста: не боевой сервер, достаточно разных чисел на каждую команду. */
 let harnessSeed = 1;
@@ -80,7 +83,8 @@ function applyCmd(app: App, gs: GameState, cmd: TownCommand, stash: AccountStash
   const reg = app.config, s = gs.save;
   switch (cmd.cmd) {
     case 'craft': return craftAction(reg, s, stash, cmd.nonce, cmd.input, harnessRng(), { maxGold: cmd.maxGold, maxMaterials: cmd.maxMaterials });   // R5-15, R8-14: как сервер
-    case 'forgeEnchant': return enchantAction(reg, s, cmd.uid, cmd.rarity, harnessRng(), cmd.maxGold);
+    // §6.2: зачарование тратит и эссенцию — из сумки и кошелька сундука моста, с согласием `maxMaterials`, как сервер.
+    case 'forgeEnchant': return enchantAction(reg, s, cmd.uid, cmd.rarity, harnessRng(), cmd.maxGold, stash.materials ?? (stash.materials = {}), cmd.maxMaterials);
     case 'forgeSketch': return sketchAction(reg, stash, cmd.variantId);   // R3-11: то же ядро, что у сервера
     case 'forgeSalvage': return forgeSalvage(reg, s, stash, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);   // R8-14, R9-04: как сервер
     case 'salvage': return fieldSalvage(reg, s, cmd.uid, harnessRng(), cmd.minYield, cmd.avgYield);
@@ -116,6 +120,8 @@ function refreshResolvers(app: App): void {
     weight: (id) => (app.config.get('weapon-weights').find((w) => w.id === id)?.name ?? id).toLowerCase(),
     physSub: (id) => { const sub = app.config.get('phys-subtypes').find((x) => x.id === id); return sub ? `${sub.name.toLowerCase()} → ${debuffLabel(app.config.get('debuffs'), sub.kind).toLowerCase()}` : id; },
     skill: (id) => app.config.get('skill-tree').nodes.find((n) => n.id === id)?.name ?? id,
+    tierName: (id) => app.config.get('item-tiers').find((t) => t.id === id)?.name,
+    materialNote: (item) => materialNote(app.config, item),
   });
   const phys = app.config.get('damage-kinds').find((k) => k.id === 'physical');
   setDamageTypeMeta({

@@ -289,7 +289,8 @@ const FIXED: Known[] = [
     repro: [
       { seed: 28, ops: [op('wear', 198088804), op('paperdoll', 1897979352)], key: /^parity:enabled-refused:paperdoll:Недостаточно атрибутов$/ },
       { seed: 5, ops: [op('paperdoll', 1454926767)], key: /^parity:enabled-refused:paperdoll:Сломано/ },
-      { seed: 14, ops: [op('paperdoll', 1742906520), op('bagFill', 1442437393), op('wear', 252115651), op('paperdoll', 1177352525)], key: /^parity:enabled-refused:paperdoll:space$/ },
+      // 06.10: цепочка переснята (`DM_FUZZ_SELFTEST=r1608`) — прежняя (сид 14) после правил трат кузницы (§6.2, §7) шла другой дорогой.
+      { seed: 116, ops: [op('bagFill', 1323129844), op('paperdoll', 1617650102)], key: /^parity:enabled-refused:paperdoll:space$/ },
     ],
   },
   {
@@ -307,9 +308,11 @@ const FIXED: Known[] = [
     repro: [
       { seed: 4, ops: [op('deploy', 2001502154)], key: /^hint:deploy-untold$/ },
       { seed: 39, ops: [op('deploy', 1209977487), op('sell', 602148880)], key: /^hint:silent-price-loop:sell$/ },
+      // 06.10: цепочка переснята (`DM_FUZZ_SELFTEST=r1808`) — прежняя (сид 5) после правил трат кузницы (§6.2, §7) шла другой дорогой.
       {
-        seed: 5,
-        ops: [op('fund', 726297956), op('lootCrafted', 1691340884), op('craft', 650839500), op('craft', 670743862), op('deploy', 223633339), op('bench', 1448082675)],
+        seed: 2,
+        ops: [op('loot', 59399032), op('deploy', 1910147214), op('goldEdge', 449644320), op('buy', 1287452780), op('wear', 1149690041), op('loot', 561930908),
+          op('bench', 1909293600), op('bench', 1519415378)],
         key: /^hint:silent-price-loop:bench$/,
       },
     ],

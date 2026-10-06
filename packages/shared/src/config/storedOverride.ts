@@ -1,5 +1,6 @@
 import { ATTRIBUTES } from '../types/attributes.js';
 import { buffTimingIssues } from '../formulas/buffTiming.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
 import { configSchemas, type ConfigKey, type ConfigShapes } from './schemas.js';
 import { defaultConfigData } from './defaults.js';
 
@@ -20,7 +21,8 @@ export interface StoredOverrideLive { get<K extends ConfigKey>(key: K): ConfigSh
  *
  * Здесь приводится только то, что новая схема сузила: старт класса — вниз до целого, не ниже нуля (дробную долю очка не вложить никогда,
  * минус — не атрибут); ⭐ D2 — кривая опыта `balance.xpTable`, сохранённая до R20-05 (`upgradeXpTable`); ⭐ D4 — откат баффа (узел древа,
- * печать вставки), короче правила времени баффа (`upgradeBuffTiming`: поверх `live` — итогового кандидата сборки, R21-01). Прочее не трогается — не прошедшее
+ * печать вставки), короче правила времени баффа (`upgradeBuffTiming`: поверх `live` — итогового кандидата сборки, R21-01); ⭐ сырьё
+ * `craft-materials`, сохранённое до эссенции и цен D4 (`upgradeCraftMaterials`). Прочее не трогается — не прошедшее
  * схему пропускается, как прежде (инцидентом). Зовёт
  * только сборка живого конфига из базы (`server/configLive.ts`) и починка базы (`db:repair`): новая запись из редактора и файл данных
  * идут строгой схемой, мимо этого, — дробь там по-прежнему отказ.
@@ -30,6 +32,7 @@ export interface StoredOverrideLive { get<K extends ConfigKey>(key: K): ConfigSh
 export function upgradeStoredOverride(key: string, value: unknown, live?: StoredOverrideLive): { value: unknown; fixes: string[] } {
   if (key === 'balance') return upgradeBalance(value);
   if (key === 'skill-tree' || key === 'skill-inserts') return upgradeBuffTiming(key, value, live);
+  if (key === 'craft-materials') return upgradeCraftMaterials(value);
   if (key !== 'classes' || !Array.isArray(value)) return { value, fixes: [] };
   const fixes: string[] = [];
   const rows = value.map((row: unknown, i) => {
@@ -48,6 +51,41 @@ export function upgradeStoredOverride(key: string, value: unknown, live?: Stored
     return next ? { ...(row as Record<string, unknown>), startAttributes: next } : row;
   });
   return fixes.length ? { value: rows, fixes } : { value, fixes };
+}
+
+/**
+ * ⭐ ОВЕРРАЙД `craft-materials`, СОХРАНЁННЫЙ ДО ЭССЕНЦИИ И ЦЕН D4 (предложение «Разбор, сырьё и чары» §14.4). Оверрайд — таблица ЦЕЛИКОМ:
+ * любая правка сырья в редакторе до этих правил (галка «булат — позже», R2-28) сохранила все 40 строк со старыми ценами I–V = 1/4/12/36/108
+ * и без строки эссенции. Схема такую таблицу пропускает, и старая экономика жила молча: эссенция не падала, чары и перекатка шли без неё, а
+ * пол цены лавки (`shopSellPrice` ≥ `salvageWorth`) превращал старые цены сырья в цены самих вещей (длинный меч t6 за 756 вместо 134).
+ * Признак старой таблицы — нет строки эссенции (`ESSENCE_ID`): таблица, сохранённая после правила, несёт её всегда (редактор пишет таблицу
+ * целиком). Тогда: недостающие строки файла дописываются, а цена продажи (`sellPrice`) каждой строки — цена файла. Галки (`enabled`), имена,
+ * заметки и значки хозяина остаются. Таблица с эссенцией — правило уже знала, не трогается: цены в ней — решение хозяина (их держит
+ * правило поверх таблиц). `db:repair -- --fix` записывает приведённое в базу.
+ */
+function upgradeCraftMaterials(value: unknown): { value: unknown; fixes: string[] } {
+  if (!Array.isArray(value)) return { value, fixes: [] };
+  const rowId = (r: unknown): unknown => (r && typeof r === 'object' ? (r as { id?: unknown }).id : undefined);
+  if (value.some((r) => rowId(r) === ESSENCE_ID)) return { value, fixes: [] };
+  const file = (defaultConfigData as Record<string, unknown>)['craft-materials'];
+  if (!Array.isArray(file)) return { value, fixes: [] };
+  const fileRow = new Map<unknown, Record<string, unknown>>(file.map((r) => [rowId(r), r as Record<string, unknown>]));
+  const fixes: string[] = [];
+  const rows = value.map((row: unknown) => {
+    if (!row || typeof row !== 'object') return row;
+    const own = row as Record<string, unknown>;
+    const f = fileRow.get(own.id);
+    if (!f || f.sellPrice === undefined || own.sellPrice === f.sellPrice) return row;
+    fixes.push(`craft-materials.${String(own.id)}.sellPrice: ${String(own.sellPrice)} → ${String(f.sellPrice)} (цены D4)`);
+    return { ...own, sellPrice: f.sellPrice };
+  });
+  const have = new Set(rows.map(rowId));
+  for (const f of file) {
+    if (have.has(rowId(f))) continue;
+    rows.push(structuredClone(f));
+    fixes.push(`craft-materials: + «${String(rowId(f))}» из файла (таблица сохранена до него)`);
+  }
+  return fixes.length ? { value: rows, fixes } : { value, fixes: [] };
 }
 
 /**

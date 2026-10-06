@@ -119,12 +119,13 @@ export const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('buy'), uid, maxGold }).strict(),
   z.object({ cmd: z.literal('sell'), uid, minGold, cfgRev, build }).strict(),
   z.object({ cmd: z.literal('forgeUpgrade'), uid, maxGold, maxMaterials, cfgRev, build }).strict(),
-  z.object({ cmd: z.literal('forgeReroll'), uid, maxGold, cfgRev, build }).strict(),
+  // ⭐ §6.2: перекатка и зачарование тратят и эссенцию — согласие на неё `maxMaterials` (R8-14), как у подъёма.
+  z.object({ cmd: z.literal('forgeReroll'), uid, maxGold, maxMaterials, cfgRev, build }).strict(),
   z.object({ cmd: z.literal('forgeSalvage'), uid, minYield, avgYield, cfgRev, build }).strict(),
   z.object({ cmd: z.literal('forgeRepair'), uid, maxGold, maxMaterials, cfgRev, build }).strict(),
   // Ключ заявки — тот же алфавит и длина, что проверяет ядро (`CRAFT_NONCE_RE`): 8–64 символа [A-Za-z0-9_-].
   z.object({ cmd: z.literal('craft'), nonce: z.string().regex(CRAFT_NONCE_RE), input: craftInputSchema, maxGold, maxMaterials, cfgRev, build }).strict(),
-  z.object({ cmd: z.literal('forgeEnchant'), uid, rarity: z.enum(['magic', 'rare']), maxGold, cfgRev, build }).strict(),
+  z.object({ cmd: z.literal('forgeEnchant'), uid, rarity: z.enum(['magic', 'rare']), maxGold, maxMaterials, cfgRev, build }).strict(),
   // R3-11: эскиз — на деталь по id конфига; можно ли, решает ядро (`sketchAction`).
   z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId, cfgRev, build }).strict(),
   z.object({ cmd: z.literal('depositMaterials') }).strict(),

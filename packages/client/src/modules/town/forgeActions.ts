@@ -1,6 +1,7 @@
 import {
-  upgradeCost, repairCost, upgradedItem, salvageMean, salvageRange, canSalvageItem, canRerollItem, canUpgradeItem, canEnchantItem, canRepairItem, canAffordBoth,
-  availableMaterials, nextTierOf, forgeGold, enchantCost, type ConfigRegistry, type Item,
+  upgradeCost, repairCost, upgradedItem, salvageMean, salvageRange, salvagePreview, canSalvageItem, canRerollItem, canUpgradeItem, canEnchantItem,
+  canRepairItem, canAffordBoth, availableMaterials, nextTierOf, forgeGold, enchantCost, enchantMaterials, rerollMaterials, STARTER_KNOWN,
+  type ConfigRegistry, type CraftJournal, type Item, type SalvageCardLine,
 } from '@dm/shared';
 
 /**
@@ -12,8 +13,13 @@ import {
  * непроверяемым, а это ровно то, что игрок видит первым.
  */
 
-export type LineState = 'ok' | 'miss' | 'gain' | 'dim';
-export interface CostLine { text: string; state: LineState }
+/** `warn` — чего не будет и почему («Эссенция: нет — вещь куплена»): не «не хватает» (красный), а оговорка. */
+export type LineState = 'ok' | 'miss' | 'gain' | 'dim' | 'warn';
+/**
+ * Строка карточки. `label` — подпись строки карточки разбора («Сырьё», «Эссенция», «Каталог», «Эскиз»): строка рисуется
+ * «Подпись: текст» без значка — сам текст уже говорит «+ …» или «нет — …».
+ */
+export interface CostLine { text: string; state: LineState; label?: string }
 
 export interface BenchAction {
   id: 'repair' | 'upgrade' | 'reroll' | 'enchant' | 'salvage';
@@ -32,7 +38,7 @@ export interface BenchAction {
    * конфиг мог уйти вперёд клиентского). Нет — действие бесплатно (разбор) или недоступно.
    */
   gold?: number;
-  /** ⭐ R8-14: сырьё строк карточки (улучшение, починка) — в команду `maxMaterials`: больше сервер не возьмёт. */
+  /** ⭐ R8-14: сырьё строк карточки (улучшение, починка; с §6.2 — эссенция перекатки и зачарования) — в команду `maxMaterials`: больше сервер не возьмёт. */
   materials?: Record<string, number>;
   /** ⭐ R8-14: низ вилки «от–до» разбора — в команду `minYield`: меньше сервер не даст, вещь останется цела. */
   minYield?: Record<string, number>;
@@ -99,7 +105,10 @@ export function diffStrings(a: readonly string[], b: readonly string[]): { was: 
   return out;
 }
 
-/** Строка цены с отметкой «хватает / не хватает» — вместо серой кнопки без объяснения. */
+/**
+ * Строка цены с отметкой «хватает / не хватает» — вместо серой кнопки без объяснения. ⭐ §15.4: «есть N» — ВСЕГДА (сумка + сундук), а не
+ * только при нехватке: «Кордован 3 (есть 12)» говорит и цену, и запас, и сколько подъёмов ещё потянешь; нехватка — ещё «— не хватает».
+ */
 function costLines(
   cost: Record<string, number>,
   have: Record<string, number>,
@@ -107,9 +116,12 @@ function costLines(
 ): CostLine[] {
   return Object.entries(cost).map(([id, n]) => {
     const got = have[id] ?? 0;
-    return { text: `${nameOf(id)} ${n}${got < n ? ` (есть ${got})` : ''}`, state: got >= n ? 'ok' : 'miss' };
+    return { text: `${nameOf(id)} ${n} (есть ${got})${got < n ? ' — не хватает' : ''}`, state: got >= n ? 'ok' : 'miss' };
   });
 }
+
+/** Строка карточки разбора (`salvagePreview`) → строка верстака: тон `gain` / `dim` / `warn`, подпись — своя. */
+const cardLine = (l: SalvageCardLine): CostLine => ({ label: l.label, text: l.text, state: l.tone });
 
 /**
  * Карточки в ФИКСИРОВАННОМ порядке: главное действие, реролл, [зачарование — у скованной], разбор.
@@ -126,6 +138,7 @@ export function benchActions(
   gold: number,
   inventory: readonly Item[],
   stashWallet: Record<string, number>,
+  journal?: CraftJournal | null,
 ): BenchAction[] {
   const prices = reg.get('balance').forgePrices;
   const have = availableMaterials(inventory, stashWallet);
@@ -175,16 +188,19 @@ export function benchActions(
 
   // Реролл: гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canRerollItem`: сломана, перекатки кончились,
   // обычной и уникальной перекатывать нечего — R2-13), и говорит ПОЧЕМУ, а не просто серый. Цена — `forgeGold`
-  // сервера: у скованной она уже с множителем формы (R2-10).
+  // сервера: у скованной она уже с множителем формы (R2-10). ⭐ §6.2: и эссенция (`rerollMaterials`) — строкой «есть / не хватает».
   const left = Math.max(0, prices.rerollLimit - (item.rerolls ?? 0));
   const rr = canRerollItem(reg, item);
   const rrPrice = forgeGold(reg, item, 'reroll');
   const rrGold = gold >= rrPrice;
+  const rrMats = rr.ok ? rerollMaterials(reg, item) : {};
   out.push({
     id: 'reroll', cmd: 'forgeReroll', title: '🎲 Реролл', sub: `осталось ${left} из ${prices.rerollLimit}`,
-    primary: false, enabled: rr.ok && rrGold, gold: rr.ok ? rrPrice : undefined,
+    primary: false, enabled: rr.ok && rrGold && canAffordBoth(inventory, stashWallet, rrMats),
+    gold: rr.ok ? rrPrice : undefined, materials: rr.ok ? rrMats : undefined,
     lines: !rr.ok ? [{ text: rr.reason ?? 'нельзя', state: 'dim' }]
       : [{ text: `${rrPrice} золота`, state: rrGold ? 'ok' : 'miss' },
+         ...costLines(rrMats, have, nameOf),
          { text: 'перекатит аффиксы', state: 'dim' }],
   });
 
@@ -198,30 +214,35 @@ export function benchActions(
       const price = enchantCost(reg, item, rarity);
       const goldOk = gold >= price;
       const why = !live ? 'Кузнец ещё не зачаровывает' : can.ok ? undefined : can.reason ?? 'нельзя';
+      // ⭐ §6.2: и эссенция (`enchantMaterials`) — строкой «есть / не хватает», в команду — согласием `maxMaterials`.
+      const ess = why ? {} : enchantMaterials(reg, item, rarity);
       out.push({
         id: 'enchant', cmd: 'forgeEnchant', rarity, title: rarity === 'magic' ? '✦ Магический' : '✦ Редкий',
         sub: rarity === 'magic' ? 'зачаровать до магической' : 'зачаровать до редкой',
-        primary: false, enabled: !why && goldOk, gold: why ? undefined : price,
+        primary: false, enabled: !why && goldOk && canAffordBoth(inventory, stashWallet, ess),
+        gold: why ? undefined : price, materials: why ? undefined : ess,
         lines: why ? [{ text: why, state: 'dim' }]
-          : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, { text: 'свойства по форме вещи', state: 'dim' }],
+          : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(ess, have, nameOf), { text: 'свойства по форме вещи', state: 'dim' }],
       });
     }
   }
 
-  // ⚠ Гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canSalvageItem`), — иначе кнопка
-  // предлагала бы то, что сервер отклонит. Выход показываем вилкой: он случаен.
-  const can = canSalvageItem(reg, item, false);
+  // ⭐ РАЗБОР — КАРТОЧКА ИЗ ЧЕТЫРЁХ СТРОК ВСЕГДА (предложение «Разбор, сырьё и чары» §15.2, `salvagePreview`): сырьё вилкой (выход
+  // случаен), эссенция, каталог, эскиз — и у нулевой строки причина («Эссенция: нет — вещь куплена»). Скованную ПЕРЕПЛАВЛЯЮТ —
+  // заголовок «Переплавить». Гаснет ТЕМ ЖЕ правилом, которым отказывает сервер (`canSalvageItem` с журналом кадра сундука: стартовый
+  // набор, из которого каталогу нечего взять, — отказ ДО нажатия, §9.3). Журнала нет (кадр не пришёл) — как прежде: откажет сервер.
+  const can = canSalvageItem(reg, item, false, journal);
+  const card = salvagePreview(reg, item, journal ?? null, false);
   const rng = salvageRange(reg, item, false);
+  const four = [card.materials, card.essence, ...(card.catalog ? [card.catalog] : []), ...(card.sketch ? [card.sketch] : [])].map(cardLine);
   out.push({
-    id: 'salvage', cmd: 'forgeSalvage', title: '♻ Разобрать', sub: 'вещь исчезнет',
+    id: 'salvage', cmd: 'forgeSalvage', title: card.verb === 'melt' ? '♻ Переплавить' : '♻ Разобрать', sub: 'вещь исчезнет',
     primary: false, enabled: can.ok,
     minYield: can.ok ? Object.fromEntries(Object.entries(rng.range).map(([id, r]) => [id, r.min])) : undefined,
     avgYield: (can.ok && salvageMean(reg, item, false)) || undefined,
-    lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }]
-      : Object.entries(rng.range).map(([id, r]) => ({
-        text: `${nameOf(id)} ${r.min === r.max ? r.min : `${r.min}–${r.max}`}`,
-        state: 'gain' as const,
-      })),
+    // Отказ — причиной; у стартового набора, из которого всё уже в каталоге, ещё и строкой каталога (что уже открыто).
+    lines: can.ok ? four
+      : [{ text: can.reason ?? 'нельзя', state: 'dim' }, ...(can.reason === STARTER_KNOWN && card.catalog ? [cardLine(card.catalog)] : [])],
   });
 
   return out;

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { allocAttr, respec, attrRespecRefund, forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, unequip, socketInsert, socketClear, canRepairItem, mendBrokenUniques } from './townActions.js';
+import { allocAttr, respec, attrRespecRefund, forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, unequip, socketInsert, socketClear, canRepairItem, canUpgradeItem, mendBrokenUniques, rerollMaterials, UNIQUE_NO_UPGRADE } from './townActions.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
 import { newCharacterSave } from './newCharacter.js';
 import { emptyStash } from './stashActions.js';
 import { createRng } from '../formulas/rng.js';
@@ -24,7 +25,9 @@ const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })()
  * Сбрасывается перед каждым тестом: общий изменяемый объект между тестами — классическая течь.
  */
 let wallet: Record<string, number> = {};
-beforeEach(() => { wallet = { 'iron-1': 99, 'iron-2': 99, 'iron-3': 99, 'wood-1': 99, 'wood-2': 99, 'plate-1': 99 }; });
+// ⭐ §7: подъём и починка — по СТУПЕНИ, сырьём семей деталей (меч — железо, кожа, прибор), §6.2: перекатка — и эссенцией. Поэтому в
+// кошельке — по 99 каждого материала конфига (а не только железо I–III, как при прежней лестнице по редкости).
+beforeEach(() => { wallet = Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 99])); });
 
 function mkItem(uid: string, gridW: number, gridH: number, x: number, y: number): Item {
   return {
@@ -80,7 +83,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     baseStats: [{ kind: 'flat', stat: 'minDamage', value: 10 }, { kind: 'increased', stat: 'attackSpeed', value: 5 }],
   } as unknown as Item);
   /** Кошелёк, которого заведомо хватает на любое улучшение. */
-  const rich = (): Record<string, number> => ({ 'iron-1': 99, 'iron-2': 99, 'iron-3': 99, 'iron-4': 99, 'iron-5': 99 });
+  const rich = (): Record<string, number> => Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 99]));
 
   /** Настоящий предмет из конвейера генерации — у выдуманного нет ни тира, ни базовых статов. */
   const rolled = (ilvl: number, rarity: Item['rarity'] = 'normal'): Item => generateItem(
@@ -101,7 +104,9 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const up = inBag(save, it.uid);
     expect(up.tier).toBe('t1');
     expect(save.gold).toBe(1000 - paid);
-    expect(wallet['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
+    // §7: основа — верх вилки разбора меча-находки t1 (рецепт [II, I, I, I]: удар Кричное железо 3), расходник — 20 Болотного железа.
+    expect(wallet['iron-1']).toBe(99 - price.upgradeMaterials.consumable);
+    expect(wallet['iron-2']).toBe(99 - 3);
     // Имя обновилось приставкой нового тира, а не украсилось звёздочкой.
     const t1 = reg.get('item-tiers').find((t) => t.id === 't1')!;
     expect(up.name.startsWith(t1.name)).toBe(true);
@@ -138,7 +143,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const it = rolled(30, 'magic');   // у обычной перекатывать нечего (R2-13) — предел мерить не на чем
     const save = { gold: 1_000_000, inventory: [it] } as unknown as SaveState;
     let n = 0;
-    while (forgeReroll(reg, save, it.uid, createRng(n + 1)).ok && n < 50) n++;
+    while (forgeReroll(reg, save, it.uid, createRng(n + 1), undefined, wallet).ok && n < 50) n++;
     expect(n).toBe(price.rerollLimit);
     expect(it.rerolls).toBe(price.rerollLimit);
   });
@@ -165,12 +170,18 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     expect(it.name).toBe('Меч');
   });
 
-  it('⭐ лестница цены: обычная — ржавое, магическая — и чистое, редкая — и калёное', () => {
-    expect(Object.keys(upgradeCost(reg, weapon('a', 'normal')))).toEqual(['iron-1']);
-    expect(Object.keys(upgradeCost(reg, weapon('b', 'magic')))).toEqual(['iron-1', 'iron-2']);
-    expect(Object.keys(upgradeCost(reg, weapon('c', 'rare')))).toEqual(['iron-1', 'iron-2', 'iron-3']);
-    // ⚠ количество первой ступени ОДНО И ТО ЖЕ у всех: ржавое — базовая валюта крафта
-    expect(upgradeCost(reg, weapon('d', 'rare'))['iron-1']).toBe(upgradeCost(reg, weapon('e', 'normal'))['iron-1']);
+  it('⭐ §7: цена подъёма — по ЦЕЛЕВОЙ ступени, а не по редкости: основа — верх разбора находки той ступени, плюс расходник I', () => {
+    const costs = (['normal', 'magic', 'rare'] as const).map((r) => upgradeCost(reg, rolled(1, r)));
+    // Редкость меняет только золото: сырьё у обычной, магической и редкой одно.
+    expect(costs[1]).toEqual(costs[0]);
+    expect(costs[2]).toEqual(costs[0]);
+    const c = costs[0]!;
+    // t0 → t1: рецепт t1 — [II, I, I, I]: удар 3 Кричного железа (сорт II), держак 2 и обвязка с оголовьем 2 — сорт I своих семей;
+    // расходник — 20 Болотного железа (сорт I семьи удара). Всего 7 единиц основы — как у разбора меча у кузнеца.
+    expect(c['iron-2']).toBe(3);
+    expect(c['iron-1']).toBe(price.upgradeMaterials.consumable);
+    expect(Object.values(c).reduce((a, b) => a + b, 0)).toBe(7 + price.upgradeMaterials.consumable);
+    expect(Object.keys(c).some((id) => /-[345]$/.test(id)), 'выше рецепта t1 — ничего').toBe(false);
   });
 
   it('⚠ уникальные кузница не улучшает вовсе — и не берёт за это денег', () => {
@@ -181,22 +192,67 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     expect(save.gold).toBe(1000);
   });
 
-  it('семья материала идёт от вещи: лук качается деревом, латы — пластинами', () => {
+  it('семьи — от деталей вещи: лук качается Плечами, Деревом и Тканью (а не одним Деревом прежних правил), латы — пластинами', () => {
+    const t0 = (baseId: string, rarity: Item['rarity'] = 'normal'): Item => shapeFoundWeapon(reg, generateItem(
+      reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+      { dropBias: 1, itemLevel: 1, baseId, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rarity,
+        maxReqTotal: reg.get('balance').maxTotalRequirement, origin: 'drop' },
+      createRng(3)));
     const bowBase = reg.get('items.base').find((b) => b.kind === 'weapon' && b.weaponClass === 'bow')!;
-    const bow = { ...weapon('bw', 'magic'), baseId: bowBase.id } as Item;
-    expect(Object.keys(upgradeCost(reg, bow))).toEqual(['wood-1', 'wood-2']);
-    const plateBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.armorClass === 'plate')!;
-    const mail = { ...weapon('pl', 'normal'), baseId: plateBase.id, kind: 'armor', slot: 'chest', armorClass: 'plate' } as unknown as Item;
-    expect(Object.keys(upgradeCost(reg, mail))).toEqual(['plate-1']);
+    const bow = upgradeCost(reg, t0(bowBase.id, 'magic'));
+    // t0 → t1: плечи-удар II ×3, древко I ×2, тетива I ×1, плечи-навершие I ×1 + расходник 20 плеч I.
+    expect(bow).toEqual({ 'stave-2': 3, 'wood-1': 2, 'cloth-1': 1, 'stave-1': 1 + price.upgradeMaterials.consumable });
+    const plateBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.armorClass === 'plate' && b.slot === 'chest')!;
+    // Нагрудник — верх правила (3) нижнего сорта рецепта целевой ступени + расходник той же семьи.
+    expect(upgradeCost(reg, t0(plateBase.id))).toEqual({ 'plate-1': 3 + price.upgradeMaterials.consumable });
   });
 
-  it('реролл: −золото, перекатывает аффиксы (столько же)', () => {
-    const it = weapon('w', 'magic');
+  it('⭐ §7: подъём до t5–t6 тратит IV и V своих семей; уник — явный отказ (а не пустая лестница)', () => {
+    // Найденный меч t5, чьи детали дотягиваются до t6 (у прочих подъёма нет — «Эта форма выше не куётся», R4-31).
+    let t5: Item | undefined;
+    for (const b of reg.get('items.base').filter((x) => x.kind === 'weapon' && x.weaponClass === 'sword')) {
+      for (let seed = 1; seed < 60 && !t5; seed++) {
+        const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+          { dropBias: 1, itemLevel: 90, tierLevel: reg.get('item-tiers').find((t) => t.id === 't5')!.minItemLevel, baseId: b.id,
+            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement,
+            origin: 'drop' }, createRng(seed)));
+        if (it.tier === 't5' && upgradedItem(reg, it)?.tier === 't6') t5 = it;
+      }
+    }
+    if (!t5) throw new Error('нет найденного меча t5 с подъёмом до t6');
+    const c = upgradeCost(reg, t5);
+    expect(c['iron-5'], 'удар t6 — Булат ×3').toBe(3);
+    expect(Object.keys(c).filter((id) => /-5$/.test(id)).reduce((s, id) => s + c[id]!, 0), 'вся основа t6 — сорт V').toBe(7);
+    const uniq = { ...t5, rarity: 'unique' as const };
+    expect(canUpgradeItem(reg, uniq)).toEqual({ ok: false, reason: UNIQUE_NO_UPGRADE });
+  });
+
+  it('реролл: −золото, −эссенция (§6.2), перекатывает аффиксы (столько же)', () => {
+    const it = rolled(1, 'magic');   // t0: перекатка магической — 1 эссенция
     const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
-    expect(forgeReroll(reg, save, 'w', createRng(1)).ok).toBe(true);
+    const ess = rerollMaterials(reg, it);
+    expect(ess[ESSENCE_ID], 'перекатка магической t0 — 1 эссенция').toBe(1);
+    expect(forgeReroll(reg, save, it.uid, createRng(1), undefined, wallet).ok).toBe(true);
     expect(save.gold).toBe(1000 - forgeGold(reg, it, 'reroll'));
+    expect(wallet[ESSENCE_ID]).toBe(99 - ess[ESSENCE_ID]!);
     expect(it.affixes.length).toBeGreaterThan(0);
     expect(it.rerolls).toBe(1);
+  });
+
+  it('⭐ §6.2: без эссенции перекатка — отказ «Не хватает материалов» ДО платы; согласие `maxMaterials` ниже цены — «Цена изменилась»', () => {
+    const it = weapon('w', 'rare');
+    const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
+    const before = JSON.stringify(it);
+    const r = forgeReroll(reg, save, 'w', createRng(1), undefined, {});
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/^Не хватает материалов: Чародейская эссенция/);
+    expect(save.gold).toBe(1000);
+    expect(JSON.stringify(it)).toBe(before);
+    const need = rerollMaterials(reg, it)[ESSENCE_ID]!;
+    const low = forgeReroll(reg, save, 'w', createRng(1), undefined, wallet, { [ESSENCE_ID]: need - 1 });
+    expect(low.ok).toBe(false);
+    expect(low.reason).toMatch(/^Цена изменилась/);
+    expect(wallet[ESSENCE_ID]).toBe(99);
   });
 
   it('⚠ R2-13: обычную и уникальную не перекатить — отказ ДО платы, перекатка не тратится', () => {
@@ -242,7 +298,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
   it('нет предмета → отказ', () => {
     const save = { gold: 1000, inventory: [] } as unknown as SaveState;
     expect(forgeUpgrade(reg, save, 'nope', wallet).ok).toBe(false);
-    expect(forgeReroll(reg, save, 'nope', createRng(1)).ok).toBe(false);
+    expect(forgeReroll(reg, save, 'nope', createRng(1), undefined, wallet).ok).toBe(false);
   });
 });
 
@@ -494,7 +550,8 @@ describe('сломанные трофеи и починка (Ч4)', () => {
     expect(forgeRepair(reg, s, 'b', wallet).ok).toBe(true);
     expect(it.broken).toBeUndefined();
     expect(s.gold).toBe(1000 - price.repairBroken);
-    expect(wallet['iron-1']).toBe(99 - price.repairMaterials.tier1);
+    // §7: на t0 главный сорт меча — I: расходник и главный сорт ложатся одной строкой Болотного железа.
+    expect(wallet['iron-1']).toBe(99 - price.repairMaterials.consumable - price.repairMaterials.main);
     expect(equip(reg, s, 'b').ok).toBe(true);  // теперь надевается
   });
 
@@ -1235,12 +1292,13 @@ describe('⚠ R10-11: требуемый уровень узла мастерс�
 });
 
 /**
- * ⚠ R10-14: ПУСТАЯ ЛЕСТНИЦА ПОЧИНКИ — ОТКАЗ И У НЕ-УНИКА. `materialLadder` пропускает выключенные ступени, и выключенный
- * материал первой ступени семьи (конфиг, который R2-28/R6-22 поддерживают) опустошал лестницу каждой обычной вещи этой семьи.
- * Улучшение такую вещь не брало («Эту вещь кузнец не улучшает»), а починка отказывала только унику (R7-19) и проверку сырья на
- * пустой цене пропускала: сломанный обычный меч чинился за одно золото — «починка стоит золота И сырья» тихо ломалась.
+ * ⚠ R10-14: ПУСТАЯ ЦЕНА ПОЧИНКИ — ОТКАЗ И У НЕ-УНИКА. Выключенный материал (конфиг, который R2-28/R6-22 поддерживают) из цены
+ * выпадает, и цена могла опустеть целиком: починка отказывала только унику (R7-19) и проверку сырья на пустой цене пропускала —
+ * сломанный обычный меч чинился за одно золото, «починка стоит золота И сырья» тихо ломалась. ⭐ С §7 цена починки — по ступени:
+ * расходник I сорта + главный сорт вещи на её ступени. Выключен iron-1 — у меча t0 (главный сорт тоже I) цена пуста → отказ; у меча
+ * t1+ главный сорт — II и выше: цена не пуста (без расходника), починка открыта и не бесплатна.
  */
-describe('⚠ R10-14: пустая лестница починки — отказ', () => {
+describe('⚠ R10-14: пустая цена починки — отказ', () => {
   const noIron1 = (): ConfigRegistry => {
     const r = new ConfigRegistry();
     r.loadAll();
@@ -1249,18 +1307,19 @@ describe('⚠ R10-14: пустая лестница починки — отка�
     r.reload({ 'craft-materials': mats });
     return r;
   };
-  const brokenOf = (r: ConfigRegistry, baseId: string, rarity: 'normal' | 'magic' | 'rare'): Item => ({
+  const brokenOf = (r: ConfigRegistry, baseId: string, rarity: 'normal' | 'magic' | 'rare', tierLevel = 10): Item => ({
     ...generateItem(r.get('items.base'), r.get('affixes'), r.get('uniques'), {
-      dropBias: 1, itemLevel: 20, tierLevel: 10, baseId, tiers: r.get('item-tiers'), rarities: r.get('rarities'), forceRarity: rarity,
+      dropBias: 1, itemLevel: 20, tierLevel, baseId, tiers: r.get('item-tiers'), rarities: r.get('rarities'), forceRarity: rarity,
       maxReqTotal: r.get('balance').maxTotalRequirement, origin: 'drop',
     }, createRng(5)),
     broken: true, pos: { x: 0, y: 0 },
   } as Item);
 
-  it('⭐ iron-1 выключен: сломанный обычный меч — отказ «Эту вещь кузнец не чинит» до платы, сейв и кошелёк не тронуты', () => {
+  it('⭐ iron-1 выключен: сломанный обычный меч t0 — отказ «Эту вещь кузнец не чинит» до платы, сейв и кошелёк не тронуты', () => {
     const r = noIron1();
-    const it = brokenOf(r, 'short-sword', 'normal');
-    expect(repairCost(r, it), 'лестница пуста').toEqual({});
+    const it = brokenOf(r, 'short-sword', 'normal', 1);
+    expect(it.tier).toBe('t0');
+    expect(repairCost(r, it), 'цена пуста: расходник и главный сорт — оба I').toEqual({});
     const s = { gold: 1_000_000, inventory: [it], equipment: {}, belt: [] } as unknown as SaveState;
     const before = JSON.stringify(s);
     const empty: Record<string, number> = {};
@@ -1269,10 +1328,13 @@ describe('⚠ R10-14: пустая лестница починки — отка�
     expect(canRepairItem(r, it)).toEqual(res);
     expect(JSON.stringify(s)).toBe(before);
     expect(empty).toEqual({});
-    // Магическая той же базы по-прежнему чинится — её лестница начинается со второй ступени.
-    const magic = brokenOf(r, 'short-sword', 'magic');
-    expect(canRepairItem(r, magic)).toEqual({ ok: true });
-    expect(Object.keys(repairCost(r, magic)).length).toBeGreaterThan(0);
+    // Та же база ступенью выше по-прежнему чинится: её главный сорт — II (редкость на сырьё больше не влияет — только на золото).
+    for (const rarity of ['normal', 'magic'] as const) {
+      const up = brokenOf(r, 'short-sword', rarity, 10);
+      expect(up.tier).toBe('t1');
+      expect(canRepairItem(r, up)).toEqual({ ok: true });
+      expect(repairCost(r, up)).toEqual({ 'iron-2': r.get('balance').forgePrices.repairMaterials.main });
+    }
   });
 
   it('встроенные данные: у каждой сломанной не-уник вещи каждой базы × редкости лестница не пуста, и починка открыта', () => {

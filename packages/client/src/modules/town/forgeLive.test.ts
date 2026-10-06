@@ -100,7 +100,8 @@ function fakeServer(save: SaveState, stash: AccountStash) {
     switch (c.cmd) {
       case 'stashOpen': sendStash(); out = { ok: true }; break;
       case 'craft': out = live ? craftAction(reg, S.save, S.stash, c.nonce, c.input, createRng(seed++)) : closed; stashTouched = out.ok; break;
-      case 'forgeEnchant': out = live ? enchantAction(reg, S.save, c.uid, c.rarity, createRng(seed++)) : closed; break;
+      // §6.2: зачарование тратит эссенцию из сумки и сундука, с согласием `maxMaterials` — как сервер.
+      case 'forgeEnchant': out = live ? enchantAction(reg, S.save, c.uid, c.rarity, createRng(seed++), c.maxGold, S.stash.materials ?? (S.stash.materials = {}), c.maxMaterials) : closed; stashTouched = out.ok; break;
       case 'forgeSketch': out = sketchAction(reg, S.stash, c.variantId); stashTouched = out.ok; break;
       default: out = { ok: false, reason: `сервер теста не исполняет ${c.cmd}` };
     }

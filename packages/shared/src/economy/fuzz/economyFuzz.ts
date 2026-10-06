@@ -9,8 +9,9 @@ import { createRng, type Rng } from '../../formulas/rng.js';
 import { generateItem, itemFromBaseId, rollTierLevel } from '../../formulas/itemgen.js';
 import { CRAFT_SLOT_LIST, baseOfKeyPart, keySlotOf } from '../../formulas/craftType.js';
 import {
-  affixSlotsFor, baseTierRange, countsAsFind, countsAsMythicFind, craftTiers, craftWeapon, enchantCost, formKey, formMult, isCraftNonce, journalTierCap,
-  normalizeCraftNonces, normalizeJournal, parseCraftInput, partById, partsOf, salvageIntoJournal, shapeFoundWeapon, tierIndexOfItem, typeOfItem, variantsFor,
+  affixSlotsFor, baseTierRange, countsAsFind, craftTiers, craftWeapon, enchantCost, formKey, formMult, isCraftNonce,
+  normalizeCraftNonces, normalizeJournal, parseCraftInput, partById, partsOf, salvageIntoJournal, salvageTierIndex, shapeFoundWeapon, tierIndexOfItem,
+  typeOfItem, variantsFor,
   type AffixForm, type CraftInput, type CraftJournal,
 } from '../../formulas/craft.js';
 import { meetsRequirements, unmetWorn } from '../../formulas/stats.js';
@@ -21,7 +22,7 @@ import { saveStateSchema } from '../../validation/save.js';
 import { parseTownCommand } from '../../session/netSchemas.js';
 import {
   SHOP_CONSUMABLE_STOCK, allocActive, allocAttr, allocPassive, applyConsumable, attrRespecRefund, buyItem, canEnchantItem, canUpgradeItem, craftAction,
-  depositMaterials, enchantAction, equip, fieldSalvage, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade,
+  depositMaterials, enchantAction, enchantMaterials, equip, fieldSalvage, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade, rerollMaterials,
   moveInventoryItem, moveToBelt, passiveRespecFee, repairCost, respec, respecPassives, respecSkills, salvageMean, salvageRange,
   salvageWorth, sellItem, settleEarned, shopBuyPrice, shopConsumableIds, shopSellPrice, sketchAction, skillRespecFee, unequip, upgradeCost,
   upgradedItem, pointsHeld, type ActionResult,
@@ -32,6 +33,7 @@ import { newCharacterSave } from '../newCharacter.js';
 import { applyDeathPenalty } from '../death.js';
 import { gainXp } from '../progression.js';
 import { canAffordBoth, giveMaterialsTo, type MaterialCost } from '../materials.js';
+import { ESSENCE_ID } from '../../formulas/salvage.js';
 
 /**
  * ⭐ ФАЗЗЕР ЭКОНОМИКИ (B2) — МОДЕЛЬ И ИНВАРИАНТЫ. Один аккаунт: два героя и общий сундук (кошелёк сырья, журнал кузнеца, ключи
@@ -50,7 +52,8 @@ import { canAffordBoth, giveMaterialsTo, type MaterialCost } from '../materials.
  *       наградой и впрыском; прочие вещи не меняются ни на байт (кроме места в сетке);
  *  I5 — ГРОСБУХ: ценность аккаунта (золото + сырьё по `sellPrice` + вещь по лучшему из «продать / разобрать») от шага
  *       города не растёт, от впрыска — не больше впрыснутого (петля с прибылью — нарушение, сжатая до кратчайшей);
- *  I6 — журнал, потолок ступени и ворота мификов двигаются только разбором годной находки и тратой эскиза;
+ *  I6 — журнал двигается только разбором у кузнеца, тратой эскиза и ковкой (кодекс «сковал»); ⭐ D3: прежние ворота ковки — потолок
+ *       ступени (`tierHi`) и счёт мификов (`mythic`) — не двигает НИЧТО, а ковка любой ступени открытой базы журналом не запирается;
  *  I7 — каждая вещь проходит zod-схему сейва (`validation/save.ts`) туда-обратно без изменений;
  *  плюс сетка (вещь в своих клетках, без наложений), экипировка по правилам слотов и требований, правила вещи (свойств не больше
  *  редкости и оплаченной формы, ступень в окне базы, сумма требований под потолком), очки (вложенное + свободное = выданное
@@ -367,6 +370,14 @@ export function newWorld(seed: number): FuzzWorld {
   const stash = emptyStash(reg);
   const mats = reg.get('craft-materials');
   for (let n = r.int(0, 25); n > 0; n--) { const m = r.pick(mats); stash.materials![m.id] = (stash.materials![m.id] ?? 0) + r.int(1, 120); }
+  // ⭐ §6.2: эссенция — частый гость кошелька (разбор находок у кузнеца): без неё зачарование и перекатка почти всегда отказывали бы.
+  if (r.chance(0.6)) stash.materials![ESSENCE_ID] = (stash.materials![ESSENCE_ID] ?? 0) + r.int(1, 80);
+  // ⭐ §7: и запас под подъём вещи из сумки — основа сорта целевой ступени семьями деталей; без него подъём почти всегда «не хватает».
+  for (const hh of heroes) {
+    const gear = hh.inventory.filter((i) => i.kind !== 'material' && i.kind !== 'consumable');
+    if (!gear.length || !r.chance(0.6)) continue;
+    for (const [id, n] of Object.entries(upgradeCost(reg, r.pick(gear)))) stash.materials![id] = (stash.materials![id] ?? 0) + n * r.int(1, 3);
+  }
   const sd = stashDims(reg);
   for (let n = r.int(0, 10); n > 0; n--) addToInventory(stash.tabs[r.int(0, stash.tabs.length - 1)]!, foundItem(reg, r), sd);
   // Журнал: пусто — или история разборов у кузнеца (законный путь его роста), плюс счёт мификов прошлого.
@@ -630,10 +641,8 @@ function journalInput(reg: ConfigRegistry, j: CraftJournal, r: Rng): CraftInput 
   const cls = base.weaponClass;
   const hands = base.hands ?? 1;
   const keySlot = keySlotOf(reg, cls);
-  const cap = journalTierCap(reg, j);
-  // Общая ступень материала, которая при ровной сборке даёт ступень вещи не выше потолка (t = round(1.5·(s−1))).
-  const steps = [1, 2, 3, 4, 5].filter((s) => Math.round(1.5 * (s - 1) + 1e-9) <= Math.max(0, cap));
-  const target = r.chance(0.75) && steps.length ? r.pick(steps) : r.int(1, 5);
+  // ⭐ D3: ворот ступени у ковки нет — общая ступень материала любая (чаще нижние: на них чаще хватает сырья).
+  const target = r.chance(0.75) ? r.pick([1, 1, 2, 2, 3, 4, 5]) : r.int(1, 5);
   const parts = {} as CraftParts;
   for (const slot of CRAFT_SLOT_LIST) {
     let pool = variantsFor(reg, cls, slot, hands);
@@ -697,33 +706,49 @@ function sameJ(b: CraftJournal, a: CraftJournal, keys: (keyof CraftJournal)[]): 
   for (const k of keys) if (JSON.stringify(b[k]) !== JSON.stringify(a[k])) return `журнал: поле ${k} изменилось (${JSON.stringify(b[k])} → ${JSON.stringify(a[k])})`;
   return null;
 }
-const ALL_J: (keyof CraftJournal)[] = ['bases', 'variants', 'tierHi', 'classSalvages', 'sketches', 'mythic', 'typesSeen', 'typesForged'];
+const ALL_J: (keyof CraftJournal)[] = ['bases', 'variants', 'tierHi', 'classSalvages', 'sketches', 'mythic', 'typesSeen', 'typesForged', 'gearSeen'];
 /**
- * Журнал после разбора `item` у кузнеца — по документации (CRAFT_WEAPONS.md §12.2–12.4), а не по `salvageIntoJournal`:
- * скованное и не оружие — журнал не трогают; найденное ИЛИ купленное оружие — открывает тип и потолок ступени; детали, кодекс,
- * жалость — только найденное (`drop`/`chest`/`boss`); мифик — только найденный t6 без подъёма кузнецом.
+ * Журнал после разбора `item` у кузнеца — по документации (CRAFT_WEAPONS.md §12.2–12.4, предложение «Разбор, сырьё и чары» §9, решение
+ * владельца D1), а не по `salvageIntoJournal`: ЛЮБАЯ разобранная у кузнеца вещь пополняет каталог — оружие любого происхождения открывает
+ * тип, свои четыре детали и кодекс (скованное — тип и детали); броня, щит, украшение — базу в каталог снаряжения (`gearSeen`). Жалость —
+ * только найденное (`drop`/`chest`/`boss`). ⭐ D3: потолок ступени (`tierHi`) и счёт мификов (`mythic`) — прежние ворота ковки — разбор не
+ * двигает никогда. Разбор в поле журнал не трогает вовсе (D2) — у него `journal` нет, сверка — `sameJ` всего журнала.
  */
 function salvageJournalRule(reg: ConfigRegistry, item: Item): (b: CraftJournal, a: CraftJournal) => string | null {
   const base = reg.get('items.base').find((x) => x.id === item.baseId);
   const parts = partsOf(reg, item);
-  const t = tierIndexOfItem(reg, item);
-  const last = craftTiers(reg).length - 1;
   const type = typeOfItem(reg, item);
   return (b, a) => {
-    if (!base || base.kind !== 'weapon' || item.parts || !parts) return sameJ(b, a, ALL_J);
-    const s = sameJ(b, a, ['typesForged']);
+    if (!base) return sameJ(b, a, ALL_J);
+    if (base.kind !== 'weapon') {
+      if (base.kind !== 'armor' && base.kind !== 'shield' && base.kind !== 'jewelry') return sameJ(b, a, ALL_J);
+      const s = sameJ(b, a, ALL_J.filter((k) => k !== 'gearSeen'));
+      if (s) return s;
+      const bg = b.gearSeen ?? [], ag = a.gearSeen ?? [];
+      if (setDiff(bg, ag).length) return 'журнал: снаряжение пропало из каталога';
+      const ng = setDiff(ag, bg);
+      if (ng.some((x) => x !== base.id)) return `журнал: в каталог снаряжения записана чужая база ${ng.join(',')}`;
+      return ag.includes(base.id) ? null : `журнал: разобранное снаряжение ${base.id} не записано в каталог`;
+    }
+    if (!parts) return sameJ(b, a, ALL_J);
+    const s = sameJ(b, a, ['typesForged', 'gearSeen', 'tierHi', 'mythic']);
     if (s) return s;
     if (setDiff(b.bases, a.bases).length) return 'журнал: база пропала';
     const nb = setDiff(a.bases, b.bases);
     if (nb.some((x) => x !== item.baseId)) return `журнал: открыта чужая база ${nb.join(',')}`;
-    if (a.tierHi !== Math.max(b.tierHi, t)) return `журнал: потолок ${b.tierHi} → ${a.tierHi}, а вещь ступени ${t}`;
-    if (!countsAsFind(item)) return sameJ(b, a, ['variants', 'typesSeen', 'classSalvages', 'sketches', 'mythic']);
+    if (!a.bases.includes(item.baseId)) return `журнал: тип ${item.baseId} не записан в каталог (${item.origin ?? 'без происхождения'})`;
     if (setDiff(b.variants, a.variants).length) return 'журнал: деталь пропала';
     const ids = CRAFT_SLOT_LIST.map((sl) => parts[sl].id);
     const nv = setDiff(a.variants, b.variants);
     if (nv.some((x) => !ids.includes(x))) return `журнал: открыта чужая деталь ${nv.join(',')}`;
+    const miss = ids.filter((x) => !a.variants.includes(x));
+    if (miss.length) return `журнал: детали ${miss.join(',')} не записаны в каталог (${item.origin ?? 'без происхождения'})`;
+    if (item.parts) return sameJ(b, a, ['typesSeen', 'classSalvages', 'sketches']);
     const nt = setDiff(a.typesSeen, b.typesSeen);
     if (nt.some((x) => x !== type?.typeId)) return `журнал: кодекс открыл чужой тип ${nt.join(',')}`;
+    if (setDiff(b.typesSeen, a.typesSeen).length) return 'журнал: тип кодекса пропал';
+    if (type?.typeId && !a.typesSeen.includes(type.typeId)) return `журнал: кодекс «${type.typeId}» не записан`;
+    if (!countsAsFind(item)) return sameJ(b, a, ['classSalvages', 'sketches']);
     // Жалость (§12): каждый `sketchAfter`-й разбор найденного оружия класса — эскиз; счёт класса +1 (или обнуляется остатком).
     const every = reg.get('balance').craft.journal.sketchAfter;
     const n = (b.classSalvages[base.weaponClass] ?? 0) + 1;
@@ -733,8 +758,6 @@ function salvageJournalRule(reg: ConfigRegistry, item: Item): (b: CraftJournal, 
     for (const k of new Set([...Object.keys(a.classSalvages), ...Object.keys(b.classSalvages)])) {
       if (k !== base.weaponClass && a.classSalvages[k] !== b.classSalvages[k]) return `журнал: счёт жалости чужого класса ${k}`;
     }
-    const mythic = t === last && countsAsMythicFind(item);
-    if (a.mythic !== b.mythic + (mythic ? 1 : 0)) return `журнал: мификов ${b.mythic} → ${a.mythic} (вещь t${t}, ${item.origin}, поднята=${!!item.tierForged})`;
     return null;
   };
 }
@@ -840,7 +863,6 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       const maxMaterials = mapConsent(r, () => pvView?.cost?.materials, -1);
       const replay = isCraftNonce(nonce) ? normalizeCraftNonces(w.stash.craftNonces).find((e) => e.n === nonce) : undefined;
       if (typeof nonce === 'string' && isCraftNonce(nonce) && !mine.includes(nonce)) mine.push(nonce);
-      const cap = journalTierCap(reg, j);
       return {
         desc: `ковать ${pv?.item?.name ?? '?'} ${parsed.ok ? JSON.stringify(parsed.input.parts) : JSON.stringify(input)?.slice(0, 80)} ключ ${String(nonce)}${replay ? ' (повтор)' : ''}`
           + ` цена ${pv?.cost ? `${pv.cost.gold}з ${JSON.stringify(pv.cost.materials)}` : pv?.reason ?? (parsed.ok ? '' : parsed.reason)}, согласие ${maxGold} ${JSON.stringify(maxMaterials)}`,
@@ -880,7 +902,6 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
                 const offPart = CRAFT_SLOT_LIST.map((sl) => partById(reg, it.parts![sl].id)).find((p) => !p || p.enabled === false);
                 if (offPart !== undefined) return `скована выключенная деталь ${offPart?.id}`;
                 const t = tierIndexOfItem(reg, it);
-                if (t > cap) return `ворота журнала: ступень t${t} выше потолка ${cap} (tierHi ${j.tierHi}, мификов ${j.mythic})`;
                 if (craftTiers(reg)[t]?.enabled === false) return `скована выключенная ступень t${t}`;
                 const offMat = Object.keys(cost.materials).find((id) => !reg.get('craft-materials').some((m) => m.id === id && m.enabled !== false));
                 if (offMat) return `ковка съела выключенный материал ${offMat}`;
@@ -900,16 +921,21 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       const uid = pickUid(w, r, h, (it) => isCrafted(it) && it.rarity === 'normal');
       const it = invItem(s, uid);
       const rarity = r.chance(0.92) ? r.pick(['magic', 'rare'] as const) : r.pick(['unique', 'normal', 'legendary']);
-      const cost = it && (rarity === 'magic' || rarity === 'rare') ? enchantCost(reg, it, rarity) : 0;
-      const can = it && (rarity === 'magic' || rarity === 'rare') ? canEnchantItem(reg, it, rarity) : { ok: false };
-      const maxGold = it && (rarity === 'magic' || rarity === 'rare') ? payConsent(r, () => enchantCost(w.view, it, rarity)) : undefined;
+      const legal = rarity === 'magic' || rarity === 'rare';
+      const cost = it && legal ? enchantCost(reg, it, rarity) : 0;
+      const can = it && legal ? canEnchantItem(reg, it, rarity) : { ok: false };
+      const maxGold = it && legal ? payConsent(r, () => enchantCost(w.view, it, rarity)) : undefined;
+      // ⭐ §6.2: и эссенция — из сумки, недостающее из сундука; согласие на неё — `maxMaterials` (R8-14).
+      const ess = it && legal ? enchantMaterials(reg, it, rarity) : {};
+      const maxMaterials = it && legal ? mapConsent(r, () => enchantMaterials(w.view, it, rarity), -1) : undefined;
       const before = it ? structuredClone(it) : undefined;
       return {
-        desc: `зачаровать ${it ? `«${it.name}»` : uid} до ${rarity} за ${cost}, согласие ${maxGold}`,
-        kind: 'town', cmd: { cmd: 'forgeEnchant', uid, rarity, ...(maxGold !== undefined ? { maxGold } : {}) },
-        run: () => asRes(enchantAction(reg, s, uid, rarity, townRng, maxGold)),
+        desc: `зачаровать ${it ? `«${it.name}»` : uid} до ${rarity} за ${cost} и ${JSON.stringify(ess)}, согласие ${maxGold} ${JSON.stringify(maxMaterials)}`,
+        kind: 'town', cmd: { cmd: 'forgeEnchant', uid, rarity, ...(maxGold !== undefined ? { maxGold } : {}), ...(maxMaterials !== undefined ? { maxMaterials } : {}) },
+        run: () => asRes(enchantAction(reg, s, uid, rarity, townRng, maxGold, w.stash.materials ?? (w.stash.materials = {}), maxMaterials)),
         spec: () => ({
           gold: { h, delta: -cost, maxPay: maxGold },
+          mats: { spend: ess, maxSpend: maxMaterials },
           transforms: [uid],
           extra: () => {
             if (!can.ok) return 'зачарование прошло там, где canEnchantItem отказывал';
@@ -986,6 +1012,8 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       const maxGold = it ? payConsent(r, () => forgeGold(w.view, it, 'upgrade')) : undefined;
       const maxMaterials = it ? mapConsent(r, () => upgradeCost(w.view, it), -1) : undefined;
       const t0 = it ? tierIndexOfItem(reg, it) : -1;
+      // ⭐ Исходная ступень разбора: первый подъём пишет её в `bornTier`, следующие не трогают (§11.2 — «поднять и разобрать» в минус).
+      const born = it ? (it.bornTier ?? (it.tierForged ? undefined : craftTiers(reg)[salvageTierIndex(reg, it)]?.id)) : undefined;
       return {
         desc: `поднять ${it ? `«${it.name}» t${t0}` : uid} за ${gold}з ${JSON.stringify(mats)}, согласие ${maxGold} ${JSON.stringify(maxMaterials)}`,
         kind: 'town', cmd: { cmd: 'forgeUpgrade', uid, ...(maxGold !== undefined ? { maxGold } : {}), ...(maxMaterials !== undefined ? { maxMaterials } : {}) },
@@ -998,6 +1026,8 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
             const after = invItem(s, uid);
             if (!next) return 'подъём прошёл там, где upgradedItem отказывал';
             if (!after) return 'поднятая вещь пропала из сумки';
+            if (it?.rarity === 'unique') return 'поднят уник (кузнец уник не поднимает)';
+            if (after.bornTier !== born) return `исходная ступень разбора ${it?.bornTier ?? '—'} → ${after.bornTier ?? '—'}, ожидалась ${born ?? '—'}`;
             if (keyOf(after) !== keyOf(next)) return `поднятая вещь не та, что в предпросмотре: ${diffKeys(after, next, ['pos'])}`;
             if (!after.tierForged) return 'поднятая вещь без метки tierForged';
             return tierIndexOfItem(reg, after) > t0 ? null : `ступень не выросла: t${t0} → t${tierIndexOfItem(reg, after)}`;
@@ -1010,14 +1040,18 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       const it = invItem(s, uid);
       const gold = it ? forgeGold(reg, it, 'reroll') : 0;
       const maxGold = it ? payConsent(r, () => forgeGold(w.view, it, 'reroll')) : undefined;
+      // ⭐ §6.2: и эссенция (половина зачарования до редкости вещи) — из сумки и сундука; согласие — `maxMaterials`.
+      const ess = it ? rerollMaterials(reg, it) : {};
+      const maxMaterials = it ? mapConsent(r, () => rerollMaterials(w.view, it), -1) : undefined;
       const before = it ? structuredClone(it) : undefined;
       const limit = reg.get('balance').forgePrices.rerollLimit;
       return {
-        desc: `перекатить ${it ? `«${it.name}» (перекаток ${it.rerolls ?? 0})` : uid} за ${gold}, согласие ${maxGold}`,
-        kind: 'town', cmd: { cmd: 'forgeReroll', uid, ...(maxGold !== undefined ? { maxGold } : {}) },
-        run: () => asRes(forgeReroll(reg, s, uid, townRng, maxGold)),
+        desc: `перекатить ${it ? `«${it.name}» (перекаток ${it.rerolls ?? 0})` : uid} за ${gold} и ${JSON.stringify(ess)}, согласие ${maxGold} ${JSON.stringify(maxMaterials)}`,
+        kind: 'town', cmd: { cmd: 'forgeReroll', uid, ...(maxGold !== undefined ? { maxGold } : {}), ...(maxMaterials !== undefined ? { maxMaterials } : {}) },
+        run: () => asRes(forgeReroll(reg, s, uid, townRng, maxGold, w.stash.materials ?? (w.stash.materials = {}), maxMaterials)),
         spec: () => ({
           gold: { h, delta: -gold, maxPay: maxGold },
+          mats: { spend: ess, maxSpend: maxMaterials },
           transforms: [uid],
           extra: () => {
             const after = invItem(s, uid);
@@ -1321,7 +1355,12 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
       const good = x < 0.55 ? feasibleInput(reg, normalizeJournal(w.stash.forgeJournal), r) : null;
       const pv = good ? craftWeapon(reg, good, { materialsOn: true }) : null;
       const bag = s.inventory.filter((i) => i.kind !== 'material' && i.kind !== 'consumable');
-      const ladder = x >= 0.55 && x < 0.8 && bag.length ? (() => { const it = r.pick(bag); return r.chance(0.5) ? upgradeCost(reg, it) : repairCost(reg, it); })() : {};
+      // Цена кузницы вещи из сумки: подъём, починка — или эссенция перекатки и зачарования (§6.2).
+      const ladder = x >= 0.55 && x < 0.8 && bag.length ? (() => {
+        const it = r.pick(bag);
+        const y = r.int(0, 5);
+        return y <= 2 ? upgradeCost(reg, it) : y === 3 ? repairCost(reg, it) : y === 4 ? rerollMaterials(reg, it) : enchantMaterials(reg, it, r.pick(['magic', 'rare'] as const));
+      })() : {};
       if (pv?.cost) { w.pending = good!; w.pendingHero = h; for (const [id, n] of Object.entries(pv.cost.materials)) gains[id] = n + r.int(0, 20); }
       else if (Object.keys(ladder).length) for (const [id, n] of Object.entries(ladder)) gains[id] = n + r.int(0, 10);
       else for (let n = r.int(1, 4); n > 0 && mats.length; n--) { const m = r.pick(mats); gains[m.id] = (gains[m.id] ?? 0) + r.int(1, 80); }
@@ -1756,10 +1795,15 @@ function configPlan(w: FuzzWorld, r: Rng): Plan {
           switch (which) {
             case 0: { const sl = r.pick(['strike', 'grip', 'bind', 'head'] as const); k.cost.units[sl] += r.int(1, 8); desc = `ковка: единиц ${sl} → ${k.cost.units[sl]}`; break; }
             case 1: k.cost.goldPerReqMult = Math.round(k.cost.goldPerReqMult * 1.5); desc = `ковка: золото → ${k.cost.goldPerReqMult}`; break;
-            case 2: k.cost.enchantGold = Math.round(k.cost.enchantGold * 1.5); desc = `зачарование → ${k.cost.enchantGold}`; break;
+            case 2: k.cost.enchantGold = Math.round(k.cost.enchantGold * 1.5); k.cost.essence.perTier += r.int(0, 2); desc = `зачарование → ${k.cost.enchantGold}, эссенция ${k.cost.essence.base}+${k.cost.essence.perTier}×t`; break;
             case 3: f.upgradeTier = Math.round(f.upgradeTier * 1.5); desc = `подъём → ${f.upgradeTier}`; break;
             case 4: f.rerollAffix = Math.round(f.rerollAffix * 1.5); f.repairBroken = Math.round(f.repairBroken * 1.5); desc = `перекатка/починка → ${f.rerollAffix}/${f.repairBroken}`; break;
-            case 5: { const t = r.pick(['tier1', 'tier2', 'tier3'] as const); f.upgradeMaterials[t] += r.int(1, 5); f.repairMaterials[t] += r.int(1, 3); desc = `сырьё подъёма/починки ${t} → ${f.upgradeMaterials[t]}/${f.repairMaterials[t]}`; break; }
+            case 5: {
+              f.upgradeMaterials.consumable += r.int(1, 5); f.repairMaterials.consumable += r.int(0, 3); f.repairMaterials.main += r.int(0, 2);
+              if (r.chance(0.3)) f.upgradeMaterials.baseShare = r.pick([0.5, 1.5, 2]);
+              desc = `сырьё подъёма ×${f.upgradeMaterials.baseShare} + ${f.upgradeMaterials.consumable} I, починки ${f.repairMaterials.consumable} I + ${f.repairMaterials.main}`;
+              break;
+            }
             case 6: b.respecCost = Math.round(b.respecCost * 1.5); desc = `сброс → ${b.respecCost}`; break;
             case 7: b.salvage.fieldYield = Math.round(b.salvage.fieldYield * 50) / 100; desc = `выход в поле → ${b.salvage.fieldYield}`; break;
             case 8: { const sl = r.pick(['strike', 'grip', 'bind', 'head'] as const); k.salvage.units[sl] = Math.max(0, k.salvage.units[sl] - 1); desc = `разбор: единиц ${sl} → ${k.salvage.units[sl]}`; break; }
@@ -1883,6 +1927,19 @@ function itemRules(w: FuzzWorld, it: Item, where: string, out: Violation[]): voi
   const reqSum = Object.values(it.requirements ?? {}).reduce<number>((n, v) => n + (v ?? 0), 0);
   const cap = birthCap(w, it);
   if (reqSum > cap) bad('req-cap', `требований ${reqSum} сверх потолка ${cap} (${JSON.stringify(it.requirements)}, происхождение ${it.origin})`);
+  // ⭐ D4 (решение владельца 06.10): разобрать вещь (у кузнеца или в поле, лучший бросок) и сдать сырьё и эссенцию — не дороже, чем сдать
+  // саму вещь; при ЛЮБОЙ правке конфига живьём (множитель редкости, цены сырья, выход разбора). Кэш — по версии конфига и самой вещи.
+  const k = `d4|${w.cfgVer}|${keyOf(it)}`;
+  let gap = w.liqCache.get(k);
+  if (gap === undefined) {
+    const sell = shopSellPrice(reg, it);
+    const priced = new Map(reg.get('craft-materials').map((m) => [m.id, m.sellPrice]));
+    const fieldTop = Object.entries(salvageRange(reg, it, true).range).reduce((sum, [id, r]) => sum + r.max * (priced.get(id) ?? 0), 0);
+    gap = Math.max(salvageWorth(reg, it), Math.ceil(fieldTop)) - sell;
+    if (w.liqCache.size > 50_000) w.liqCache.clear();
+    w.liqCache.set(k, gap);
+  }
+  if (gap > 0) bad('salvage-sell', `разбор и продажа сырья дороже продажи самой вещи на ${gap} (D4)`);
 }
 
 /**

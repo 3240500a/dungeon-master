@@ -4,6 +4,7 @@ import {
   WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, isSafeKey, isWireText,
 } from '../session/wireLimits.js';
 import { buffTimingIssues } from '../formulas/buffTiming.js';
+import { salvageRecipeIssues, salvageSellIssues } from '../formulas/salvageGuard.js';
 
 /**
  * zod-схемы всех конфигов — единственный источник истины по ФОРМЕ данных.
@@ -399,18 +400,6 @@ export const balanceSchema = z.object({
     upgradeTier: z.number().int().min(0),
     rerollAffix: z.number().int().min(0),
     /**
-     * ⭐ ЦЕНА УЛУЧШЕНИЯ В МАТЕРИАЛАХ — лестница по редкости вещи.
-     *
-     * Обычная просит только первую ступень, магическая — первую И вторую, редкая — все три.
-     * Каждая следующая редкость ДОБАВЛЯЕТ ступень, ничего не убирая: иначе чистое железо
-     * стало бы мусором ровно тогда, когда игрок перерос магические вещи, а приходить бы
-     * не перестало.
-     *
-     * Семья материала берётся из ПРАВИЛА РАЗБОРА той же вещи (`salvage-rules`): меч чинится
-     * железом, лук — деревом, латы — пластинами. Одна таблица описывает и что вещь даёт,
-     * и что она стоит, поэтому разойтись они не могут.
-     */
-    /**
      * ⭐ КУЗНЕЧНАЯ СКИДКА НА ТРЕБОВАНИЯ при подъёме тира (доля, 0.2 = −20 %).
      * Найденный «Мастерский» меч сильнее, кузнечный — доступнее раньше. Это и есть причина
      * возиться с крафтом, а не ждать удачного дропа.
@@ -430,25 +419,29 @@ export const balanceSchema = z.object({
      */
     repairBroken: z.number().int().min(0).default(40),
     /**
-     * Починка в материалах — та же лестница по редкости, что у улучшения, но дешевле.
-     * ⚠ Дороже, чем даёт разбор той же вещи: иначе чинить было бы выгоднее всегда, и выбор
-     * «починить или разобрать» исчез бы. Платим за ВЕЩЬ, а не за материалы в ней.
+     * ⭐ ЦЕНА ПОДЪЁМА В СЫРЬЕ — ПО СТУПЕНИ, А НЕ ПО РЕДКОСТИ (предложение «Разбор, сырьё и чары» §7, `upgradeCost`). Подъём до ступени t
+     * просит ОСНОВУ — верх вилки разбора этой вещи у кузнеца, будь она НАЙДЕНА на ступени t (оружие — 7 единиц по рецепту t, каждая деталь
+     * в своей семье; нагрудник 3, шлем, сапоги, перчатки и пояс по 2; щит — 3 дерева + 2 железа), × `baseShare`, — плюс РАСХОДНИК:
+     * `consumable` сырья I сорта главной семьи вещи (у оружия — семья ударной части, у прочего — первая семья правила разбора).
+     * Редкость меняет только золото (`upgradeTier` × `priceMult`). Поэтому IV и V тратятся подъёмом t5–t6, а «поднять и разобрать» —
+     * всегда чистый расход: разбор идёт по исходной ступени (`bornTier`). ⚠ Было: лестница сортов I–III по редкости (`tier1..3`).
+     */
+    upgradeMaterials: z
+      .object({
+        /** Доля основы: 1 — верх вилки разбора целевой ступени целиком; рычаг §13 — 0.5, если подъёмы резко упадут. */
+        baseShare: z.number().min(0).max(2).default(1),
+        /** Расходник: столько сырья I сорта главной семьи вещи — сток I на любой глубине. */
+        consumable: z.number().int().min(0).default(20),
+      })
+      .default({}),
+    /**
+     * ⭐ ЦЕНА ПОЧИНКИ В СЫРЬЕ — по ступени вещи (§7, `repairCost`): `consumable` сырья I сорта главной семьи + `main` ГЛАВНОГО сорта вещи
+     * на её ступени (сорт ударной части оружия или брони по рецепту `salvage.recipeByTier`) в той же семье. Редкость — только в золоте.
      */
     repairMaterials: z
       .object({
-        tier1: z.number().int().min(0).default(6),
-        tier2: z.number().int().min(0).default(2),
-        tier3: z.number().int().min(0).default(1),
-      })
-      .default({}),
-    upgradeMaterials: z
-      .object({
-        /** Сколько материала ПЕРВОЙ ступени. Нужен всем редкостям — это базовая валюта крафта. */
-        tier1: z.number().int().min(0).default(20),
-        /** Второй ступени — только магическим и выше. */
-        tier2: z.number().int().min(0).default(5),
-        /** Третьей — только редким. Самый дефицитный вход, он и гейтит топовый крафт. */
-        tier3: z.number().int().min(0).default(2),
+        consumable: z.number().int().min(0).default(6),
+        main: z.number().int().min(0).default(2),
       })
       .default({}),
   }),
@@ -624,21 +617,42 @@ export const balanceSchema = z.object({
        */
       fieldYield: z.number().min(0).max(1).default(0.3),
       /**
-       * ⭐ РЕДКОСТЬ → СТУПЕНЬ МАТЕРИАЛА. Обычная вещь даёт ржавое, магическая — чистое,
-       * редкая — калёное. Это ЕДИНАЯ истина и для разбора вещей, и для дропа с монстров.
-       *
-       * Почему редкость, а не глубина: цвет вещи и цвет имени монстра видно сразу, а глубину
-       * игрок в голове не держит. И это наш единственный сигнал — пул снаряжения монстров один
-       * и тот же на всех этажах, «ржавый топор» на двадцатом не выглядит лучше, чем на первом.
-       *
-       * ⚠ 0 = «не разбирается вовсе» — так выключены уникальные (решение В2).
+       * ⭐ СОРТ СЫРЬЯ = СТУПЕНЬ ВЕЩИ, А НЕ РЕДКОСТЬ (docs/ECONOMY.md, предложение «Разбор, сырьё и чары» §4). Разбор у кузнеца
+       * возвращает РЕЦЕПТ СВОЕЙ СТУПЕНИ: строка `t` — сорта четырёх деталей оружия (ударная, держак, обвязка, оголовье), из
+       * которых ковка (`tierFromParts`) собирает ровно ступень `t`. t1 и t4 — «смешанные»: ударная часть на сорт выше. Броня,
+       * щит и украшение берут НИЖНИЙ сорт строки. Собственные ступени деталей найденного оружия на сорт больше не влияют —
+       * детали отвечают за вид и каталог, рецепт за сорт. Поэтому V идёт только с t6, а IV — только с t4+.
+       * Строка на ступень (`item-tiers`); что каждая строка куётся ровно в свою ступень и рецепт монотонен — проверка поверх таблиц
+       * (`salvageRecipeIssues`): редактор не сохранит рецепт, который ломает это правило. Строк может быть больше или меньше, чем ступеней
+       * (ступень добавляют или убирают по одной таблице за раз): ступень без своей строки берёт последнюю (`salvageGrades` зажимает
+       * индекс) — сорт не выше своего, насоса нет; лишние строки не читаются.
+       * ⚠ Было `rarityTier` (обычная → I, магическая → II, редкая → III): «жёлтая вещь давала жёлтое сырьё». Убрано.
        */
-      rarityTier: z
+      recipeByTier: z
+        .array(z.array(z.number().int().min(1).max(5)).length(4))
+        .min(1)
+        .default([[1, 1, 1, 1], [2, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3], [4, 3, 3, 3], [4, 4, 4, 4], [5, 5, 5, 5]]),
+      /**
+       * ⭐ ПОТОЛОК СОРТА НЕ-НАХОДКИ: купленная вещь, вещь без происхождения (сейв старше поля) и поднятая кузнецом до `bornTier`
+       * разбираются не выше этого сорта (решение владельца D1). Высокие сорта — только с найденного (дроп, сундук, босс) и
+       * наград: иначе лавка — прямой обмен золота на IV/V. Не выше III — правило, а не число (проверка ниже).
+       */
+      nonFindMaxGrade: z.number().int().min(1).max(5).default(3),
+      /**
+       * Разбираются ли уникальные. ⚠ Явный выключатель, а не «ступень 0» в таблице редкостей (прежний `rarityTier.unique = 0`
+       * заодно глушил сырьё с тел боссов). Выключено (решение В2): «нашёл — носи как есть», лишний уходит торговцу.
+       */
+      uniqueSalvage: z.boolean().default(false),
+      /**
+       * ⭐ ЧАРОДЕЙСКАЯ ЭССЕНЦИЯ (`ench-essence`) с разбора у кузнеца — по редкости: за редкость теперь платит эссенция, а не
+       * сорт сырья. Дают только найденные и награды (`ESSENCE_ORIGINS`); купленное, без происхождения, стартовое и переплавка —
+       * нет. В поле — та же доля `fieldYield` с вероятностным округлением.
+       */
+      essence: z
         .object({
-          normal: z.number().int().min(0).default(1),
-          magic: z.number().int().min(0).default(2),
-          rare: z.number().int().min(0).default(3),
-          unique: z.number().int().min(0).default(0),
+          magic: z.number().int().min(0).default(1),
+          rare: z.number().int().min(0).default(2),
+          unique: z.number().int().min(0).default(2),
         })
         .default({}),
       /** Множитель выхода по слоту брони: нагрудник целый, перчатки — мелочь. */
@@ -651,6 +665,34 @@ export const balanceSchema = z.object({
           belt: z.number().min(0).default(0.4),
         })
         .default({}),
+    })
+    // ⭐ ЗАЩИТА РАЗБОРА НЕ ДЕРЖИТСЯ НА ПРАВИМЫХ ЧИСЛАХ (предложение §11.2): что строка рецепта куётся ровно в свою ступень, — проверка
+    // поверх таблиц (`salvageRecipeIssues`); здесь — то, что видно по одной таблице.
+    .superRefine((s, ctx) => {
+      // Поле — всегда меньше кузницы: при 1 нести вещь домой незачем никогда, и смерть теряет смысл (Ч3, правило Р4).
+      if (s.fieldYield >= 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['fieldYield'], message: `доля разбора в поле ${s.fieldYield} — не меньше кузницы: в поле обязано выходить меньше, чем у кузнеца` });
+      // Высокие сорта — только с находок: потолок купленного не выше III (решение D1), иначе лавка меняет золото на IV/V.
+      if (s.nonFindMaxGrade > 3) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nonFindMaxGrade'], message: `потолок сорта купленного ${s.nonFindMaxGrade} — выше III: лавка стала бы источником IV–V` });
+      // Монотонность: ступень выше не даёт сорта ниже ни в одной детали.
+      for (let t = 1; t < s.recipeByTier.length; t++) {
+        for (let k = 0; k < 4; k++) {
+          if (s.recipeByTier[t]![k]! < s.recipeByTier[t - 1]![k]!) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['recipeByTier', t, k], message: `рецепт не монотонен: ступень ${t} даёт деталь ${k + 1} сорта ${s.recipeByTier[t]![k]}, а ступень ${t - 1} — ${s.recipeByTier[t - 1]![k]}` });
+          }
+        }
+      }
+    })
+    .default({}),
+  /** Лавка (кузница города): что она выкладывает на прилавок. */
+  shop: z
+    .object({
+      /**
+       * ⭐ ВЫШЕ ЭТОЙ СТУПЕНИ ЛАВКА НЕ ПРОДАЁТ (предложение §8.1): t5–t6 — только находки и ковка. Ступень прилавка зажимается
+       * по ИТОГОВОЙ ступени вещи (`shopTierCap`: пулы без баз с `minTier` выше, бросок уровня ступени и потолок базы), а не по
+       * уровню героя. ⚠ Нет такой ступени в конфиге (опечатка, переименованная ступень) — ЗАКРЫТО, а не «без лимита»: потолок — запасная
+       * ступень `t4`, а нет и её — нижняя (`shopTierCap`), и сервер говорит об этом при сборке конфига.
+       */
+      maxTier: z.string().min(1).default('t4'),
     })
     .default({}),
   /**
@@ -724,6 +766,22 @@ export const balanceSchema = z.object({
           goldPerReqMult: z.number().min(0).default(300),
           /** Золото зачарования = это × reqMult × priceMult редкости × M формы. */
           enchantGold: z.number().min(0).default(100),
+          /**
+           * ⭐ ЧАРОДЕЙСКАЯ ЭССЕНЦИЯ зачарования и перекатки — ПОВЕРХ прежнего золота (предложение «Разбор, сырьё и чары» §6.2, `essenceCost`):
+           * зачарование до магической — `base + perTier × ступень`, до редкой — × `rareMult`, перекатка — доля `rerollShare` зачарования до
+           * редкости вещи (t0: 2/4, перекатка 1/2; t6: 14/28, перекатка 7/14). Эссенцию даёт только разбор найденных магических и редких
+           * вещей у кузнеца (в поле — доля), поэтому чары держит не только золото. Ступень — нынешняя ступень вещи.
+           */
+          essence: z
+            .object({
+              base: z.number().min(0).default(2),
+              perTier: z.number().min(0).default(2),
+              /** Редкая — во столько раз дороже магической. Не меньше 1: редкая не дешевле магической. */
+              rareMult: z.number().min(1).default(2),
+              /** Перекатка — эта доля зачарования. Не больше 1: перекатка не дороже нового зачарования той же редкости. */
+              rerollShare: z.number().min(0).max(1).default(0.5),
+            })
+            .default({}),
         })
         .default({}),
       /**
@@ -752,8 +810,9 @@ export const balanceSchema = z.object({
       /** Переплавка скованного: доля возврата каждого материала (§16). Меньше 1 — иначе прачечная. */
       melt: z.object({ share: z.number().min(0).max(1).default(0.6) }).default({}),
       /**
-       * Разбор найденного оружия (§10.9): сколько единиц материала даёт каждая деталь — из той ступени,
-       * из которой она сделана. Редкость добавляет единицы ударной части: редкую вещь разбирать выгоднее.
+       * Разбор оружия у кузнеца: сколько единиц материала даёт каждая деталь (семья — от детали, сорт — по рецепту ступени вещи,
+       * `balance.salvage.recipeByTier`). ⚠ Надбавки за редкость к ударной части больше нет (было +1 магической, +2 редкой): за
+       * редкость теперь платит эссенция (`balance.salvage.essence`), дважды за одно не платят.
        */
       salvage: z
         .object({
@@ -761,19 +820,17 @@ export const balanceSchema = z.object({
             strike: z.number().int().min(0).default(3), grip: z.number().int().min(0).default(2),
             bind: z.number().int().min(0).default(1), head: z.number().int().min(0).default(1),
           }).default({}),
-          rarityBonus: z.object({
-            normal: z.number().int().min(0).default(0), magic: z.number().int().min(0).default(1),
-            rare: z.number().int().min(0).default(2), unique: z.number().int().min(0).default(2),
-          }).default({}),
         })
         .default({}),
-      /** Журнал кузнеца: жалость и ворота t6 (§12). */
+      /**
+       * Журнал кузнеца: жалость (§12). ⭐ Ворот ступени у ковки НЕТ (решение владельца D3, 06.10: «разобрал вещь, получил чертежи — и
+       * можно сразу делать; всё упирается только в количество ресурсов»): ни потолка журнала (`tierHi`), ни счётчика разобранных мификов
+       * (был `mythicSalvages`). Ступень ковки держит только сырьё её сорта — V есть лишь у найденных t6.
+       */
       journal: z
         .object({
-          /** Столько разборов оружия своего класса дают «эскиз» — любой неоткрытый вариант класса на выбор. */
+          /** Столько разборов найденного оружия своего класса дают «эскиз» — любой неоткрытый вариант класса на выбор. */
           sketchAfter: z.number().int().min(1).default(8),
-          /** Столько разборов мифических вещей нужно, чтобы открыть полосу t6. */
-          mythicSalvages: z.number().int().min(1).default(5),
         })
         .default({}),
       /** Вес варианта в пуле найденных вещей по его редкости. */
@@ -3116,22 +3173,88 @@ export type ConfigShapes = {
   [K in ConfigKey]: z.infer<(typeof configSchemas)[K]>;
 };
 
-/** Нарушение правила поверх нескольких таблиц: таблица, в которой строка-нарушитель, и что не так. */
-export interface ConfigCrossIssue { key: ConfigKey; msg: string }
-
-/** Таблицы, которые читают правила поверх нескольких таблиц (`configCrossIssues`): правка любой из них проверяется ими. */
-export const CONFIG_CROSS_KEYS: readonly ConfigKey[] = ['balance', 'skill-tree', 'skill-inserts'];
+/** Правило поверх нескольких таблиц: время баффа, рецепт разбора своей ступени, «сырьё с разбора дешевле самой вещи» (D4). */
+export type ConfigCrossRule = 'buff' | 'salvage-recipe' | 'salvage-sell';
 
 /**
- * ⭐ D4: ПРАВИЛА ПОВЕРХ НЕСКОЛЬКИХ ТАБЛИЦ — то, чего схема одной таблицы не видит. Сегодня одно: время баффа (`buffTimingIssues`) — откат
- * из древа и вставок, действие по рангу, отдых из баланса. Зовут реестр (`loadAll`/`reload`: файлы, `/api/dev/config`, оверрайды базы — всё
- * или ничего, как схема) и редактор (`validatedKeys`, до отправки). `get` — разобранная таблица (схемой) или `undefined`, если её нет:
- * без любой из таблиц правило молчит.
+ * Нарушение правила поверх нескольких таблиц: таблица, в которой строка-нарушитель, и что не так. `rule` и `id` — чьё и какое нарушение
+ * (одна и та же строка до и после правки — один `id`), `severity` — насколько глубоко (лексикографически, больше — хуже): по ним правка
+ * отказывает только НОВОМУ или УГЛУБЛЁННОМУ нарушению (`crossIssuesWorse`), а не тому, что уже лежит в живом конфиге.
  */
-export function configCrossIssues(get: (key: ConfigKey) => unknown): ConfigCrossIssue[] {
+export interface ConfigCrossIssue { key: ConfigKey; msg: string; rule: ConfigCrossRule; id: string; severity: readonly number[] }
+
+/**
+ * ⭐ ЧЬИ ТАБЛИЦЫ ЧИТАЕТ КАЖДОЕ ПРАВИЛО. Правка таблицы проверяется ТОЛЬКО правилами, которые её читают: прежде любая таблица из общего
+ * списка будила все правила разом, и нарушение, лежащее в чужой таблице (старый оверрайд `craft-materials` без эссенции), запирало
+ * сохранение древа скилов, а нарушение баффа — сохранение ступеней и сырья.
+ */
+export const CONFIG_CROSS_RULES: Readonly<Record<ConfigCrossRule, readonly ConfigKey[]>> = {
+  buff: ['balance', 'skill-tree', 'skill-inserts'],
+  'salvage-recipe': ['balance', 'item-tiers'],
+  'salvage-sell': ['balance', 'item-tiers', 'craft-materials', 'salvage-rules'],
+};
+
+/** Таблицы, которые читают правила поверх нескольких таблиц (`configCrossIssues`): правка любой из них проверяется ими. */
+export const CONFIG_CROSS_KEYS: readonly ConfigKey[] = [...new Set(Object.values(CONFIG_CROSS_RULES).flat())];
+
+/** Что делает ядро, если правило всё же нарушено в живом конфиге (сборка без проверки с инцидентом), — для текстов лога и `db:repair`. */
+export const CONFIG_CROSS_CORE: Readonly<Record<ConfigCrossRule, string>> = {
+  buff: 'ядро зажимает откаты баффов с логом (`clampBuffCooldown`)',
+  'salvage-recipe': 'разбор берёт строку рецепта как есть — сырьё такой ступени куётся не в неё: поправить balance.salvage.recipeByTier',
+  'salvage-sell': 'D4 держит пол цены в ядре (лавка платит за вещь не меньше выхода её разбора), но цены вещей тянутся вверх ценой сырья: поправить craft-materials.sellPrice',
+};
+
+/**
+ * ⭐ D4: ПРАВИЛА ПОВЕРХ НЕСКОЛЬКИХ ТАБЛИЦ — то, чего схема одной таблицы не видит. Время баффа (`buffTimingIssues`) — откат
+ * из древа и вставок, действие по рангу, отдых из баланса; разбор (`formulas/salvageGuard.ts`) — рецепт своей ступени (баланс + ступени) и
+ * «сырьё с разбора дешевле самой вещи» (баланс, ступени, сырьё, правила разбора). Зовут реестр (`loadAll`/`reload`: файлы, `/api/dev/config`, оверрайды базы — всё
+ * или ничего, как схема) и редактор (`validatedKeys`, до отправки). `get` — разобранная таблица (схемой) или `undefined`, если её нет:
+ * без любой из таблиц правило молчит. `touched` — правленые таблицы: тогда спрашиваются только правила, которые их читают
+ * (`CONFIG_CROSS_RULES`); без него — все.
+ */
+export function configCrossIssues(get: (key: ConfigKey) => unknown, touched?: readonly string[]): ConfigCrossIssue[] {
+  const on = (rule: ConfigCrossRule): boolean => !touched || CONFIG_CROSS_RULES[rule].some((k) => touched.includes(k));
   const balance = get('balance') as ConfigShapes['balance'] | undefined;
-  const tree = get('skill-tree') as ConfigShapes['skill-tree'] | undefined;
-  const inserts = get('skill-inserts') as ConfigShapes['skill-inserts'] | undefined;
-  if (!balance || !tree || !inserts) return [];
-  return buffTimingIssues({ balance, 'skill-tree': tree, 'skill-inserts': inserts }).map((i) => ({ key: i.table, msg: `⭐ D4 правило баффа: ${i.msg}` }));
+  const out: ConfigCrossIssue[] = [];
+  if (on('buff')) {
+    const tree = get('skill-tree') as ConfigShapes['skill-tree'] | undefined;
+    const inserts = get('skill-inserts') as ConfigShapes['skill-inserts'] | undefined;
+    if (balance && tree && inserts) {
+      // Глубже — раньше первый негодный ранг, на том же ранге — больше нехватка отката (как сравнивал R22-06 у слоя файлов).
+      out.push(...buffTimingIssues({ balance, 'skill-tree': tree, 'skill-inserts': inserts }).map((i): ConfigCrossIssue => ({
+        key: i.table, rule: 'buff', id: `${i.table}:${i.id}`, severity: [-i.rank, i.floor - i.cooldown], msg: `⭐ D4 правило баффа: ${i.msg}`,
+      })));
+    }
+  }
+  // ⭐ Разбор (`formulas/salvageGuard.ts`): рецепт своей ступени и цены сырья под правило «разобрать и продать не выгоднее продажи» (D4).
+  const tiers = get('item-tiers') as ConfigShapes['item-tiers'] | undefined;
+  if (on('salvage-recipe') && balance && tiers) {
+    out.push(...salvageRecipeIssues(balance, tiers).map((i): ConfigCrossIssue => ({ key: i.table, rule: 'salvage-recipe', id: i.id, severity: i.severity, msg: i.msg })));
+  }
+  const mats = get('craft-materials') as ConfigShapes['craft-materials'] | undefined;
+  const rules = get('salvage-rules') as ConfigShapes['salvage-rules'] | undefined;
+  if (on('salvage-sell') && balance && tiers && mats && rules) {
+    out.push(...salvageSellIssues({ balance, 'item-tiers': tiers, 'craft-materials': mats, 'salvage-rules': rules })
+      .map((i): ConfigCrossIssue => ({ key: i.table, rule: 'salvage-sell', id: i.id, severity: i.severity, msg: i.msg })));
+  }
+  return out;
+}
+
+/** Лексикографически `a` глубже `b` (шум плавающей точки — не углубление). */
+function deeper(a: readonly number[], b: readonly number[]): boolean {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0, y = b[i] ?? 0;
+    if (x > y + 1e-9) return true;
+    if (x < y - 1e-9) return false;
+  }
+  return false;
+}
+
+/**
+ * ⭐ R22-06 ДЛЯ ВСЕХ ПУТЕЙ: что правка вносит НОВОГО по правилам поверх таблиц — нарушение, которого среди `before` не было (правило + `id`), или
+ * то же, но углублённое (`severity`). Лежащее уже (старый оверрайд, файл, принятый стартом с инцидентом) правку чужих строк не запирает —
+ * а новое и углублённое отказывает, как прежде.
+ */
+export function crossIssuesWorse(before: readonly ConfigCrossIssue[], after: readonly ConfigCrossIssue[]): ConfigCrossIssue[] {
+  return after.filter((i) => !before.some((b) => b.rule === i.rule && b.id === i.id && !deeper(i.severity, b.severity)));
 }

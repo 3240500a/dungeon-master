@@ -3,7 +3,7 @@ import { ConfigRegistry } from '../config/registry.js';
 import { defaultConfigData } from '../config/defaults.js';
 import {
   anatomyOf, bakeParts, baseTierRange, capacityOf, clampStep, craftCost, craftSalvageYield, craftTiers, craftWeapon,
-  emptyJournal, enchantCost, enchantItem, finishOf, formOf, fullJournal, journalTierCap, keyVariantsByBase, meltReturn, partById,
+  emptyJournal, enchantCost, enchantItem, finishOf, formOf, fullJournal, keyVariantsByBase, meltReturn, partById, partFamily,
   partsOf, resolveParts, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndexOfItem, tierOfSteps, typeOfItem, useSketch,
   variantsFor, type CraftInput,
 } from './craft.js';
@@ -25,6 +25,9 @@ import { createRng } from './rng.js';
 import { canEnchantItem, canRerollItem, enchantAction, forgeGold, forgeReroll, forgeUpgrade, upgradedItem } from '../economy/townActions.js';
 import type { SaveState } from '../types/save.js';
 import type { CraftParts, Item } from '../types/items.js';
+import { ESSENCE_ID } from './salvage.js';
+/** §6.2: зачарование и перекатка тратят эссенцию — кошелёк сундука с запасом (тесту важно не это). */
+const essWallet = (): Record<string, number> => ({ [ESSENCE_ID]: 1_000_000 });
 
 const reg = new ConfigRegistry();
 reg.loadAll();
@@ -491,7 +494,7 @@ describe('ёмкость аффиксов: потолок выведен из д
     const item = enchantItem(reg, res.item!, 'rare', createRng(3))!;
     const save = { gold: 1e9, inventory: [item] } as unknown as SaveState;
     for (let i = 0; i < 3; i++) {
-      expect(forgeReroll(reg, save, item.uid, createRng(50 + i)).ok).toBe(true);
+      expect(forgeReroll(reg, save, item.uid, createRng(50 + i), undefined, essWallet()).ok).toBe(true);
       const kinds = new Map(item.affixes.map((a) => [a.affixId, a.kind]));
       const p = [...kinds.values()].filter((k) => k === 'prefix').length;
       expect({ p, s: kinds.size - p }).toEqual({ p: item.affixCap!.prefix, s: item.affixCap!.suffix });
@@ -651,12 +654,13 @@ describe('ковка: каркас — существующая база (пра
     expect(r.tier).toBeGreaterThan(3);
     expect(r.reason).toMatch(/не бывает выше/);
   });
-  it('журнал режет ступень, а t6 требует mythicSalvages мифических разборов', () => {
-    const j = { ...fullJournal(reg), mythic: 0 };
-    const r = craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!), { journal: j });
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/мифических/);
-    expect(craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!), { journal: fullJournal(reg) }).ok).toBe(true);
+  it('⭐ D3: журнал ступень НЕ режет — t6 куётся без счётчика мификов и при любом прежнем потолке (держит только сырьё)', () => {
+    for (const legacy of [{ mythic: 0, tierHi: 6 }, { mythic: 0, tierHi: -1 }, { mythic: 3, tierHi: 2 }]) {
+      const j = { ...fullJournal(reg), ...legacy };
+      const r = craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!), { journal: j });
+      expect(r.ok, JSON.stringify(legacy)).toBe(true);
+      expect(r.tier).toBe(6);
+    }
   });
 });
 
@@ -879,13 +883,38 @@ describe('журнал кузнеца: разобрал — открыл (§12)'
     }
     expect(exact).toBe(total);
   });
-  it('разбор отдаёт материалы деталей их ступеней; редкость добавляет единицы клинку', () => {
-    const it1 = drop('long-sword', 40, 3);
-    const picks = partsOf(reg, it1)!;
-    const y = craftSalvageYield(reg, it1);
-    expect(y[`iron-${picks.strike.step}`]).toBeGreaterThanOrEqual(3);
-    const rare = craftSalvageYield(reg, { ...it1, rarity: 'rare' });
-    expect(rare[`iron-${picks.strike.step}`]).toBe((y[`iron-${picks.strike.step}`] ?? 0) + 2);
+  it('⭐ разбор отдаёт семьи деталей по РЕЦЕПТУ ступени вещи; редкость единиц не добавляет (за неё — эссенция)', () => {
+    const recipe = reg.get('balance').salvage.recipeByTier;
+    for (const lvl of [1, 8, 18, 30, 45, 62, 80]) {
+      const it1 = drop('long-sword', lvl, 3);
+      const t = tierIndexOfItem(reg, it1);
+      const y = craftSalvageYield(reg, it1);
+      // Семья — от детали (меч: клинок — железо, держак — кожа, обвязка и оголовье — прибор), единицы — 3/2/1/1, сорт — строка рецепта ступени.
+      const anat = anatomyOf(reg, 'sword')!;
+      const picks = partsOf(reg, it1)!;
+      const units = reg.get('balance').craft.salvage.units;
+      const want: Record<string, number> = {};
+      CRAFT_SLOT_LIST.forEach((sl, i) => {
+        const id = `${partFamily(anat, sl, partById(reg, picks[sl].id)!)}-${recipe[t]![i]}`;
+        want[id] = (want[id] ?? 0) + units[sl];
+      });
+      expect(y, `ур.${lvl} t${t}`).toEqual(want);
+      expect(craftSalvageYield(reg, { ...it1, rarity: 'rare' }), `ур.${lvl}: редкость не в счёт`).toEqual(y);
+    }
+    // ⭐ Неровные детали сорт не «протекают»: ступень клинка детали другая — сырьё то же (было: топор t4 5/3/3/3 давал Булат).
+    const it1 = drop('long-sword', 45, 3);
+    const parts = partsOf(reg, it1)!;
+    const p = partById(reg, parts.strike.id)!;
+    const odd = { ...it1, foundParts: { ...parts, strike: { ...parts.strike, step: p.stepMax } } };
+    expect(craftSalvageYield(reg, odd)).toEqual(craftSalvageYield(reg, it1));
+  });
+  it('⭐ каждая строка рецепта куётся ровно в свою ступень (рецепт своей ступени, §4.1)', () => {
+    const recipe = reg.get('balance').salvage.recipeByTier;
+    expect(recipe).toHaveLength(craftTiers(reg).length);
+    recipe.forEach((row, t) => {
+      const picks = Object.fromEntries(CRAFT_SLOT_LIST.map((sl, i) => [sl, { step: row[i]! }])) as Record<CraftSlot, { step: number }>;
+      expect(tierOfSteps(reg, picks).tier, `строка t${t}: ${row.join('/')}`).toBe(t);
+    });
   });
   it('разбор открывает базу и четыре детали, а каждые N разборов класса дают эскиз', () => {
     let j = emptyJournal();
@@ -908,17 +937,21 @@ describe('журнал кузнеца: разобрал — открыл (§12)'
     expect(useSketch(reg, j, 'sw-h-wavy')).toBe(j);
     expect(useSketch(reg, j, 'sw-gd-rings').variants).toContain('sw-gd-rings');
   });
-  it('⭐ t6 не открывается одной мифической вещью — нужно mythicSalvages штук', () => {
-    const j = { ...emptyJournal(), tierHi: 6, mythic: 1 };
-    expect(journalTierCap(reg, j)).toBe(5);
-    expect(journalTierCap(reg, { ...j, mythic: reg.get('balance').craft.journal.mythicSalvages })).toBe(6);
-    expect(journalTierCap(reg, fullJournal(reg))).toBe(6);
+  it('⭐ D3: разбор не двигает прежние ворота — ни потолок ступени, ни счёт мификов (поля старого журнала — как были)', () => {
+    const mythicFind = craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!)).item!;
+    const found = { ...mythicFind, parts: undefined, origin: 'drop' as const, foundParts: mythicFind.parts };
+    for (const legacy of [{ tierHi: -1, mythic: 0 }, { tierHi: 3, mythic: 4 }]) {
+      const r = salvageIntoJournal(reg, { ...emptyJournal(), ...legacy }, found);
+      expect({ tierHi: r.journal.tierHi, mythic: r.journal.mythic }).toEqual(legacy);
+      expect(r.journal.bases).toContain('long-sword');
+    }
   });
-  it('скованное не открывает журнал — у него свой глагол «переплавить»', () => {
+  it('⭐ скованное (переплавка) журнал не пишет вовсе: его тип и детали известны по построению — ничего нового, ни кодекса, ни жалости', () => {
     const res = craftWeapon(reg, buildFor('long-sword', uniform(2)));
+    // Даже с пустым журналом (скованное флагом стенда мимо журнала): запись копировала бы флаговые детали в настоящий журнал.
     const r = salvageIntoJournal(reg, emptyJournal(), res.item!);
-    expect(r.unlocked).toEqual([]);
-    expect(r.journal.bases).toEqual([]);
+    expect(r.journal).toEqual(emptyJournal());
+    expect({ unlocked: r.unlocked, newBase: r.newBase, newType: r.newType, sketch: r.sketch }).toEqual({ unlocked: [], newBase: false, newType: undefined, sketch: false });
   });
   it('тег у варианта читается со словарным умолчанием', () => {
     const anat = anatomyOf(reg, 'sword')!;
@@ -1026,7 +1059,7 @@ describe('⚠ R17-03: форма ёмкости без цены — отказ �
       expect(can.reason).toMatch(/без цены/);
       const s1 = bag(structuredClone(forged));
       const was1 = JSON.stringify(s1);
-      expect(enchantAction(x, s1, forged.uid, 'rare', createRng(1)).ok).toBe(false);
+      expect(enchantAction(x, s1, forged.uid, 'rare', createRng(1), undefined, essWallet()).ok).toBe(false);
       expect(JSON.stringify(s1), `${how}: отказ зачарования не тронул ни золото, ни вещь`).toBe(was1);
 
       const rr = canRerollItem(x, rare);
@@ -1034,7 +1067,7 @@ describe('⚠ R17-03: форма ёмкости без цены — отказ �
       expect(rr.reason).toMatch(/без цены/);
       const s2 = bag(structuredClone(rare));
       const was2 = JSON.stringify(s2);
-      expect(forgeReroll(x, s2, rare.uid, createRng(9)).ok).toBe(false);
+      expect(forgeReroll(x, s2, rare.uid, createRng(9), undefined, essWallet()).ok).toBe(false);
       expect(JSON.stringify(s2), `${how}: отказ перекатки не тронул ни золото, ни вещь`).toBe(was2);
 
       // Магическая у 3+2 катает 1+1 (R2-23) — у неё цена есть: зачарование и перекатка идут прежней ценой.

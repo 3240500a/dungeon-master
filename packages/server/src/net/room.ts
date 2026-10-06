@@ -3,9 +3,9 @@ import type { GameConn } from './conn.js';
 import {
   GameSession, spawnPacksEl, floorChallengeLevel, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, pickRunModifiers, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
-  generateItem, itemFromBaseId, createRng, rngFrom, shapeFoundWeapon, rollTierLevel,
+  itemFromBaseId, createRng, rngFrom, rollShopGear,
   buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
-  craftAction, enchantAction, sketchAction, fullJournal, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
+  craftAction, enchantAction, sketchAction, fullJournal, legacyGateOpen, serverMaterialsConsent, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor, pruneBoardQuests,
   isDifficultyUnlocked, applyDeathPenalty, parseTownCommand, PRICE_CHANGED, CONFIG_CONSENT_CMDS, configChanged, buildChanged,
@@ -222,7 +222,7 @@ export function warnSave(text: string, e: unknown): void {
 }
 
 /** Итог команды города — он же тело кадра `cmdResult` (D3). */
-type CmdOutcome = { ok: boolean; reason?: string; uid?: string; unlocked?: string[] };
+type CmdOutcome = { ok: boolean; reason?: string; uid?: string; unlocked?: string[]; summary?: string };
 /**
  * Итог исполнения. `early` — отказ ДО исполнения (не то место, лимит частоты): сейв не трогали, и слать его
  * клиенту незачем (R1-11). ⭐ R16 C-04: `later` — исход придёт после записи в базу (подъём выброшенного, K3): ответ уйдёт тогда, а
@@ -244,7 +244,7 @@ const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', '
  * (`limits.stashRead`). Новая команда через `withAccount` — сюда же.
  */
 const STASH_READ_CMDS: ReadonlySet<string> = new Set([
-  'stashOpen', 'stashMove', 'depositMaterials', 'forgeUpgrade', 'forgeRepair', 'forgeSalvage', 'craft', 'forgeEnchant', 'forgeSketch',
+  'stashOpen', 'stashMove', 'depositMaterials', 'forgeUpgrade', 'forgeRepair', 'forgeReroll', 'forgeSalvage', 'craft', 'forgeEnchant', 'forgeSketch',
 ]);
 /** D13: отказ ковки и зачарования, пока кузнец не открыт (`balance.craft.live`). Разбор работает и так. */
 const CRAFT_CLOSED = 'Кузнец ещё не куёт';
@@ -2110,6 +2110,7 @@ export class Room implements Tickable {
         ...(out.reason !== undefined ? { reason: out.reason } : {}),
         ...(out.uid !== undefined ? { uid: out.uid } : {}),
         ...(out.unlocked !== undefined ? { unlocked: out.unlocked } : {}),
+        ...(typeof out.summary === 'string' ? { summary: out.summary } : {}),
       });
     };
     try {
@@ -2376,12 +2377,15 @@ export class Room implements Tickable {
       // ⭐ R5-15: `maxGold` — цена, которую видел игрок: выше неё ядро не берёт (`priceRaised`, отказ до траты). R8-14: и
       // `maxMaterials` — сырьё карточки (`materialsRaised`); у разборов — `minYield`, низ вилки выхода (`yieldDropped`), и R9-04
       // `avgYield` — средний выход карточки: низ дробной доли — 0 при любой правке.
-      case 'forgeUpgrade': return this.withAccount(c, pid, 'forge', (st) => forgeUpgrade(this.cfg, save, command.uid, walletOf(st), command.maxGold, command.maxMaterials), { subject: command.uid, guard });
-      case 'forgeRepair': return this.withAccount(c, pid, 'forge', (st) => forgeRepair(this.cfg, save, command.uid, walletOf(st), command.maxGold, command.maxMaterials), { subject: command.uid, guard });
+      // ⭐ Нет `maxMaterials` — согласие «ни на какое сырьё» (`serverMaterialsConsent`): клиент по старым правилам (Unity до переноса) не платит
+      // сырьём и эссенцией, которых его карточка не показала, — «Цена изменилась» до траты.
+      case 'forgeUpgrade': return this.withAccount(c, pid, 'forge', (st) => forgeUpgrade(this.cfg, save, command.uid, walletOf(st), command.maxGold, serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard });
+      case 'forgeRepair': return this.withAccount(c, pid, 'forge', (st) => forgeRepair(this.cfg, save, command.uid, walletOf(st), command.maxGold, serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard });
       case 'depositMaterials': return this.withAccount(c, pid, 'stash', (st) => depositMaterials(save, walletOf(st)));
-      // Перекатка трогает только сейв, но пишется сразу и со своей причиной (D9):
-      // иначе журнал вещей записал бы её «автосейвом».
-      case 'forgeReroll': return this.withSave(c, pid, 'forge', () => forgeReroll(this.cfg, save, command.uid, townRng(), command.maxGold), command.uid, guard);
+      // ⭐ Перекатка тратит ЭССЕНЦИЮ (§6.2), а её недостающее — из кошелька сундука: сейв и сундук ОДНОЙ транзакцией, как у подъёма
+      // (прежде — только сейв, `withSave`). Причина своя (D9), иначе журнал вещей записал бы её «автосейвом». `maxMaterials` — эссенция
+      // карточки (R8-14): больше неё ядро не возьмёт.
+      case 'forgeReroll': return this.withAccount(c, pid, 'forge', (st) => forgeReroll(this.cfg, save, command.uid, townRng(), command.maxGold, walletOf(st), serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard });
       // D6: разбор у кузнеца пишет журнал аккаунта и доливает не влезшее в сумку сырьё в сундук —
       // значит сейв и сундук одной транзакцией. Скованное переплавляется — в журнале вещей это `melt` (D9).
       case 'forgeSalvage': return this.withAccount(c, pid, salvageReason(save, command.uid), (st) => forgeSalvage(this.cfg, save, st, command.uid, townRng(), command.minYield, command.avgYield), { subject: command.uid, guard });
@@ -2403,12 +2407,12 @@ export class Room implements Tickable {
           return craftAction(this.cfg, save, st, nonce, input, townRng(), { fullJournal: craftFullJournal(), maxGold, maxMaterials });
         }, { guard: guardCraft });
       }
-      // D5: зачарование — только золото, но через транзакцию аккаунта, как вся кузница: при неудачной
-      // записи вещь и золото откатываются в памяти, а журнал вещей видит причину `enchant`.
+      // D5: зачарование — золото и ЭССЕНЦИЯ (§6.2: из сумки, недостающее — из кошелька сундука), транзакцией аккаунта, как вся кузница:
+      // при неудачной записи вещь, золото и эссенция откатываются, а журнал вещей видит причину `enchant`. `maxMaterials` — эссенция карточки.
       case 'forgeEnchant': {
         const closed = this.craftClosed();
         if (closed) return closed;
-        return this.withAccount(c, pid, 'enchant', () => enchantAction(this.cfg, save, command.uid, command.rarity, townRng(), command.maxGold), { subject: command.uid, guard: guardCraft });
+        return this.withAccount(c, pid, 'enchant', (st) => enchantAction(this.cfg, save, command.uid, command.rarity, townRng(), command.maxGold, walletOf(st), serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard: guardCraft });
       }
       // ⭐ R3-11: эскиз (жалость разбора) открывает выбранную деталь в журнале аккаунта. Журнал — в сундуке, поэтому
       // транзакция сундука, как вся кузница; отказы ядра — до изменения. От `craft.live` не зависит: эскизы копит
@@ -3999,42 +4003,9 @@ export class Room implements Tickable {
    * любой ноде. Личность вещи (`uid`) у каждого броска своя — купленная повтором броска не удвоится.
    */
   private rollGear(seed: number, heroLevel: number): Item[] {
-    const itemsBase = this.cfg.get('items.base');
-    const rarities = this.cfg.get('rarities');
-    const tiers = this.cfg.get('item-tiers');
-    const affixes = this.cfg.get('affixes');
-    const uniques = this.cfg.get('uniques');
-    const rng = createRng((seed >>> 0) || 1);
-    const level = Math.max(1, heroLevel);
-    const loot = this.cfg.get('balance').loot;
-    const gear: Item[] = [];
-    // Оружие/броня — кузница. Гарантируем товар в КАЖДОЙ вкладке магазина (ближний/дальний/броня):
-    // N роллов на категорию по её базам (generateItem с baseId → полноценный ролл: тир/редкость/аффиксы).
-    // ⚠ Только ВКЛЮЧЁННЫЕ базы: выключенная база (ещё не в игре) не падает с монстров — не должна и продаваться.
-    const on = itemsBase.filter((b) => b.enabled !== false);
-    const meleeBases = on.filter((b) => b.kind === 'weapon' && b.attackType === 'melee');
-    const rangedBases = on.filter((b) => b.kind === 'weapon' && b.attackType === 'ranged');
-    const armorBases = on.filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry');
-    const rollFrom = (pool: typeof itemsBase, count: number): void => {
-      for (let i = 0; i < count && pool.length; i++) {
-        // Меч с прилавка — как с пола: клинок несёт статы своей геометрии (§26).
-        gear.push(shapeFoundWeapon(this.cfg, generateItem(itemsBase, affixes, uniques, {
-          dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities,
-          // D21: ступень базы — БРОСОК в окне, ровно как у дропа (`rollTierLevel`). Без него прилавок
-          // выставлял высшую ступень уровня каждый раз — надёжный кран верхних ступеней для разбора.
-          tierLevel: rollTierLevel(level + 1, loot.tierWindow, rng),
-          rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement, baseRoll: loot.baseRoll,
-          // Происхождение (D16): купленное в счётчик мифических находок журнала не идёт.
-          origin: 'shop',
-          // ⭐ R13-09: УНИКОВ КУЗНИЦА НЕ ПРОДАЁТ («нашёл — носи как есть», ECONOMY.md). Бросок «уник» (2,6% на вещь, у половины
-          // прилавков) ставил на полку уник по цене уровня хозяина — секира палача за 284 золота у альта 1-го уровня, её
-          // фиксированные аффиксы от уровня не зависят, — и на чужой базе: вкладка теряла вещь. Теперь — редкая вещь этой базы.
-          noUnique: true,
-        }, rng)));
-      }
-    };
-    rollFrom(meleeBases, 9); rollFrom(rangedBases, 6); rollFrom(armorBases, 9);
-    return gear;
+    // ⭐ Ролл — общий (`rollShopGear`, @dm/shared): тот же бросок, что и раньше, плюс потолок ступени лавки (`balance.shop.maxTier`, t4 —
+    // по итоговой ступени вещи: пулы, бросок уровня ступени и потолок базы). Сторож по уровням 1..100 — `shopGear.test.ts`.
+    return rollShopGear(this.cfg, seed, heroLevel);
   }
 
   /**
@@ -5346,15 +5317,18 @@ export class Room implements Tickable {
     });
   }
   /**
-   * Журнал для окна — ТОТ, которым сервер гейтит ковку. С флагом разработчика ворота открыты (базы,
-   * детали, потолок ступени, мифики), а кодекс и счётчики остаются своими: иначе окно показывало бы
-   * запертым то, что сервер скуёт. В базу это не пишется — только в кадр.
+   * Журнал для окна — ТОТ, которым сервер гейтит ковку. С флагом разработчика ворота открыты (базы и детали; ворот ступени у ковки нет
+   * вовсе — решение D3), а кодекс и счётчики остаются своими: иначе окно показывало бы запертым то, что сервер скуёт. В базу это не
+   * пишется — только в кадр.
+   * ⭐ D3: ПОТОЛОК СТУПЕНИ (`tierHi`) И СЧЁТ МИФИКОВ (`mythic`) В КАДРЕ — ОТКРЫТЫ (`legacyGateOpen`). Сервер их не читает (у ковки нет ворот
+   * ступени), веб тоже; а клиент Unity до переноса ещё зажимает ступень окна ковки по ним (`JournalTierCap`: min(tierHi, …)) — и с журналом,
+   * который разбор больше не двигает, новый аккаунт навсегда видел бы «Кузнец ещё не работал со ступенью…», хотя сервер скуёт. В базу не пишется.
    */
   private journalView(stash: AccountStash): CraftJournal {
-    const own = normalizeJournal(stash.forgeJournal);
+    const own = legacyGateOpen(this.cfg, normalizeJournal(stash.forgeJournal));
     if (!craftFullJournal()) return own;
     const full = fullJournal(this.cfg);
-    return { ...own, bases: full.bases, variants: full.variants, tierHi: Math.max(own.tierHi, full.tierHi), mythic: Math.max(own.mythic, full.mythic) };
+    return { ...own, bases: full.bases, variants: full.variants };
   }
   private broadcastQuestBoard(): void {
     this.broadcast({ t: 'questBoard', quests: this.questBoard });

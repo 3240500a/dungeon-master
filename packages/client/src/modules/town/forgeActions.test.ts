@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ConfigRegistry, buildCraftShell, canRerollItem, canUpgradeItem, craftAction, createRng, defaultParts, emptyStash, enchantAction, enchantCost, forgeGold, forgeRepair,
+  ConfigRegistry, STARTER_KNOWN, buildCraftShell, canRerollItem, canSalvageItem, emptyJournal, salvageIntoJournal, salvagePreview, salvageRange, canUpgradeItem, craftAction, createRng, defaultParts, emptyStash, enchantAction, enchantCost, forgeGold, forgeRepair,
   forgeReroll, forgeSalvage, forgeUpgrade, fullJournal, generateItem, itemFromBaseId, newBotSave, retierItem, salvageMean, shapeFoundWeapon, tierMatters,
   type AccountStash, type Item, type SaveState,
 } from '@dm/shared';
@@ -20,9 +20,11 @@ function gearItem(broken = false): Item {
   const it = save.equipment.weapon!;
   return { ...it, broken: broken || undefined };
 }
-const RICH = { 'iron-1': 999, 'iron-2': 999, 'iron-3': 999, 'wood-1': 999, 'wood-2': 999, 'wood-3': 999,
-  'cloth-1': 999, 'cloth-2': 999, 'cloth-3': 999, 'hide-1': 999, 'hide-2': 999, 'hide-3': 999,
-  'plate-1': 999, 'plate-2': 999, 'plate-3': 999 };
+/**
+ * Кошелёк «всего вдоволь»: §7 — подъём и починка платят сырьём семей ДЕТАЛЕЙ вещи (у меча — железо, кожа, прибор) по сорту ступени,
+ * §6.2 — перекатка и зачарование ещё и эссенцией. Поэтому — каждый материал конфига, а не железо, дерево, ткань, кожа и пластины I–III.
+ */
+const RICH: Record<string, number> = Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 999]));
 
 describe('benchActions — какое действие главное', () => {
   it('⭐ у ЦЕЛОЙ вещи первая карточка «Улучшить»', () => {
@@ -71,13 +73,20 @@ describe('benchActions — какое действие главное', () => {
 });
 
 describe('benchActions — цена построчно', () => {
-  it('⭐ нехватка видна СТРОКОЙ с «есть N», а не одной серой кнопкой', () => {
+  it('⭐ нехватка видна СТРОКОЙ с «есть N — не хватает», а не одной серой кнопкой', () => {
     const a = benchActions(reg, gearItem(), 99999, [], {}); // сырья нет вовсе
     const up = a[0]!;
     expect(up.enabled).toBe(false);
     const miss = up.lines.filter((l) => l.state === 'miss');
     expect(miss.length).toBeGreaterThan(0);
     expect(miss.some((l) => l.text.includes('есть 0'))).toBe(true);
+    expect(miss.filter((l) => !l.text.endsWith('золота')).every((l) => l.text.endsWith(' — не хватает'))).toBe(true);
+  });
+
+  it('⭐ §15.4: «есть N» — у КАЖДОЙ строки сырья, и когда хватает («Кордован 3 (есть 999)»): цена и запас рядом', () => {
+    for (const a of benchActions(reg, { ...gearItem(), rarity: 'magic' as const }, 99999, [], RICH)) {
+      for (const l of a.lines.filter((x) => x.state === 'ok' && !x.text.endsWith('золота'))) expect(l.text, a.id).toMatch(/^.+ \d+ \(есть 999\)$/);
+    }
   });
 
   it('нехватка ЗОЛОТА помечает свою строку, а строки сырья остаются зелёными', () => {
@@ -88,12 +97,60 @@ describe('benchActions — цена построчно', () => {
     expect(up.lines.filter((l) => l !== gold).every((l) => l.state === 'ok')).toBe(true);
   });
 
-  it('разбор показывает выход ВИЛКОЙ — он случаен, одно число было бы враньём', () => {
-    // Находка той же базы: стартовое кузнец не разбирает (R3-04) — см. ниже.
-    const sv = benchActions(reg, { ...gearItem(), origin: 'drop' }, 99999, [], RICH).find((x) => x.id === 'salvage')!;
+  it('⭐ §15.2: разбор — ЧЕТЫРЕ строки всегда (сырьё вилкой, эссенция, каталог, эскиз) — те же, что карточка `salvagePreview`', () => {
+    // Находка той же базы: у стартового сырья нет (R3-04) — см. ниже.
+    const it0 = { ...gearItem(), origin: 'drop' as const };
+    const sv = benchActions(reg, it0, 99999, [], RICH).find((x) => x.id === 'salvage')!;
     expect(sv.enabled).toBe(true);
-    expect(sv.lines.length).toBeGreaterThan(0);
-    expect(sv.lines.every((l) => l.state === 'gain')).toBe(true);
+    expect(sv.title).toBe('♻ Разобрать');
+    expect(sv.lines.map((l) => l.label)).toEqual(['Сырьё', 'Эссенция', 'Каталог', 'Эскиз']);
+    const card = salvagePreview(reg, it0, null, false);
+    expect(sv.lines.map((l) => [l.text, l.state])).toEqual([card.materials, card.essence, card.catalog!, card.sketch!].map((l) => [l.text, l.tone]));
+    // Выход — вилкой по `salvageRange`: он случаен, одно число было бы враньём.
+    for (const [id, r] of Object.entries(salvageRange(reg, it0, false).range)) {
+      const name = reg.get('craft-materials').find((m) => m.id === id)!.name;
+      expect(sv.lines[0]!.text).toContain(`+ ${name} ${r.min === r.max ? r.min : `${r.min}–${r.max}`}`);
+    }
+    // У обычной вещи эссенции нет — сказано почему; каталог пуст — «+ тип…»; эскиз копится.
+    expect(sv.lines[1]).toMatchObject({ text: 'нет — у обычной вещи чар нет', state: 'dim' });
+    expect(sv.lines[2]!.state).toBe('gain');
+  });
+
+  it('⭐ купленная: сырьё «не выше III сорта», «Эссенция: нет — вещь куплена» (оговорка), эскиз копят только находки', () => {
+    const shop = { ...gearItem(), origin: 'shop' as const, rarity: 'rare' as const };
+    const sv = benchActions(reg, shop, 99999, [], RICH).find((x) => x.id === 'salvage')!;
+    expect(sv.lines[0]!.text).toContain('вещь куплена — не выше III сорта');
+    expect(sv.lines[1]).toMatchObject({ label: 'Эссенция', text: 'нет — вещь куплена', state: 'warn' });
+    expect(sv.lines.find((l) => l.label === 'Эскиз')?.text).toBe('копят только находки');
+  });
+
+  it('⭐ скованную ПЕРЕПЛАВЛЯЮТ: заголовок «♻ Переплавить», эссенция не вернётся, детали уже в каталоге', () => {
+    const save = newBotSave(reg, reg.get('classes')[0]!.id);
+    save.gold = 9_999_999; save.inventory = [];
+    const stash = { ...emptyStash(reg), materials: { ...RICH }, forgeJournal: fullJournal(reg) };
+    const r = craftAction(reg, save, stash, 'bench-melt', { weaponClass: 'sword', hands: 1, parts: defaultParts(reg, 'sword', 1, 2)! }, createRng(3), { fullJournal: true });
+    if (!r.ok) throw new Error(r.reason);
+    const forged = save.inventory.find((i) => i.uid === r.uid)!;
+    const sv = benchActions(reg, forged, 99999, save.inventory, RICH, stash.forgeJournal).find((x) => x.id === 'salvage')!;
+    expect(sv.title).toBe('♻ Переплавить');
+    expect(sv.lines.map((l) => l.label)).toEqual(['Сырьё', 'Эссенция', 'Каталог']);
+    expect(sv.lines[1]!.text).toBe('нет — переплавка эссенцию не возвращает');
+    expect(sv.lines[2]!.text).toMatch(/^все детали уже в каталоге \(меч: \d+ из \d+\)$/);
+  });
+
+  it('⭐ §9.3: стартовый набор, из которого всё уже в каталоге, — карточка гаснет ДО нажатия с причиной сервера и строкой каталога', () => {
+    const kit = gearItem();
+    const known = salvageIntoJournal(reg, emptyJournal(), kit).journal;
+    const sv = benchActions(reg, kit, 99999, [], RICH, known).find((x) => x.id === 'salvage')!;
+    expect(sv.enabled).toBe(false);
+    expect(sv.lines[0]).toEqual({ text: STARTER_KNOWN, state: 'dim' });
+    expect(sv.lines[1]?.label).toBe('Каталог');
+    expect(sv.lines[1]?.text).toMatch(/^всё из этой вещи уже в каталоге/);
+    // Первый разбор у нового аккаунта — горит: в каталог ляжет тип и детали, сырья нет.
+    const first = benchActions(reg, kit, 99999, [], RICH, emptyJournal()).find((x) => x.id === 'salvage')!;
+    expect(first.enabled).toBe(true);
+    expect(first.lines[0]!.text).toBe('сырья нет — стартовый набор бесплатный');
+    expect(first.minYield).toEqual({});
   });
 
   it('⭐ R9-04: пояс и перчатки — вилка «0–2», а не пустая карточка; в команду — низ вилки и средний выход', () => {
@@ -101,18 +158,23 @@ describe('benchActions — цена построчно', () => {
       const it0 = { ...itemFromBaseId(reg.get('items.base'), baseId, reg.get('item-tiers'), 'drop')!, uid: `sv-${baseId}` };
       const sv = benchActions(reg, it0, 99999, [], RICH).find((x) => x.id === 'salvage')!;
       expect(sv.enabled, baseId).toBe(true);
-      expect(sv.lines.map((l) => l.text), `${baseId}: было — ни строки выхода`).toEqual([`${reg.get('craft-materials').find((m) => m.id === 'hide-1')!.name} 0–2`]);
-      expect(sv.minYield).toEqual({ 'hide-1': 0 });
+      // Кожа 0–2 и побочные Плечи 0–1 (китовый ус кожаной брони — после рецензии 06.10 узкие семьи ковки идут и с брони).
+      const name = (id: string): string => reg.get('craft-materials').find((m) => m.id === id)!.name;
+      expect(sv.lines[0]!.text, `${baseId}: было — ни строки выхода`).toBe(`+ ${name('hide-1')} 0–2 · + ${name('stave-1')} 0–1`);
+      expect(sv.minYield).toEqual({ 'hide-1': 0, 'stave-1': 0 });
       expect(sv.avgYield, 'R9-04: у дробного выхода низ правку не видит — среднее видит').toEqual(salvageMean(reg, it0, false));
       expect(sv.avgYield!['hide-1']).toBeCloseTo(1, 9);
     }
   });
 
-  it('R3-04: стартовое кузнец не разбирает — карточка разбора гаснет тем же правилом, что отказ сервера', () => {
+  it('R3-04 + D1: стартовое кузнец разбирает только в каталог — карточка тем же правилом, что сервер (`canSalvageItem`); сырья в ней нет', () => {
     const it0 = gearItem();
     expect(it0.origin).toBe('start');
     const sv = benchActions(reg, it0, 99999, [], RICH).find((x) => x.id === 'salvage');
-    expect(sv?.enabled ?? false).toBe(false);
+    expect(sv?.enabled ?? false).toBe(canSalvageItem(reg, it0, false).ok);
+    expect(salvageRange(reg, it0, false).range, 'сырья стартовое не даёт').toEqual({});
+    // Всё из вещи уже в каталоге — отказ с причиной ДО нажатия (журнал кузнеца — с кадра сундука).
+    expect(canSalvageItem(reg, it0, false, salvageIntoJournal(reg, emptyJournal(), it0).journal).ok).toBe(false);
   });
 
   it('⚠ сырьё в СУМКЕ засчитывается наравне с сундуком (кузница тратит оба)', () => {
@@ -170,10 +232,11 @@ describe('⭐ R2-12: карточка верстака ≡ ответ серве
       // R8-14: и со сырьём карточки (`materials`) и низом вилки разбора (`minYield`) — как их шлёт верстак. R9-04: и средним выходом.
       case 'forgeUpgrade': return forgeUpgrade(reg, s, uid, w, a.gold, a.materials).ok;
       case 'forgeRepair': return forgeRepair(reg, s, uid, w, a.gold, a.materials).ok;
-      case 'forgeReroll': return forgeReroll(reg, s, uid, createRng(1), a.gold).ok;
+      // §6.2: перекатка и зачарование — с эссенцией карточки (`materials` → `maxMaterials`) из того же кошелька сундука.
+      case 'forgeReroll': return forgeReroll(reg, s, uid, createRng(1), a.gold, w, a.materials).ok;
       case 'forgeSalvage': return forgeSalvage(reg, s, st, uid, createRng(1), a.minYield, a.avgYield).ok;
       // R3-09: сервер отказывает зачарованию и при закрытой ковке (`balance.craft.live`) — до ядра.
-      case 'forgeEnchant': return reg.get('balance').craft.live && enchantAction(reg, s, uid, a.rarity!, createRng(1), a.gold).ok;
+      case 'forgeEnchant': return reg.get('balance').craft.live && enchantAction(reg, s, uid, a.rarity!, createRng(1), a.gold, w, a.materials).ok;
     }
   }
 
@@ -187,7 +250,7 @@ describe('⭐ R2-12: карточка верстака ≡ ответ серве
       if (!it) continue;
       items.push(structuredClone(it));
       for (const rar of ['magic', 'rare'] as const) {
-        const e = enchantAction(reg, forge, it.uid, rar, createRng(nonce + items.length));
+        const e = enchantAction(reg, forge, it.uid, rar, createRng(nonce + items.length), undefined, forgeStash.materials);
         if (e.ok) items.push(structuredClone(forge.inventory.find((i) => i.uid === (e.uid ?? it.uid))!));
       }
       forge.inventory = [];   // сумка не копит — следующей ковке нужно место
@@ -283,7 +346,7 @@ describe('⭐ R3-09: зачарование скованной — с верст
     const item = crafted()!;
     const ids = (it: Item): string[] => benchActions(liveReg, it, 10_000_000, [it], fullWallet()).map((x) => `${x.id}${x.rarity ? `:${x.rarity}` : ''}`);
     const save = richSave(); save.inventory = [{ ...item, pos: { x: 0, y: 0 } }];
-    expect(enchantAction(reg, save, item.uid, 'magic', createRng(3)).ok).toBe(true);
+    expect(enchantAction(reg, save, item.uid, 'magic', createRng(3), undefined, fullWallet()).ok).toBe(true);
     expect(ids(save.inventory[0]!)).toEqual(ids(item));
     expect(ids(item)).toEqual(['upgrade', 'reroll', 'enchant:magic', 'enchant:rare', 'salvage']);
     expect(ids({ ...gearItem(), origin: 'drop' })).toEqual(['upgrade', 'reroll', 'salvage']);
@@ -297,17 +360,18 @@ describe('⭐ R3-09: зачарование скованной — с верст
       if (!it) continue;
       items.push(it, { ...it, broken: true });
       const s = richSave(); s.inventory = [{ ...it, pos: { x: 0, y: 0 } }];
-      if (enchantAction(reg, s, it.uid, 'rare', createRng(items.length)).ok) items.push(s.inventory[0]!);
+      if (enchantAction(reg, s, it.uid, 'rare', createRng(items.length), undefined, fullWallet()).ok) items.push(s.inventory[0]!);
     }
     expect(items.filter((i) => i.rarity === 'normal' && !i.broken).length).toBeGreaterThan(20);
     let checked = 0, enabled = 0;
-    for (const r of [liveReg, closedReg]) for (const item of items) for (const gold of [10_000_000, 0, enchantCost(reg, item, 'magic')]) {
+    // §6.2: и кошелёк — с эссенцией и без неё (тогда карточка гаснет «не хватает», как отказ сервера).
+    for (const r of [liveReg, closedReg]) for (const item of items) for (const gold of [10_000_000, 0, enchantCost(reg, item, 'magic')]) for (const wal of [fullWallet(), {}]) {
       const save = richSave();
       save.gold = gold;
       save.inventory = [{ ...structuredClone(item), pos: { x: 0, y: 0 } }];
-      for (const a of enchantCards(benchActions(r, save.inventory[0]!, save.gold, save.inventory, {}))) {
+      for (const a of enchantCards(benchActions(r, save.inventory[0]!, save.gold, save.inventory, wal))) {
         const s = structuredClone(save);
-        const ok = r.get('balance').craft.live && enchantAction(reg, s, item.uid, a.rarity!, createRng(1), a.gold).ok;
+        const ok = r.get('balance').craft.live && enchantAction(reg, s, item.uid, a.rarity!, createRng(1), a.gold, structuredClone(wal), a.materials).ok;
         expect(a.enabled, `${a.rarity} «${item.name}» (${item.rarity}${item.broken ? ', сломана' : ''}), золото ${gold}, live ${r.get('balance').craft.live}: ${a.lines.map((l) => l.text).join(' · ')}`).toBe(ok);
         checked++;
         if (a.enabled) enabled++;

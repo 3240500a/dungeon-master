@@ -1,5 +1,6 @@
 export * from './townActions.js';
 export * from './salvagePreview.js';
+export * from './shopGear.js';
 export * from './stashActions.js';
 export * from './progression.js';
 export * from './questLogic.js';

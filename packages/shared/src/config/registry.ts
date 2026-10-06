@@ -1,4 +1,4 @@
-import { configSchemas, configCrossIssues, CONFIG_CROSS_KEYS, type ConfigKey, type ConfigShapes } from './schemas.js';
+import { configSchemas, configCrossIssues, crossIssuesWorse, CONFIG_CROSS_KEYS, type ConfigKey, type ConfigShapes } from './schemas.js';
 import { defaultConfigData } from './defaults.js';
 import { configSetRev } from './configRev.js';
 import type { EventBus } from '../events/index.js';
@@ -27,20 +27,25 @@ export class ConfigRegistry {
     for (const key of Object.keys(configSchemas) as ConfigKey[]) {
       staged[key] = this.parse(key, raw[key]);
     }
-    if (opts?.cross !== false) this.crossCheck(staged, Object.keys(staged) as ConfigKey[]);
+    if (opts?.cross !== false) this.crossCheck(staged, Object.keys(staged) as ConfigKey[], false);
     Object.assign(this.data, staged);
   }
 
   /**
-   * ⭐ D4: ПРАВИЛА ПОВЕРХ НЕСКОЛЬКИХ ТАБЛИЦ (`configCrossIssues`: время баффа) — над тем, что станет живым: разобранное в сторонке поверх
+   * ⭐ D4: ПРАВИЛА ПОВЕРХ НЕСКОЛЬКИХ ТАБЛИЦ (`configCrossIssues`: время баффа, разбор) — над тем, что станет живым: разобранное в сторонке поверх
    * прежнего. Нарушение — та же ошибка валидации (всё или ничего, R7-14), с таблицей правки: `reload({ balance })`, поднявший отдых баффа
    * выше, чем держит древо, — отказ «balance», а не молча нарушенное правило в игре.
+   * ⭐ Спрашиваются только правила, читающие правленые таблицы (`CONFIG_CROSS_RULES`), и у ПРАВКИ (`reload`, `incremental`) отказ — только
+   * НОВОМУ или УГЛУБЛЁННОМУ нарушению (`crossIssuesWorse`, как R22-06 у слоя файлов): лежащее в живом конфиге (старый оверрайд базы, принятый
+   * сборкой с инцидентом) не запирает правку чужих строк — прежде старый оверрайд `craft-materials` без эссенции запирал сохранение древа
+   * скилов, а нарушение баффа — сохранение ступеней и сырья. Целиком (`loadAll`) — всё, что нарушено.
    */
-  private crossCheck(staged: Record<string, unknown>, changed: readonly ConfigKey[]): void {
+  private crossCheck(staged: Record<string, unknown>, changed: readonly ConfigKey[], incremental: boolean): void {
     const touched = changed.filter((k) => CONFIG_CROSS_KEYS.includes(k));
     if (!touched.length) return;
     const live = this.data as Record<string, unknown>;
-    const issues = configCrossIssues((k) => (k in staged ? staged[k] : live[k]));
+    const after = configCrossIssues((k) => (k in staged ? staged[k] : live[k]), touched);
+    const issues = incremental ? crossIssuesWorse(configCrossIssues((k) => live[k], touched), after) : after;
     if (!issues.length) return;
     const key = touched.length === 1 ? touched[0]! : issues[0]!.key;
     throw new Error(`Конфиг "${key}" не прошёл валидацию:\n${issues.map((i) => `${i.key}: ${i.msg}`).join('\n')}`);
@@ -76,7 +81,7 @@ export class ConfigRegistry {
   reload(partial: Partial<Record<ConfigKey, unknown>>, opts?: { cross?: boolean }): void {
     const staged: [ConfigKey, unknown][] = [];
     for (const key of Object.keys(partial) as ConfigKey[]) staged.push([key, this.parse(key, partial[key])]);
-    if (opts?.cross !== false) this.crossCheck(Object.fromEntries(staged), staged.map(([key]) => key));   // R21-03: `cross: false` — как у `loadAll`
+    if (opts?.cross !== false) this.crossCheck(Object.fromEntries(staged), staged.map(([key]) => key), true);   // R21-03: `cross: false` — как у `loadAll`
     const store = this.data as Record<string, unknown>;
     for (const [key, value] of staged) store[key] = value;
     this.bus?.emit('config:reloaded', { keys: staged.map(([key]) => key) });

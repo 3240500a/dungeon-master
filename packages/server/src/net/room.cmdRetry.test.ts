@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { GameConn } from './conn.js';
-import { ConfigRegistry, newCharacterSave, generateItem, createRng, forgeGold, type ServerFrame, type SaveState, type Item } from '@dm/shared';
+import { ConfigRegistry, newCharacterSave, generateItem, createRng, forgeGold, rerollMaterials, addToInventory, materialItem, ESSENCE_ID, type ServerFrame, type SaveState, type Item } from '@dm/shared';
 
 // Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
 // таймера (~15,6 мс): тест идёт 0,3–3 с и без нагрузки. Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот
@@ -74,6 +74,11 @@ class FakeConn implements GameConn {
   all<T extends ServerFrame['t']>(t: T): Extract<ServerFrame, { t: T }>[] { return this.frames.filter((f) => f.t === t) as Extract<ServerFrame, { t: T }>[]; }
 }
 const settle = async (n = 10): Promise<void> => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+/** §6.2: перекатка тратит и Чародейскую эссенцию — стопка в сумке героя (сундук в этих тестах пуст). */
+const withEssence = (save: SaveState): void => {
+  const def = cfg.get('craft-materials').find((m) => m.id === ESSENCE_ID)!;
+  addToInventory(save.inventory, materialItem(def, 100, `ess-${save.charId}`), cfg.get('balance').inventory);
+};
 
 interface RoomLike { area: string; stop(): void; persist(pid: string): Promise<unknown>; session: { world: { players: Record<string, { save: SaveState }> } } }
 let rm: { rooms: Map<string, RoomLike>; handleConnection(c: GameConn): void };
@@ -97,6 +102,7 @@ describe('⭐ R4-23: повтор команды тем же номером за
     const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'R', charId) as SaveState;
     save.gold = 10_000;
     save.inventory.push(sword);
+    withEssence(save);   // §6.2: перекатка тратит и эссенцию
     db.chars.set(charId, { data: save, version: 1 });
 
     const ws = new FakeConn();
@@ -113,6 +119,7 @@ describe('⭐ R4-23: повтор команды тем же номером за
     const live = (): Item => me().inventory.find((i) => i.uid === sword.uid)!;
     const gold0 = me().gold;
     const cost = forgeGold(cfg, live(), 'reroll');
+    const ess = rerollMaterials(cfg, live());   // согласие на эссенцию — как у веба (`maxMaterials` карточки)
 
     // База медленная: автосейв игрока в полёте — команда встаёт в очередь записей за ним.
     let open!: () => void;
@@ -120,11 +127,11 @@ describe('⭐ R4-23: повтор команды тем же номером за
     void room!.persist(pid);
     await settle();
     ws.frames.length = 0;
-    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid }, id: 101 });
+    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxMaterials: ess }, id: 101 });
     await settle();
     expect(ws.all('cmdResult'), 'первая ещё ждёт базу — клиент через 8 с скажет «нет ответа»').toHaveLength(0);
     // Повтор с верстака — ТЕМ ЖЕ номером.
-    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid }, id: 101 });
+    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxMaterials: ess }, id: 101 });
     await settle();
 
     db.gate = null; open();
@@ -149,6 +156,7 @@ describe('⭐ R5-15: сервер не берёт больше цены, кот�
     const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'P', charId) as SaveState;
     save.gold = 10_000;
     save.inventory.push(sword);
+    withEssence(save);   // §6.2: перекатка тратит и эссенцию
     db.chars.set(charId, { data: save, version: 1 });
     const ws = new FakeConn();
     rm.handleConnection(ws);
@@ -160,13 +168,14 @@ describe('⭐ R5-15: сервер не берёт больше цены, кот�
     const me = (): SaveState => room!.session.world.players[pid]!.save;
     const live = (): Item => me().inventory.find((i) => i.uid === sword.uid)!;
     const cost = forgeGold(cfg, live(), 'reroll');
+    const ess = rerollMaterials(cfg, live());   // согласие на эссенцию — как у веба (`maxMaterials` карточки)
     const before = JSON.stringify(me());
     ws.frames.length = 0;
-    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost - 1 }, id: 201 });   // конфиг клиента устарел
+    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost - 1, maxMaterials: ess }, id: 201 });   // конфиг клиента устарел
     await settle(20);
     expect(ws.all('cmdResult').map((r) => [r.id, r.ok, r.reason])).toEqual([[201, false, `Цена изменилась: ${cost} золота`]]);
     expect(JSON.stringify(me()), 'было: сервер молча брал свою цену').toBe(before);
-    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost }, id: 202 });
+    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost, maxMaterials: ess }, id: 202 });
     await settle(20);
     expect(ws.all('cmdResult').at(-1)).toMatchObject({ id: 202, ok: true });
     expect(live().rerolls).toBe(1);
@@ -194,6 +203,7 @@ describe('⭐ R6-24: повтор тем же номером за пачкой �
     const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'D', charId) as SaveState;
     save.gold = 100_000;
     save.inventory.push(sword);
+    withEssence(save);   // §6.2: перекатка тратит и эссенцию
     db.chars.set(charId, { data: save, version: 1 });
     const ws = new FakeConn();
     rm.handleConnection(ws);
@@ -207,17 +217,18 @@ describe('⭐ R6-24: повтор тем же номером за пачкой �
     const live = (): Item => me().inventory.find((i) => i.uid === sword.uid)!;
     const gold0 = me().gold;
     const cost = forgeGold(cfg, live(), 'reroll');
+    const ess = rerollMaterials(cfg, live());   // согласие на эссенцию — как у веба (`maxMaterials` карточки)
 
     let open!: () => void;
     db.gate = new Promise<void>((r) => { open = r; });
     void room!.persist(pid);
     await settle();
     ws.frames.length = 0;
-    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost }, id: 17 });
+    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost, maxMaterials: ess }, id: 17 });
     await settle();
     expect(ws.all('cmdResult'), 'перекатка ждёт базу').toHaveLength(0);
     for (let k = 0; k < 64; k++) ws.push({ t: 'cmd', command: { cmd: 'moveItem', uid: sword.uid, x: k % 2 ? 0 : 4, y: 0 }, id: 18 + k });
-    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost }, id: 17 });   // «нет ответа» — повтор
+    ws.push({ t: 'cmd', command: { cmd: 'forgeReroll', uid: sword.uid, maxGold: cost, maxMaterials: ess }, id: 17 });   // «нет ответа» — повтор
     await settle();
     db.gate = null; open();
     const answered = (): number => ws.all('cmdResult').filter((r) => r.cmd === 'forgeReroll').length;

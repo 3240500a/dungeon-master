@@ -1,18 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   CRAFT_SLOT_LIST, ConfigRegistry, baseTierRange, craftTiers, craftWeapon, createRng, defaultParts, emptyJournal, fullJournal,
-  generateItem, newBotSave, partsOf, salvageMean, salvageRange, shapeFoundWeapon, sketchable, tierIndexOfItem, typeOfItem,
+  generateItem, newBotSave, partsOf, salvageIntoJournal, salvageMean, salvageRange, shapeFoundWeapon, sketchable, tierIndexOfItem, typeOfItem,
   type CraftJournal, type Item,
 } from '@dm/shared';
 import { askInGame, dismissAsk } from '../../ui/kit.js';
-import { confirmAll, confirmAllAsync, disposePrompts, journalGainsOf, salvageInField } from './disposeConfirm.js';
+import { confirmAll, confirmAllAsync, disposePrompts, fieldSalvageLines, journalGainsOf, salvageInField } from './disposeConfirm.js';
 
 /**
- * ⭐ ВОПРОСЫ ПЕРЕД ТЕМ, КАК ВЕЩЬ ИСЧЕЗНЕТ (§12.2, §17):
- * - полевой разбор и продажа найденного оружия, которое кузнец засчитал бы журналу (тип, деталь, кодекс, потолок
- *   ступени, мифик к воротам t6, эскиз), предупреждают — иначе игрок сжигает единственный носитель штучной
- *   детали (или мифик) и не узнаёт об этом никогда;
+ * ⭐ ВОПРОСЫ ПЕРЕД ТЕМ, КАК ВЕЩЬ ИСЧЕЗНЕТ (§12.2, §17; предложение «Разбор, сырьё и чары» §9):
+ * - полевой разбор и продажа вещи, которую кузнец записал бы в каталог (тип, деталь, кодекс, снаряжение, эскиз) — любого
+ *   происхождения (решение D1), — предупреждают: каталог пишет только кузнец (D2), и игрок сжигает носитель детали молча;
  * - разбор и продажа скованного спрашивают дважды.
+ * Потолка ступени и мификов в вопросах нет: ковку держит только сырьё (решение D3).
  */
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
@@ -75,25 +75,32 @@ describe('journalGainsOf — что засчитал бы журналу раз�
     expect(journalGainsOf(reg, it0, journalOf(it0, { base: true }))).toEqual([expect.stringMatching(/^тип/)]);
   });
 
-  it('скованное, уникальное и не оружие — не предупреждают', () => {
-    expect(journalGainsOf(reg, crafted(), emptyJournal())).toEqual([]);
+  it('скованное из открытого и уникальное — не предупреждают; броня — её база в каталог снаряжения', () => {
+    const c = crafted();
+    expect(journalGainsOf(reg, c, salvageIntoJournal(reg, emptyJournal(), c).journal)).toEqual([]);
     expect(journalGainsOf(reg, { ...found(), rarity: 'unique' }, emptyJournal())).toEqual([]);
-    const armor = reg.get('items.base').find((b) => b.kind === 'armor')!;
-    expect(journalGainsOf(reg, { ...found(), kind: 'armor', baseId: armor.id }, emptyJournal())).toEqual([]);
+    const armor = reg.get('items.base').find((b) => b.kind === 'armor' && b.enabled !== false)!;
+    const chest = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+      dropBias: 1, itemLevel: 10, baseId: armor.id, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal', origin: 'drop',
+    }, createRng(5));
+    expect(journalGainsOf(reg, chest, emptyJournal())).toEqual([`снаряжение «${armor.name}»`]);
+    expect(journalGainsOf(reg, chest, { ...emptyJournal(), gearSeen: [armor.id] })).toEqual([]);
   });
 
-  it('купленное и без происхождения: кузнец откроет только тип и потолок ступени — о деталях не спрашиваем', () => {
+  it('⭐ купленное и без происхождения — каталог как у находки (D1): тип, детали, кодекс; без детали — только она', () => {
     for (const origin of ['shop', undefined] as const) {
       const it0 = { ...starter(), origin };
-      expect(journalGainsOf(reg, it0, emptyJournal()), String(origin))
-        .toEqual([expect.stringMatching(/^тип/), expect.stringMatching(/^ступень/)]);
-      expect(journalGainsOf(reg, it0, journalOf(it0, { variant: true })), String(origin)).toEqual([]);
+      const g = journalGainsOf(reg, it0, emptyJournal());
+      expect(g[0], String(origin)).toMatch(/^тип/);
+      expect(g.filter((x) => x.startsWith('деталь')).length, String(origin)).toBeGreaterThan(0);
+      expect(journalGainsOf(reg, it0, journalOf(it0, { variant: true })), String(origin)).toHaveLength(1);
     }
   });
 
-  it('стартовое кузнец не разбирает вовсе (R3-04) — терять журналу нечего, вопроса нет', () => {
+  it('стартовое кузнец разбирает в каталог (D1) — в поле и в лавке это потеря, вопрос есть', () => {
     expect(starter().origin).toBe('start');
-    expect(journalGainsOf(reg, starter(), emptyJournal())).toEqual([]);
+    expect(journalGainsOf(reg, starter(), emptyJournal()).some((x) => x.startsWith('деталь'))).toBe(true);
+    expect(journalGainsOf(reg, starter(), journalOf(starter()))).toEqual([]);
   });
 
   it('журнала нет (кадр сундука не пришёл) — считаем пустым: лишний вопрос дешевле ловушки', () => {
@@ -103,26 +110,19 @@ describe('journalGainsOf — что засчитал бы журналу раз�
   });
 
   /**
-   * ⭐ R2-07: вопрос строился из двух полей `salvageIntoJournal` (база, детали) и молчал про остальные четыре. Мифик
-   * с известными деталями уходил в поле без вопроса — и с ним потолок ковки и счёт ворот t6: поле журнал не трогает.
+   * ⭐ R2-07 (пересмотрено D3, 06.10): мифик с известными деталями — без вопроса: ворот t6 и потолка ковки больше нет, ковку держит только
+   * сырьё. В вопросе — лишь то, что разбор у кузнеца добавил бы в каталог.
    */
-  it('⭐ R2-07: мифик с известными деталями — спрашивает про ступень и ворота t6; ворота открыты — молчит', () => {
+  it('⭐ R2-07 + D3: мифик с известными деталями — молчит (ни ступени, ни ворот); купленный — тоже', () => {
     const m = mythicDrop();
-    const gains = journalGainsOf(reg, m, { ...knownAll(m), tierHi: 0, mythic: 0 });
-    expect(gains.some((s) => s.startsWith('ступень') && s.includes(TIERS[LAST]!.name)), gains.join(' | ')).toBe(true);
-    expect(gains.some((s) => s.startsWith('мифик')), gains.join(' | ')).toBe(true);
-    expect(gains.filter((s) => s.startsWith('деталь') || s.startsWith('тип'))).toEqual([]);
-    // Ступень известна, а ворота ещё нет — только мифик; ворота открыты — лишнего мифика не просим.
-    expect(journalGainsOf(reg, m, { ...knownAll(m), mythic: 0 })).toEqual([expect.stringMatching(/^мифик/)]);
+    expect(journalGainsOf(reg, m, { ...knownAll(m), tierHi: 0, mythic: 0 })).toEqual([]);
     expect(journalGainsOf(reg, m, knownAll(m))).toEqual([]);
-    // Купленный мифик воротам не засчитается (`countsAsMythicFind`) — о нём и не спрашиваем.
     expect(journalGainsOf(reg, { ...m, origin: 'shop' }, { ...knownAll(m), mythic: 0 })).toEqual([]);
-    expect(journalGainsOf(reg, { ...m, tierForged: true }, { ...knownAll(m), mythic: 0 })).toEqual([]);
   });
 
-  it('⭐ R2-07: первая вещь новой ступени и новый тип кодекса — тоже потеря', () => {
+  it('⭐ R2-07: новый тип кодекса — тоже потеря; новая ступень — нет (D3)', () => {
     const it0 = found();
-    expect(journalGainsOf(reg, it0, { ...journalOf(it0), tierHi: -1 })).toEqual([expect.stringMatching(/^ступень/)]);
+    expect(journalGainsOf(reg, it0, { ...journalOf(it0), tierHi: -1 })).toEqual([]);
     expect(typesOf(it0), 'у стартового топора есть исторический тип').not.toEqual([]);
     expect(journalGainsOf(reg, it0, { ...journalOf(it0), typesSeen: [] })).toEqual([expect.stringMatching(/^кодекс/)]);
   });
@@ -148,14 +148,13 @@ describe('⭐ disposePrompts — что спросить', () => {
     expect(p[0]).toContain(PHRASE);
   });
 
-  it('⭐ R2-07: полевой разбор найденного мифика — вопрос называет ступень и мифик; всё засчитано — без вопроса', () => {
+  it('⭐ D3: полевой разбор найденного мифика с известными деталями — без вопроса (ни ступени, ни ворот); неизвестная деталь — вопрос', () => {
     const m = mythicDrop();
-    const p = disposePrompts(reg, m, 'field', { ...knownAll(m), tierHi: 0, mythic: 0 });
+    expect(disposePrompts(reg, m, 'field', { ...knownAll(m), tierHi: 0, mythic: 0 })).toEqual([]);
+    const p = disposePrompts(reg, m, 'field', emptyJournal());
     expect(p).toHaveLength(1);
     expect(p[0]).toContain(PHRASE);
-    expect(p[0]).toContain(TIERS[LAST]!.name);
-    expect(p[0]).toMatch(/мифик/);
-    expect(disposePrompts(reg, m, 'field', { ...knownAll(m), tierHi: LAST })).toEqual([]);
+    expect(p[0]).not.toMatch(/мифик|ступень/);
   });
 
   it('⭐ R2-07: продажа — та же потеря для журнала: найденное с тем, что засчитал бы кузнец, спрашивает', () => {
@@ -165,7 +164,7 @@ describe('⭐ disposePrompts — что спросить', () => {
     expect(p[0]).toContain(SELL_PHRASE);
     expect(p[0]).toContain('42');
     const m = mythicDrop();
-    expect(disposePrompts(reg, m, 'sell', { ...knownAll(m), mythic: 0 })[0]).toMatch(/мифик/);
+    expect(disposePrompts(reg, m, 'sell', { ...knownAll(m), mythic: 0 })).toEqual([]);
   });
 
   it('всё известно, или разбор у кузнеца (он сам откроет) — без вопросов', () => {
@@ -179,14 +178,34 @@ describe('⭐ disposePrompts — что спросить', () => {
 
   it('⭐ скованное спрашивает ДВАЖДЫ — и в поле, и у кузнеца, и в лавке', () => {
     const c = crafted();
+    const known = salvageIntoJournal(reg, emptyJournal(), c).journal;   // скованное — из открытого: каталог его знает
     for (const act of ['field', 'forge', 'sell'] as const) {
-      const p = disposePrompts(reg, c, act, emptyJournal(), 123);
+      const p = disposePrompts(reg, c, act, known, 123);
       expect(p, act).toHaveLength(2);
       expect(p[0]).toContain(c.name);
       expect(p[1]).toMatch(/^Точно\?/);
       expect(p.join('\n')).not.toContain(PHRASE); // скованное из открытого — неизвестного в нём нет
     }
     expect(disposePrompts(reg, c, 'sell', null, 123)[0]).toContain('123');
+  });
+});
+
+describe('⭐ fieldSalvageLines — карточка разбора в поле у пункта «Разобрать здесь» (§15.2, D2)', () => {
+  it('заголовок с долей, «Сырьё: ≈ …», эссенция, эскиз, подсказка «у кузнеца втрое больше» — и НИ строки каталога', () => {
+    const it0 = { ...found(), rarity: 'magic' as const };
+    const lines = fieldSalvageLines(reg, it0, emptyJournal());
+    expect(lines[0]).toEqual({ text: `Разобрать здесь (${Math.round(reg.get('balance').salvage.fieldYield * 100)} %)`, tone: 'title' });
+    expect(lines.find((l) => l.text.startsWith('Сырьё: '))?.text).toMatch(/^Сырьё: ≈ /);
+    expect(lines.some((l) => l.text.startsWith('Эссенция: '))).toBe(true);
+    expect(lines.some((l) => l.text.startsWith('Каталог')), 'разбор в поле каталог не пишет — строки нет (D2)').toBe(false);
+    expect(lines.at(-1)).toMatchObject({ tone: 'hint' });
+    expect(lines.at(-1)!.text).toMatch(/^У кузнеца сырья и эссенции втрое больше/);
+  });
+
+  it('стартовый набор в поле — отказ с причиной первой строкой после заголовка', () => {
+    const lines = fieldSalvageLines(reg, starter(), emptyJournal());
+    expect(lines[1]).toMatchObject({ tone: 'warn' });
+    expect(lines[1]!.text).toMatch(/^Стартовый набор сырья не даёт/);
   });
 });
 
@@ -240,7 +259,7 @@ describe('⭐ R1-14: вопрос в поле — в игре, а не window.co
     const btns = box.all().filter((e) => e.tag === 'button');
     return { box, yes: btns[0]!, no: btns[1]! };
   };
-  function fieldApp(item: Item, journal: CraftJournal = emptyJournal(), reply: { ok: boolean; reason?: string } = { ok: true }) {
+  function fieldApp(item: Item, journal: CraftJournal = emptyJournal(), reply: { ok: boolean; reason?: string; summary?: string } = { ok: true }) {
     const sent: unknown[] = [];
     const logs: string[] = [];
     const app = {
@@ -304,16 +323,22 @@ describe('⭐ R1-14: вопрос в поле — в игре, а не window.co
     expect(town.sent).toEqual([]);
   });
 
-  it('⭐ R2-14: отказ сервера («Слишком часто») — строкой в логе игры, а не молчанием; успех лог не трогает', async () => {
+  it('⭐ R2-14: отказ сервера («Слишком часто») — строкой в логе игры, а не молчанием; ⭐ §15.2: успех — итоговой строкой сервера', async () => {
     const it0 = found();
     const busy = fieldApp(it0, knownAll(it0), { ok: false, reason: 'Слишком часто' });
     await expect(salvageInField(busy.app, it0)).resolves.toBe(true);
     await Promise.resolve();
     expect(busy.logs).toEqual(['Разбор не удался: Слишком часто']);
-    const fine = fieldApp(it0, knownAll(it0));
+    const summary = 'Получено: Болотное железо 1 · каталог пополняет только разбор у кузнеца';
+    const fine = fieldApp(it0, knownAll(it0), { ok: true, summary });
     await expect(salvageInField(fine.app, it0)).resolves.toBe(true);
     await Promise.resolve();
-    expect(fine.logs).toEqual([]);
+    expect(fine.logs, 'было: успех молчал — даже полученное сырьё не показывалось').toEqual([`Разбор «${it0.name}»: ${summary}`]);
+    // Сервер старше итоговой строки — успех без неё лог не трогает.
+    const old = fieldApp(it0, knownAll(it0));
+    await expect(salvageInField(old.app, it0)).resolves.toBe(true);
+    await Promise.resolve();
+    expect(old.logs).toEqual([]);
   });
 
   it('askInGame: второй вопрос снимает первый с ответом «нет» — на странице одна плашка', async () => {

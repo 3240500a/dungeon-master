@@ -194,21 +194,22 @@
     "upgradeReqDiscount": 0.2,
     "rerollLimit": 3,
     "repairBroken": 40,
-    "repairMaterials": {
-      "tier1": 6,
-      "tier2": 2,
-      "tier3": 1
-    },
     "upgradeMaterials": {
-      "tier1": 20,
-      "tier2": 5,
-      "tier3": 2
+      "baseShare": 1,
+      "consumable": 20
+    },
+    "repairMaterials": {
+      "consumable": 6,
+      "main": 2
     }
   },
   "respecCost": 500,
   "passiveRespecCostPct": 0.5,
   "skillRespecCostPerPoint": 100,
   "townRestockSec": 600,
+  "shop": {
+    "maxTier": "t4"
+  },
   "skillSocketRanks": [
     1,
     6,
@@ -285,11 +286,21 @@
   },
   "salvage": {
     "fieldYield": 0.3,
-    "rarityTier": {
-      "normal": 1,
-      "magic": 2,
-      "rare": 3,
-      "unique": 0
+    "recipeByTier": [
+      [1, 1, 1, 1],
+      [2, 1, 1, 1],
+      [2, 2, 2, 2],
+      [3, 3, 3, 3],
+      [4, 3, 3, 3],
+      [4, 4, 4, 4],
+      [5, 5, 5, 5]
+    ],
+    "nonFindMaxGrade": 3,
+    "uniqueSalvage": false,
+    "essence": {
+      "magic": 1,
+      "rare": 2,
+      "unique": 2
     },
     "armorSlotMult": {
       "chest": 1,
@@ -384,7 +395,13 @@
         "head": 8
       },
       "goldPerReqMult": 300,
-      "enchantGold": 100
+      "enchantGold": 100,
+      "essence": {
+        "base": 2,
+        "perTier": 2,
+        "rareMult": 2,
+        "rerollShare": 0.5
+      }
     },
     "finish": [
       {
@@ -425,17 +442,10 @@
         "grip": 2,
         "bind": 1,
         "head": 1
-      },
-      "rarityBonus": {
-        "normal": 0,
-        "magic": 1,
-        "rare": 2,
-        "unique": 2
       }
     },
     "journal": {
-      "sketchAfter": 8,
-      "mythicSalvages": 5
+      "sketchAfter": 8
     },
     "rarityWeight": {
       "common": 10,

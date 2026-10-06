@@ -56,8 +56,8 @@ export const shopPanel: PanelFactory = (app) => ({
     if (state.save.inventory.length === 0) right.append(mk('div', 'color:#666', 'Инвентарь пуст'));
     for (const item of state.save.inventory) {
       const price = shopSellPrice(app.config, item);
-      // Скованное продаётся только после двух вопросов (§17): назад его не выкупить. Найденное оружие, которое кузнец
-      // засчитал бы журналу (деталь, ступень, мифик…), — после одного (R2-07): продажа журнал не пополняет.
+      // Скованное продаётся только после двух вопросов (§17): назад его не выкупить. Вещь, которую кузнец записал бы в каталог
+      // (тип, деталь, кодекс, снаряжение, эскиз), — после одного (R2-07): продажа каталог не пополняет.
       sellCells.appendChild(pricedSlot(item, `+${price}`, COLORS.gold, () => {
         if (!confirmAll(disposePrompts(app.config, item, 'sell', app.stash?.forgeJournal, price))) return;
         app.sendCmd({ cmd: 'sell', uid: item.uid, minGold: price });   // R6-16: меньше подписи «+N» лавка не даст

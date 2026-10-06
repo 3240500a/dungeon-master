@@ -45,11 +45,12 @@ export function sandboxHost(reg: ConfigRegistry, sb: CraftSandbox, save: SaveSta
       return { ok: true, item: { ...item, pos: null } };
     },
     enchant: (item, rarity) => {
-      const { bag } = scratch([{ ...item }]);
-      const r = enchantAction(reg, bag, item.uid, rarity, createRng(sb.seed++));
+      // §6.2: эссенция — из кошелька песочницы (черновой при «бесконечном сырье»), тем же ядром, что у сервера.
+      const { bag, stash } = scratch([{ ...item }]);
+      const r = enchantAction(reg, bag, item.uid, rarity, createRng(sb.seed++), undefined, stash.materials ?? {});
       const next = r.ok ? bag.inventory.find((i) => i.uid === r.uid) : undefined;
       if (!next) return { ok: false, reason: r.reason };
-      if (!sb.infinite) sb.gold = bag.gold;
+      if (!sb.infinite) { sb.gold = bag.gold; sb.wallet = stash.materials ?? {}; }
       sb.drop = null; sb.fight = null;
       return { ok: true, item: { ...next, pos: null } };
     },

@@ -7,15 +7,17 @@ import { unmetWorn } from '../formulas/stats.js';
 import { isVersatile } from '../formulas/versatile.js';
 import { rollAffixes, nextTier, inferTierId, retierItem, tierMatters } from '../formulas/itemgen.js';
 import {
-  CRAFT_NONCES_KEEP, FORM_UNPRICED, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost, enchantItem,
-  enchantSlots, fullJournal, isCraftNonce, meltReturn, normalizeCraftNonces, normalizeJournal, parseCraftInput, partById,
-  rolledFormMult, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndex, typeOfItem, upgradeFoundParts, useSketch, type SalvageUnlock,
+  CRAFT_NONCES_KEEP, FORM_UNPRICED, MATERIAL_STEPS, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost,
+  enchantItem, enchantSlots, essenceMaterials, fullJournal, isCraftNonce, materialId, meltReturn, normalizeCraftNonces, normalizeJournal,
+  parseCraftInput, partById, partFamily, partsOf, rolledFormMult, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndex, typeOfItem,
+  upgradeFoundParts, useSketch, type SalvageUnlock, catalogProgress, emptyJournal, salvageFullOrigin, salvageGrades, salvageTierIndex, priceTierIndex,
+  type CraftJournal,
 } from '../formulas/craft.js';
 import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
 import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
-import { canSalvage, salvageFromItem, salvageRuleFor, tierOfRarity, type SalvageRng } from '../formulas/salvage.js';
+import { ESSENCE_ID, UNIQUE_NO_SALVAGE, canSalvage, salvageFromItem, salvageRuleFor, type SalvageRng } from '../formulas/salvage.js';
 import { addToWallet, availableMaterials, bagCopy, canAffordBoth, carriedMaterials, giveMaterialsTo, missingForBoth, spendBoth, depositCarried,
   type MaterialCost, type MaterialWallet } from './materials.js';
 import type { AccountStash } from '../types/stash.js';
@@ -122,13 +124,25 @@ const consentBroken = (shown: unknown): boolean =>
  * (ковка, улучшение, починка). Берёт ядро по СВОЕМУ конфигу, и правка из редактора живьём (`craft.cost.units`, строка формы,
  * доводка, `upgradeMaterials`/`repairMaterials`) поднимала сырьё молча: золото то же — `maxGold` проходил, а из сумки и
  * кошелька сундука уходило больше показанного. Любого материала нужно больше, чем в карточке (или его там не было), — отказ
- * до траты, с ценой в причине. Меньше — не отказ. Нет поля — прежнее поведение (Unity, старые вкладки); кривое — отказ.
+ * до траты, с ценой в причине. Меньше — не отказ. Нет поля — прежнее поведение (песочница редактора, сим, тесты); кривое — отказ.
+ * ⭐ СЕРВЕР поля не прощает (`serverMaterialsConsent`): команда без него — согласие «ни на какое сырьё».
  */
 export function materialsRaised(reg: ConfigRegistry, cost: MaterialCost, maxMaterials: Record<string, number> | undefined): ActionResult | null {
   if (maxMaterials === undefined) return null;
   const raised = consentBroken(maxMaterials)
     || Object.entries(cost).some(([id, n]) => n > 0 && !(n <= consentOf(maxMaterials, id)));
   return raised ? { ok: false, reason: `${PRICE_CHANGED}: ${describeCost(reg, cost)}` } : null;
+}
+
+/**
+ * ⭐ СОГЛАСИЕ НА СЫРЬЁ У СЕРВЕРА ОБЯЗАТЕЛЬНО: нет поля `maxMaterials` — согласие «ни на какое сырьё» (`{}`), а не «на любое». Подъём, починка,
+ * перекатка и зачарование с сырьём или эссенцией в цене без него — отказ «Цена изменилась» ДО траты; без сырья в цене — как прежде.
+ * ⚠ Прежде «нет поля» значило «прежнее поведение», и с эссенцией в цене перекатки и чар (§6.2) клиент, рисующий по старым правилам (Unity
+ * до переноса, старая вкладка), платил эссенцией из сумки и сундука, которой карточка не показывала: зачарование скованной t3 до редкой
+ * молча снимало 16 эссенции (R8-14 в обход). Веб шлёт поле всегда (`forgeBench`, `craftHost`).
+ */
+export function serverMaterialsConsent(maxMaterials: Record<string, number> | undefined): Record<string, number> {
+  return maxMaterials ?? {};
 }
 
 /**
@@ -222,10 +236,11 @@ function tierPremium(reg: ConfigRegistry, item: Item): number {
 }
 
 /**
- * БЕСПЛАТНЫЙ СТАРТОВЫЙ КОМПЛЕКТ (R3-04) — лавка берёт за 1, кузнец не разбирает. ⚠ R4-34: только НЕТРОНУТЫЙ: поднятый
- * у кузнеца (`tierForged`) оплачен золотом и сырьём — вложенное пропадало целиком (продажа за 1, разбор — отказ).
+ * БЕСПЛАТНЫЙ СТАРТОВЫЙ КОМПЛЕКТ (R3-04) — лавка берёт за 1, кузнец разбирает ТОЛЬКО В КАТАЛОГ: ни сырья, ни эссенции, ни эскиза
+ * (решение владельца D1; нового в каталоге нет — отказ с причиной, §9.3). ⚠ R4-34: только НЕТРОНУТЫЙ: поднятый у кузнеца (`tierForged`)
+ * оплачен золотом и сырьём — он разбирается как купленный, по исходной ступени (`bornTier` = t0: сорт I, не выше III, без эссенции).
  * Краном это не стало: подъём бесплатной вещи дороже того, что она потом даст продажей или разбором, на каждой
- * ступени (сторож — `starterKit.test.ts`). Происхождение не переписывается: журнал такую вещь не учит (`countsAsFind`).
+ * ступени (сторож — `starterKit.test.ts`). Происхождение не переписывается: эскиз такая вещь не копит (`countsAsFind`).
  */
 const freeKit = (item: Item): boolean => item.origin === 'start' && !item.tierForged;
 
@@ -238,7 +253,7 @@ export function shopItemValue(reg: ConfigRegistry, item: Item): number {
   return estimate(reg, item, tierPremium(reg, item));
 }
 export function shopSellPrice(reg: ConfigRegistry, item: Item): number {
-  // ⭐ Сырьё — ПОШТУЧНО по `craft-materials.sellPrice` (§13: 1 · 4 · 12 · 36 · 108). До этого стек шёл по
+  // ⭐ Сырьё — ПОШТУЧНО по `craft-materials.sellPrice` (сорта I–V: 1 · 2 · 5 · 10 · 15, эссенция 5 — D4, дешевле вещи, из которой вышли). До этого стек шёл по
   // формуле вещи — 7 золота за стек любой длины и любой ступени: стек из одной ржавой железки стоил как семь,
   // а сотня булата — как та же одна. Отсюда же меряются инварианты «не прачечная» (цена сырья = его продажа).
   if (item.kind === 'material') {
@@ -248,10 +263,17 @@ export function shopSellPrice(reg: ConfigRegistry, item: Item): number {
   }
   // ⚠ R3-04: СТАРТОВЫЙ КОМПЛЕКТ — за 1. Он бесплатен и бесконечен: создал героя → переложил комплект в сундук
   // аккаунта (или бросил соседу) → удалил героя → заново. По формуле вещи комплект стоил 35 золота, и скрипт гонял
-  // круг за 2–3 с — десятки тысяч золота в час против цели «золото дефицитно». Разбирать его тоже нельзя (`salvagePlan`).
+  // круг за 2–3 с — десятки тысяч золота в час против цели «золото дефицитно». Сырья его разбор не даёт — только каталог (`salvagePlan`).
   if (freeKit(item)) return 1;
   // Без надбавки ступени (R2-16, см. `tierPremium`): она — плата за силу вещи на прилавке, а не доход с находки.
-  return Math.max(1, Math.floor(estimate(reg, item) * 0.4));
+  const flat = Math.max(1, Math.floor(estimate(reg, item) * 0.4));
+  // ⭐ D4 (решение владельца 06.10: сырьё продаётся, но «разобрать и продать» — невыгодно): ЛАВКА ПЛАТИТ ЗА ВЕЩЬ НЕ МЕНЬШЕ, ЧЕМ СТОИТ
+  // ВЫХОД ЕЁ РАЗБОРА У КУЗНЕЦА (`salvageWorth`: лучший бросок, сырьё и эссенция по `sellPrice`). Правило, а не числа — держится при ЛЮБОМ
+  // конфиге: и у скованной (переплавка возвращает долю заплаченного сырья, а формула вещи о нём не знает: меч III из 89 единиц III
+  // сдавался за ≈ 54, а переплавка — за ≈ 255), и при множителе цены редкости у нуля (R23-04). У найденных при живых ценах сырья пол
+  // не включается (цены держит `salvageSellIssues`, сторож — `salvageSell.test.ts`): цена вещи — её формула. Петли нет: ковка берёт всё
+  // сырьё и золото, а продажа скованного возвращает не больше доли `melt.share` < 1 сырья — меньше, чем продажа того же сырья напрямую.
+  return Math.max(flat, salvageWorth(reg, item));
 }
 
 /**
@@ -380,56 +402,99 @@ export function sellItem(reg: ConfigRegistry, save: SaveState, uid: string, minG
 
 // ── Кузница (авторитетно; раньше мутировал клиент → откатывалось сейвом) ──────
 /**
- * ЦЕНА УЛУЧШЕНИЯ В МАТЕРИАЛАХ — лестница по редкости вещи (docs/ECONOMY.md, Ч5).
- *
- * Обычная просит только ржавое, магическая — ржавое И чистое, редкая — ржавое, чистое И калёное.
- * Каждая следующая редкость ДОБАВЛЯЕТ ступень: убери среднюю у редких — и чистое железо станет
- * мусором ровно тогда, когда игрок перерос магические вещи, а приходить не перестанет.
- *
- * СЕМЬЯ материала берётся из ПРАВИЛА РАЗБОРА той же вещи: меч чинится железом, лук — деревом,
- * латы — пластинами. Берётся первая (главная) семья правила: у топора это железо, дерево — довесок.
- * ⚠ «Что вещь даёт = что она стоит» держится поштучно только у брони и прочего (см. `materialLadder`).
- *
- * Пустая цена (нет правила / редкость с нулевой ступенью) — значит улучшать нечем, и это ОТКАЗ,
- * а не «бесплатно»: иначе уники чинились бы даром.
+ * ⭐ ВЕЩЬ «КАК НАЙДЕННАЯ» на своей ступени — мерка цены подъёма и починки (предложение «Разбор, сырьё и чары» §7): обычная, без
+ * свойств, найденная (полный сорт, без потолка не-находки), без `bornTier`, без метки подъёма и без поломки. Её разбор у кузнеца и
+ * есть «что вещь этой ступени стоит в сырье»: одна таблица (рецепт `salvage.recipeByTier`, правила `salvage-rules`) описывает и что
+ * вещь даёт, и что она стоит, поэтому разойтись они не могут.
  */
-export function upgradeCost(reg: ConfigRegistry, item: Item): MaterialCost {
-  const u = reg.get('balance').forgePrices.upgradeMaterials;
-  return materialLadder(reg, item, [u.tier1, u.tier2, u.tier3]);
+function asFound(item: Item): Item {
+  const { bornTier: _b, tierForged: _f, broken: _x, ...rest } = item;
+  return { ...rest, origin: 'drop', rarity: 'normal', affixes: [] };
 }
 
 /**
- * ЛЕСТНИЦА ПО РЕДКОСТИ — общий расчёт цены для улучшения и починки.
- *
- * Обычная вещь просит только первую ступень, магическая — первую И вторую, редкая — все три:
- * каждая следующая редкость ДОБАВЛЯЕТ ступень. Семья материала берётся из ПРАВИЛА РАЗБОРА той же
- * вещи, поэтому меч чинится железом, лук деревом, латы пластинами. У брони, щитов и украшений разбор
- * идёт по тому же правилу, и «что вещь даёт» и «что она стоит» описаны одной таблицей.
- * ⚠ У ОРУЖИЯ — нет (R2-29): найденное разбирается ПО ДЕТАЛЯМ (`salvagePlan`, docs/CRAFT_WEAPONS.md §10.9) —
- * материалы их ступеней, при закрытой ковке тоже. t5-меч отдаёт сварочный дамаск (ступень 4), а не болотное
- * железо, дубина (семья булавы — железо) — дерево и прибор. Лестницу кормит сырьё С ТЕЛ: от уровня оно не
- * зависит, ступень — редкость надетого (замер: 62–72 единицы железа и дерева ступеней 1–3 за 100 убийств с тел,
- * 6–15 — с разбора оружейных находок; весь приход лестницы — в пределах −4…+9 % от прежнего разбора по правилу).
- * Сторож — `materialsLive.test.ts` (R2-29): каждый материал этой цены падает с тел, приход не ниже 90 % прежнего.
- *
- * Пустой результат — «кузнец эту вещь не трогает» (уник либо нет правила), и это ОТКАЗ,
- * а не «бесплатно».
+ * ПОБОЧНЫЕ семьи правила разбора вещи — строки «0–N» (`min` 0): прибор щита, китовый ус кожаной и стёганой брони, поддоспешник лат. Они
+ * подкармливают узкие семьи ковки (рецензия 06.10: Прибор, Плечи, Ткань шли только с оружия своего класса), а в основу подъёма не входят.
+ * Семья, что есть и в обязательной строке, побочной не считается.
  */
-function materialLadder(reg: ConfigRegistry, item: Item, need: readonly number[]): MaterialCost {
-  const bal = reg.get('balance');
-  const tier = tierOfRarity(item.rarity, bal.salvage.rarityTier);
+function optionalFamilies(reg: ConfigRegistry, item: Item): Set<string> {
   const rule = salvageRuleFor(item, weaponClassOf(reg, item), reg.get('salvage-rules'));
-  const first = rule?.yields?.[0]?.materialId;
-  if (tier <= 0 || !first) return {};
-  const mats = reg.get('craft-materials');
-  const family = mats.find((m) => m.id === first)?.family;
-  if (!family) return {};
-  const out: MaterialCost = {};
-  for (let t = 1; t <= Math.min(tier, need.length); t++) {
-    const n = need[t - 1]!;
-    const mat = mats.find((m) => m.family === family && m.tier === t && m.enabled);
-    if (n > 0 && mat) out[mat.id] = n;
+  const fam = (id: string): string => reg.get('craft-materials').find((m) => m.id === id)?.family ?? id.replace(/-\d+$/, '');
+  const must = new Set((rule?.yields ?? []).filter((y) => y.min > 0).map((y) => fam(y.materialId)));
+  return new Set((rule?.yields ?? []).filter((y) => y.min <= 0).map((y) => fam(y.materialId)).filter((f) => !must.has(f)));
+}
+
+/** Главная семья сырья вещи: у оружия по деталям — семья ударной части; у прочего — первая семья правила разбора. Нет — `undefined`. */
+function mainFamily(reg: ConfigRegistry, item: Item): string | undefined {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (base?.kind === 'weapon') {
+    const anat = reg.get('weapon-anatomy').find((a) => a.id === base.weaponClass);
+    const picks = partsOf(reg, item);
+    const p = picks ? partById(reg, picks.strike.id) : undefined;
+    if (anat && p) return partFamily(anat, 'strike', p);
   }
+  const first = salvageRuleFor(item, weaponClassOf(reg, item), reg.get('salvage-rules'))?.yields?.[0]?.materialId;
+  return first ? reg.get('craft-materials').find((m) => m.id === first)?.family : undefined;
+}
+
+/** Сложить `n` сырья `family-grade` в цену, спустив выключенный сорт до ближайшего включённого ниже (`knownOnly`); нет ни одного — пропуск. */
+function addGrade(reg: ConfigRegistry, out: MaterialCost, family: string | undefined, grade: number, n: number): void {
+  if (!family || !(n > 0)) return;
+  for (const [id, k] of Object.entries(knownOnly(reg, { [materialId(family, Math.max(1, Math.min(MATERIAL_STEPS, grade)))]: n }))) {
+    out[id] = (out[id] ?? 0) + k;
+  }
+}
+
+/**
+ * ⭐ ЦЕНА ПОДЪЁМА В СЫРЬЕ — ПО СТУПЕНИ, А НЕ ПО РЕДКОСТИ (предложение «Разбор, сырьё и чары» §7, `forgePrices.upgradeMaterials`).
+ * Подъём до ступени t просит:
+ * - ОСНОВУ — верх вилки разбора этой вещи у кузнеца, будь она НАЙДЕНА на ступени t (`asFound` поднятой вещи: те же детали в своих
+ *   семьях, рецепт t), × `baseShare`. Оружие — 7 единиц по рецепту t (лук платит Плечами, Деревом, Тканью — а не одним Деревом прежних
+ *   правил `w-*`); нагрудник 3, шлем, сапоги, перчатки и пояс по 2, щит — 3 дерева + 2 железа. Эссенции в основе нет; ПОБОЧНОГО выхода
+ *   правила (строка «0–N»: прибор щита, китовый ус кожаной брони, поддоспешник лат — `optionalFamilies`) тоже нет: он подкармливает узкие
+ *   семьи ковки, а не делает подъём брони дороже;
+ * - РАСХОДНИК — `consumable` сырья I сорта главной семьи вещи (`mainFamily`): сток I на любой глубине.
+ * Редкость меняет только золото (`forgeGold`). Поэтому IV и V тратятся подъёмом до t5–t6, а «поднять и разобрать» — чистый расход при
+ * ЛЮБЫХ числах: разбор поднятой вещи идёт по исходной ступени (`bornTier`, §11.2).
+ * Пусто — кузнец эту вещь не поднимает (уник, скованная, на потолке, всё сырьё выключено), и это ОТКАЗ (`canUpgradeItem`), а не «бесплатно».
+ * ⚠ Было: лестница сортов I–III по редкости — редкий меч t1→t2 просил Уклад, а IV и V подъём не тратил никогда.
+ */
+export function upgradeCost(reg: ConfigRegistry, item: Item): MaterialCost {
+  if (item.rarity === 'unique' || item.parts) return {};
+  const next = upgradedItem(reg, item);
+  if (!next) return {};
+  const k = reg.get('balance').forgePrices.upgradeMaterials;
+  const out: MaterialCost = {};
+  const found = asFound(next);
+  const hi = salvageYield(reg, found, ROLL_HI, false);
+  const optional = hi.source === 'rules' ? optionalFamilies(reg, found) : new Set<string>();
+  const familyOf = (id: string): string | undefined => reg.get('craft-materials').find((m) => m.id === id)?.family;
+  if (hi.ok) {
+    for (const [id, n] of Object.entries(hi.gains)) {
+      if (id === ESSENCE_ID || optional.has(familyOf(id) ?? '')) continue;
+      const m = Math.ceil(n * k.baseShare - 1e-9);
+      if (m > 0) out[id] = (out[id] ?? 0) + m;
+    }
+  }
+  addGrade(reg, out, mainFamily(reg, found), 1, k.consumable);
+  return out;
+}
+
+/**
+ * ⭐ ЦЕНА ПОЧИНКИ В СЫРЬЕ — по ступени вещи (§7, `forgePrices.repairMaterials`): `consumable` сырья I сорта главной семьи + `main` ГЛАВНОГО
+ * сорта вещи на её нынешней ступени — сорт ударной части оружия по рецепту (`salvage.recipeByTier`), у брони, щита и оружия без деталей —
+ * нижний сорт строки, как у их разбора. Редкость — только в золоте. Пусто (уник, всё сырьё выключено) — ОТКАЗ (`canRepairItem`).
+ */
+export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
+  if (item.rarity === 'unique') return {};
+  const k = reg.get('balance').forgePrices.repairMaterials;
+  const found = asFound(item);
+  const family = mainFamily(reg, found);
+  const g = salvageGrades(reg, found);
+  const byParts = Object.keys(craftSalvageYield(reg, found)).length > 0;
+  const out: MaterialCost = {};
+  addGrade(reg, out, family, 1, k.consumable);
+  addGrade(reg, out, family, byParts ? (g.row[0] ?? g.low) : g.low, k.main);
   return out;
 }
 
@@ -488,12 +553,18 @@ export function canUpgradeItem(reg: ConfigRegistry, item: Item): ActionResult {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   if (!base) return { ok: false, reason: 'Кузнец не знает такой вещи' };
   if (item.parts) return { ok: false, reason: 'Скованную вещь поднимает замена детали, а не подъём тира' };
+  // ⭐ Уник кузнец не поднимает — ЯВНО (§7). Прежде его отсекала только пустая лестница сырья по редкости (`unique: 0`); цена по ступени
+  // у него не пуста, и без этой строки уник t3 → t6 поднимался бы за ≈ 17 тыс. золота и ×2.4 к статам базы. «Нашёл — носи как есть».
+  if (item.rarity === 'unique') return { ok: false, reason: UNIQUE_NO_UPGRADE };
   if (!tierMatters(base)) return { ok: false, reason: 'Ступень этой вещи ничего не меняет' };
   // Ступень выше есть, а подъёма нет — у найденного меча, чьи детали до неё не дотягиваются (R4-31).
   if (!upgradedItem(reg, item)) return { ok: false, reason: nextTierOf(reg, item) ? 'Эта форма выше не куётся' : 'Лучше эту вещь уже не сделать' };
   if (!Object.keys(upgradeCost(reg, item)).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
   return { ok: true };
 }
+
+/** Отказ подъёма уникальной вещи — одна строка для сервера, карточки и эталона Unity. */
+export const UNIQUE_NO_UPGRADE = 'Уникальную вещь кузнец не поднимает';
 
 /** Какое действие кузницы считаем. */
 export type ForgeOp = 'upgrade' | 'repair' | 'reroll';
@@ -506,16 +577,15 @@ export type ForgeOp = 'upgrade' | 'repair' | 'reroll';
  * обесценивалось в четырнадцать раз. Со ступенью в цене эта колонка встаёт колом: 1.4 / 0.9 / 0.6
  * улучшения за этаж (обычная / магическая / редкая) на ВСЕХ ступенях.
  *
- * ⭐ Сырьё при этом остаётся плоским по ступени — и это не забывчивость. Приход сырья от уровня НЕ
- * зависит вовсе (`salvageTo` — фиксированные числа за кусок снаряжения, замер: ~45 единиц за этаж
- * хоть на пятом этаже, хоть на двухсотом). Плоский доход требует плоской цены; растущий — растущей.
- * По РЕДКОСТИ сырьё уже масштабируется лестницей, и золото теперь согласовано с ним.
+ * ⭐ Сырьё масштабируется СОРТОМ, а не количеством (`upgradeCost`, `repairCost`, предложение «Разбор, сырьё и чары» §7): подъём до t
+ * просит основу по рецепту ступени t, а приход высоких сортов — только с находок своей ступени. Редкость меняет только золото.
  *
  * ⚠ Множители не новые: `item-tiers.reqMult` и `rarities.priceMult` уже есть в конфиге. Заводить
  * третью колонку значило бы держать три таблицы про одно и то же и следить, чтобы они не разъехались.
  * `reqMult` выбран, а не `statMult`: он отслеживает рост дохода заметно точнее (проверено замером).
  *
- * У улучшения ступень берётся ЦЕЛЕВАЯ — платим за то, что покупаем, а не за то, что имеем.
+ * У улучшения ступень берётся ЦЕЛЕВАЯ — платим за то, что покупаем, а не за то, что имеем. У починки и перекатки — нынешняя ступень цены
+ * (`priceTierIndex`: записанная, а у вещи без поля — по уровню, как её разбор); у подъёма — по статам (`inferTierId`), как сам подъём.
  *
  * ⚠ ПЕРЕКАТКА СКОВАННОЙ — ещё × M формы, которую она катает (R2-10, docs/CRAFT_WEAPONS.md §6.3): каждая
  * перекатка выдаёт ГАРАНТИРОВАННУЮ форму, ровно как зачарование (`rolledFormMult` — тот же шов). Без
@@ -529,8 +599,9 @@ export function forgeGold(reg: ConfigRegistry, item: Item, op: ForgeOp): number 
   const itemsBase = reg.get('items.base');
   const b = itemsBase.find((x) => x.id === item.baseId);
   const curId = b ? inferTierId(tiers, b, item, reg.get('balance').loot.baseRoll) : item.tier;
-  const tierId = op === 'upgrade' && b ? nextTier(tiers, b, curId)?.id ?? curId : curId;
-  const tier = tiers.find((t) => t.id === tierId);
+  const tier = op === 'upgrade'
+    ? tiers.find((t) => t.id === (b ? nextTier(tiers, b, curId)?.id ?? curId : curId))
+    : craftTiers(reg)[priceTierIndex(reg, item)];
   const rarity = reg.get('rarities').find((r) => r.id === item.rarity);
   // R17-03: у катаемой формы нет цены — NaN (не число, а не скидка до ×1); `canRerollItem` откажет раньше, «Форма без цены».
   const form = op === 'reroll' ? rolledFormMult(reg, item, item.rarity) ?? Number.NaN : 1;
@@ -571,6 +642,13 @@ export function upgradedItem(reg: ConfigRegistry, item: Item): Item | undefined 
     spread: bal.loot.baseRoll,
   });
   // Ступень куплена у кузнеца, а не найдена: мифик так не засчитается воротам t6 (`countsAsMythicFind`).
+  // ⭐ И РАЗБОР ПОЙДЁТ ПО ИСХОДНОЙ СТУПЕНИ (`bornTier`, пишет только первый подъём): «поднять и разобрать» — всегда чистый расход,
+  // какие бы цены ни стояли в конфиге (предложение «Разбор, сырьё и чары» §5, §11.2). Вещь, поднятая до этого поля (только тестовая
+  // база), — без него: разбор читает её как купленную (`salvageFullOrigin`), а не по нынешней ступени.
+  if (!item.tierForged && !item.bornTier) {
+    const born = craftTiers(reg)[salvageTierIndex(reg, item)]?.id;
+    if (born) next.bornTier = born;
+  }
   next.tierForged = true;
   // ⭐ Найденный меч с записанными деталями (§26): клинок тот же, ступени деталей — под новый тир (разбор
   // отдаёт то, из чего вещь сделана), статы клинка — заново от деталей, а не вычитанием из старых статов.
@@ -719,20 +797,42 @@ export function canRerollItem(reg: ConfigRegistry, item: Item): ActionResult {
 }
 
 /**
- * Реролл аффиксов: заново катит столько же аффиксов из пула (rng — от вызывающего). Цена — `forgeGold`
- * (`forgePrices.rerollAffix`, у скованной × M формы). Все отказы — `canRerollItem`, до платы.
+ * ⭐ ЭССЕНЦИЯ ПЕРЕКАТКИ — словарём сырья (`essenceMaterials`, §6.2): половина зачарования до редкости вещи. Одна функция для карточки
+ * верстака (строка «Чародейская эссенция N (есть M)», согласие `maxMaterials`) и сервера.
  */
-export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng, maxGold?: number): ActionResult {
+export function rerollMaterials(reg: ConfigRegistry, item: Item): MaterialCost {
+  return essenceMaterials(reg, item, item.rarity, 'reroll');
+}
+
+/** ⭐ ЭССЕНЦИЯ ЗАЧАРОВАНИЯ до `rarity` — словарём сырья (`essenceMaterials`, §6.2). Одна функция для карточки, окна ковки и сервера. */
+export function enchantMaterials(reg: ConfigRegistry, item: Item, rarity: Rarity): MaterialCost {
+  return essenceMaterials(reg, item, rarity, 'enchant');
+}
+
+/**
+ * Реролл аффиксов: заново катит столько же аффиксов из пула (rng — от вызывающего). Цена — `forgeGold`
+ * (`forgePrices.rerollAffix`, у скованной × M формы) и ЭССЕНЦИЯ (`rerollMaterials`, §6.2) — из сумки, недостающее из кошелька сундука
+ * (`wallet`; на сервере — транзакция сундука). Все отказы — `canRerollItem`, цена (`maxGold`, `maxMaterials` — R5-15, R8-14), золото и
+ * эссенция, — до платы.
+ */
+export function forgeReroll(
+  reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng, maxGold?: number, wallet: MaterialWallet = {}, maxMaterials?: Record<string, number>,
+): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   const can = canRerollItem(reg, item);
   if (!can.ok) return can;
   const slots = rerollSlots(reg, item)!;   // `canRerollItem` уже отказал бы без редкости
   const cost = forgeGold(reg, item, 'reroll');
-  const raised = priceRaised(cost, maxGold);   // R5-15
+  const mats = rerollMaterials(reg, item);
+  const raised = priceRaised(cost, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
   if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
+  if (!canAffordBoth(save.inventory, wallet, mats)) {
+    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+  }
   save.gold -= cost;
+  spendBoth(save.inventory, wallet, mats);
   item.rerolls = (item.rerolls ?? 0) + 1;
   item.affixes = rollAffixes(
     reg.get('affixes'),
@@ -742,21 +842,25 @@ export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, r
 }
 
 /**
- * ⭐ РАЗБОР У КУЗНЕЦА — полный выход (docs/ECONOMY.md Ч3, docs/CRAFT_WEAPONS.md §10.9, §12, §16). Что
- * делать, решает сама вещь (`salvagePlan`):
- * - СКОВАННАЯ — переплавка (`meltReturn`), журналу ничего: иначе ковка стала бы прачечной знаний;
- * - НАЙДЕННОЕ ОРУЖИЕ — сырьё ровно из её деталей (`craftSalvageYield`) и ОТКРЫТИЕ в журнале аккаунта:
- *   база, четыре детали, потолок ступени, кодекс, жалость-эскиз (`salvageIntoJournal`);
- * - броня и прочее — прежнее правило по редкости; уникальное и стартовый комплект (R3-04) — отказ.
- * Сырьё кладётся в сумку, а что не влезло — в кошелёк сундука: у кузнеца сундук рядом, и потерять
- * выход разбора из-за полной сумки было бы нечестно. Поэтому действие идёт через сундук аккаунта
- * (одной транзакцией на сервере) и возвращает человеческие строки открытий для окна (`unlocked`).
+ * ⭐ РАЗБОР У КУЗНЕЦА — полный выход (docs/ECONOMY.md Ч3, docs/CRAFT_WEAPONS.md §10.9, §12, §16; предложение «Разбор, сырьё и чары»).
+ * Что делать, решает сама вещь (`salvagePlan`):
+ * - СКОВАННАЯ — переплавка (`meltReturn`): доля заплаченного, без эссенции;
+ * - ОРУЖИЕ — сырьё семей его деталей, сорт — по рецепту ступени вещи (`craftSalvageYield`, `salvageGrades`);
+ * - броня, щит, украшение — по правилу (`salvage-rules`), нижний сорт рецепта ступени;
+ * - найденное и награда магической или редкой редкости — ещё ЭССЕНЦИЯ (`balance.salvage.essence`);
+ * - СТАРТОВЫЙ НАБОР — только каталог, без сырья (R3-04: он бесплатен и бесконечен); нового в каталоге нет — отказ с причиной;
+ * - уникальное — отказ (выключатель `uniqueSalvage`).
+ * ⭐ ЛЮБАЯ разобранная у кузнеца вещь пополняет КАТАЛОГ (`salvageIntoJournal`, решение владельца D1): тип и детали оружия, кодекс,
+ * снаряжение (`gearSeen`); жалость-эскиз — только находки. Итог — строки открытий (`unlocked`) и итоговая строка (`summary`: «Получено: …
+ * · Каталог: …») — она есть ВСЕГДА, даже когда нового в каталоге нет: «разобрал, а ничего не добавилось» больше не бывает молча.
+ * Сырьё кладётся в сумку, а что не влезло — в кошелёк сундука: у кузнеца сундук рядом, и потерять выход разбора из-за полной сумки было
+ * бы нечестно. Поэтому действие идёт через сундук аккаунта (одной транзакцией на сервере).
  * ⚠ Все отказы — ДО разбора: он уничтожает вещь, и «правила нет» не должно съедать её впустую.
  */
 export function forgeSalvage(
   reg: ConfigRegistry, save: SaveState, stash: AccountStash, uid: string, rng: SalvageRng, minYield?: Record<string, number>,
   avgYield?: Record<string, number>,
-): ActionResult & { unlocked?: string[] } {
+): ActionResult & { unlocked?: string[]; summary?: string } {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
   const item = save.inventory[idx]!;
@@ -764,43 +868,82 @@ export function forgeSalvage(
   if (!out.ok) return { ok: false, reason: out.reason };
   const dropped = yieldDropped(reg, item, false, minYield, avgYield);   // R8-14, R9-04: вилка верстака устарела — вещь цела
   if (dropped) return dropped;
-  const unlock = out.source === 'parts' ? salvageIntoJournal(reg, normalizeJournal(stash.forgeJournal), item) : null;
+  const unlock = salvageIntoJournal(reg, normalizeJournal(stash.forgeJournal), item);
+  // Стартовый набор даёт только каталог (§9.3): нового нет — отказ ДО разбора, «разобрать и не получить ничего» нельзя.
+  if (out.source === 'catalog' && !catalogGained(unlock)) return { ok: false, reason: STARTER_KNOWN };
   // ── Проверки позади: дальше только запись, отказать она уже не может ──
   save.inventory.splice(idx, 1);
   // Вещь уже снята с полки — место под сырьё освободилось, и оно почти всегда доливается в стек.
   const left = giveMaterialsTo(save.inventory, out.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), uuidv7);
   if (Object.keys(left).length) addToWallet(stash.materials ?? (stash.materials = {}), left);
-  if (!unlock) return { ok: true };
   stash.forgeJournal = unlock.journal;
-  return { ok: true, unlocked: unlockLabels(reg, unlock, item) };
+  return {
+    ok: true,
+    unlocked: unlockLabels(reg, unlock, item),
+    summary: `Получено: ${describeCost(reg, out.gains) || 'сырья нет'} · Каталог: ${catalogLine(reg, item, unlock)}${unlock.sketch ? ' · Эскиз: деталь на выбор во вкладке «Ковка»' : ''}`,
+  };
 }
 
-/** Что открыл разбор — строками для окна: «Тип «Длинный меч»», «Деталь «Широкий, XXII»», «Эскиз…». */
+/** Отказ разбора стартового набора, из которого каталогу нечего взять (§9.3) — одна строка для сервера и карточки. */
+export const STARTER_KNOWN = 'Всё из этой вещи уже в каталоге, а сырья стартовый набор не даёт — продай за 1';
+/** Отказ разбора стартового набора в поле: сырья он не даёт, а каталог пишет только кузнец (решение D2). */
+export const STARTER_FIELD = 'Стартовый набор сырья не даёт, а каталог пополняет только кузнец';
+
+/** Добавил ли разбор в каталог хоть что-то: тип, деталь, кодекс, снаряжение. */
+export function catalogGained(u: SalvageUnlock): boolean {
+  return u.newBase || u.unlocked.length > 0 || !!u.newType || !!u.newGear;
+}
+
+/** Класс оружия словами для строки каталога: «меч» (`weapon-anatomy.name`), нет — id. */
+function classLabel(reg: ConfigRegistry, cls: string): string {
+  const name = reg.get('weapon-anatomy').find((a) => a.id === cls)?.name;
+  return name ? name[0]!.toLowerCase() + name.slice(1) : cls;
+}
+
+/**
+ * ⭐ СТРОКА КАТАЛОГА разбора у кузнеца (предложение §9.4) — по итогу журнала (`salvageIntoJournal`): что добавится и прогресс класса.
+ * «+ тип «Длинный меч» · + деталь «Клинок с долом» (меч: 24 из 41)», «всё уже в каталоге (меч: 24 из 41)», «+ «Латы»», ««Латы» уже в
+ * каталоге». Есть ВСЕГДА: после сотни разборов новое открывает меньше половины, и молчание читалось как «ничего не добавилось».
+ */
+export function catalogLine(reg: ConfigRegistry, item: Item, u: SalvageUnlock): string {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base) return 'кузнец такой вещи не знает';
+  if (base.kind !== 'weapon') return u.newGear ? `+ «${base.name}»` : `«${base.name}» уже в каталоге`;
+  const gains = [
+    ...(u.newBase ? [`+ тип «${base.name}»`] : []),
+    ...u.unlocked.map((id) => `+ деталь «${partById(reg, id)?.name ?? id}»`),
+    ...(u.newType ? [`+ кодекс «${typeOfItem(reg, item)?.name ?? u.newType}»`] : []),
+  ];
+  const p = catalogProgress(reg, u.journal, base.weaponClass);
+  const tail = `(${classLabel(reg, base.weaponClass)}: ${p.known} из ${p.total})`;
+  if (gains.length) return `${gains.join(' · ')} ${tail}`;
+  return item.parts ? `все детали уже в каталоге ${tail}` : `всё из этой вещи уже в каталоге ${tail}`;
+}
+
+/** Что открыл разбор — строками для окна: «Тип «Длинный меч»», «Деталь «Широкий, XXII»», «Снаряжение «Латы»», «Эскиз…». */
 function unlockLabels(reg: ConfigRegistry, u: SalvageUnlock, item: Item): string[] {
   const out: string[] = [];
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   if (u.newBase && base) out.push(`Тип «${base.name}»`);
   for (const id of u.unlocked) out.push(`Деталь «${partById(reg, id)?.name ?? id}»`);
   if (u.newType) out.push(`Кодекс: «${typeOfItem(reg, item)?.name ?? u.newType}»`);
-  const tier = u.tierUp ? craftTiers(reg)[u.journal.tierHi] : undefined;
-  if (tier) out.push(`Ступень «${tier.name}»`);
-  if (u.mythic) out.push(`Мифических разобрано: ${u.journal.mythic} из ${reg.get('balance').craft.journal.mythicSalvages}`);
+  if (u.newGear && base) out.push(`Снаряжение «${base.name}»`);
   // R3-11: эскиз тратится во вкладке «Ковка» (`forgeSketch`) — строка говорит, где, а не обещает в пустоту.
   if (u.sketch) out.push('Эскиз: откроет закрытую деталь на выбор во вкладке «Ковка»');
   return out;
 }
 
 /**
- * РАЗБОР НА МЕСТЕ, прямо в подземелье: тот же выбор пути, что у кузницы, но выход — доля
- * `balance.salvage.fieldYield`, и журнал НЕ открывается (решение владельца, §12.2: открытие — у кузнеца).
- * Ни верстака, ни возврата в город — выделил трофей и переработал. Мира и позиции не требует,
- * поэтому живёт здесь, рядом с кузнечным близнецом, а не в сессии.
+ * РАЗБОР НА МЕСТЕ, прямо в подземелье: тот же выбор пути, что у кузницы, но выход — доля `balance.salvage.fieldYield` (сырьё И эссенция,
+ * вероятностным округлением), а КАТАЛОГ НЕ ПОПОЛНЯЕТСЯ (решение владельца D2: «разбор в поле не пишет в каталог, а только часть ресурсов
+ * даёт»): повод нести вещь домой — каталог и втрое больший выход у кузнеца. Ни верстака, ни возврата в город — выделил трофей и
+ * переработал. Мира и позиции не требует, поэтому живёт здесь, рядом с кузнечным близнецом, а не в сессии.
  * ⚠ Сундука в поле нет: не влезшее в сумку сырьё пропало бы вместе с вещью. Поэтому сперва примерка на
  * копии сумки (`fieldSalvageFits`, по ЛУЧШЕМУ броску) — не влезает целиком, значит отказ, и вещь цела.
  */
 export function fieldSalvage(
   reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng, minYield?: Record<string, number>, avgYield?: Record<string, number>,
-): ActionResult {
+): ActionResult & { summary?: string } {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
   const out = salvageYield(reg, save.inventory[idx]!, rng, true);
@@ -813,8 +956,11 @@ export function fieldSalvage(
   // Не бывает: выпавший бросок не больше лучшего (поштучно, те же материалы), а лучший влез в ту же сумку. Бросок — чтобы
   // сервер откатил сейв, а не молча потерял сырьё.
   if (Object.keys(left).length) throw new Error('fieldSalvage: примерка разошлась с записью');
-  return { ok: true };
+  return { ok: true, summary: `Получено: ${describeCost(reg, out.gains) || 'ничего'} · ${FIELD_NO_CATALOG}` };
 }
+
+/** Строка разбора в поле про каталог: его пополняет только кузнец (решение D2). */
+export const FIELD_NO_CATALOG = 'каталог пополняет только разбор у кузнеца';
 
 /** Отказ разбора в поле «сырьё не влезет» — одна строка для сервера и окна. */
 export const FIELD_SALVAGE_FULL = 'Сумка полна: сырьё с разбора не поместится';
@@ -835,14 +981,17 @@ export function fieldSalvageFits(reg: ConfigRegistry, inventory: readonly Item[]
   return !Object.keys(giveMaterialsTo(probe, best.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), () => 'probe')).length;
 }
 
-/** Откуда берётся выход разбора: переплавка скованного, детали найденного оружия, правило по редкости. */
-export type SalvageSource = 'melt' | 'parts' | 'rules';
+/**
+ * Откуда берётся выход разбора: переплавка скованного, детали оружия, правило (броня, щит, украшение, оружие без деталей кузнеца),
+ * только каталог (стартовый набор у кузнеца — сырья нет).
+ */
+export type SalvageSource = 'melt' | 'parts' | 'rules' | 'catalog';
 
 /**
  * Только ВКЛЮЧЁННЫЕ материалы. Неизвестный конфигу id положить некуда, и «выход» из него был бы враньём.
  * ⚠ R2-28: выключенный — «не падает и не участвует в рецептах» (`craftMaterialsSchema`), и разбор его тоже
  * не выдаёт: иначе «булат — позже» в редакторе не держал бы ничего, находки t5/t6 и переплавка клали бы его
- * в сумку и сундук, а лавка скупала бы поштучно. Правило то же, что у пути по правилу (`shiftTier`) и у тел
+ * в сумку и сундук, а лавка скупала бы поштучно. Правило то же, что у пути по правилу (`gradeId`) и у тел
  * монстров: ступень СПУСКАЕТСЯ до ближайшей включённой той же семьи; ниже нет ни одной — единицы пропадают.
  */
 function knownOnly(reg: ConfigRegistry, gains: MaterialCost): MaterialCost {
@@ -859,30 +1008,44 @@ function knownOnly(reg: ConfigRegistry, gains: MaterialCost): MaterialCost {
 }
 
 /**
- * ПУТЬ РАЗБОРА — одно решение для кнопки, подсказки «что выйдет» и самого разбора. Уникальное — отказ
- * всегда. Скованное — только переплавка: на путь «по редкости» ему нельзя (зачаровал до редкой — и
- * получил бы калёное сырьё из вещи, скованной из болотного). Найденное оружие — по деталям; если
- * детали не вывести (база ушла из конфига) — по правилу, как было.
+ * ⭐ СКОЛЬКО ЭССЕНЦИИ ДАСТ РАЗБОР У КУЗНЕЦА: по редкости (`balance.salvage.essence`), и только у вещей из списка разрешённых
+ * (`ESSENCE_ORIGINS` — находки и награды, `salvageFullOrigin`). Купленное, без происхождения, стартовое, поднятое до `bornTier` и
+ * переплавка — ноль: эссенция не пишется в `craftPaid`, и «зачаровать → переплавить» её не возвращает.
+ */
+export function essenceOf(reg: ConfigRegistry, item: Item): number {
+  if (item.parts || !salvageFullOrigin(item)) return 0;
+  const n = (reg.get('balance').salvage.essence as Record<string, number>)[item.rarity] ?? 0;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * ПУТЬ РАЗБОРА — одно решение для кнопки, подсказки «что выйдет» и самого разбора. Уникальное — отказ (выключатель `uniqueSalvage`).
+ * Стартовый набор — только каталог у кузнеца, в поле — отказ. Скованное — только переплавка: на путь по правилу ему нельзя (зачаровал до
+ * редкой — и получил бы эссенцию из вещи, скованной из болотного). Оружие с деталями кузнеца — по деталям; если детали не вывести (база
+ * ушла из конфига или вне ковки) — по правилу. Сорт — по рецепту ступени вещи (`salvageGrades`), эссенция — `essenceOf`.
  */
 function salvagePlan(reg: ConfigRegistry, item: Item, inField: boolean):
-  { ok: true; source: SalvageSource; base: MaterialCost } | { ok: false; reason: string } {
+  { ok: true; source: SalvageSource; base: MaterialCost; grade: number; essence: number } | { ok: false; reason: string } {
   const tuning = reg.get('balance').salvage;
-  if (item.rarity === 'unique' || tierOfRarity(item.rarity, tuning.rarityTier) <= 0) return { ok: false, reason: 'Уникальные вещи не разбираются' };
-  // ⚠ R3-04: стартовый комплект бесплатен и бесконечен (создал героя → переложил → удалил): его разбор был краном
-  // сырья первой ступени — ровно той, что ест лестница подъёма. Продаётся он за 1 (`shopSellPrice`).
-  if (freeKit(item)) return { ok: false, reason: 'Стартовое снаряжение не разбирается' };
+  if (item.rarity === 'unique' && !tuning.uniqueSalvage) return { ok: false, reason: UNIQUE_NO_SALVAGE };
+  // ⚠ R3-04: стартовый комплект бесплатен и бесконечен (создал героя → переложил → удалил): сырья с него нет никогда — только каталог у
+  // кузнеца (решение D1). Продаётся он за 1 (`shopSellPrice`).
+  if (freeKit(item)) return inField ? { ok: false, reason: STARTER_FIELD } : { ok: true, source: 'catalog', base: {}, grade: 1, essence: 0 };
   const field = (): boolean => !inField || tuning.fieldYield > 0;
   if (item.parts) {
     const base = knownOnly(reg, meltReturn(reg, item));
     if (!Object.keys(base).length) return { ok: false, reason: 'Переплавка ничего не дала бы' };
-    return field() ? { ok: true, source: 'melt', base } : { ok: false, reason: 'Разбор ничего не даст' };
+    return field() ? { ok: true, source: 'melt', base, grade: 1, essence: 0 } : { ok: false, reason: 'Разбор ничего не даст' };
   }
+  const essence = essenceOf(reg, item);
   const byParts = knownOnly(reg, craftSalvageYield(reg, item));   // не оружие — пусто
   if (Object.keys(byParts).length) {
-    return field() ? { ok: true, source: 'parts', base: byParts } : { ok: false, reason: 'Разбор ничего не даст' };
+    return field() ? { ok: true, source: 'parts', base: byParts, grade: 1, essence } : { ok: false, reason: 'Разбор ничего не даст' };
   }
   const can = canSalvage(item, weaponClassOf(reg, item), reg.get('salvage-rules'), tuning, inField);
-  return can.ok ? { ok: true, source: 'rules', base: {} } : { ok: false, reason: can.reason ?? 'Эту вещь не из чего разбирать' };
+  return can.ok
+    ? { ok: true, source: 'rules', base: {}, grade: salvageGrades(reg, item).low, essence }
+    : { ok: false, reason: can.reason ?? 'Эту вещь не из чего разбирать' };
 }
 
 /** Доля от целого выхода с вероятностным округлением остатка (0.6 → шесть раз из десяти единица). */
@@ -909,6 +1072,8 @@ export function salvageYield(
 ): ActionResult & { gains: Record<string, number>; source?: SalvageSource } {
   const plan = salvagePlan(reg, item, inField);
   if (!plan.ok) return { ok: false, reason: plan.reason, gains: {} };
+  // Стартовый набор у кузнеца: сырья нет по правилу, а «нового в каталоге нет» решает журнал (`forgeSalvage`, `canSalvageItem`).
+  if (plan.source === 'catalog') return { ok: true, gains: {}, source: plan.source };
   // ⚠ R9-03: «НИЧЕГО НЕ ДАЛ БЫ» — ПО ЛУЧШЕМУ БРОСКУ, А НЕ ПО ВЫПАВШЕМУ. Отказ решался после броска и оставлял вещь в сумке,
   // а повтор катал заново (`townRng()` на команду): пояс в поле (0.24–0.36 единицы) отказывал в 70 % бросков, и «жми, пока
   // не выйдет» давало ровно единицу вместо трети — правило «поле — 30 % от кузницы» не держалось (у кузнеца перчатки и пояс
@@ -918,27 +1083,42 @@ export function salvageYield(
   return { ok: true, gains: rollSalvage(reg, item, plan, rng, inField), source: plan.source };
 }
 
-/** Бросок выхода по уже выбранному пути (`salvagePlan`). Пусто — бросок не дал ничего. */
+/** Бросок выхода по уже выбранному пути (`salvagePlan`). Пусто — бросок не дал ничего. Эссенция — последним броском. */
 function rollSalvage(
-  reg: ConfigRegistry, item: Item, plan: { source: SalvageSource; base: MaterialCost }, rng: SalvageRng, inField: boolean,
+  reg: ConfigRegistry, item: Item, plan: { source: SalvageSource; base: MaterialCost; grade: number; essence: number }, rng: SalvageRng,
+  inField: boolean,
 ): MaterialCost {
   const tuning = reg.get('balance').salvage;
-  if (plan.source !== 'rules') return inField ? shareOf(plan.base, tuning.fieldYield, rng) : { ...plan.base };
+  if (plan.source === 'catalog') return {};
   const mats = reg.get('craft-materials');
-  return knownOnly(reg, salvageFromItem(item, weaponClassOf(reg, item), reg.get('salvage-rules'), tuning, rng, {
-    inField,
-    knownMaterial: (id) => mats.some((c) => c.id === id && c.enabled),
-  }));
+  const out: MaterialCost = plan.source !== 'rules'
+    ? (inField ? shareOf(plan.base, tuning.fieldYield, rng) : { ...plan.base })
+    : knownOnly(reg, salvageFromItem(item, weaponClassOf(reg, item), reg.get('salvage-rules'), tuning, rng, {
+      inField,
+      grade: plan.grade,
+      knownMaterial: (id) => mats.some((c) => c.id === id && c.enabled),
+    }));
+  if (plan.essence > 0) {
+    const ess = knownOnly(reg, inField ? shareOf({ [ESSENCE_ID]: plan.essence }, tuning.fieldYield, rng) : { [ESSENCE_ID]: plan.essence });
+    for (const [id, n] of Object.entries(ess)) out[id] = (out[id] ?? 0) + n;
+  }
+  return out;
 }
 
 /**
  * МОЖНО ЛИ РАЗОБРАТЬ — ОДИН ответ для кнопки в UI и для отказа сервера. Если развести их по
  * двум местам, кнопка будет предлагать то, что сервер отклоняет.
+ * `journal` — журнал кузнеца аккаунта (кадр сундука): с ним стартовый набор, из которого каталогу нечего взять, получает отказ с причиной
+ * ДО нажатия (§9.3). Без него (кадр не пришёл) — как прежде: отказ скажет сервер.
  */
-export function canSalvageItem(reg: ConfigRegistry, item: Item, inField: boolean): ActionResult {
+export function canSalvageItem(reg: ConfigRegistry, item: Item, inField: boolean, journal?: CraftJournal | null): ActionResult {
   // R9-03: и отказ «ничего не дал бы» — тот же, что у разбора: по лучшему броску, от кубика не зависит.
   const hi = salvageYield(reg, item, ROLL_HI, inField);
-  return hi.ok ? { ok: true } : { ok: false, reason: hi.reason };
+  if (!hi.ok) return { ok: false, reason: hi.reason };
+  if (hi.source === 'catalog' && journal !== undefined && !catalogGained(salvageIntoJournal(reg, normalizeJournal(journal ?? emptyJournal()), item))) {
+    return { ok: false, reason: STARTER_KNOWN };
+  }
+  return { ok: true };
 }
 
 /**
@@ -952,21 +1132,15 @@ function weaponClassOf(reg: ConfigRegistry, item: Item): string | undefined {
   return base && base.kind === 'weapon' ? base.weaponClass : undefined;
 }
 
-/** Цена починки сломанного трофея: та же лестница по редкости, что у улучшения, но дешевле. */
-export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
-  const m = reg.get('balance').forgePrices.repairMaterials;
-  return materialLadder(reg, item, [m.tier1, m.tier2, m.tier3]);
-}
-
 /**
  * МОЖНО ЛИ ПОЧИНИТЬ — ОДИН ответ для карточки верстака и для отказа сервера (как `canUpgradeItem`, `canRerollItem`).
  * Золото и сырьё — не здесь: их не хватает «пока», и карточка показывает это построчно.
- * ⚠ R7-19: УНИК КУЗНЕЦ НЕ ЧИНИТ — кузницу он не проходит вовсе (docs/ECONOMY.md §1: «Нашёл — носи как есть»), и лестница сырья
- * у него пуста: пустая — это ОТКАЗ, а не «бесплатно» (`materialLadder`). Прежде `forgeRepair` на пустой цене проверку сырья
- * пропускал, и сломанный уник чинился за одно золото, когда редкий той же базы платил железом трёх ступеней. Сломанным уник
- * больше и не падает (`GameSession.killMonster`), а сломанный из старого сейва цел на входе (`mendBrokenUniques`).
- * ⚠ R10-14: пустая лестница — отказ и у НЕ-уника. Выключенный материал первой ступени семьи (конфиг, который R2-28/R6-22
- * поддерживают) опустошал лестницу каждой обычной вещи семьи: улучшение её не брало, а починка брала за одно золото.
+ * ⚠ R7-19: УНИК КУЗНЕЦ НЕ ЧИНИТ — кузницу он не проходит вовсе (docs/ECONOMY.md §1: «Нашёл — носи как есть»), и цена сырья у него
+ * пуста (`repairCost`): пустая — это ОТКАЗ, а не «бесплатно». Прежде `forgeRepair` на пустой цене проверку сырья пропускал, и
+ * сломанный уник чинился за одно золото, когда редкий той же базы платил железом. Сломанным уник больше и не падает
+ * (`GameSession.killMonster`), а сломанный из старого сейва цел на входе (`mendBrokenUniques`).
+ * ⚠ R10-14: пустая цена — отказ и у НЕ-уника: всё сырьё главной семьи выключено в редакторе (конфиг, который R2-28/R6-22
+ * поддерживают) — починка не берётся за одно золото.
  */
 export function canRepairItem(reg: ConfigRegistry, item: Item): ActionResult {
   if (!item.broken) return { ok: false, reason: 'Вещь цела' };
@@ -988,11 +1162,8 @@ export function mendBrokenUniques(items: Iterable<Item | null | undefined>): num
 }
 
 /**
- * ПОЧИНКА СЛОМАННОГО ТРОФЕЯ — золото + материалы. После неё это обычная вещь своего тира,
- * её можно носить и улучшать. Все отказы вещи — `canRepairItem` (R7-19: уник — отказ), до платы.
- *
- * ⚠ Чинить дороже, чем даёт разбор той же вещи: иначе разбор не выбирали бы никогда.
- * Платим за ВЕЩЬ, а не за материалы в ней.
+ * ПОЧИНКА СЛОМАННОГО ТРОФЕЯ — золото + материалы (`repairCost`: расходник I сорта и главный сорт вещи по её ступени). После неё это
+ * обычная вещь своего тира, её можно носить и улучшать. Все отказы вещи — `canRepairItem` (R7-19: уник — отказ), до платы.
  */
 export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number, maxMaterials?: Record<string, number>): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
@@ -1116,12 +1287,16 @@ export function canEnchantItem(reg: ConfigRegistry, item: Item, rarity: string):
 }
 
 /**
- * ⭐ ЗАЧАРОВАТЬ скованную вещь до магической или редкой — за золото (`enchantCost`, §13). Только
- * СКОВАННАЯ (у найденной аффиксы уже выпали), только обычная, только из сумки, не уникальная.
+ * ⭐ ЗАЧАРОВАТЬ скованную вещь до магической или редкой — за золото (`enchantCost`, §13) и ЭССЕНЦИЮ (`enchantMaterials`, §6.2: из сумки,
+ * недостающее — из кошелька сундука `wallet`). Только СКОВАННАЯ (у найденной аффиксы уже выпали), только обычная, только из сумки, не
+ * уникальная. Эссенция в `craftPaid` не пишется: «зачаровать → переплавить» её не возвращает.
  * ⚠ Отказ ДО оплаты, если пул аффиксов не наберёт оплаченную форму при любом броске (§17) или базы
  * нет в конфиге. Поверх — страховка: бросок делается до оплаты, и недобор тоже отказ.
  */
-export function enchantAction(reg: ConfigRegistry, save: SaveState, uid: string, rarity: string, rng: Rng, maxGold?: number): ActionResult & { uid?: string } {
+export function enchantAction(
+  reg: ConfigRegistry, save: SaveState, uid: string, rarity: string, rng: Rng, maxGold?: number, wallet: MaterialWallet = {},
+  maxMaterials?: Record<string, number>,
+): ActionResult & { uid?: string } {
   if (rarity !== 'magic' && rarity !== 'rare') return { ok: false, reason: 'Зачаровать можно до магической или редкой' };
   const idx = typeof uid === 'string' ? save.inventory.findIndex((i) => i.uid === uid) : -1;
   const item = save.inventory[idx];
@@ -1129,16 +1304,23 @@ export function enchantAction(reg: ConfigRegistry, save: SaveState, uid: string,
   const can = canEnchantItem(reg, item, rarity);
   if (!can.ok) return can;
   const cost = enchantCost(reg, item, rarity);
-  const raised = priceRaised(cost, maxGold);   // R5-15
+  const mats = enchantMaterials(reg, item, rarity);
+  const raised = priceRaised(cost, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
   if (!Number.isFinite(save.gold) || save.gold < cost) return { ok: false, reason: `Недостаточно золота: нужно ${cost}` };
+  if (!canAffordBoth(save.inventory, wallet, mats)) {
+    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+  }
   const next = enchantItem(reg, item, rarity, rng);
   if (!next) return { ok: false, reason: 'Кузнец не знает такой вещи' };
   const fit = enchantSlots(reg, item, rarity)!;
   if (new Set(next.affixes.map((a) => a.affixId)).size < fit.slots.minAffixes) return { ok: false, reason: 'Кузнецу не хватит свойств на форму этой вещи' };
   // ── Проверки позади ──
   save.gold -= cost;
-  save.inventory[idx] = next;   // новый объект целиком: `enchantItem` исходную вещь не трогает
+  // Эссенция — из сумки и сундука. ⚠ Индекс вещи — ЗАНОВО по uid: `spendBoth` мог убрать из сумки опустевшую стопку эссенции.
+  spendBoth(save.inventory, wallet, mats);
+  const at = save.inventory.findIndex((i) => i.uid === item.uid);
+  save.inventory[at >= 0 ? at : idx] = next;   // новый объект целиком: `enchantItem` исходную вещь не трогает
   return { ok: true, uid: next.uid };
 }
 

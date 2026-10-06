@@ -4,7 +4,7 @@ import { defaultConfigData } from '../config/defaults.js';
 import { CRAFT_SLOT_LIST } from '../formulas/craftType.js';
 import { anatomyOf, defaultParts, fullJournal, materialId, partFamily, shapeFoundWeapon, type CraftInput } from '../formulas/craft.js';
 import { createRng } from '../formulas/rng.js';
-import { salvageFromItem, salvageFromMonster, type SalvageRng } from '../formulas/salvage.js';
+import { ESSENCE_ID, salvageFromItem, salvageFromMonster, type SalvageRng } from '../formulas/salvage.js';
 import { craftAction, repairCost, salvageRange, salvageYield, sellItem, upgradeCost } from './townActions.js';
 import { emptyStash } from './stashActions.js';
 import { giveMaterialsTo } from './materials.js';
@@ -25,8 +25,8 @@ import { generateMonster } from '../formulas/monstergen.js';
  * ⭐ D18 (К2): в игре все 40 материалов — прибор, плечи, фокус и ступени 4–5 включены. Сторож того, что
  * включение НИЧЕГО не сдвинуло у старых потребителей флага `enabled`:
  * - цена улучшения и починки (`materialLadder`) берёт ступени 1–3 по редкости — те же, что и раньше;
- * - разбор по редкости (броня, `salvageFromItem`) и сырьё с монстров (`salvageFromMonster`) поднимают ступень
- *   не выше `rarityTier` (3) — дорогие ступени оттуда не падают;
+ * - разбор по правилу (броня, `salvageFromItem`) у вещи t0 — первый сорт, сырьё с монстров (`salvageFromMonster`) — только первый сорт
+ *   (предложение «Разбор, сырьё и чары» §10: сорт = ступень вещи, у тела — I); дорогие сорта даёт лишь разбор вещей высоких ступеней;
  * - ковке есть из чего ковать каждое семейство (без D18 она отказывала всем: «Материал ещё не в игре»).
  * Сравнение — с реестром, где включены ровно прежние 15.
  */
@@ -52,38 +52,45 @@ const MIN: SalvageRng = { int: (a) => a, chance: () => false };
 const RARITIES: Rarity[] = ['normal', 'magic', 'rare'];
 
 describe('D18: все 40 материалов в игре, старые потребители не сдвинулись', () => {
-  it('включены все 40, у «старого» реестра — ровно прежние 15', () => {
-    expect(live.get('craft-materials').filter((m) => m.enabled)).toHaveLength(40);
+  it('включены все 40 (и эссенция), у «старого» реестра — ровно прежние 15', () => {
+    expect(live.get('craft-materials').filter((m) => m.enabled && m.id !== ESSENCE_ID)).toHaveLength(40);
+    expect(live.get('craft-materials').find((m) => m.id === ESSENCE_ID)?.enabled).toBe(true);
     expect(old15.get('craft-materials').filter((m) => m.enabled)).toHaveLength(15);
   });
 
-  it('цена улучшения и починки — та же у каждой базы и редкости (лестница ступеней 1–3)', () => {
+  it('цена улучшения и починки (§7: по ступени, семьями деталей): выключенное сырьё лишь выпадает из цены — включённое то же', () => {
     let n = 0;
     for (const base of live.get('items.base').filter((b) => b.kind !== 'consumable')) {
       for (const rarity of RARITIES) {
         const it = { ...itemFromBase(base, live.get('item-tiers')), rarity };
-        expect(upgradeCost(live, it), `${base.id}/${rarity}`).toEqual(upgradeCost(old15, it));
-        expect(repairCost(live, it), `${base.id}/${rarity}`).toEqual(repairCost(old15, it));
+        for (const cost of [upgradeCost, repairCost]) {
+          const a = cost(live, it), b = cost(old15, it);
+          for (const [id, k] of Object.entries(b)) expect(a[id], `${base.id}/${rarity}: ${id}`).toBe(k);
+          for (const id of Object.keys(a)) if (!(id in b)) expect(old15.get('craft-materials').find((m) => m.id === id)?.enabled, `${base.id}/${rarity}: ${id}`).toBe(false);
+        }
         n++;
       }
     }
     expect(n).toBeGreaterThan(50);
   });
 
-  it('разбор по редкости (броня, щиты, украшения) — та же вилка у кузнеца и в поле', () => {
-    for (const base of live.get('items.base').filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry')) {
+  it('разбор по правилу (броня, щиты, украшения) — та же вилка старых семей у кузнеца и в поле', () => {
+    // Новые семьи (прибор колец и щитов, фокус амулетов, плечи кожаной и стёганой брони — рецензия 06.10: узкие семьи ковки не только с
+    // оружия своего класса) у «старого» реестра выключены — сравниваем старые семьи; украшения прежде давали железо, теперь прибор и фокус.
+    const oldPart = (r: ReturnType<typeof salvageRange>): ReturnType<typeof salvageRange>['range'] =>
+      Object.fromEntries(Object.entries(r.range).filter(([id]) => OLD_FAMILIES.includes(id.replace(/-\d+$/, ''))));
+    for (const base of live.get('items.base').filter((b) => b.kind === 'armor' || b.kind === 'shield')) {
       for (const rarity of RARITIES) {
         const it = { ...itemFromBase(base, live.get('item-tiers')), rarity } as Item;
         for (const field of [false, true]) {
-          expect(salvageRange(live, it, field), `${base.id}/${rarity}/${field}`).toEqual(salvageRange(old15, it, field));
+          expect(oldPart(salvageRange(live, it, field)), `${base.id}/${rarity}/${field}`).toEqual(oldPart(salvageRange(old15, it, field)));
         }
       }
     }
   });
 
-  it('сырьё с монстров: ступень не выше третьей, старые семьи — ровно как с 15 материалами', () => {
+  it('сырьё с монстров: только первый сорт, старые семьи — ровно как с 15 материалами', () => {
     const known = (r: ConfigRegistry) => (id: string): boolean => r.get('craft-materials').some((c) => c.id === id && c.enabled);
-    const rarityTier = live.get('balance').salvage.rarityTier;
     // С F2 монстры роняют и прибор/плечи/фокус (у «старого» реестра их нет) — сравниваем старые семьи.
     const oldPart = (m: Record<string, number>): Record<string, number> =>
       Object.fromEntries(Object.entries(m).filter(([id]) => OLD_FAMILIES.includes(id.replace(/-\d+$/, ''))));
@@ -91,19 +98,18 @@ describe('D18: все 40 материалов в игре, старые потр
       for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
         const rolls: MonsterGearRoll[] = [{ slot: 'weapon', gearId: g.id, name: g.id, rarity, affixes: [], mods: [], base: {} }];
         for (const rng of [MAX, MIN]) {
-          const a = salvageFromMonster(rolls, (id) => live.get('monster-gear').find((x) => x.id === id), rng, { rarity, rarityTier, knownMaterial: known(live) });
-          const b = salvageFromMonster(rolls, (id) => old15.get('monster-gear').find((x) => x.id === id), rng, { rarity, rarityTier, knownMaterial: known(old15) });
+          const a = salvageFromMonster(rolls, (id) => live.get('monster-gear').find((x) => x.id === id), rng, { rarity, knownMaterial: known(live) });
+          const b = salvageFromMonster(rolls, (id) => old15.get('monster-gear').find((x) => x.id === id), rng, { rarity, knownMaterial: known(old15) });
           expect(oldPart(a), `${g.id}/${rarity}`).toEqual(oldPart(b));
-          for (const id of Object.keys(a)) expect(live.get('craft-materials').find((m) => m.id === id)!.tier, id).toBeLessThanOrEqual(3);
+          for (const id of Object.keys(a)) expect(live.get('craft-materials').find((m) => m.id === id)!.tier, id).toBe(1);
         }
       }
     }
   });
 
-  it('⭐ F2: с монстров падает сырьё ВЕРХНИХ гнёзд — семьи деталей его оружия, ступень = редкость надетой вещи', () => {
+  it('⭐ F2: с монстров падает сырьё ВЕРХНИХ гнёзд — семьи деталей его оружия, всегда I сорт', () => {
     // Семьи гнёзд классов — из анатомии (прибор, плечи, фокус): что носит, то и даёт (docs/ECONOMY.md).
     const gear = live.get('monster-gear');
-    const rarityTier = live.get('balance').salvage.rarityTier;
     const known = (id: string): boolean => live.get('craft-materials').some((c) => c.id === id && c.enabled);
     const UPPER = ['trim', 'stave', 'focus'];
     let carriers = 0;
@@ -116,12 +122,11 @@ describe('D18: все 40 материалов в игре, старые потр
       expect([...got].sort(), `${g.id}: семьи верхних гнёзд`).toEqual([...want].sort());
       for (const y of g.salvageTo ?? []) if (UPPER.some((f) => y.materialId.startsWith(`${f}-`))) expect(y.materialId, g.id).toMatch(/-1$/);
       if (want.size) carriers++;
-      // ⭐ Ступень поднимает редкость вещи — как у железа: магическая → 2, редкая → 3, обычная → 1.
-      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+      // ⭐ Сорт с тела — первый у любой редкости надетого (§10): сорт сырья = ступень вещи, а у тела исключений нет.
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
         const rolls: MonsterGearRoll[] = [{ slot: 'weapon', gearId: g.id, name: g.id, rarity, affixes: [], mods: [], base: {} }];
-        const out = salvageFromMonster(rolls, (id) => gear.find((x) => x.id === id), MAX, { rarity, rarityTier, knownMaterial: known });
-        const step = rarityTier[rarity];
-        for (const f of want) expect(out[`${f}-${step}`] ?? 0, `${g.id}/${rarity}: ${f}-${step}`).toBeGreaterThan(0);
+        const out = salvageFromMonster(rolls, (id) => gear.find((x) => x.id === id), MAX, { rarity, knownMaterial: known });
+        for (const f of want) expect(out[`${f}-1`] ?? 0, `${g.id}/${rarity}: ${f}-1`).toBeGreaterThan(0);
       }
     }
     expect(carriers).toBeGreaterThan(10);
@@ -169,15 +174,13 @@ describe('D18: все 40 материалов в игре, старые потр
   });
 });
 
-describe('⚠ R2-29: оружие разбирается ПО ДЕТАЛЯМ, а лестница улучшения и починки не голодает', () => {
+describe('⚠ R2-29: лестница улучшения и починки не голодает — расходник (I) с тел, основа с разбора находок', () => {
   /**
-   * Лестница улучшения (`materialLadder`) берёт семью ПРАВИЛА разбора и ступени 1–3 по редкости, а найденное оружие
-   * с врезки ковки разбирается по ДЕТАЛЯМ (§10.9): материалы их ступеней. Тождество «что даёт = что стоит» для
-   * оружия больше не держится поштучно — t5-меч отдаёт сварочный дамаск (ступень 4), а не болотное железо, дубина
-   * (семья булавы — железо) — дерево и прибор. Держаться обязано другое: лестницу кормит сырьё С ТЕЛ, не зависящее
-   * от уровня, а разбор по деталям до t3 даёт ей не меньше прежнего. Сравнение — с прежним путём разбора оружия
-   * (`salvageFromItem`, как до врезки). ⚠ До R2-30 (перекошенные ступени найденного) на 50-м уровне разбор давал
-   * лестнице 2.05 единицы против прежних 2.39: ступени 4–5 сыпались уже с t2–t3.
+   * Лестница улучшения (`materialLadder`) берёт семью ПРАВИЛА разбора и сорта 1–3 по редкости (`forgePrices.ladderByRarity`). С 06.10
+   * разбор отдаёт сорт по РЕЦЕПТУ СТУПЕНИ вещи (`balance.salvage.recipeByTier`), а тела — только I (предложение «Разбор, сырьё и чары» §10,
+   * R2-29 переписан, §16): первый сорт лестницы кормят тела на любой глубине, II–III — разбор находок t1–t4 (и купленного — до III).
+   * Держаться обязано: каждый материал лестницы откуда-то приходит, и весь приход лестницы за 100 убийств — не меньше 90 % прежнего
+   * (прежний разбор — по правилу и редкости, его сорт — как у `rarityTier` до 06.10).
    */
   const reg = live;
   const loot = reg.get('balance').loot;
@@ -195,22 +198,28 @@ describe('⚠ R2-29: оружие разбирается ПО ДЕТАЛЯМ, а
     dropBias: 1, itemLevel: Math.max(1, level), tierLevel: rollTierLevel(level, loot.tierWindow, rng), baseId,
     tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), categoryWeights: loot.categoryWeights, baseRoll: loot.baseRoll, origin: 'drop',
   }, rng));
-  /** Сырьё лестницы: семья цены улучшения этой вещи (семья правила), ступени 1–3. */
-  const ladderUnits = (it: Item, gains: Record<string, number>): number => {
-    const fam = Object.keys(upgradeCost(reg, it))[0]?.replace(/-\d+$/, '');
-    return Object.entries(gains).reduce((s, [id, n]) => s + (fam && new RegExp(`^${fam}-[123]$`).test(id) ? n : 0), 0);
-  };
+  /** Прежний сорт разбора — по редкости (`rarityTier` до 06.10). */
+  const OLD_GRADE: Record<string, number> = { normal: 1, magic: 2, rare: 3 };
   /** Прежний разбор оружия у кузнеца — по правилу и редкости (до врезки ковки). */
   const byRule = (it: Item, rng: Rng): Record<string, number> =>
-    salvageFromItem(it, classOf(it), reg.get('salvage-rules'), tuning, rng, { knownMaterial: known });
+    salvageFromItem(it, classOf(it), reg.get('salvage-rules'), tuning, rng, { knownMaterial: known, grade: OLD_GRADE[it.rarity] ?? 1 });
 
-  it('каждый материал цены улучшения и починки оружия падает с тел — источник, не зависящий от разбора', () => {
+  it('⭐ каждый материал цены улучшения и починки оружия приходит: I сорт — с тел, II–III — с разбора найденных вещей своей ступени', () => {
     const fromBodies = new Set<string>();
     for (const g of reg.get('monster-gear')) {
-      for (const rarity of ['normal', 'magic', 'rare'] as const) {
+      for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
         const rolls: MonsterGearRoll[] = [{ slot: 'weapon', gearId: g.id, name: g.id, rarity, affixes: [], mods: [], base: {} }];
-        const out = salvageFromMonster(rolls, (id) => reg.get('monster-gear').find((x) => x.id === id), MAX, { rarity, rarityTier: tuning.rarityTier, knownMaterial: known });
+        const out = salvageFromMonster(rolls, (id) => reg.get('monster-gear').find((x) => x.id === id), MAX, { rarity, knownMaterial: known });
         for (const id of Object.keys(out)) fromBodies.add(id);
+      }
+    }
+    // Разбор найденного у кузнеца — каждая база оружия на каждой своей ступени.
+    const fromSalvage = new Set<string>();
+    const tiers = [...reg.get('item-tiers')].sort((x, y) => x.minItemLevel - y.minItemLevel);
+    for (const base of weaponBases) {
+      for (const t of tiers) {
+        const it = weaponDrop(base.id, t.minItemLevel, createRng(t.minItemLevel + 1));
+        for (const id of Object.keys(salvageRange(reg, { ...it, tier: t.id }, false).range)) fromSalvage.add(id);
       }
     }
     let n = 0;
@@ -218,30 +227,13 @@ describe('⚠ R2-29: оружие разбирается ПО ДЕТАЛЯМ, а
       for (const rarity of RARITIES) {
         const it = { ...itemFromBase(base, reg.get('item-tiers')), rarity } as Item;
         for (const id of Object.keys({ ...upgradeCost(reg, it), ...repairCost(reg, it) })) {
-          expect(fromBodies.has(id), `${base.id}/${rarity}: ${id} с тел не падает`).toBe(true);
+          if (/-1$/.test(id)) expect(fromBodies.has(id), `${base.id}/${rarity}: ${id} — расходник, обязан падать с тел`).toBe(true);
+          else expect(fromSalvage.has(id), `${base.id}/${rarity}: ${id} — с разбора находок не приходит`).toBe(true);
           n++;
         }
       }
     }
     expect(n).toBeGreaterThan(weaponBases.length * 3);
-  });
-
-  it('⭐ до 50-го уровня разбор по деталям даёт лестнице не меньше прежнего разбора по правилу (было 2.05 против 2.39 на 50-м)', () => {
-    for (const level of [10, 30, 50]) {
-      const rng = createRng(level * 17 + 3);
-      let n = 0, parts = 0, rule = 0;
-      for (let i = 0; i < 2000; i++) {
-        const it = weaponDrop(rng.pick(weaponBases).id, level, rng);
-        if (it.rarity === 'unique') continue;
-        const now = salvageYield(reg, it, rng, false);
-        expect(now.source, it.baseId).toBe('parts');
-        parts += ladderUnits(it, now.gains);
-        rule += ladderUnits(it, byRule(it, rng));
-        n++;
-      }
-      expect(n).toBeGreaterThan(1500);
-      expect(parts / rule, `ур.${level}: ${(parts / n).toFixed(2)} против ${(rule / n).toFixed(2)} за разбор`).toBeGreaterThanOrEqual(0.95);
-    }
   });
 
   it('⭐ весь приход лестницы за 100 убийств (тела + разбор оружейных находок) — не меньше 90 % прежнего на любой глубине', () => {
@@ -259,9 +251,9 @@ describe('⚠ R2-29: оружие разбирается ПО ДЕТАЛЯМ, а
         const depth = Math.max(1, Math.round(el / 4));
         for (const s of spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + el), el, resolveMonsterPool(biome, depth), 1, '')) {
           kills++;
-          if (rng.chance(loot.materials.chance)) {
+          if (rng.chance(loot.materials.chance) || s.def.rarity === 'unique') {
             bodies += loot.materials.mult * ladder(salvageFromMonster(s.def.gearRolls, (id) => gear.find((x) => x.id === id), rng,
-              { rarity: s.def.rarity, rarityTier: tuning.rarityTier, knownMaterial: known }));
+              { rarity: s.def.rarity, knownMaterial: known }));
           }
           if (!rng.chance(loot.dropChance)) continue;
           const baseId = monsterTrophyBase(s.def.gearRolls, (id) => gear.find((x) => x.id === id), reg.get('items.base'), rng, loot.categoryWeights);
@@ -323,7 +315,7 @@ describe('⚠ R3-20: сданное в лавку сырьё с тел — не 
           if (rng.chance(loot.goldChance)) coins += Math.max(1, Math.round(rng.int(1, 5 + s.def.level * 2) * goldMult));
           if (rng.chance(loot.materials.chance)) {
             const g = salvageFromMonster(s.def.gearRolls, (id) => gear.find((x) => x.id === id), rng,
-              { rarity: s.def.rarity, rarityTier: bal.salvage.rarityTier, knownMaterial: known });
+              { rarity: s.def.rarity, knownMaterial: known });
             for (const id of Object.keys(g)) {
               const raw = g[id]! * loot.materials.mult;
               const n = Math.floor(raw) + (rng.chance(raw - Math.floor(raw)) ? 1 : 0);
@@ -345,7 +337,8 @@ describe('⚠ R3-20: сданное в лавку сырьё с тел — не 
 
 /**
  * ⚠ R6-22: ВЫКЛЮЧЕННОЕ СЫРЬЁ НЕ ПАДАЕТ И С ТЕЛ. Разбор у кузнеца, в поле и переплавка фильтровали выключенное (`knownOnly`),
- * а тела — нет: `shiftTier` отдавал исходный id без проверки (сдвиг 0 у обычной вещи и откат, когда ступени выше нет).
+ * а тела — нет: `shiftTier` отдавал исходный id без проверки (сдвиг 0 у обычной вещи и откат, когда ступени выше нет). Тело теперь
+ * даёт только I сорт (`gradeId`) — и выключенный первый сорт семьи с тела не падает вовсе.
  * Выключил дизайнер семью «прибор» — и `trim-1` сыпался с каждого, кто носит кинжал или меч, копился в сумках и продавался.
  */
 describe('⚠ R6-22: с тел не падает выключенное сырьё', () => {
@@ -364,12 +357,11 @@ describe('⚠ R6-22: с тел не падает выключенное сырь
 
   it('⭐ семья выключена целиком, у другой — первая ступень: каждая вещь монстров × редкость × крайний бросок — без выключенного', () => {
     expect(disabled.has('trim-1') && disabled.has('iron-1'), 'предпосылка').toBe(true);
-    const rarityTier = off.get('balance').salvage.rarityTier;
     let n = 0;
     const bad: string[] = [];
     for (const g of off.get('monster-gear')) for (const rarity of RARITIES) for (const rng of [MAX, MIN]) {
       const rolls: MonsterGearRoll[] = [{ slot: 'weapon', gearId: g.id, name: g.id, rarity, affixes: [], mods: [], base: {} }];
-      const got = salvageFromMonster(rolls, (id) => off.get('monster-gear').find((x) => x.id === id), rng, { rarity, rarityTier, knownMaterial: known });
+      const got = salvageFromMonster(rolls, (id) => off.get('monster-gear').find((x) => x.id === id), rng, { rarity, knownMaterial: known });
       for (const id of Object.keys(got)) { n++; if (disabled.has(id)) bad.push(`${g.id}/${rarity}: ${id}`); }
     }
     expect(bad.slice(0, 10), `${bad.length} выдач выключенного`).toEqual([]);
@@ -385,10 +377,11 @@ describe('⚠ R6-22: с тел не падает выключенное сырь
       const p = s.addPlayer('p1', newBotSave(off, 'warrior'));
       const def = generateMonster(off.get('monsters'), off.get('monster-gear'), off.get('monster-affixes'),
         { baseId: off.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(seed));
-      // Нечётные — обычный кинжал (оба его материала выключены), чётные — магический: `iron-2` включён и падает.
-      const rarity = seed % 2 ? 'normal' : 'magic';
+      // Нечётные — кинжал (оба его материала выключены: тело даёт только I сорт), чётные — топор: его `wood-1` включён и падает.
+      const rarity = seed % 4 < 2 ? 'normal' : 'magic';
+      const gearId = seed % 2 ? 'u-dagger' : 'u-axe1h';
       def.hp = 1; def.armor = 0; def.evade = 0; def.rarity = rarity;
-      def.gearRolls = [{ slot: 'weapon', gearId: 'u-dagger', name: 'u-dagger', rarity, affixes: [], mods: [], base: {} }];
+      def.gearRolls = [{ slot: 'weapon', gearId, name: gearId, rarity, affixes: [], mods: [], base: {} }];
       const pp = cellToWorld(6, 6), mp = cellToWorld(7, 6);
       s.enterFloor(1, { grid: field(), spawn: pp, monsters: [{ def, x: mp.x, y: mp.y }] });
       const m = s.world.monsters[0]!;
@@ -401,5 +394,49 @@ describe('⚠ R6-22: с тел не падает выключенное сырь
       }
     }
     expect(piles, 'сторож не выродился: кучи были').toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ⭐ ТЕЛО БОССА ДАЁТ СЫРЬЁ ВСЕГДА (предложение «Разбор, сырьё и чары» §10). Прежде с боссов не падало НИЧЕГО: все их вещи уникальные, а сорт
+ * брался по редкости (`rarityTier.unique = 0` — «не разбирается»), — замер: 400 боссов, 0 сырья. Сторож — живой сессией с НАСТОЯЩЕЙ картой
+ * конфига: шанс сырья с тела обнулён, а босс (монстр уникальной редкости) всё равно роняет I сорт; обычный при том же шансе — ничего.
+ */
+describe('⭐ §10: тело босса — сырьё всегда, I сорт', () => {
+  const r = regWith();
+  const field = () => {
+    const g = makeGrid(14, 12, Cell.Floor);
+    for (let x = 0; x < 14; x++) { g[0]![x] = Cell.Wall; g[11]![x] = Cell.Wall; }
+    for (let y = 0; y < 12; y++) { g[y]![0] = Cell.Wall; g[y]![13] = Cell.Wall; }
+    return g;
+  };
+  it('⭐ живая сессия: шанс сырья 0 — босс роняет сырьё I сорта каждый раз, обычный монстр — нет', () => {
+    const loot = r.get('balance').loot as { dropChance: number; goldChance: number; potions: { chance: number }; materials: { chance: number } };
+    loot.dropChance = 0; loot.goldChance = 0; loot.potions.chance = 0; loot.materials.chance = 0;
+    let boss = 0, plain = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      for (const rarity of ['unique', 'normal'] as const) {
+        const s = new GameSession(r, seed, 'normal');
+        const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+        const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'),
+          { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(seed));
+        def.hp = 1; def.armor = 0; def.evade = 0; def.rarity = rarity;
+        def.gearRolls = [
+          { slot: 'weapon', gearId: 'u-sword1h', name: 'u-sword1h', rarity, affixes: [], mods: [], base: {} },
+          { slot: 'armor', gearId: 'u-chain', name: 'u-chain', rarity, affixes: [], mods: [], base: {} },
+        ];
+        const pp = cellToWorld(6, 6), mp = cellToWorld(7, 6);
+        s.enterFloor(1, { grid: field(), spawn: pp, monsters: [{ def, x: mp.x, y: mp.y }] });
+        const m = s.world.monsters[0]!;
+        for (let i = 0; i < 300 && m.alive; i++) { m.pos = { ...mp }; p.pos = { ...pp }; s.tick(1 / 30, { p1: { move: { x: 0, y: 0 }, facing: 0, attack: true, cast: null, interact: false } }); }
+        expect(m.alive, `сид ${seed} ${rarity}`).toBe(false);
+        const piles = s.world.drops.filter((d) => d.kind === 'materials');
+        for (const d of piles) for (const id of Object.keys(d.mats)) expect(id, `сид ${seed}: с тела — только I сорт`).toMatch(/-1$/);
+        if (rarity === 'unique') { expect(piles.length, `сид ${seed}: босс без сырья`).toBeGreaterThan(0); boss++; }
+        else { expect(piles, `сид ${seed}: обычный при шансе 0`).toEqual([]); plain++; }
+      }
+    }
+    expect(boss).toBe(12);
+    expect(plain).toBe(12);
   });
 });

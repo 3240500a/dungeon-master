@@ -443,7 +443,13 @@ export function inferTierId(
   if (!tiers?.length) return undefined;
   // ⚠ R12-08: сверка — со ВСЕЙ лестницей, выключенные тоже: след на статах оставила ступень, которой вещь была, а выключенная
   // после её рождения ступень от этого не перестала быть её ступенью (иначе вещь «была бы» соседней).
-  const pool = tiers;
+  // ⭐ Но — В ПРЕДЕЛАХ БАЗЫ (`minTier`…`maxTier`, предложение «Разбор, сырьё и чары» §14.2): вещь прода 08.08 с подъёмом-заглушкой
+  // (статы ×1.2 за клик, «★» в имени, без лимита) по статам читалась как t6 — короткий меч с потолком t3 тоже. Ступени вне базы она
+  // не бывает никогда. Нет такой ступени в конфиге — граница открыта, как у `pickTierClamped`.
+  const sorted = [...tiers].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  const loAt = sorted.findIndex((t) => t.id === base.minTier), hiAt = sorted.findIndex((t) => t.id === base.maxTier);
+  const lo = loAt < 0 ? 0 : loAt, hi = hiAt < 0 ? sorted.length - 1 : hiAt;
+  const pool = sorted.slice(Math.min(lo, hi), Math.max(lo, hi) + 1);
   // Сравнивать можно только то, что тир вообще масштабирует (`scaleBaseStats`), и только `flat`.
   // Числа базы — С ФОРМОЙ клинка (`spreadMult`): узкий 5–15 на «Сломанном» не должен читаться чужим тиром.
   const pairs = shapedBaseStats(base.baseStats, shapeOfItem(item))
@@ -708,6 +714,17 @@ export function rollAffixes(
 }
 
 /**
+ * Нижняя из двух ступеней по лестнице (`minItemLevel`): потолок базы и внешний потолок (лавка не выше t4 — `balance.shop.maxTier`).
+ * Внешнего нет или такой ступени нет в конфиге — потолок базы как есть.
+ */
+export function lowerTierId(tiers: ItemTiers | undefined, baseMax: string, cap: string | undefined): string {
+  if (!cap || !tiers?.length) return baseMax;
+  const lvl = (id: string): number => tiers.find((t) => t.id === id)?.minItemLevel ?? Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(lvl(cap))) return baseMax;
+  return lvl(cap) < lvl(baseMax) ? cap : baseMax;
+}
+
+/**
  * Генерирует предмет из базы (или уникум) с учётом редкости, iLvl и ТИРА. По ilvl
  * дропа берётся высший доступный тир (`opts.tiers`): урон/броня базы масштабируются
  * `statMult`, требования — `reqMult`, имя получает префикс тира. Аффиксы — по ilvl.
@@ -718,7 +735,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin; noUnique?: boolean },
+  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin; noUnique?: boolean; maxTier?: string },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -743,7 +760,7 @@ export function generateItem(
     const base = enabledBase.find((b) => b.id === unique.baseId);
     if (base) {
       const ilvl = Math.max(baseItemLevel(base, opts.tiers), dropIlvl);
-      const tier = pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, base.maxTier);
+      const tier = pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, lowerTierId(opts.tiers, base.maxTier, opts.maxTier));
       return buildItem(base, {
         rarity: 'unique',
         name: titledName(base.name, base.gender, unique.name), // имя базы + титул уника
@@ -775,7 +792,7 @@ export function generateItem(
   const isConsumable = base.kind === 'consumable';
   const ilvl = Math.max(baseItemLevel(base, opts.tiers), dropIlvl);
   const tier = isConsumable ? undefined
-    : pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, base.maxTier);
+    : pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, lowerTierId(opts.tiers, base.maxTier, opts.maxTier));
   const effRarity: Rarity = isConsumable ? 'normal' : rarity === 'unique' ? 'rare' : rarity;
   const rDef = opts.rarities.find((x) => x.id === effRarity);
   const rolled = isConsumable ? [] : rollAffixes(

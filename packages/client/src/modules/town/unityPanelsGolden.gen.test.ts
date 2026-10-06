@@ -2,13 +2,14 @@
  * ПРОДЮСЕР И СТОРОЖ эталона НЕДОСТАЮЩИХ ПАНЕЛЕЙ для Unity-клиента (U6a): верстак кузнеца целиком (починка, улучшение, перекатка,
  * зачарование, разбор — карточки с причинами, `benchActions`), выход разбора (`salvageYield` / `salvageRange` / `salvageMean`,
  * `canSalvageItem`, `fieldSalvageFits`), вопросы перед тем, как вещь исчезнет (`journalGainsOf`, `disposePrompts`), вкладка «Ресурсы»
- * сундука (`materialsView`), гнёзда и вставки скилов (`socketsView`: `socketsOpen`, `insertRank`, `insertFits`, `resolveActive`), меню
+ * сундука (`materialsModel`: сорта I–V, эссенция плашкой, подсказки; и подсказка стопки сырья `materialNote`), карточка разбора в поле
+ * у пункта меню (`fieldSalvageLines`), гнёзда и вставки скилов (`socketsView`: `socketsOpen`, `insertRank`, `insertFits`, `resolveActive`), меню
  * предмета инвентаря, атрибуты пачкой (`attrAllocCommands`) и сброс (`attrRespecRefund`, `respecRefusal`), задания с заменой
  * (`questRival`) и их строки, пояс по размеру, таблички и полоса статусов (`debuffIcon`, `debuffLabel`, `activeToggleInfos`), гейт оружия
  * панели биндов (`skillWeaponAllowed`).
  *
  * Unity — основной клиент, веб — источник истины по правилам. Настоящими функциями веба считаются все, что экспортированы (`@dm/shared`,
- * `forgeActions.ts`, `disposeConfirm.ts`, `allocAttrs.ts`, подпись клетки сетки `glyphOf` из `heldItem.ts`). Разметка окон живёт в замыканиях и DOM (`socketsView.ts`, `materialsView.ts`,
+ * `forgeActions.ts`, `disposeConfirm.ts`, `materialsModel.ts`, `allocAttrs.ts`, подпись клетки сетки `glyphOf` из `heldItem.ts`). Разметка окон живёт в замыканиях и DOM (`socketsView.ts`, `materialsView.ts`,
  * `inventoryPanel.ts`, `questLogPanel.ts`, `stashPanel.ts`, `bindBar.ts`, `beltBar.ts`, `hud3d.ts`, `online3d.ts`) — здесь она повторена
  * копией, и каждая копия СТОРОЖИТСЯ строкой исходника (`SRC`): правило поменяли — тест падает, пока копию, эталон и порт Unity не обновят.
  *
@@ -20,8 +21,9 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  ATTRIBUTES, ALLOC_ATTR_MAX, CRAFT_SLOT_LIST, ConfigRegistry, activeToggleInfos, attrRespecRefund, baseTierRange, canEnchantItem,
-  canRepairItem, canSalvageItem, carriedMaterials, equipRefusal, craftTiers, craftWeapon, createRng, debuffIcon, debuffLabel, enchantCost, enchantItem,
+  ATTRIBUTES, ALLOC_ATTR_MAX, CRAFT_SLOT_LIST, ESSENCE_ID, ConfigRegistry, activeToggleInfos, attrRespecRefund, baseTierRange, canEnchantItem,
+  STARTER_FIELD, UNIQUE_NO_SALVAGE, canRepairItem, canSalvageItem, carriedMaterials, equipRefusal, craftTiers, craftWeapon, createRng, debuffIcon, debuffLabel, enchantCost, enchantItem,
+  enchantMaterials, rerollMaterials,
   fieldSalvageFits, fullJournal, emptyJournal, generateBoard, generateItem, insertById, insertFits, insertRank, insertUnlocked,
   itemFromBaseId, keySlotOf, keyVariantsByBase, materialItem, newCharacterSave, partsOf, questRival, repairCost, resolveActive,
   respecRefusal, salvageMean, salvageRange, salvageYield, shapeFoundWeapon, skillWeaponAllowed, socketsOpen, tierIndexOfItem,
@@ -29,7 +31,8 @@ import {
   type Attribute, type CraftJournal, type CraftParts, type DebuffKind, type Item, type QuestDef, type SalvageRng, type SaveState,
 } from '@dm/shared';
 import { benchActions, benchTarget, benchTargetLabel } from './forgeActions.js';
-import { disposePrompts, journalGainsOf } from '../inventory/disposeConfirm.js';
+import { disposePrompts, fieldSalvageLines, journalGainsOf } from '../inventory/disposeConfirm.js';
+import { materialNote, materialsModel } from '../inventory/materialsModel.js';
 import { attrAllocCommands } from '../progression/allocAttrs.js';
 import { elementOf } from '../skills/skillIcon.js';
 import { glyphOf } from '../inventory/heldItem.js';
@@ -75,25 +78,13 @@ const SRC: [string, string][] = [
   [SOCKETS, 'if (!insertFits(ins, base, weaponClass)) continue;'],
   [SOCKETS, 'if (usedTypes.has(ins.type)) continue;'],
   [SOCKETS, 'item(`${typeName(ins.type)} · ${ins.name}`, COLORS.text,'],
-  // «Ресурсы» сундука (materialsView.ts, stashPanel.ts)
-  [MATS, "const TIER_HEX = ['#9aa6b2', '#7fb6e0', '#d0a24a', '#b48ad8', '#e0875a'];"],
-  [MATS, "const TIER_HEAD = ['обычные', 'магические', 'редкие', 'ступень 4', 'ступень 5'];"],
-  [MATS, "1: 'Падает с обычных вещей. Нужен для улучшения ЛЮБЫХ.',"],
-  [MATS, "2: 'Падает с магических. Нужен для улучшения магических и редких.',"],
-  [MATS, "3: 'Падает с редких. Нужен для улучшения редких.',"],
-  [MATS, "4: 'Даёт разбор оружия высоких ступеней. Нужен для ковки.',"],
-  [MATS, "5: 'Даёт разбор мастерского и мифического оружия. Нужен для ковки.',"],
-  [MATS, "iron: 'Железо',"], [MATS, "wood: 'Дерево',"], [MATS, "cloth: 'Ткань',"], [MATS, "hide: 'Кожа',"], [MATS, "plate: 'Пластины',"],
-  [MATS, "stave: 'Плечи',"], [MATS, "trim: 'Прибор',"], [MATS, "focus: 'Фокус',"],
-  [MATS, "const defs = app.config.get('craft-materials').filter((d) => d.enabled);"],
-  [MATS, 'for (const d of defs) if (!families.includes(d.family)) families.push(d.family);'],
-  [MATS, 'const steps = Math.max(...defs.map((d) => d.tier));'],
-  [MATS, 'for (const d of defs.filter((x) => x.family === fam).sort((a, b) => a.tier - b.tier)) {'],
-  [MATS, 'const hex = TIER_HEX[Math.min(TIER_HEX.length, Math.max(1, d.tier)) - 1]!;'],
-  [MATS, '`<b style="color:${hex}">${d.name}</b><br>В сундуке ${inStash}`'],
-  [MATS, "+ (onHand > 0 ? `<br><span style=\"color:#7fd07f\">В сумке ${onHand} — потеряешь часть при смерти</span>` : '') +"],
-  [MATS, "`<br>${NEEDED_FOR[d.tier] ?? ''}` +"],
-  [MATS, "(d.sellPrice > 0 ? `<br>Продажа: ${d.sellPrice} за штуку` : ''));"],
+  // «Ресурсы» сундука: модель — настоящая функция (`materialsModel`, materialsModel.ts), здесь сторожатся только вид и вкладка
+  // (materialsView.ts, stashPanel.ts): клетка — сундук и «+N» в сумке, эссенция — плашкой «✦ имя: N».
+  [MATS, 'const m = materialsModel(app.config, stashWallet, app.state!.save.inventory);'],
+  [MATS, "plate.append(mk('span', '', `✦ ${e.name}:`), mk('b', '', String(e.stash)));"],
+  [MATS, "if (e.hand > 0) plate.append(mk('span', 'font-size:10px;color:#7fd07f', `+${e.hand}`));"],
+  [MATS, "el.append(mk('b', '', String(c.stash)));"],
+  [MATS, "if (c.hand > 0) el.append(mk('span', 'font-size:10px;color:#7fd07f', `+${c.hand}`));"],
   [STASH, "['mats', carried > 0 ? `Ресурсы (+${carried})` : 'Ресурсы'] as const,"],
   [STASH, '...Array.from({ length: tabCount }, (_, i) => [String(i), `Вкладка ${i + 1}`] as const),'],
   [STASH, "row.append(button(carried > 0 ? `Сдать всё сырьё (${carried})` : 'В сумке сырья нет',"],
@@ -106,7 +97,8 @@ const SRC: [string, string][] = [
   [INV, "actions.push({ label: 'Выбросить', run: () => app.sendCmd({ cmd: 'drop', uid: item.uid }) });"],
   [INV, "if (app.state!.area !== 'town') {"],
   [INV, "const pct = Math.round(app.config.get('balance').salvage.fieldYield * 100);"],
-  [INV, 'actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); } });'],
+  [INV, 'actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => { void salvageInField(app, item); }, tip: () => fieldSalvageTip(app, item) });'],
+  [INV, 'return fieldSalvageLines(app.config, item, app.stash?.forgeJournal).map((l, i) =>'],
   [INV, "actions.push({ label: 'Разобрать нельзя: сумка полна', run: () => {} });"],
   // задания (questLogPanel.ts)
   [QUESTS, "? '<span style=\"color:#8aa84a\">выполнено</span>'"],
@@ -361,11 +353,13 @@ function itemCases() {
       // Из чего сделана вещь (`partsOf`: записанное или выведенное сидом), её тип (`typeOfItem`) и ступень (`tierIndexOfItem`): по ним же Unity
       // строит журналы вопроса (`journalsFor`) — сами журналы в эталон не кладутся (полный журнал на 220 вещей — мегабайты).
       parts: partsOf(reg, item), type: type ? { id: type.typeId ?? null, name: type.name } : null, tierIndex: tierIndexOfItem(reg, item),
+      // ⭐ §7: сырьё починки — по ступени вещи (расходник I + главный сорт), §6.2: эссенция зачарования и перекатки.
       repair: (() => { const c = canRepairItem(reg, item); return { can: c.ok ? null : c.reason ?? '', cost: repairCost(reg, item) }; })(),
       enchant: Object.fromEntries((['magic', 'rare'] as const).map((r) => {
         const c = canEnchantItem(reg, item, r);
-        return [r, { can: c.ok ? null : c.reason ?? '', cost: num(enchantCost(reg, item, r)) }];
+        return [r, { can: c.ok ? null : c.reason ?? '', cost: num(enchantCost(reg, item, r)), essence: enchantMaterials(reg, item, r) }];
       })),
+      rerollEssence: rerollMaterials(reg, item),
       forge: salvage(false),
       field: salvage(true),
       fits: {
@@ -548,51 +542,32 @@ function questCases() {
   };
 }
 
-// ── «Ресурсы» сундука (materialsView.ts) ─────────────────────────────────────────────────────────
-const TIER_HEX = ['#9aa6b2', '#7fb6e0', '#d0a24a', '#b48ad8', '#e0875a'];
-const TIER_HEAD = ['обычные', 'магические', 'редкие', 'ступень 4', 'ступень 5'];
-const NEEDED_FOR: Record<number, string> = {
-  1: 'Падает с обычных вещей. Нужен для улучшения ЛЮБЫХ.',
-  2: 'Падает с магических. Нужен для улучшения магических и редких.',
-  3: 'Падает с редких. Нужен для улучшения редких.',
-  4: 'Даёт разбор оружия высоких ступеней. Нужен для ковки.',
-  5: 'Даёт разбор мастерского и мифического оружия. Нужен для ковки.',
-};
-const FAMILY_LABEL: Record<string, string> = { iron: 'Железо', wood: 'Дерево', cloth: 'Ткань', hide: 'Кожа', plate: 'Пластины', stave: 'Плечи', trim: 'Прибор', focus: 'Фокус' };
+// ── «Ресурсы» сундука (materialsModel.ts — настоящая функция, не копия) ───────────────────────────────────────────────────────
+/**
+ * ⭐ §15.1: столбцы — сорта I–V («I сорт» + мелко «с каких вещей» из рецепта `salvage.recipeByTier`), металлическая шкала цветов без
+ * цветов редкостей, клетка `null` — сорта у семьи нет (выключен): столбцы не съезжают; эссенция — плашкой под сеткой; строка-правило;
+ * подсказки строками (первая — заголовок цветом сорта). Плюс подсказка стопки сырья в сумке (`materialNote`) по каждому материалу.
+ */
 function materialsCases() {
   const defs = reg.get('craft-materials').filter((d) => d.enabled);
   const view = (wallet: Record<string, number>, inventory: Item[]) => {
-    const carried = carriedMaterials(inventory);
-    const families: string[] = [];
-    for (const d of defs) if (!families.includes(d.family)) families.push(d.family);
-    const steps = Math.max(...defs.map((d) => d.tier));
-    const total = Object.values(carried).reduce((x, y) => x + y, 0);
+    const total = Object.values(carriedMaterials(inventory)).reduce((x, y) => x + y, 0);
     return {
       tab: total > 0 ? `Ресурсы (+${total})` : 'Ресурсы',
       deposit: total > 0 ? `Сдать всё сырьё (${total})` : 'В сумке сырья нет',
-      heads: TIER_HEAD.slice(0, steps).map((label, i) => ({ label, color: TIER_HEX[i]! })),
-      rows: families.map((fam) => ({
-        label: FAMILY_LABEL[fam] ?? fam,
-        cells: defs.filter((x) => x.family === fam).sort((p, q) => p.tier - q.tier).map((d) => {
-          const inStash = wallet[d.id] ?? 0, onHand = carried[d.id] ?? 0;
-          const hex = TIER_HEX[Math.min(TIER_HEX.length, Math.max(1, d.tier)) - 1]!;
-          return {
-            id: d.id, stash: inStash, hand: onHand, have: inStash + onHand > 0, color: hex,
-            tip: `<b style="color:${hex}">${d.name}</b><br>В сундуке ${inStash}`
-              + (onHand > 0 ? `<br><span style="color:#7fd07f">В сумке ${onHand} — потеряешь часть при смерти</span>` : '')
-              + `<br>${NEEDED_FOR[d.tier] ?? ''}` + (d.sellPrice > 0 ? `<br>Продажа: ${d.sellPrice} за штуку` : ''),
-          };
-        }),
-      })),
+      ...materialsModel(reg, wallet, inventory),
     };
   };
   const pot = itemFromBaseId(reg0.get('items.base'), 'healing-potion', undefined, 'shop')!;
   const cases: { wallet: Record<string, number>; inventory: Item[] }[] = [
     { wallet: {}, inventory: [] },
-    { wallet: { 'iron-1': 40, 'iron-2': 3, 'plate-1': 12, 'cloth-4': 1, 'iron-5': 6, 'no-such': 2 }, inventory: [pot] },
-    { wallet: { 'wood-1': 7 }, inventory: [...matStacks(17, (id) => /-(1|3)$/.test(id)), { ...materialItem(defs[0]!, 1, 'nc'), count: undefined } as unknown as Item, pot] },
+    { wallet: { 'iron-1': 40, 'iron-2': 3, 'plate-1': 12, 'cloth-4': 1, 'iron-5': 6, 'no-such': 2, [ESSENCE_ID]: 9 }, inventory: [pot] },
+    { wallet: { 'wood-1': 7 }, inventory: [...matStacks(17, (id) => /-(1|3)$/.test(id) || id === ESSENCE_ID), { ...materialItem(defs[0]!, 1, 'nc'), count: undefined } as unknown as Item, pot] },
   ];
-  return cases.map((c) => ({ ...c, view: view(c.wallet, c.inventory) }));
+  return {
+    cases: cases.map((c) => ({ ...c, view: view(c.wallet, c.inventory) })),
+    notes: reg.get('craft-materials').map((m) => ({ id: m.id, note: materialNote(reg, { kind: 'material', materialId: m.id }) })),
+  };
 }
 
 // ── Меню предмета инвентаря (inventoryPanel.ts) ─────────────────────────────────────────────────
@@ -615,7 +590,9 @@ function menuCases(items: Item[]) {
           if (can.ok && fieldSalvageFits(reg, save.inventory, bagItem)) labels.push(`Разобрать здесь (${pct} %)`);
           else if (can.ok) labels.push('Разобрать нельзя: сумка полна');
         }
-        out.push({ uid: item.uid, bag: bagName, town, attributes: save.attributes, labels });
+        // ⭐ §15.2: подсказка пункта «Разобрать здесь» — карточка разбора в поле (без строки каталога, D2), журнала нет — как пустой.
+        const tip = !town && labels.at(-1)?.startsWith('Разобрать здесь') ? fieldSalvageLines(reg, item, null) : null;
+        out.push({ uid: item.uid, bag: bagName, town, attributes: save.attributes, labels, ...(tip ? { tip } : {}) });
       }
     }
   }
@@ -700,18 +677,24 @@ describe('unityPanelsGolden — продюсер эталона панелей (
     for (const r of [null, 'Зачаровать можно только скованную вещь', 'Вещь уже зачарована', 'Сперва почини', 'Кузнецу не хватит свойств на форму этой вещи'])
       expect(ench.has(r), `зачарование: ${r}`).toBe(true);
     const salv = reasons((c) => [c.forge.can, c.field.can]);
-    for (const r of [null, 'Уникальные вещи не разбираются', 'Стартовое снаряжение не разбирается', 'Эту вещь не из чего разбирать'])
+    // Отказы разбора (предложение «Разбор, сырьё и чары»): уник; стартовый набор в поле (у кузнеца он идёт в каталог — `catalog`).
+    for (const r of [null, UNIQUE_NO_SALVAGE, STARTER_FIELD, 'Эту вещь не из чего разбирать'])
       expect(salv.has(r), `разбор: ${r}`).toBe(true);
-    expect(new Set(items.map((c) => c.forge.source))).toEqual(new Set(['melt', 'parts', 'rules', null]));
+    expect(new Set(items.map((c) => c.forge.source))).toEqual(new Set(['melt', 'parts', 'rules', 'catalog', null]));
     expect(items.some((c) => c.fits.alone && !c.fits.full), 'полная сумка отказывает разбор в поле').toBe(true);
     expect(items.some((c) => c.field.mean && Object.values(c.field.mean).some((v) => !Number.isInteger(v))), 'дробный средний выход').toBe(true);
     expect(items.some((c) => c.journal.some((j) => j.gains.some((g) => g.startsWith('эскиз')))), 'эскиз в вопросе').toBe(true);
-    expect(items.some((c) => c.journal.some((j) => j.gains.some((g) => g.startsWith('мифик')))), 'мифик в вопросе').toBe(true);
+    // Мифика и ступени в вопросе нет: ковку держит только сырьё (решение D3).
+    expect(items.some((c) => c.journal.some((j) => j.gains.some((g) => /^(мифик|ступень)/.test(g)))), 'мифика и ступени в вопросе нет').toBe(false);
+    expect(items.some((c) => c.journal.some((j) => j.gains.some((g) => g.startsWith('снаряжение')))), 'снаряжение в вопросе').toBe(true);
     expect(items.some((c) => c.journal.some((j) => j.gains.some((g) => g.startsWith('кодекс')))), 'кодекс в вопросе').toBe(true);
     expect(items.some((c) => c.prompts.forge.length === 2), 'скованное у кузнеца — два вопроса').toBe(true);
     // R2-28: разбор и переплавка выключенного не выдают — ступень спускается (`iron-5` → `iron-4`).
     expect(items.every((c) => !('iron-5' in c.forge.range) && !('iron-5' in c.field.range))).toBe(true);
     expect(items.some((c) => c.bench.some((b) => b.actions.some((a) => a.id === 'enchant' && a.enabled)))).toBe(true);
+    // §6.2: эссенция — строкой карточки и согласием `materials` у перекатки и зачарования; без неё («бедный» кошелёк) карточка гаснет.
+    expect(items.some((c) => c.bench.some((b) => b.actions.some((a) => a.id === 'reroll' && a.materials && Object.keys(a.materials as object).length)))).toBe(true);
+    expect(items.some((c) => c.bench.some((b) => b.wallet === 'broke' && b.actions.some((a) => a.id === 'enchant' && !a.enabled)))).toBe(true);
     const sockets = socketCases();
     expect(sockets.some((s) => s.learned.some((l) => l.summary?.extra))).toBe(true);
     expect(sockets.some((s) => s.learned.some((l) => l.cells.some((c) => c.options.length > 2)))).toBe(true);
@@ -719,6 +702,18 @@ describe('unityPanelsGolden — продюсер эталона панелей (
     expect(new Set(attrs.respec.map((r) => r.refusal)).size).toBeGreaterThan(3);
     const quests = questCases();
     expect(quests.saves.some((s) => s.rival.some((r) => r))).toBe(true);
+    // ⭐ §15.1: склад — сорта I–V, эссенция плашкой (не строкой сетки), выключенный сорт — пустая клетка на своём месте.
+    const materials = materialsCases();
+    const v0 = materials.cases[0]!.view, v1 = materials.cases[1]!.view;
+    expect(v0.heads.map((h) => h.label)).toEqual(['I сорт', 'II сорт', 'III сорт', 'IV сорт', 'V сорт']);
+    expect(v0.heads[0]!.sub).toMatch(/тела монстров$/);
+    expect(v0.heads.some((h) => h.sub.includes('(боевая часть)'))).toBe(true);
+    expect(v0.rows.some((r) => r.family === 'ench'), 'эссенция — не строка сетки').toBe(false);
+    expect(v0.rows.find((r) => r.family === 'iron')!.cells[4], 'iron-5 выключен — клетка пуста, столбцы не съехали').toBeNull();
+    expect(v1.essence?.stash).toBe(9);
+    expect(materials.cases[2]!.view.essence?.hand).toBe(17);
+    expect(v1.rule).toBe('Разбор: сырьё — по ступени вещи, эссенция — по редкости, детали — в каталог (у кузнеца)');
+    expect(materials.notes.every((n) => n.note && n.note.lines.length > 2)).toBe(true);
     const golden = {
       note: 'Эталон паритета Unity ↔ веб для недостающих панелей (U6a). Генерит packages/client/src/modules/town/unityPanelsGolden.gen.test.ts.',
       config: {
@@ -757,7 +752,7 @@ describe('unityPanelsGolden — продюсер эталона панелей (
       prices: reg.get('skill-inserts').flatMap((ins) => (['mana', 'stamina'] as const).map((carrier) => ({ id: ins.id, carrier, text: priceText(ins, carrier) }))),
       attrs,
       quests,
-      materials: materialsCases(),
+      materials,
       menu: menuCases(items.map((c) => c.item)),
       belt: beltCases(),
       debuffs: debuffCases(),

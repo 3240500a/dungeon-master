@@ -22,7 +22,7 @@ const classId = str('class', reg.get('classes')[0]!.id);
 
 // Настоящий сим на GameSession (бот играет как игрок). `--scenario=run`.
 // Ковка (K7): `--craft=on|off` — открыта ли кузница (по умолчанию как в игре, `balance.craft.live`);
-// `--craft=both` — два прогона на ОДНОМ сиде и таблица «без ковки / с ковкой»; `--fulljournal` — журнал открыт.
+// `--craft=both` — два прогона на ОДНОМ сиде и таблица «без ковки / с ковкой»; `--fulljournal` — журнал открыт; `--salvageall` — крафтер.
 if (str('scenario', 'progression') === 'run') {
   const craftArg = str('craft', '');
   const runOnce = (craft: boolean | undefined): { rep: RunReport; ms: number } => {
@@ -61,6 +61,8 @@ function runSession(craft: boolean | undefined): RunReport {
     },
     craft,
     fullJournal: bool('fulljournal', false),
+    // Политика крафтера: и не по силам вещь — в разбор, а не в золото (`--salvageall`).
+    salvageAll: bool('salvageall', false),
   });
 }
 
@@ -114,7 +116,7 @@ function printRunReport(r: RunReport, ms: number): void {
   console.log(`Итог: ур.${b.level} (мощь ${b.power}) за ${r.totalHours} ч игрового времени · глубже всего ${r.deepestFloor} · этажей зачищено ${r.floorsCompleted}`);
   console.log(`Убито ${r.kills} · смертей ${r.deaths} · золото ${r.goldEarned} · предметов найдено ${r.itemsFound}`);
   console.log(`Темп: ${r.killsPerHour} убийств/ч · ${r.xpPerHour} XP/ч · ${r.lootPerHour} предм/ч`);
-  console.log(`Кузница/ч: скованно ${r.craftedPerHour} · переплавлено ${r.meltedPerHour} · разобрано ${r.salvagedPerHour} · зачаровано ${r.enchantedPerHour}`);
+  console.log(`Кузница/ч: скованно ${r.craftedPerHour} · переплавлено ${r.meltedPerHour} · разобрано ${r.salvagedPerHour} · зачаровано ${r.enchantedPerHour} · перекачено ${r.rerolledPerHour}`);
   printCraft(r);
   console.log(`\n— Финальный билд —`);
   console.log(`  Атрибуты: ${JSON.stringify(b.attributes)}  (эфф. ${JSON.stringify(b.effectiveAttributes)})`);
@@ -136,16 +138,22 @@ function printCraft(r: RunReport): void {
   const c = r.craft;
   const m = c.materials;
   console.log(`\n— Кузница (${c.enabled ? 'ковка открыта' : 'ковка закрыта'}) —`);
-  console.log(`  Скованно ${c.crafted} · зачаровано ${c.enchanted} · переплавлено ${c.melted} · разобрано у кузнеца ${c.salvagedAtForge} / в поле ${c.salvagedInField} · открытий журнала ${c.unlocked}`);
+  console.log(`  Скованно ${c.crafted} · зачаровано ${c.enchanted} · перекачено ${c.rerolled} · переплавлено ${c.melted} · разобрано у кузнеца ${c.salvagedAtForge} / в поле ${c.salvagedInField} · открытий журнала ${c.unlocked}`);
   console.log(`  Сырьё пришло ${m.in.total} (${m.inPerHour}/ч): монстры ${m.in.monsters} · поле ${m.in.field} · кузнец ${m.in.forge} · переплавка ${m.in.melt}`);
-  console.log(`  Сырьё ушло ${m.out.total} (${m.outPerHour}/ч): ковка ${m.out.craft} · починка и подъём тира ${m.out.forge} · потеряно ${m.lost}`);
+  console.log(`  Сырьё ушло ${m.out.total} (${m.outPerHour}/ч): ковка ${m.out.craft} · починка и подъём тира ${m.out.forge} · эссенция чар ${m.out.enchant} · перекатки ${m.out.reroll} · потеряно ${m.lost}`);
+  const ess = (o: Record<string, number>): number => o['ench-essence'] ?? 0;
+  console.log(`  Эссенция: пришла у кузнеца ${ess(c.flow.in.forge)} · в поле ${ess(c.flow.in.field)} (у кузнеца было бы ${Math.round(ess(c.flow.fieldAtForge) * 10) / 10}) · ушла на чары ${ess(c.flow.out.enchant)} · на перекатку ${ess(c.flow.out.reroll)}`);
+  const b = c.blocked;
+  console.log(`  Не хватило: чары — золота ${b.enchantGold} / эссенции ${b.enchantEssence} · перекатка — золота ${b.rerollGold} / эссенции ${b.rerollEssence} · подъём — золота ${b.upgradeGold} / сырья ${b.upgradeMats}`);
   console.log(`  Запас на конец ${m.end}: ${Object.entries(m.endByTier).sort().map(([k, v]) => `${k} ${v}`).join(' · ')}`);
   // R3-20: бот сырьё не продаёт, а лавка платит за него поштучно — кран золота, которого нет в «продажах».
   console.log(`  Сырьё в ценах лавки (бот не продаёт): с тел ${m.sellWorth.monsters} · запас на конец ${m.sellWorth.end}`);
   console.log(`  Золото: конец ${r.goldEnd} · ковка ${c.goldOnCraft} · зачарование ${c.goldOnEnchant} · магазин+кузня ${r.goldSpent} · пассивы ${r.goldOnPassives} · продажи ${r.goldSold} · с монстров ${r.goldEarned}`);
+  const g = c.gold;
+  console.log(`  Золото по статьям: лавка ${g.shop} · пояс ${g.belt} · починка ${g.repair} · подъём ${g.upgrade} · перекатка ${g.reroll} · смерть ${g.death}`);
   const p = c.power;
   console.log(`  Сила оружия (ДПС) по источникам: нашёл +${p.found} · купил +${p.shop} · сковал +${p.craft} · подъём тира +${p.upgrade}  (в час: ${p.perHour.found} / ${p.perHour.shop} / ${p.perHour.craft} / ${p.perHour.upgrade})`);
-  console.log(`  В руке: ДПС ${p.weaponDps} (${p.weaponSource}) · журнал: баз ${c.journal.bases}, деталей ${c.journal.variants}, потолок t${c.journal.tierHi}, мификов ${c.journal.mythic}`);
+  console.log(`  В руке: ДПС ${p.weaponDps} (${p.weaponSource}) · журнал: баз ${c.journal.bases}, деталей ${c.journal.variants}`);
 }
 
 /** «До/после ковки» на одном сиде — таблицей, чтобы разницу было видно глазами. */
@@ -160,6 +168,7 @@ function printCraftCompare(off: RunReport, on: RunReport, ms: number): void {
     ['переплавлено/ч', (r) => r.meltedPerHour],
     ['разобрано/ч', (r) => r.salvagedPerHour],
     ['зачаровано/ч', (r) => r.enchantedPerHour],
+    ['перекачено/ч', (r) => r.rerolledPerHour],
     ['сырьё пришло/ч', (r) => r.craft.materials.inPerHour],
     ['сырьё ушло/ч', (r) => r.craft.materials.outPerHour],
     ['запас сырья', (r) => r.craft.materials.end],

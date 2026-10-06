@@ -129,7 +129,8 @@ const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Скилы и вставки', keys: ['skillSocketRanks'] },
   { title: 'Монстры', keys: ['monsterXpGrowth', 'uniqueXpMult', 'monsterScaling'] },
   { title: 'Лут', keys: ['loot', 'autoPickup', 'salvage'] },
-  { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint', 'townRestockSec'] },
+  // ⭐ `shop` (лавка не выше `maxTier`) — к ценам кузницы: без строки здесь он уходил в «Прочее».
+  { title: 'Экономика', keys: ['forgePrices', 'shop', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint', 'townRestockSec'] },
   { title: 'Ковка', keys: ['craft'] },
   { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },
   { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'combatLogoutSec', 'deathPenalty', 'lighting'] },

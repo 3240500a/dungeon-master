@@ -1,4 +1,4 @@
-import { availableMaterials, forgeGold, type Item, type TownCommand } from '@dm/shared';
+import { forgeGold, type Item, type TownCommand } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { itemTooltipHtml, itemDescLines } from '../inventory/itemView.js';
@@ -6,6 +6,7 @@ import { rarityHex } from '../loot/rarity.js';
 import { CELL, glyphOf, getHeld, clearHeld } from '../inventory/heldItem.js';
 import { benchActions, benchTarget, benchTargetLabel, diffStrings, type BenchAction } from './forgeActions.js';
 import { confirmAll, disposePrompts } from '../inventory/disposeConfirm.js';
+import { materialsView } from '../inventory/materialsView.js';
 import type { CmdReply } from '../../net/cmdReplies.js';
 
 /**
@@ -30,8 +31,8 @@ export interface BenchOpts {
   uid: string | null;
   setUid: (uid: string | null) => void;
   /**
-   * Строка над верстаком: что открыл в журнале кузнеца последний разбор (§17.1: «открыта новая деталь») или почему
-   * последнее действие не вышло (R3-16). Текст — со своим значком: «📖 …» / «⚠ …».
+   * Строка над верстаком: итог последнего разбора («♻ Получено: … · Каталог: …», §15.2 — всегда, даже когда нового в каталоге нет)
+   * или почему последнее действие не вышло (R3-16). Текст — со своим значком: «♻ …» / «📖 …» (сервер старше итоговой строки) / «⚠ …».
    */
   note?: string;
   setNote?: (note: string) => void;
@@ -88,11 +89,12 @@ function runAction(app: App, o: BenchOpts, item: Item, a: BenchAction): void {
   // R9-04: и со средним выходом (`avgYield`) — низ дробной доли правку выхода не видит.
   const price = a.gold !== undefined ? { maxGold: a.gold } : {};
   const mats = a.materials !== undefined ? { maxMaterials: a.materials } : {};
+  // ⭐ §6.2: перекатка и зачарование — с эссенцией карточки (`maxMaterials`), как подъём и починка — с её сырьём.
   const command: TownCommand = a.cmd === 'forgeEnchant'
-    ? { cmd: 'forgeEnchant', uid: item.uid, rarity: a.rarity ?? 'magic', ...price }
+    ? { cmd: 'forgeEnchant', uid: item.uid, rarity: a.rarity ?? 'magic', ...price, ...mats }
     : a.cmd === 'forgeSalvage' ? { cmd: 'forgeSalvage', uid: item.uid, ...(a.minYield !== undefined ? { minYield: a.minYield } : {}),
       ...(a.avgYield !== undefined ? { avgYield: a.avgYield } : {}) }
-    : a.cmd === 'forgeReroll' ? { cmd: 'forgeReroll', uid: item.uid, ...price }
+    : a.cmd === 'forgeReroll' ? { cmd: 'forgeReroll', uid: item.uid, ...price, ...mats }
     : { cmd: a.cmd, uid: item.uid, ...price, ...mats };
   const key = actionKey(a);
   const slot = `${item.uid}|${key}`;
@@ -104,9 +106,15 @@ function runAction(app: App, o: BenchOpts, item: Item, a: BenchAction): void {
   inFlight = { uid: item.uid, key };
   o.setNote?.('');
   app.bus.emit('state:changed', {});   // карточки гаснут, нажатая — «⏳»
-  /** Строка над верстаком по ответу сервера — своевременному или позднему (R5-18). */
+  /**
+   * Строка над верстаком по ответу сервера — своевременному или позднему (R5-18). ⭐ Разбор — ИТОГОВОЙ СТРОКОЙ ВСЕГДА (§15.2,
+   * `cmdResult.summary`: «Получено: … · Каталог: …»): раньше при пустом `unlocked` успех проходил молча, и даже полученное сырьё не
+   * показывалось — отсюда «разобрал, а ничего не добавилось». Сервер старше итоговой строки — по-старому, строками открытий.
+   */
   const noteOf = (r: CmdReply): string => (!r.ok ? `⚠ Не вышло: ${r.reason ?? 'кузнец отказал'}`
-    : a.id === 'salvage' && r.unlocked?.length ? `📖 Открыто в журнале кузнеца: ${r.unlocked.join(' · ')}` : '');
+    : a.id !== 'salvage' ? ''
+    : r.summary ? `♻ ${r.summary}`
+    : r.unlocked?.length ? `📖 Открыто в каталоге кузнеца: ${r.unlocked.join(' · ')}` : '');
   /**
    * ⭐ R5-18: ответ пришёл ПОСЛЕ «нет ответа» — итог известен, номер больше не повторяем: дедуп сервера ответил бы на
    * повтор эхом этого итога, не исполнив (после позднего «Не удалось сохранить…» повтор, о котором просит сообщение, не
@@ -132,7 +140,7 @@ function runAction(app: App, o: BenchOpts, item: Item, a: BenchAction): void {
   });
 }
 
-/** Строка над верстаком: что открыл разбор (📖) или почему действие не вышло (⚠). */
+/** Строка над верстаком: итог разбора (♻ «Получено: … · Каталог: …») или почему действие не вышло (⚠). */
 function noteLine(text: string): HTMLElement {
   return mk('div',
     `font-size:12px;color:${text.startsWith('⚠') ? COLORS.bad : GOOD};border:1px solid ${COLORS.border};border-radius:6px;` +
@@ -170,7 +178,10 @@ function actionCard(a: BenchAction, onClick: () => void, enabled = a.enabled, wa
   card.append(mk('div', `font-size:13px;color:${enabled || waiting ? COLORS.text : COLORS.dim}`, waiting ? `⏳ ${a.title}…` : a.title));
   card.append(mk('div', `font-size:11px;color:${COLORS.dim};margin:2px 0 8px`, a.sub));
   for (const l of a.lines) {
-    const color = l.state === 'miss' ? COLORS.bad : l.state === 'gain' ? GOOD : l.state === 'dim' ? COLORS.dim : COLORS.text;
+    const color = l.state === 'miss' ? COLORS.bad : l.state === 'gain' ? GOOD : l.state === 'warn' ? COLORS.accent
+      : l.state === 'dim' ? COLORS.dim : COLORS.text;
+    // Строка карточки разбора — «Подпись: текст» (текст сам говорит «+ …» или «нет — …»); строка цены — со значком.
+    if (l.label) { card.append(mk('div', `font-size:12px;line-height:1.5;margin-bottom:3px;color:${color}`, `${l.label}: ${l.text}`)); continue; }
     const mark = l.state === 'ok' ? '✓ ' : l.state === 'miss' ? '✕ ' : l.state === 'gain' ? '+ ' : '';
     card.append(mk('div', `font-size:12px;line-height:1.7;color:${color}`, `${mark}${l.text}`));
   }
@@ -183,20 +194,14 @@ function actionCard(a: BenchAction, onClick: () => void, enabled = a.enabled, wa
   return card;
 }
 
-/** Полоса сырья: сумка + сундук одним числом — цены выше считаются по тому же итогу. */
+/**
+ * Полоса сырья под верстаком — ТА ЖЕ сетка «семья × сорт», что вкладка «Ресурсы» сундука (§15.4), низкой клеткой: в клетке сундук
+ * и «+N» в сумке (цены карточек считаются по их сумме), эссенция — плашкой, внизу строка-правило разбора. Было — 40 плоских ярлыков.
+ */
 function materialsStrip(app: App): HTMLElement {
-  const have = availableMaterials(app.state!.save.inventory, app.stash?.materials ?? {});
   const box = mk('div', `border-top:1px solid ${COLORS.border};padding-top:8px;margin-top:12px`);
-  box.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:6px`, 'Сырьё — в сумке и сундуке'));
-  const row = mk('div', 'display:flex;flex-wrap:wrap;gap:6px');
-  for (const d of app.config.get('craft-materials').filter((m) => m.enabled)) {
-    const n = have[d.id] ?? 0;
-    row.append(mk('div',
-      `font-size:12px;padding:2px 9px;border-radius:6px;border:1px solid ${n > 0 ? COLORS.borderHi : COLORS.border};` +
-      `background:${COLORS.panel2};color:${n > 0 ? COLORS.text : '#4a4a4a'}`,
-      `${d.name} ${n}`));
-  }
-  box.append(row);
+  box.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:6px`, 'Сырьё — в сундуке (+ в сумке)'));
+  box.append(materialsView(app, app.stash?.materials ?? {}, { compact: true }));
   return box;
 }
 
@@ -266,7 +271,8 @@ export function forgeBench(app: App, o: BenchOpts): HTMLElement {
   root.append(head);
 
   // ── Карточки действий ────────────────────────────────────────────────────────
-  const actions = benchActions(app.config, item, state.save.gold, state.save.inventory, app.stash?.materials ?? {});
+  // Журнал кузнеца (кадр сундука): карточка разбора говорит, что ляжет в каталог, и гасит стартовый набор, которому нечего добавить.
+  const actions = benchActions(app.config, item, state.save.gold, state.save.inventory, app.stash?.materials ?? {}, app.stash?.forgeJournal);
   // У скованной карточек пять (с зачарованием, R3-09) — в узком окне они переносятся, а не сжимаются в столбик букв.
   const cards = mk('div', 'display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;align-items:stretch');
   for (const a of actions) {

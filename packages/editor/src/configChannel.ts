@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { configSchemas, configCrossIssues, CONFIG_CROSS_KEYS, type ConfigKey } from '@dm/shared';
+import { configSchemas, configCrossIssues, crossIssuesWorse, CONFIG_CROSS_KEYS, type ConfigKey } from '@dm/shared';
 import type { LiveConfigBase } from './liveConfig.js';
 
 /** Ответ инструментальной ручки — то, что каналу нужно от `Response`. */
@@ -58,7 +58,8 @@ export class ConfigChannel {
    * (вкладка «Ковка → Клинки» правит `balance` и `weapon-parts` вместе, и половина правки на сервере хуже, чем никакой).
    * ⭐ D4: правила поверх нескольких таблиц (время баффа: откат из древа и вставок, отдых из баланса) — над тем, что уйдёт, поверх ЖИВОГО
    * (⭐ R22-08: прочие таблицы — как их держит сервер; до загрузки живого — рабочая копия, запись тогда закрыта). Схема одной таблицы их не
-   * видит, а сервер всё равно откажет: говорим до отправки и что поправить.
+   * видит, а сервер всё равно откажет: говорим до отправки и что поправить. ⭐ Как сервер (`ConfigRegistry.reload`): только правила, читающие
+   * правленые таблицы, и отказ только НОВОМУ или УГЛУБЛЁННОМУ нарушению (`crossIssuesWorse`) — лежащее в живом конфиге правку чужих строк не запирает.
    */
   validated(keys: readonly string[]): Record<string, unknown> | null {
     const out: Record<string, unknown> = {};
@@ -74,12 +75,13 @@ export class ConfigChannel {
       out[key] = result.data;
     }
     if (keys.some((k) => (CONFIG_CROSS_KEYS as readonly string[]).includes(k))) {
-      const view = (k: ConfigKey): unknown => {
-        if (k in out) return out[k];
+      const live = (k: ConfigKey): unknown => {
         const r = configSchemas[k].safeParse(this.live.loaded ? this.live.value(k) : this.data[k]);
         return r.success ? r.data : undefined;
       };
-      const issues = configCrossIssues(view);
+      const view = (k: ConfigKey): unknown => (k in out ? out[k] : live(k));
+      // До загрузки живого «прежнее» — та же рабочая копия с правкой: сравнивать не с чем — всё, что нарушено (запись тогда и так закрыта).
+      const issues = crossIssuesWorse(this.live.loaded ? configCrossIssues(live, keys) : [], configCrossIssues(view, keys));
       if (issues.length) {
         this.io.status(`Ошибка валидации «${this.io.label(issues[0]!.key)}»: ${issues[0]!.msg}${issues.length > 1 ? ` (и ещё ${issues.length - 1})` : ''}`, BAD);
         return null;

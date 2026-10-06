@@ -18,7 +18,8 @@ import { dirname, join } from 'node:path';
 import {
   CRAFT_SLOT_LIST, ConfigRegistry, MATERIAL_STEPS, affixSlotsFillable, canRerollItem, canUpgradeItem, craftWeapon, createRng, enchantItem, forgeGold,
   generateItem, itemFromBaseId, keySlotOf, keyVariantsByBase, materialItem, newCharacterSave, nextTierOf, offhandRefusal, parseTownCommand,
-  passiveRespecFee, shapeFoundWeapon, shopSellPrice, skillRespecFee, stashDims, tierOfSteps, upgradeCost, upgradedItem, variantsFor,
+  passiveRespecFee, repairCost, rerollMaterials, salvageWorth, shapeFoundWeapon, shopSellPrice, skillRespecFee, stashDims, tierOfSteps, UNIQUE_NO_UPGRADE, upgradeCost,
+  upgradedItem, variantsFor,
   type CraftParts, type EquipSlot, type Item, type SaveState,
 } from '@dm/shared';
 import { dropCell } from '../inventory/heldItem.js';
@@ -82,6 +83,11 @@ function sellItems(): Item[] {
     for (const it of [...Object.values(kit.equipment), ...kit.inventory]) if (it) out.push(it);
     const up = !forged && kit.equipment.weapon ? upgradedItem(reg, kit.equipment.weapon) : undefined;
     if (up) { out.push(up); forged = true; }
+  }
+  // ⭐ D4 (06.10): скупка не дешевле выхода разбора у кузнеца (`salvageWorth`) — у скованных пол включается (переплавка возвращает долю
+  // заплаченного сырья, а формула вещи о нём не знает): без них сверка Unity пола не видела вовсе.
+  for (const [cls, hands] of [['sword', 1], ['axe', 2], ['staff', 2]] as const) {
+    for (const step of [1, 3, 5]) { const w = forgedWeapon(cls, hands, step); if (w) out.push(w); }
   }
   // uid — постоянный: эталон не должен меняться от прогона к прогону.
   return out.map((it, i) => ({ ...it, uid: `golden-${i}` }));
@@ -211,7 +217,7 @@ function forgeItems(): Item[] {
 
 /** Поля вещи, которые читают правила кузницы (цена, ворота, сырьё, имя ступени): в эталон — только они, как в разделе `offhand`. */
 const FORGE_FIELDS = ['uid', 'baseId', 'name', 'kind', 'slot', 'armorClass', 'weaponClass', 'rarity', 'tier', 'itemLevel', 'baseStats', 'baseRoll',
-  'spreadMult', 'broken', 'rerolls', 'parts', 'foundParts', 'affixCap', 'origin', 'tierForged'] as const;
+  'spreadMult', 'broken', 'rerolls', 'parts', 'foundParts', 'affixCap', 'origin', 'tierForged', 'bornTier'] as const;
 /** Поля вещи, которые читает решение пупсика (`equipPlan`): ячейка, руки, требования и прибавки, место в сумке, ёмкость пояса. */
 const EQUIP_FIELDS = ['uid', 'baseId', 'name', 'kind', 'slot', 'hands', 'versatile', 'broken', 'requirements', 'baseStats', 'affixes', 'gridW', 'gridH',
   'pos', 'beltSlots'] as const;
@@ -226,7 +232,11 @@ function forgeCase(item: Item) {
     item: pick(item, FORGE_FIELDS),
     upgrade: up.ok ? null : up.reason ?? '',
     reroll: rr.ok ? null : rr.reason ?? '',
+    // ⭐ §7: сырьё подъёма — по целевой ступени (основа = верх вилки разбора как находки + расходник I), починки — по нынешней.
     cost: upgradeCost(reg, item),
+    repairCost: repairCost(reg, item),
+    // ⭐ §6.2: эссенция перекатки (половина зачарования до редкости вещи) — согласие `maxMaterials` команды `forgeReroll`.
+    rerollEssence: rerollMaterials(reg, item),
     gold: { upgrade: gold('upgrade'), reroll: gold('reroll'), repair: gold('repair') },
     next: nextTierOf(reg, item)?.name ?? null,
   };
@@ -380,6 +390,7 @@ describe('unityTownGolden — продюсер эталона (пишет __gold
     // Unity показывал «+7» за нетронутый комплект, а сервер платил 1, и сверка паритета этого не видела.
     expect(sell.some((c) => c.item.origin === 'start' && !c.item.tierForged && c.price === 1), 'нетронутый стартовый комплект').toBe(true);
     expect(sell.some((c) => c.item.origin === 'start' && c.item.tierForged && c.price > 1), 'комплект, поднятый у кузнеца').toBe(true);
+    expect(sell.some((c) => c.item.parts && c.price === salvageWorth(reg, c.item) && c.price > 1), 'скованное — по полу выхода разбора (D4)').toBe(true);
     const drop = dropCases();
     expect(drop.some((c) => c.cell === null) && drop.some((c) => c.cell !== null)).toBe(true);
     // Каждая клетка, которую dropCell разрешает, проходит строгую схему сервера (R2-35).
@@ -391,11 +402,12 @@ describe('unityTownGolden — продюсер эталона (пишет __gold
     const forge = forgeItems().map(forgeCase);
     const ups = new Set(forge.map((c) => c.upgrade)), rrs = new Set(forge.map((c) => c.reroll));
     for (const r of [null, 'Сперва почини', 'Кузнец не знает такой вещи', 'Скованную вещь поднимает замена детали, а не подъём тира',
-      'Ступень этой вещи ничего не меняет', 'Лучше эту вещь уже не сделать', 'Эта форма выше не куётся']) expect(ups.has(r), `подъём: ${r}`).toBe(true);
+      'Ступень этой вещи ничего не меняет', 'Лучше эту вещь уже не сделать', 'Эта форма выше не куётся', UNIQUE_NO_UPGRADE]) expect(ups.has(r), `подъём: ${r}`).toBe(true);
     for (const r of [null, 'Сперва почини', 'Эту вещь перекатывать больше нельзя', 'Уникальные вещи не перекатываются', 'У обычной вещи нечего перекатывать',
       'Кузнецу не хватит свойств на форму этой вещи', 'Форма без цены — кузнец её сейчас не куёт']) expect(rrs.has(r), `перекатка: ${r}`).toBe(true);
     expect(forge.some((c) => c.gold.reroll === null), 'перекатка формы без цены — без числа').toBe(true);
-    expect(forge.some((c) => c.upgrade === null && Object.keys(c.cost).length >= 3), 'лестница сырья редкой').toBe(true);
+    expect(forge.some((c) => c.upgrade === null && Object.keys(c.cost).length >= 3), 'основа подъёма оружия по деталям + расходник').toBe(true);
+    expect(forge.some((c) => Object.keys(c.rerollEssence).length > 0), 'эссенция перекатки').toBe(true);
     // ⭐ U3: пупсик — команда во вторую руку, обычная и каждая причина отказа ядра.
     const equip = equipCases();
     const results = equip.flatMap((e) => e.checks.map((c) => c.result));
@@ -423,16 +435,28 @@ describe('unityTownGolden — продюсер эталона (пишет __gold
         'craft-materials': reg.get('craft-materials').map((m) => pick(m, ['id', 'name', 'family', 'tier', 'enabled', 'sellPrice'])),
         'items.base': reg.get('items.base').map((b) => pick(b, ['id', 'kind', 'enabled', 'slot', 'minTier', 'maxTier', 'baseStats', 'weaponClass', 'hands', 'attackType', 'damageKind'])),
         'item-tiers': reg.get('item-tiers').map((t) => pick(t, ['id', 'name', 'minItemLevel', 'statMult', 'reqMult', 'enabled'])),
-        'salvage-rules': reg.get('salvage-rules').map((r) => ({ ...pick(r, ['id', 'enabled', 'kind', 'weaponClass', 'armorClass', 'slot']), yields: (r.yields ?? []).map((y) => pick(y, ['materialId'])) })),
-        'weapon-parts': reg.get('weapon-parts').map((p) => pick(p, ['id', 'enabled', 'slot', 'classes', 'hands', 'stepMin', 'stepMax', 'rarity', 'geom'])),
-        'weapon-anatomy': reg.get('weapon-anatomy').map((a) => pick(a, ['id', 'enabled', 'keySlot'])),
+        'salvage-rules': reg.get('salvage-rules').map((r) => ({ ...pick(r, ['id', 'enabled', 'kind', 'weaponClass', 'armorClass', 'slot']), yields: (r.yields ?? []).map((y) => pick(y, ['materialId', 'min', 'max'])) })),
+        // ⭐ §7 (06.10): основа подъёма оружия — семьи его деталей (`partFamily`: своя у варианта или гнезда анатомии), а у вещи без записанных
+        // деталей (стартовый набор) — детали выводом от uid (`deriveParts`: ключевые формы базы по таблице типов и тегам) — поэтому анатомия,
+        // типы и теги/семьи деталей целиком.
+        'weapon-parts': reg.get('weapon-parts').map((p) => pick(p, ['id', 'enabled', 'slot', 'classes', 'hands', 'stepMin', 'stepMax', 'rarity', 'geom', 'family', 'tags'])),
+        'weapon-anatomy': reg.get('weapon-anatomy'),
+        'weapon-types': reg.get('weapon-types'),
         affixes: reg.get('affixes').map((a) => pick(a, ['id', 'enabled', 'kind', 'group', 'onMagic', 'onRare', 'appliesTo', 'exclude', 'stat', 'tiers', 'mods', 'proc'])),
         'mastery-tree': { nodes: fees.nodes },
         balance: (() => {
           const b = reg.get('balance');
           return {
-            forgePrices: b.forgePrices, loot: { baseRoll: b.loot.baseRoll }, salvage: { rarityTier: b.salvage.rarityTier },
-            craft: { tierFromParts: b.craft.tierFromParts, formMult: b.craft.formMult, rarityWeight: b.craft.rarityWeight },
+            // ⭐ §7 (06.10): подъём и починка — по СТУПЕНИ, а не по редкости: лестницы `salvage.rarityTier` / `forgePrices.ladderByRarity` больше
+            // нет. Цена подъёма — верх вилки разбора вещи как находки целевой ступени (рецепт `salvage.recipeByTier`, единицы деталей
+            // `craft.salvage.units`, правила `salvage-rules` с вилками) × `forgePrices.upgradeMaterials.baseShare` + расходник I; починка —
+            // `forgePrices.repairMaterials`. Порт Unity (`DmTown.UpgradeCost`) переводится на эти ключи (или берёт цену из кадра сервера).
+            forgePrices: b.forgePrices, loot: { baseRoll: b.loot.baseRoll }, salvage: b.salvage,
+            craft: {
+              tierFromParts: b.craft.tierFromParts, formMult: b.craft.formMult, rarityWeight: b.craft.rarityWeight, salvage: b.craft.salvage,
+              // D4: скупка скованного — по полу выхода переплавки (`meltReturn`: доля `melt.share` заплаченного, без записи — единицы гнёзд).
+              cost: { essence: b.craft.cost.essence, units: b.craft.cost.units }, foundEvenness: b.craft.foundEvenness, melt: b.craft.melt,
+            },
             inventory: b.inventory, skillRespecCostPerPoint: b.skillRespecCostPerPoint, passiveRespecCostPct: b.passiveRespecCostPct,
             passiveRankCostMult: b.passiveRankCostMult,
           };

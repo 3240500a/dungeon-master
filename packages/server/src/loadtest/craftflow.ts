@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import pg from 'pg';
 import {
   Cell, ConfigRegistry, CRAFT_SLOT_LIST, FIND_ORIGINS, applyWorldDelta, availableMaterials, canSalvageItem, craftWeapon,
-  decodeWorldFrame, emptySnapshot, enchantCost, findPath, normalizeJournal, salvageMean, salvageRange, WIRE_FULL,
+  decodeWorldFrame, emptySnapshot, enchantCost, enchantMaterials, ESSENCE_ID, findPath, normalizeJournal, salvageMean, salvageRange, WIRE_FULL,
   type CraftInput, type CraftJournal, type FloorInit, type Item, type PlayerInput, type SaveState, type ServerFrame,
   type TownCommand, type WorldSnapshot,
 } from '@dm/shared';
@@ -431,6 +431,8 @@ async function main(): Promise<void> {
     const stRow = (await db.query<{ data: { materials?: Record<string, number> } }>('SELECT data FROM account_stash WHERE user_id = $1', [userId])).rows[0];
     const wallet = { ...(stRow?.data.materials ?? {}) };
     for (const [id, n] of Object.entries(lack)) wallet[id] = (wallet[id] ?? 0) + n;
+    // ⭐ §6.2: зачарование тратит и эссенцию — засеваем с запасом на шаг 4.
+    wallet[ESSENCE_ID] = (wallet[ESSENCE_ID] ?? 0) + 100;
     await db.query(`UPDATE account_stash SET data = jsonb_set(data, '{materials}', $2::jsonb), version = version + 1 WHERE user_id = $1`,
       [userId, JSON.stringify(wallet)]);
     console.log(`\n[3] в базу (герой вне игры, версия ${v0}): золото ${SEED_GOLD}, недостающее сырьё ${JSON.stringify(lack)}`);
@@ -458,7 +460,7 @@ async function main(): Promise<void> {
     await sleep(600);   // лимит кузницы (запас 5, +2/с) — честный клиент чаще не жмёт
     const eCost = enchantCost(reg, crafted!, 'magic');
     const gold1 = c.save!.gold;
-    const re = await c.cmd({ cmd: 'forgeEnchant', uid: rc.uid!, rarity: 'magic', maxGold: eCost });
+    const re = await c.cmd({ cmd: 'forgeEnchant', uid: rc.uid!, rarity: 'magic', maxGold: eCost, maxMaterials: enchantMaterials(reg, crafted!, 'magic') });
     const ench = c.save!.inventory.find((i) => i.uid === re.uid);
     check(re.ok && ench?.rarity === 'magic' && ench.affixes.length > 0, `forgeEnchant ok: ${ench?.rarity}, аффиксов ${ench?.affixes.length ?? 0} (${re.reason ?? 'ok'})`);
     check(c.save!.gold === gold1 - eCost, `зачарование стоило ровно ${eCost}: ${gold1} → ${c.save!.gold}`);

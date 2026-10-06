@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 import {
   CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, ConfigRegistry, FORM_UNPRICED, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, buildCraftShell,
   bladeStats, clampStep, craftFits, craftMissing, craftTiers, craftWeapon, createRng, debuffLabel, defaultParts, describeCost, describeItem,
-  emptyJournal, enchantCost, enchantItem, enchantSlots, familiesOf, finishOf, fullJournal, generateItem, itemFromBaseId, keySlotOf,
+  emptyJournal, enchantCost, enchantItem, enchantMaterials, enchantSlots, familiesOf, finishOf, fullJournal, generateItem, itemFromBaseId, keySlotOf,
   keyVariantsByBase, materialItem, partById, rangeLabel, rolledFormMult, sketchable, slotName, slotSuffix, statusKindOf, stepLabel,
   tierOfSteps, variantsFor, weaponLookSig,
   type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item, type ItemLabels, type Rarity, type WeaponPart,
@@ -97,12 +97,11 @@ const SRC: [string, string][] = [
   [PANEL, "root.append(mk('div', `color:${COLORS.dim};font-size:11.5px;margin-bottom:10px`, fams[0] === 2 ? 'Семейство одно: двуручное' : 'Семейство одно: одноручное'));"],
   [PANEL, 'const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 };'],
   [PANEL, 'const pv = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials });'],
-  // ⭐ 06.10: ступень нового окна по журналу (`journalDefaultStep`) — её зовут кнопки класса и семейства тем же журналом окна
-  [PANEL, 'let k = 2;'],
-  [PANEL, 'while (k > 1 && tierOfSteps(reg, all(k)).tier > cap) k--;'],
-  [PANEL, 'const step = journal ? journalDefaultStep(reg, journal) : 2;'],
-  [PANEL, 'Object.assign(st, initialCraftState(reg, a.id, undefined, j)); draw();'],
-  [PANEL, 'Object.assign(st, initialCraftState(reg, st.weaponClass, h, j)); draw();'],
+  // ⭐ D3 (06.10): ворот ступени у ковки нет — новое окно всегда на эталонной ст. 2, журнал на неё не влияет (прежний `journalDefaultStep`
+  // прижимал её к потолку журнала); кнопки класса и семейства открывают окно без журнала
+  [PANEL, "return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, 2) ?? blankParts(), crafted: null, message: '' };"],
+  [PANEL, 'Object.assign(st, initialCraftState(reg, a.id)); draw();'],
+  [PANEL, 'Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw();'],
   [PANEL, 'const why = idle || pv.reason;'],
   [PANEL, "type?.ok ? type.name : '—'"],
   [PANEL, '`${tiers[tier]?.id} ${tiers[tier]?.name}`'],
@@ -171,8 +170,15 @@ const SRC: [string, string][] = [
   [PANEL, ": Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? 'Этой вещи некуда принять свойства'"],
   [PANEL, ": !fit.fillable ? 'Кузнецу не хватит свойств на форму этой вещи'"],
   [PANEL, ': rolledFormMult(reg, item, r) === undefined ? FORM_UNPRICED   // R17-03: у катаемой формы нет цены — сервер откажет'],
-  [PANEL, ": host.gold() < cost ? `Недостаточно золота: нужно ${cost}` : '';"],
-  [PANEL, "const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`;"],
+  // ⭐ §6.2: зачарование тратит и эссенцию — строка нехватки после золота, количество в подписи кнопки, согласие `maxMaterials` хозяину
+  [PANEL, 'const ess = enchantMaterials(reg, item, r);'],
+  [PANEL, 'const essLack = Object.fromEntries(Object.entries(ess).filter(([id, n]) => (host.wallet()[id] ?? 0) < n).map(([id, n]) => [id, n - (host.wallet()[id] ?? 0)]));'],
+  [PANEL, ": host.gold() < cost ? `Недостаточно золота: нужно ${cost}`"],
+  [PANEL, ": Object.keys(essLack).length ? `Не хватает материалов: ${describeCost(reg, essLack)}` : '';"],
+  [PANEL, 'const essN = Object.values(ess)[0] ?? 0;'],
+  [PANEL, "const essHave = host.wallet()[Object.keys(ess)[0] ?? ''] ?? 0;"],
+  [PANEL, "const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${essN > 0 ? ` · эссенция ${essN} (есть ${essHave})` : ''}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`;"],
+  [PANEL, "const b = button(label, () => act('enchant', () => host.enchant(item, r, cost, ess), (res) => {"],
   [PANEL, "st.message = res.ok ? `Зачарована: ${res.item?.name ?? item.name}` : res.unknown ? res.reason ?? 'Нет ответа от кузнеца' : `Не вышло: ${res.reason}`;"],
   [PANEL, "btns.append(button(st.busy === 'equip' ? '⏳ надеваю…' : 'Надеть', () => act('equip', () => host.equip!(item), (res) => {"],
   [PANEL, "st.message = res.ok ? 'Надето' : res.unknown ? res.reason ?? 'Нет ответа' : `Не вышло: ${res.reason}`;"],
@@ -196,7 +202,7 @@ const SRC: [string, string][] = [
   [TAB, "return ok(cls) ? cls : ok('sword') ? 'sword' : reg.get('weapon-anatomy').map((a) => a.id).find(ok) ?? 'sword';"],
   [TAB, "const ok = (c: string | undefined): c is string => !!c && !!anatomyOf(reg, c) && forgeableFamilies(reg, c).length > 0;"],
   [FORGE, "[['work', '🔨 Работа'], ['craft', '⚒ Ковка'], ['buy', '🛒 Купить']] as const,"],
-  [FORGE, "body.append(note('Кузнец ещё не куёт', 'Ковка из деталей откроется позже. Разбор найденного оружия у кузнеца уже открывает его детали в журнале.'"],
+  [FORGE, "body.append(note('Кузнец ещё не куёт', 'Ковка из деталей откроется позже. Разбор у кузнеца уже пополняет каталог: тип и детали любого оружия, снаряжение.'"],
   [FORGE, "+ (sketches > 0 ? ` Эскизов: ${sketches} — здесь откроешь ими детали на выбор, когда кузнец начнёт ковать.` : '')));"],
   [FORGE, "body.append(stashLoad === 'wait' ? note('Кузнец листает журнал…', '')"],
   [FORGE, ": lostNote('Журнал не загрузился', 'Сервер не отдал сундук аккаунта, а без журнала кузнец не знает, что открыто.'));"],
@@ -615,7 +621,9 @@ function stateCases() {
       out.push({ op: 'init', cls, hands: hands ?? null, out: snap(init) });
       // ⭐ 06.10: окно игры открывается с журналом — ступень не выше его потолка (`journalDefaultStep`)
       for (const [jn, jj] of [...Object.entries(JOURNALS), ...Object.entries(INIT_JOURNALS)]) {
-        out.push({ op: 'init', cls, hands: hands ?? null, journal: jn, out: snap(initialCraftState(reg, cls, hands, jj)) });
+        // ⭐ D3: журнал на ступень окна больше не влияет — случаи с журналом остаются, чтобы порт Unity снял прежний прижим к потолку.
+        void jj;
+        out.push({ op: 'init', cls, hands: hands ?? null, journal: jn, out: snap(initialCraftState(reg, cls, hands)) });
       }
       for (const jn of Object.keys(JOURNALS)) {
         const st = initialCraftState(reg, cls, hands);
@@ -841,6 +849,10 @@ function view(v: ViewIn) {
     const item = st.crafted;
     left.enchant = (['magic', 'rare'] as const).map((r) => {
       const cost = enchantCost(reg, item, r);
+      const ess = enchantMaterials(reg, item, r);
+      const essLack = Object.fromEntries(Object.entries(ess).filter(([id, n]) => (wallet[id] ?? 0) < n).map(([id, n]) => [id, n - (wallet[id] ?? 0)]));
+      const essN = Object.values(ess)[0] ?? 0;
+      const essHave = wallet[Object.keys(ess)[0] ?? ''] ?? 0;
       const fit = enchantSlots(reg, item, r);
       const why = item.rarity !== 'normal' ? 'Вещь уже зачарована'
         : !craftedInBag ? 'Надетую не зачаровать: сперва сними её в сумку'
@@ -849,10 +861,11 @@ function view(v: ViewIn) {
         : Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? 'Этой вещи некуда принять свойства'
         : !fit.fillable ? 'Кузнецу не хватит свойств на форму этой вещи'
         : rolledFormMult(reg, item, r) === undefined ? FORM_UNPRICED
-        : v.gold < cost ? `Недостаточно золота: нужно ${cost}` : '';
+        : v.gold < cost ? `Недостаточно золота: нужно ${cost}`
+        : Object.keys(essLack).length ? `Не хватает материалов: ${describeCost(reg, essLack)}` : '';
       return {
-        label: st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`,
-        disabled: !!why || busy, title: why || null, cost: num(cost),
+        label: st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${essN > 0 ? ` · эссенция ${essN} (есть ${essHave})` : ''}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`,
+        disabled: !!why || busy, title: why || null, cost: num(cost), essence: ess,
       };
     });
     left.equip = craftedInBag ? { label: st.busy === 'equip' ? '⏳ надеваю…' : 'Надеть', disabled: busy } : null;
@@ -916,7 +929,10 @@ const enchantCases = () => craftedItems().map((c) => ({
   name: c.name, item: noUid(c.item),
   out: Object.fromEntries((['magic', 'rare'] as Rarity[]).map((r) => {
     const fit = enchantSlots(reg, c.item, r);
-    return [r, { cost: num(enchantCost(reg, c.item, r)), fit: fit ? { slots: fit.slots, fillable: fit.fillable } : null, form: rolledFormMult(reg, c.item, r) ?? null }];
+    return [r, {
+      cost: num(enchantCost(reg, c.item, r)), essence: enchantMaterials(reg, c.item, r),
+      fit: fit ? { slots: fit.slots, fillable: fit.fillable } : null, form: rolledFormMult(reg, c.item, r) ?? null,
+    }];
   })),
 }));
 
@@ -1076,7 +1092,9 @@ describe('unityCraftGolden — продюсер эталона окна ковк
     const reasons = new Set(previews.map((p) => p.out.reason));
     // Каждый отказ ядра ковки, который бывает в окне, — хотя бы раз.
     const want = ['Нет такой детали', 'не для этого гнезда', 'не подходит этому семейству', 'куётся только из ступеней', 'не задаёт тип',
-      'не открыт: разбери', 'ещё не открыта', 'не бывает выше', 'кузнец сейчас не куёт', 'Материал ещё не в игре', 'Кузнец ещё не работал', 'Мифическую ступень'];
+      'не открыт: разбери', 'ещё не открыта', 'не бывает выше', 'кузнец сейчас не куёт', 'Материал ещё не в игре'];
+    // ⭐ D3: ворот ступени у ковки нет — отказов «Кузнец ещё не работал со ступенью…» и «Мифическую ступень кузнец откроет…» не бывает.
+    expect([...reasons].some((r) => /не работал со ступенью|Мифическую ступень/.test(r ?? '')), 'ворота ступени').toBe(false);
     for (const w of want) expect([...reasons].some((r) => r?.includes(w)), `отказ «${w}»`).toBe(true);
     expect(previews.filter((p) => p.out.ok).length, 'собранных предпросмотров').toBeGreaterThan(200);
     expect(previews.some((p) => p.out.bake && (p.out.bake.notes as string[]).length > 0), 'оговорки запекания').toBe(true);

@@ -1,5 +1,6 @@
 import {
-  ConfigRegistry, configSchemas, defaultConfigData, buffTimingIssues, CONFIG_CROSS_KEYS, type ConfigKey, type BuffTimingIssue,
+  ConfigRegistry, configSchemas, defaultConfigData, configCrossIssues, crossIssuesWorse, CONFIG_CROSS_KEYS, ESSENCE_ID, shopTierCap,
+  type ConfigCrossIssue, type ConfigKey,
 } from '@dm/shared';
 import { counters } from './net/metrics.js';
 import { buildCandidate, candidateText, type ConfigCandidate } from './configCandidate.js';
@@ -32,7 +33,9 @@ import { buildCandidate, candidateText, type ConfigCandidate } from './configCan
  * (пишется, опечатка) основой не становится (как R15-05); его перечитывает следующее применение, а ручка «в файл» такую таблицу не пишет
  * поверх диска (409, `fileMatches`).
  * ⭐ R22-06: проба «в файл» отказывает слою файлов, только если правка вносит в него НОВОЕ нарушение правила поверх таблиц или углубляет
- * лежащее (`filesWorse`): уже лежащее (старт принял с инцидентом) не запирает правки чужих таблиц.
+ * лежащее (`filesWorse`): уже лежащее (старт принял с инцидентом) не запирает правки чужих таблиц. ⭐ Слой файлов проверяется ВСЕМИ
+ * правилами поверх таблиц (`configCrossIssues`: время баффа, рецепт разбора, цены сырья D4), а не одним временем баффа: прежде файл
+ * `balance`/`craft-materials`, годный только вместе с оверрайдом базы по правилу разбора, ложился в git молча.
  */
 export interface LiveConfigDeps {
   config: ConfigRegistry;
@@ -89,6 +92,29 @@ export interface LiveConfig {
   trialReset(key: string): Promise<string | null>;
 }
 
+/**
+ * ⭐ ДРЕЙФ ЭКОНОМИКИ РАЗБОРА В ЖИВОМ КОНФИГЕ (предложение «Разбор, сырьё и чары» §14.4): то, что схема таблицы пропускает, а экономику ломает
+ * молча. Оверрайды базы хранятся ЦЕЛЫМИ таблицами: `craft-materials`, сохранённый до эссенции, приводится при сборке
+ * (`upgradeStoredOverride`), но живой конфиг без эссенции — разбор её не даёт, чары и перекатка её не просят, — это инцидент; рецепт разбора,
+ * отличный от файла, — предупреждение (правка хозяина законна, но «сорт = ступень» обязан держать ровно файл, §14.4); потолок лавки, которого
+ * нет среди ступеней, — инцидент: лавка закрыта запасной ступенью (`shopTierCap`), а не без лимита. Выключенная эссенция — решение хозяина
+ * (чары за одно золото), предупреждение. `files` — основа сборки (файлы данных, как на диске).
+ */
+export function economyDrift(reg: ConfigRegistry, files: Record<string, unknown> = defaultConfigData): { incident: boolean; line: string }[] {
+  const out: { incident: boolean; line: string }[] = [];
+  const ess = reg.get('craft-materials').find((m) => m.id === ESSENCE_ID);
+  if (!ess) out.push({ incident: true, line: `в живом конфиге нет сырья «${ESSENCE_ID}» (Чародейская эссенция): разбор её не даёт, чары и перекатка её не просят — сбросить или пересохранить оверрайд craft-materials (npm run db:repair -- --fix)` });
+  else if (!ess.enabled) out.push({ incident: false, line: `Чародейская эссенция («${ESSENCE_ID}») выключена в craft-materials: разбор её не даёт, а чары и перекатка идут за одно золото` });
+  const file = configSchemas.balance.safeParse(files.balance);
+  const recipe = reg.get('balance').salvage.recipeByTier;
+  if (file.success && JSON.stringify(file.data.salvage.recipeByTier) !== JSON.stringify(recipe)) {
+    out.push({ incident: false, line: `рецепт разбора balance.salvage.recipeByTier живого конфига (${JSON.stringify(recipe)}) не равен файлу (${JSON.stringify(file.data.salvage.recipeByTier)}) — оверрайд balance правит сорта разбора` });
+  }
+  const cap = shopTierCap(reg);
+  if (cap.fallback) out.push({ incident: true, line: `потолок лавки balance.shop.maxTier «${reg.get('balance').shop.maxTier}» — нет такой ступени в item-tiers: лавка закрыта по запасной ступени «${cap.id}»` });
+  return out;
+}
+
 export function liveConfig(deps: LiveConfigDeps): LiveConfig {
   const { config } = deps;
   const log = deps.log ?? ((s: string) => console.log(s));
@@ -121,6 +147,9 @@ export function liveConfig(deps: LiveConfigDeps): LiveConfig {
     for (const [key, lines] of Object.entries(c.fileFixes)) incident(`[dm-server] ИНЦИДЕНТ: ${candidateText.fileFixed(key, lines)}`);
     if (c.crossLeft.length) incident(`[dm-server] ИНЦИДЕНТ: ${candidateText.crossLeft(c.crossLeft)}`);
     for (const [key, lines] of Object.entries(c.fixes)) warn(`[dm-server] ${candidateText.fixed(key, lines)}`);
+    // ⭐ Сторожа экономики разбора (предложение §14.4): живой конфиг — файлы плюс ЦЕЛЫЕ таблицы оверрайдов, и таблица, сохранённая до правила,
+    // молча возвращает старую экономику без единой ошибки схемы.
+    for (const d of economyDrift(config, base())) (d.incident ? incident : warn)(`[dm-server] ${d.incident ? 'ИНЦИДЕНТ: ' : ''}${d.line}`);
     // ГОВОРИМ ВСЛУХ, что перекрыто. Оверрайд из редактора живёт в БД и переживает рестарт, поэтому
     // «правлю файл, а везде старое» выглядит как мистика, пока не увидишь эту строчку.
     if (keys.length) log(`[dm-server] поверх файлов лежат оверрайды редактора: ${keys.join(', ')}`);
@@ -131,24 +160,23 @@ export function liveConfig(deps: LiveConfigDeps): LiveConfig {
     deps.changed();
   };
   /**
-   * ⭐ R22-06: нарушения правила поверх таблиц у СЛОЯ ФАЙЛОВ `layer` (без оверрайдов базы) — со строкой и рангом, чтобы сравнить «до» и
-   * «после» правки. Разбираются только таблицы правила (схема уже проверена строгой пробой).
+   * ⭐ R22-06: нарушения правил поверх таблиц у СЛОЯ ФАЙЛОВ `layer` (без оверрайдов базы) — со строкой и глубиной, чтобы сравнить «до» и
+   * «после» правки. Разбираются только таблицы правил (схема уже проверена строгой пробой). `touched` — правленые таблицы: только их правила.
    */
-  const layerIssues = (layer: Record<string, unknown>): BuffTimingIssue[] => {
+  const layerIssues = (layer: Record<string, unknown>, touched?: readonly string[]): ConfigCrossIssue[] => {
     const reg = new ConfigRegistry();
     reg.reload(Object.fromEntries(CONFIG_CROSS_KEYS.map((k) => [k, layer[k]])), { cross: false });
-    return buffTimingIssues({ balance: reg.get('balance'), 'skill-tree': reg.get('skill-tree'), 'skill-inserts': reg.get('skill-inserts') });
+    return configCrossIssues((k) => reg.get(k), touched);
   };
   /**
-   * ⭐ R22-06: что правка `changes` вносит в слой файлов НОВОГО по правилу поверх таблиц: строка, которой среди нарушений не было, или та же, но
-   * углублённая — первый негодный ранг раньше или нехватка отката на нём больше. Правка, не трогающая таблиц правила, — ничего.
+   * ⭐ R22-06: что правка `changes` вносит в слой файлов НОВОГО по правилам поверх таблиц: строка, которой среди нарушений не было, или та же, но
+   * углублённая (`crossIssuesWorse`: у баффа — первый негодный ранг раньше или нехватка отката на нём больше; у разбора — сырьё дороже вещи
+   * сильнее, строка рецепта дальше от своей ступени). Правка, не трогающая таблиц правил, — ничего.
    */
-  const filesWorse = (changes: Record<string, unknown>): BuffTimingIssue[] => {
-    if (!Object.keys(changes).some((k) => (CONFIG_CROSS_KEYS as readonly string[]).includes(k))) return [];
-    const was = layerIssues(base());
-    const gap = (i: BuffTimingIssue): number => i.floor - i.cooldown;
-    return layerIssues({ ...base(), ...changes }).filter((i) => !was.some((b) => b.table === i.table && b.id === i.id
-      && (b.rank < i.rank || (b.rank === i.rank && gap(i) <= gap(b) + 1e-9))));
+  const filesWorse = (changes: Record<string, unknown>): ConfigCrossIssue[] => {
+    const touched = Object.keys(changes);
+    if (!touched.some((k) => (CONFIG_CROSS_KEYS as readonly string[]).includes(k))) return [];
+    return crossIssuesWorse(layerIssues(base(), touched), layerIssues({ ...base(), ...changes }, touched));
   };
   const trial = async (changes: Record<string, unknown>, opts?: { files?: boolean }): Promise<string | null> => {
     const c = await candidate();   // чтение базы — до проб: его отказ бросается (не «данные негодны»)
@@ -160,8 +188,8 @@ export function liveConfig(deps: LiveConfigDeps): LiveConfig {
     const worse = filesWorse(changes);
     if (!worse.length) return null;
     return `Файлы данных вместе не проходят правила поверх таблиц без оверрайдов базы (файл уходит в git и на деплой — годным только из-за них он быть не должен; `
-      + `нарушение, уже лежащее в файлах, правке не мешает — мешает новое или углублённое). Конфиг "${worse[0]!.table}" не прошёл валидацию:\n`
-      + worse.map((i) => `${i.table}: ⭐ D4 правило баффа: ${i.msg}`).join('\n');
+      + `нарушение, уже лежащее в файлах, правке не мешает — мешает новое или углублённое). Конфиг "${worse[0]!.key}" не прошёл валидацию:\n`
+      + worse.map((i) => `${i.key}: ${i.msg}`).join('\n');
   };
   /** ⭐ R22-02: применения файлов наблюдателем — по одному: каждое берёт основу, оставленную прежним. */
   let applying: Promise<unknown> = Promise.resolve();
@@ -180,8 +208,8 @@ export function liveConfig(deps: LiveConfigDeps): LiveConfig {
       if (!taken.length) return { taken, refused };
       if (taken.some((k) => (CONFIG_CROSS_KEYS as readonly string[]).includes(k))) {
         // Слой файлов сам по себе нарушает правило: здесь его может держать оверрайд базы, а на деплое (другая база) старт приведёт таблицу.
-        const alone = layerIssues(base());
-        if (alone.length) warn(`[dm-server] файлы данных сами по себе (без оверрайдов базы) нарушают правило поверх таблиц (⭐ D4) — на деплое старт их зажмёт: ${alone.map((i) => `${i.table}: ${i.msg}`).join(' | ')}`);
+        const alone = layerIssues(base(), taken);
+        if (alone.length) warn(`[dm-server] ${candidateText.filesAlone(alone)}`);
       }
       const stored = await deps.readOverrides();
       for (const key of taken) {

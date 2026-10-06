@@ -84,9 +84,9 @@ function measureFloor(reg: ConfigRegistry, k: Knobs): FloorPay {
       out.lvlHi = Math.max(out.lvlHi, def.level);
       if (rng.chance(loot.goldChance)) out.gold += Math.max(1, Math.round(rng.int(1, 5 + def.level * 2) * diff.goldMult));
       if (rng.chance(loot.potions.chance)) out.potions++;
-      if (rng.chance(loot.materials.chance)) {
-        const g = salvageFromMonster(def.gearRolls, gearById, rng,
-          { rarity: def.rarity, rarityTier: bal.salvage.rarityTier, knownMaterial: known });
+      // Как у ядра (`GameSession.killMonster`): тело даёт I сорт, у босса (уник) — всегда, бросок шанса делается и у него.
+      if (rng.chance(loot.materials.chance) || def.rarity === 'unique') {
+        const g = salvageFromMonster(def.gearRolls, gearById, rng, { rarity: def.rarity, knownMaterial: known });
         for (const [id, n0] of Object.entries(g)) {
           const raw = n0 * loot.materials.mult, whole = Math.floor(raw);
           const n = whole + (rng.chance(raw - whole) ? 1 : 0);

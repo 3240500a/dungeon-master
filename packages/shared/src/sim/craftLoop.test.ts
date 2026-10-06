@@ -6,18 +6,26 @@ import {
   variantsFor, type CraftInput,
 } from '../formulas/craft.js';
 import { CRAFT_SLOT_LIST, keySlotOf } from '../formulas/craftType.js';
-import { craftAction, enchantAction, fieldSalvage, forgeSalvage, sellItem, shopSellPrice } from '../economy/townActions.js';
+import {
+  craftAction, enchantAction, fieldSalvage, forgeGold, forgeSalvage, rerollMaterials, sellItem, shopSellPrice,
+} from '../economy/townActions.js';
+import { meetsRequirements } from '../formulas/stats.js';
 import { availableMaterials, depositCarried, materialItem, type MaterialCost } from '../economy/materials.js';
 import { emptyStash } from '../economy/stashActions.js';
 import { addToInventory } from '../inventory/grid.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { newBotSave, levelUpBotTo } from './playerBot.js';
-import { bestCraft, considerDrop, visitForge, visitShop, scoreItem, type FieldCarry } from './economy.js';
+import {
+  bestCraft, carryPriority, considerDrop, forgeSalvageGain, rerollGain, visitForge, visitShop, scoreItem, type FieldCarry, type ForgeResult,
+} from './economy.js';
 import { DEFAULT_BUILD } from './types.js';
 import { runSessionSim } from '../session/runner.js';
 import type { AccountStash } from '../types/stash.js';
 import type { Item, CraftParts } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
+/** §6.2: зачарование и перекатка тратят эссенцию — кошелёк сундука с запасом (тесту важно не это). */
+const essWallet = (): Record<string, number> => ({ [ESSENCE_ID]: 1_000_000 });
 
 /**
  * K7 — СИМ И БОТ КОВКИ. Главный сторож: «сковал → переплавил» и «сковал → продал» (в том числе через
@@ -91,7 +99,7 @@ describe('K7: ковка не прачечная — 1000 петель дейс�
       if (path === 'enchant-sell' || path === 'enchant-melt') {
         const r = (['rare', 'magic'] as const).find((x) => enchantSlots(reg, item, x)?.fillable && enchantCost(reg, item, x) > 0);
         if (r) {
-          const e = enchantAction(reg, save, uid, r, rng);
+          const e = enchantAction(reg, save, uid, r, rng, undefined, essWallet());
           expect(e.ok, e.reason).toBe(true);
           uid = e.uid!;
         }
@@ -107,7 +115,7 @@ describe('K7: ковка не прачечная — 1000 петель дейс�
       } else {
         const m = forgeSalvage(reg, save, stash, uid, rng);
         expect(m.ok, m.reason).toBe(true);
-        expect(m.unlocked, 'переплавка ничего не открывает').toBeUndefined();
+        expect((m.unlocked ?? []).filter((x) => !/^(Тип|Деталь) «/.test(x)), 'переплавка пишет в каталог только тип и детали').toEqual([]);
       }
       depositCarried(save.inventory, wallet);
       done[path]++;
@@ -121,9 +129,10 @@ describe('K7: ковка не прачечная — 1000 петель дейс�
       expect(save.gold + worth(have1), `${path}: ценность (золото + сырьё по sellPrice) только падает`).toBeLessThan(gold0 + worth(have0));
     }
     for (const p of paths) expect(done[p], `путь ${p} пройден`).toBeGreaterThan(100);
-    // Журнал: переплавка и продажа не открывают ничего — растёт только кодекс «сковал».
+    // Журнал: переплавка пишет в каталог тип и детали скованного (D1: любая разобранная у кузнеца вещь), продажа — ничего; кодекс
+    // «видел», потолок, жалость и мифики не растут — растёт только кодекс «сковал».
     const j = normalizeJournal(stash.forgeJournal);
-    expect({ ...j, typesForged: [] }).toEqual({ ...journal0, typesForged: [] });
+    expect({ ...j, typesForged: [], bases: [], variants: [] }).toEqual({ ...journal0, typesForged: [], bases: [], variants: [] });
   });
 });
 
@@ -154,14 +163,15 @@ describe('K7: бот у кузницы — ковка авторитетными
     expect(out.goldCraft, 'золото ковки — по цене плана').toBe(plan.cost.gold);
     expect(out.matsOutCraft).toBe(Object.values(plan.cost.materials).reduce((a, b) => a + b, 0));
     expect(save.gold, 'сальдо золота сходится').toBe(gold0 - out.goldCraft - out.goldEnchant - out.spent + out.sold);
-    // Снятое стартовое кузнец не разбирает (R3-04: комплект бесплатен и бесконечен) — бот сдаёт его в лавку за 1.
+    // Снятое стартовое кузнец разбирает ТОЛЬКО В КАТАЛОГ (R3-04 + D1: комплект бесплатен и бесконечен — сырья с него нет).
     expect(old.origin).toBe('start');
-    expect(out.salvaged).toBe(0);
-    expect(out.sold, 'стартовое продано за 1').toBe(1);
-    expect(normalizeJournal(stash.forgeJournal).bases, 'журнал стартовым не открывается').not.toContain(old.baseId);
+    expect(out.salvaged, 'стартовое — в каталог').toBe(1);
+    expect(out.matsIn, 'сырья стартовое не даёт').toBe(0);
+    expect(out.sold).toBe(0);
+    expect(normalizeJournal(stash.forgeJournal).bases, 'тип стартового — в каталоге').toContain(old.baseId);
     const have1 = availableMaterials(save.inventory, stash.materials!);
     const spent = Object.values(have0).reduce((a, b) => a + b, 0) - Object.values(have1).reduce((a, b) => a + b, 0);
-    expect(spent, 'сырьё: списано на ковку минус пришло разбором/переплавкой').toBe(out.matsOutCraft + out.matsOutForge - out.matsIn - out.matsMelt);
+    expect(spent, 'сырьё: списано на ковку и чары (эссенция) минус пришло разбором/переплавкой').toBe(out.matsOutCraft + out.matsOutForge + out.matsOutEnchant + out.matsOutReroll - out.matsIn - out.matsMelt);
     expect(save.inventory.filter((i) => i.kind !== 'material'), 'в сумке не осталось вещей').toEqual([]);
     expect(stash.craftNonces!.length, 'ключ записан').toBe(1);
 
@@ -326,6 +336,168 @@ describe('K7: бот в поле — ноша к кузнецу и разбор 
   });
 });
 
+describe('⭐ бот по правилам «Разбор, сырьё и чары»: перекатка, ноша к кузнецу, крафтер', () => {
+  const big = { strength: 900, dexterity: 900, intelligence: 900, vitality: 900 };
+  const helmBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.slot === 'helm' && b.enabled !== false)!;
+  const chestBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.slot === 'chest' && b.enabled !== false)!;
+  const gen = (baseId: string, rarity: 'normal' | 'magic' | 'rare', seed: number, itemLevel = 20): Item =>
+    shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+      { dropBias: 1, itemLevel, baseId, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rarity, origin: 'drop' }, createRng(seed)));
+  /** Герой 20-го уровня, атрибуты с запасом, на голове — редкий шлем БЕЗ свойств (перекатка заведомо выгодна). */
+  function poorHelmHero(gold = 200_000): { save: SaveState; helm: Item } {
+    const save = newBotSave(reg, 'warrior');
+    levelUpBotTo(reg, save, 20, DEFAULT_BUILD, createRng(3));
+    save.attributes = { ...big };
+    save.gold = gold;
+    const helm = { ...gen(helmBase.id, 'rare', 11), affixes: [] };
+    save.equipment.helm = helm;
+    return { save, helm };
+  }
+  const nonces = (): (() => string) => { let n = 0; return () => `bot-rr-${++n}`; };
+
+  it('⭐ перекатка: выгодна — бот платит ровно золото и эссенцию перекатки, свойства есть, счёт перекаток +1', () => {
+    const { save, helm } = poorHelmHero();
+    expect(rerollGain(reg, save, 'helm', DEFAULT_BUILD)!, 'средний бросок лучше пустых свойств').toBeGreaterThan(0);
+    const gold = forgeGold(reg, helm, 'reroll');
+    const ess = rerollMaterials(reg, helm)[ESSENCE_ID]!;
+    expect(ess).toBeGreaterThan(0);
+    const stash = emptyStash(reg);
+    stash.materials = { [ESSENCE_ID]: 100 };
+    const gold0 = save.gold;
+    const out = visitForge(reg, save, DEFAULT_BUILD, stash, { craft: true, rng: createRng(4), nonce: nonces() });
+    expect(out.rerolled).toBe(1);
+    expect(out.goldReroll).toBe(gold);
+    expect(out.flow.reroll).toEqual({ [ESSENCE_ID]: ess });
+    expect(out.matsOutReroll).toBe(ess);
+    expect(stash.materials[ESSENCE_ID]).toBe(100 - ess);
+    expect(save.equipment.helm!.uid).toBe(helm.uid);
+    expect(save.equipment.helm!.affixes.length, 'свойства выкатились').toBeGreaterThan(0);
+    expect(save.equipment.helm!.rerolls).toBe(1);
+    expect(save.gold).toBe(gold0 - out.spent - out.goldCraft - out.goldEnchant + out.sold);
+    flowsAgree(out, 'перекатка');
+  });
+
+  it('перекатка: нет эссенции — не катает и пишет «не хватило эссенции»; золото только на запас — «не хватило золота»', () => {
+    const a = poorHelmHero();
+    const outA = visitForge(reg, a.save, DEFAULT_BUILD, emptyStash(reg), { craft: true, rng: createRng(4), nonce: nonces() });
+    expect(outA.rerolled).toBe(0);
+    expect(outA.blocked.rerollEssence).toBe(1);
+    expect(a.save.equipment.helm!.affixes).toEqual([]);
+    const b = poorHelmHero(0);
+    b.save.gold = forgeGold(reg, b.helm, 'reroll');   // на перекатку хватает, а запас на лавку (`goldReserve`) съела бы она
+    const stash = emptyStash(reg);
+    stash.materials = { [ESSENCE_ID]: 100 };
+    const outB = visitForge(reg, b.save, DEFAULT_BUILD, stash, { craft: true, rng: createRng(4), nonce: nonces() });
+    expect(outB.rerolled).toBe(0);
+    expect(outB.blocked.rerollGold).toBe(1);
+    expect(outB.blocked.rerollEssence).toBe(0);
+    expect(stash.materials[ESSENCE_ID]).toBe(100);
+  });
+
+  it('перекатка: средний бросок не лучше нынешнего — бот не платит (лучший из 40 редких шлемов)', () => {
+    const { save } = poorHelmHero();
+    let best: Item | null = null;
+    for (let k = 0; k < 40; k++) {
+      const it = gen(helmBase.id, 'rare', 100 + k);
+      save.equipment.helm = it;
+      if (!best || scoreItem(reg, save, it, DEFAULT_BUILD) > scoreItem(reg, save, best, DEFAULT_BUILD)) best = it;
+    }
+    save.equipment.helm = best!;
+    const gain = rerollGain(reg, save, 'helm', DEFAULT_BUILD)!;
+    const stash = emptyStash(reg);
+    stash.materials = { [ESSENCE_ID]: 100 };
+    const out = visitForge(reg, save, DEFAULT_BUILD, stash, { craft: true, rng: createRng(4), nonce: nonces() });
+    if (gain <= 0.05 * scoreItem(reg, save, best!, DEFAULT_BUILD)) expect(out.rerolled, `выгода ${gain}`).toBe(0);
+    expect(rerollGain(reg, save, 'weapon', DEFAULT_BUILD), 'обычная (стартовая) — перекатывать нечего').toBeNull();
+  });
+
+  it('⭐ очерёдность ноши: открытие каталога выше всего, редкая выше обычной той же базы (эссенция), уник и зелье — 0', () => {
+    const j = normalizeJournal(undefined);
+    const sword = gen('long-sword', 'normal', 5);
+    expect(carryPriority(reg, j, sword)).toBe(1e6);
+    const rare = gen(chestBase.id, 'rare', 6, 30), normal = { ...rare, uid: 'n-uid', rarity: 'normal' as const, affixes: [] };
+    expect(forgeSalvageGain(reg, rare)).toBeGreaterThan(forgeSalvageGain(reg, normal));
+    expect(carryPriority(reg, j, rare)).toBeGreaterThan(carryPriority(reg, j, normal));
+    expect(carryPriority(reg, j, normal)).toBeGreaterThan(0);
+    expect(carryPriority(reg, j, { ...rare, rarity: 'unique' })).toBe(0);
+    const potion = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+      { dropBias: 1, itemLevel: 5, baseId: 'healing-potion', tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), origin: 'drop' }, createRng(1));
+    expect(carryPriority(reg, j, potion)).toBe(0);
+  });
+
+  it('⭐ снятое ради находки ценное — к кузнецу (`carried`), а не в разбор на месте', () => {
+    const save = newBotSave(reg, 'warrior');
+    save.attributes = { ...big };
+    const old = { ...gen(chestBase.id, 'rare', 7, 30), affixes: [] };
+    save.equipment.chest = old;
+    const better = gen(chestBase.id, 'rare', 8, 30);
+    expect(scoreItem(reg, save, better, DEFAULT_BUILD)).toBeGreaterThan(scoreItem(reg, save, old, DEFAULT_BUILD));
+    const carry: FieldCarry = { journal: normalizeJournal(undefined), carryCells: 15, reserve: 0 };
+    const r = considerDrop(reg, save, better, DEFAULT_BUILD, carry);
+    expect(r.equipped).toBe(true);
+    expect(r.carried, 'снятое несём').toBe(old);
+    expect(r.sold + (r.salvaged ?? 0)).toBe(0);
+    expect(carry.carryCells).toBe(15 - old.gridW * old.gridH);
+  });
+
+  it('⭐ крафтер (`salvageAll`): не по силам — в разбор, а не в золото; без политики — в золото, как было', () => {
+    const weak = (): SaveState => {
+      const s = newBotSave(reg, 'warrior');
+      s.inventory = [];
+      s.attributes = { strength: 1, dexterity: 1, intelligence: 1, vitality: 1 };
+      return s;
+    };
+    const heavy = reg.get('items.base').filter((b) => b.kind === 'armor' && b.slot === 'chest' && b.enabled !== false)
+      .map((b, i) => gen(b.id, 'rare', 9 + i, 70)).find((it) => !meetsRequirements(it, weak().attributes))!;
+    expect(heavy, 'есть нагрудник не по силам').toBeTruthy();
+    const a = weak();
+    const ra = considerDrop(reg, a, { ...heavy }, DEFAULT_BUILD, { journal: normalizeJournal(undefined), carryCells: 0, reserve: 0 });
+    expect(ra.sold, 'по умолчанию — продажа').toBeGreaterThan(0);
+    const b = weak();
+    const rb = considerDrop(reg, b, { ...heavy }, DEFAULT_BUILD, { journal: normalizeJournal(undefined), carryCells: 0, reserve: 0, salvageAll: true });
+    expect(rb.sold).toBe(0);
+    expect(rb.salvagedItems).toBe(1);
+    expect(rb.gains?.[ESSENCE_ID] ?? 0, 'эссенция в поле — доля').toBeLessThanOrEqual(1);
+    expect(Object.values(rb.forgeMean ?? {}).reduce((x, y) => x + y, 0), 'у кузнеца было бы больше').toBeGreaterThan(Object.values(rb.gains ?? {}).reduce((x, y) => x + y, 0));
+  });
+
+  it('⭐ у кузнеца разбирается ВСЁ принесённое: броня — в каталог снаряжения, эссенция и сырьё — целиком; учёт по id сходится', () => {
+    const save = newBotSave(reg, 'warrior');
+    save.inventory = [];
+    const chest = gen(chestBase.id, 'rare', 12, 30);
+    expect(addToInventory(save.inventory, chest, reg.get('balance').inventory)).toBe(true);
+    const stash = emptyStash(reg);
+    const out = visitForge(reg, save, DEFAULT_BUILD, stash, { craft: true, rng: createRng(5), nonce: nonces() });
+    expect(out.salvaged).toBe(1);
+    expect(out.flow.salvage[ESSENCE_ID], 'редкая — 2 эссенции').toBe(2);
+    expect(normalizeJournal(stash.forgeJournal).gearSeen).toContain(chestBase.id);
+    expect(save.inventory.some((i) => i.uid === chest.uid)).toBe(false);
+    flowsAgree(out, 'броня у кузнеца');
+  });
+
+  it('лавка с ковкой (`toForge`): снятое — в сумку к кузнецу, а не на прилавок; без ковки — продаётся', () => {
+    const mk = (): SaveState => {
+      const s = newBotSave(reg, 'warrior');
+      levelUpBotTo(reg, s, 20, DEFAULT_BUILD, createRng(3));
+      s.gold = 10_000_000;
+      return s;
+    };
+    const a = mk(), b = mk();
+    const ra = visitShop(reg, a, 20, createRng(21), DEFAULT_BUILD, { toForge: true });
+    const rb = visitShop(reg, b, 20, createRng(21), DEFAULT_BUILD);
+    expect(ra.bought.length, 'лавка что-то продала').toBeGreaterThan(0);
+    expect(ra.bought.map((i) => i.baseId)).toEqual(rb.bought.map((i) => i.baseId));
+    expect(rb.sold, 'без ковки снятое продано, как было').toBeGreaterThan(0);
+    expect(ra.sold, 'с ковкой снятое не продано').toBe(0);
+    expect(a.inventory.length, 'снятое лежит в сумке').toBeGreaterThan(0);
+    expect(b.inventory.length).toBe(0);
+    // Кузница разбирает снятое (стартовое — только в каталог, а нового нет — за 1, R3-04): в сумке не остаётся вещей.
+    const out = visitForge(reg, a, DEFAULT_BUILD, emptyStash(reg), { craft: true, rng: createRng(5), nonce: nonces() });
+    expect(out.salvaged + (out.sold > 0 ? 1 : 0)).toBeGreaterThan(0);
+    expect(a.inventory.filter((i) => i.kind !== 'material')).toEqual([]);
+  });
+});
+
 /** Эталонная сборка топора первой ступени — для «скованного в руке». */
 function defaultAxe(): CraftParts {
   const keySlot = keySlotOf(reg, 'axe');
@@ -339,6 +511,20 @@ function defaultAxe(): CraftParts {
   return parts;
 }
 
+/** Сырьё по id (`flow`) сходится со счётчиками единиц, золото по статьям — с `spent`: отчёт «сорт × семья» и эссенции не врёт. */
+function flowsAgree(out: ForgeResult, tag: string): void {
+  const u = (m: MaterialCost): number => Object.values(m).reduce((a, b) => a + b, 0);
+  expect(u(out.flow.salvage), `${tag}: разбор`).toBe(out.matsIn);
+  expect(u(out.flow.melt), `${tag}: переплавка`).toBe(out.matsMelt);
+  expect(u(out.flow.craft), `${tag}: ковка`).toBe(out.matsOutCraft);
+  expect(u(out.flow.upgrade) + u(out.flow.repair), `${tag}: подъём и починка`).toBe(out.matsOutForge);
+  expect(u(out.flow.enchant), `${tag}: зачарование`).toBe(out.matsOutEnchant);
+  expect(u(out.flow.reroll), `${tag}: перекатка`).toBe(out.matsOutReroll);
+  for (const [k, m] of Object.entries(out.flow)) for (const [id, n] of Object.entries(m)) expect(n, `${tag}: ${k} ${id} — без минусов`).toBeGreaterThan(0);
+  expect(Object.keys(out.flow.reroll).every((id) => id === ESSENCE_ID), `${tag}: перекатка тратит только эссенцию`).toBe(true);
+  expect(out.spent, `${tag}: статьи золота`).toBe(out.goldRepair + out.goldUpgrade + out.goldReroll);
+}
+
 describe('K7: фаззер кузницы бота — случайные журналы, сырьё, золото и сумки', () => {
   it('⭐ 100 случайных состояний: не бросает, золото и сырьё сходятся до единицы, скованное не продаётся', () => {
     const rng = createRng(4242);
@@ -346,7 +532,7 @@ describe('K7: фаззер кузницы бота — случайные жур
     const weapons = reg.get('items.base').filter((b) => b.kind === 'weapon' && b.enabled !== false).map((b) => b.id);
     const units = (save: SaveState, st: AccountStash): number =>
       Object.values(availableMaterials(save.inventory, st.materials ?? {})).reduce((a, b) => a + b, 0);
-    let crafted = 0;
+    let crafted = 0, rerolled = 0;
     for (let i = 0; i < 100; i++) {
       const save = newBotSave(reg, rng.pick(['warrior', 'mage', 'archer', 'zastupnik', 'vyuga']));
       levelUpBotTo(reg, save, rng.int(1, 60), DEFAULT_BUILD, rng);
@@ -372,19 +558,49 @@ describe('K7: фаззер кузницы бота — случайные жур
         if (pv.item) addToInventory(save.inventory, pv.item, reg.get('balance').inventory);
       }
       if (rng.chance(0.5)) addToInventory(save.inventory, materialItem(rng.pick(mats), rng.int(1, 150), `stack-${i}`), reg.get('balance').inventory, 200);
+      // Надетое магическое и редкое (перекатка, §6.2): иногда с пустыми свойствами — тогда перекатка выгодна; эссенции — когда есть, когда нет.
+      for (let k = rng.int(0, 3); k > 0; k--) {
+        const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+          { dropBias: 2, itemLevel: rng.int(1, 80), tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rng.pick(['magic', 'rare'] as const), origin: 'drop' }, rng));
+        if (!it.slot) continue;
+        if (rng.chance(0.5)) it.affixes = [];
+        save.equipment[it.slot] = it;
+      }
+      if (rng.chance(0.5)) st.materials![ESSENCE_ID] = rng.int(0, 60);
       const gold0 = save.gold, u0 = units(save, st);
       const out = visitForge(reg, save, DEFAULT_BUILD, st, { craft: true, rng, nonce: () => `fuzz-${i}-${crafted}`, fullJournal: rng.chance(0.3) });
       crafted += out.crafted;
       expect(Number.isInteger(save.gold) && save.gold >= 0, `#${i}: золото ${save.gold}`).toBe(true);
       expect(save.gold, `#${i}: сальдо золота`).toBe(gold0 - out.spent - out.goldCraft - out.goldEnchant + out.sold);
-      expect(units(save, st), `#${i}: сальдо сырья`).toBe(u0 + out.matsIn + out.matsMelt - out.matsOutCraft - out.matsOutForge);
+      expect(units(save, st), `#${i}: сальдо сырья`).toBe(u0 + out.matsIn + out.matsMelt - out.matsOutCraft - out.matsOutForge - out.matsOutEnchant - out.matsOutReroll);
       for (const [id, n] of Object.entries(st.materials ?? {})) expect(Number.isInteger(n) && n > 0, `#${i}: ${id}=${n}`).toBe(true);
+      flowsAgree(out, `#${i}`);
+      rerolled += out.rerolled;
       expect(save.inventory.filter((it) => it.kind === 'weapon' && !it.broken), `#${i}: принесённое оружие разобрано`).toEqual([]);
       expect(st.craftNonces!.length).toBeLessThanOrEqual(32);
     }
     expect(crafted, 'фаззер дошёл и до ковки').toBeGreaterThan(5);
+    expect(rerolled, 'и до перекатки').toBeGreaterThan(5);
   });
 });
+
+/** Отчёт прогона: сырьё по id сходится с единицами по источникам и статьям, золото по статьям — с общими суммами. */
+function reportAgrees(r: ReturnType<typeof runSessionSim>): void {
+  const u = (m: Record<string, number>): number => Object.values(m).reduce((a, b) => a + b, 0);
+  const c = r.craft, m = c.materials;
+  expect(u(c.flow.in.monsters)).toBe(m.in.monsters);
+  expect(u(c.flow.in.field)).toBe(m.in.field);
+  expect(u(c.flow.in.forge)).toBe(m.in.forge);
+  expect(u(c.flow.in.melt)).toBe(m.in.melt);
+  expect(u(c.flow.out.craft)).toBe(m.out.craft);
+  expect(u(c.flow.out.upgrade) + u(c.flow.out.repair)).toBe(m.out.forge);
+  expect(u(c.flow.out.enchant)).toBe(m.out.enchant);
+  expect(u(c.flow.out.reroll)).toBe(m.out.reroll);
+  expect(c.gold.monsters).toBe(r.goldEarned);
+  expect(c.gold.sold).toBe(r.goldSold);
+  expect(c.gold.passives).toBe(r.goldOnPassives);
+  expect(c.gold.shop + c.gold.belt + c.gold.repair + c.gold.upgrade + c.gold.reroll, 'магазин + пояс + кузня').toBe(r.goldSpent);
+}
 
 describe('K7: сим на GameSession с ковкой', () => {
   it('⭐ бот куёт в настоящем прогоне; сверка сырья сходится; скованное не продаётся; сид повторяется', () => {
@@ -403,6 +619,7 @@ describe('K7: сим на GameSession с ковкой', () => {
     expect(a.craft.materials.out.craft).toBeGreaterThan(0);
     // Сверка: старт + пришло − ушло − запас = потеряно (смерть, не влезло) — не меньше нуля.
     expect(a.craft.materials.lost).toBeGreaterThanOrEqual(0);
+    reportAgrees(a);
     expect(stash.materials!['iron-1'], 'прогон не правит переданный сундук').toBe(300);
     const b = runSessionSim(reg, opts);
     expect(b.craft.crafted).toBe(a.craft.crafted);
@@ -411,6 +628,23 @@ describe('K7: сим на GameSession с ковкой', () => {
 
     // Без ковки на том же сиде — ни одной ковки, ни одного разбора у кузнеца.
     const off = runSessionSim(reg, { ...opts, craft: false });
-    expect(off.craft.crafted + off.craft.salvagedAtForge + off.craft.enchanted).toBe(0);
+    expect(off.craft.crafted + off.craft.salvagedAtForge + off.craft.enchanted + off.craft.rerolled).toBe(0);
+    reportAgrees(off);
+  });
+
+  it('⭐ крафтер (`salvageAll`): отчёт по id и по статьям золота сходится; эссенция приходит; сид повторяется', () => {
+    const save = newBotSave(reg, 'warrior');
+    levelUpBotTo(reg, save, 30, DEFAULT_BUILD, createRng(30));
+    save.gold = 5_000;
+    const opts = { classId: 'warrior', difficultyId: 'normal', seed: 31, targetLevel: 80, maxHours: 0.15, build: DEFAULT_BUILD, craft: true, salvageAll: true, save };
+    const a = runSessionSim(reg, opts);
+    reportAgrees(a);
+    expect(a.craft.salvagedAtForge + a.craft.salvagedInField, 'разбор был').toBeGreaterThan(0);
+    const ess = (a.craft.flow.in.field[ESSENCE_ID] ?? 0) + (a.craft.flow.in.forge[ESSENCE_ID] ?? 0);
+    expect(ess, 'эссенция пришла разбором').toBeGreaterThan(0);
+    expect(a.craft.materials.endByTier['эссенция'] ?? 0, 'эссенция — своей строкой, не «ступень 1»').toBeGreaterThan(0);
+    const b = runSessionSim(reg, opts);
+    expect(b.craft.flow).toEqual(a.craft.flow);
+    expect(b.craft.gold).toEqual(a.craft.gold);
   });
 });

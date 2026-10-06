@@ -141,9 +141,12 @@ describe('⚠ R9-03: отказ разбора не зависит от брос
       expect(inBag(s, `belt-${k}`)).toBe(false);
       got += units(s) + Object.values(st.materials ?? {}).reduce((a, b) => a + b, 0);   // сумка была — один пояс
     }
-    // Замысел: (2..3) × 0.4 = 1.0. Было 1.11 — повтор снимал пустые броски.
-    expect(got / N).toBeGreaterThan(0.92);
-    expect(got / N).toBeLessThan(1.08);
+    // Замысел — среднее правила × 0.4: кожа (2..3) × 0.4 = 1.0 и побочный китовый ус (0..1) × 0.4 = 0.2 (рецензия 06.10: Плечи не только с
+    // луков). Было +0.11 сверх замысла — повтор снимал пустые броски.
+    const rule = reg.get('salvage-rules').find((r) => r.id === 'a-leather')!;
+    const design = rule.yields.reduce((a, y) => a + (y.min + y.max) / 2, 0) * reg.get('balance').salvage.armorSlotMult.belt;
+    expect(got / N).toBeGreaterThan(design - 0.08);
+    expect(got / N).toBeLessThan(design + 0.08);
   });
 
   it('вещь, которой и лучший бросок не дал бы ничего, — отказ по-прежнему, и вещь цела', () => {
@@ -173,9 +176,10 @@ describe('⚠ R9-04: согласие на выход разбора видит 
   });
 
   it('⭐ вилка мелкой вещи в поле — «0–1», а не пустая: пояс, перчатки; у кузнеца — «0–2»', () => {
-    expect(salvageRange(reg, belt, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 } } });
-    expect(salvageRange(reg, gloves, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 } } });
-    expect(salvageRange(reg, belt, false)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 2 } } });
+    // Кожаная броня даёт и побочные Плечи (китовый ус, «0–1» в правиле): у мелкой вещи — «0–1» и у кузнеца, и в поле.
+    expect(salvageRange(reg, belt, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 }, 'stave-1': { min: 0, max: 1 } } });
+    expect(salvageRange(reg, gloves, true)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 1 }, 'stave-1': { min: 0, max: 1 } } });
+    expect(salvageRange(reg, belt, false)).toEqual({ ok: true, range: { 'hide-1': { min: 0, max: 2 }, 'stave-1': { min: 0, max: 1 } } });
     const sw = salvageRange(reg, sword, true);
     expect(sw.ok).toBe(true);
     expect(Object.keys(sw.range).length, 'у обычного меча в поле вилка по каждой детали').toBeGreaterThan(0);

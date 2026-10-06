@@ -1,6 +1,6 @@
 import {
   CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseOfKeyPart, baseTierRange, bladeCaption, bladeStats, clampStep,
-  craftFits, craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantSlots, familiesOf, finishOf, journalTierCap, keySlotOf, keyVariantsByBase, makePlayerModel,
+  craftFits, craftMissing, craftTiers, craftWeapon, defaultParts, describeCost, enchantCost, enchantMaterials, enchantSlots, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
   FORM_UNPRICED, partById, rangeLabel, rolledFormMult, sketchable, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
@@ -51,7 +51,8 @@ export interface CraftHost {
    * так же его сырьё (строки «Цена»).
    */
   craft(input: CraftInput, maxGold?: number, maxMaterials?: Record<string, number>): CraftReply | Promise<CraftReply>;
-  enchant(item: Item, rarity: Rarity, maxGold?: number): CraftReply | Promise<CraftReply>;
+  /** Зачаровать: `maxGold` — золото кнопки, ⭐ `maxMaterials` — её эссенция (§6.2): больше сервер не возьмёт. */
+  enchant(item: Item, rarity: Rarity, maxGold?: number, maxMaterials?: Record<string, number>): CraftReply | Promise<CraftReply>;
   /** Надеть скованное на героя (песочница — сразу, игра — командой экипировки). */
   equip?(item: Item): void | CraftReply | Promise<CraftReply>;
   /**
@@ -125,29 +126,15 @@ function blankParts(): CraftParts {
 }
 
 /**
- * ⭐ СТУПЕНЬ НОВОГО ОКНА ПО ЖУРНАЛУ (06.10): эталонная 2 (кричное железо), но не выше той, что журнал разрешает ковать
- * (`journalTierCap`). Жалоба владельца «разобрал топор — детали не открылись»: после первого разбора вещи ступени t0 детали
- * открыты, а окно вставало на «ст. 2» (это ступень вещи t2) с красным «Кузнец ещё не работал со ступенью Крепкий» и погашенной
- * «Ковать» — успех выглядел провалом. Ступень вещи из одной ступени материала k — `tierOfSteps`; журнал без единого разбора
- * (потолок −1) — самая нижняя, 1 (ковать всё равно нечего: закрыт тип).
- */
-export function journalDefaultStep(reg: ConfigRegistry, j: CraftJournal): number {
-  const cap = journalTierCap(reg, j);
-  const all = (k: number): Record<CraftSlot, { step: number }> => ({ strike: { step: k }, grip: { step: k }, bind: { step: k }, head: { step: k } });
-  let k = 2;
-  while (k > 1 && tierOfSteps(reg, all(k)).tier > cap) k--;
-  return k;
-}
-
-/**
  * Начальное состояние: эталонные детали из кричного железа (ступень 2). Семейство не задано — первое, которое кузнец
- * куёт (V-B3-06); не куётся ни одно — гнёзда пустые, окно скажет почему. С журналом (игра) — ступень не выше его потолка
- * (`journalDefaultStep`); без журнала (песочница: открыто всё) — 2, как было.
+ * куёт (V-B3-06); не куётся ни одно — гнёзда пустые, окно скажет почему.
+ * ⭐ D3 (решение владельца 06.10): ворот ступени у ковки нет — журнал на ступень окна не влияет (прежний `journalDefaultStep` прижимал её
+ * к потолку журнала, чтобы окно не вставало красным «Кузнец ещё не работал со ступенью…»: такого отказа больше нет). Не хватает
+ * сырья ст. 2 — окно говорит ровно это («Не хватает: …»).
  */
-export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', hands?: number, journal?: CraftJournal): CraftWindowState {
+export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', hands?: number): CraftWindowState {
   const h = hands ?? forgeableFamilies(reg, weaponClass)[0] ?? familiesOf(reg, weaponClass)[0] ?? 1;
-  const step = journal ? journalDefaultStep(reg, journal) : 2;
-  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, step) ?? blankParts(), crafted: null, message: '' };
+  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, 2) ?? blankParts(), crafted: null, message: '' };
 }
 
 /**
@@ -381,7 +368,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:${busy ? 'default' : 'pointer'};font-size:12px;border:1px ${idle ? 'dashed' : 'solid'} ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : busy || idle ? '#4a4a4a' : COLORS.text}`, a.name);
       if (idle) b.title = IDLE_CLASS;
       b.disabled = busy;
-      b.addEventListener('click', () => { if (on || st.busy) return; Object.assign(st, initialCraftState(reg, a.id, undefined, j)); draw(); });
+      b.addEventListener('click', () => { if (on || st.busy) return; Object.assign(st, initialCraftState(reg, a.id)); draw(); });
       clsRow.append(b);
     }
     root.append(clsRow);
@@ -393,7 +380,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
         const b = mk('button', chip(h === st.hands, busy), h === 2 ? 'Двуручное' : 'Одноручное');
         if (!defaultParts(reg, st.weaponClass, h, 2)) { b.style.borderStyle = 'dashed'; b.title = IDLE_FAMILY; }   // V-B3-06
         b.disabled = busy;
-        b.addEventListener('click', () => { if (h === st.hands || st.busy) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h, j)); draw(); });
+        b.addEventListener('click', () => { if (h === st.hands || st.busy) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw(); });
         famRow.append(b);
       }
       root.append(famRow);
@@ -634,6 +621,9 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       const item = st.crafted;
       for (const r of ['magic', 'rare'] as const) {
         const cost = enchantCost(reg, item, r);
+        // ⭐ §6.2: и эссенция — сколько её нужно и чего не хватает (кошелёк хозяина: в игре сумка и сундук).
+        const ess = enchantMaterials(reg, item, r);
+        const essLack = Object.fromEntries(Object.entries(ess).filter(([id, n]) => (host.wallet()[id] ?? 0) < n).map(([id, n]) => [id, n - (host.wallet()[id] ?? 0)]));
         // Гаснет ТЕМИ ЖЕ правилами, которыми откажет сервер (`enchantAction`), — и говорит почему.
         const fit = enchantSlots(reg, item, r);
         const why = item.rarity !== 'normal' ? 'Вещь уже зачарована'
@@ -643,9 +633,13 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
           : Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? 'Этой вещи некуда принять свойства'
           : !fit.fillable ? 'Кузнецу не хватит свойств на форму этой вещи'
           : rolledFormMult(reg, item, r) === undefined ? FORM_UNPRICED   // R17-03: у катаемой формы нет цены — сервер откажет
-          : host.gold() < cost ? `Недостаточно золота: нужно ${cost}` : '';
-        const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`;
-        const b = button(label, () => act('enchant', () => host.enchant(item, r, cost), (res) => {
+          : host.gold() < cost ? `Недостаточно золота: нужно ${cost}`
+          : Object.keys(essLack).length ? `Не хватает материалов: ${describeCost(reg, essLack)}` : '';
+        const essN = Object.values(ess)[0] ?? 0;
+        // ⭐ §15.4: и запас — «эссенция 16 (есть 7)»: сколько нужно и сколько лежит, а не только серая кнопка с подсказкой.
+        const essHave = host.wallet()[Object.keys(ess)[0] ?? ''] ?? 0;
+        const label = st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${essN > 0 ? ` · эссенция ${essN} (есть ${essHave})` : ''}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`;
+        const b = button(label, () => act('enchant', () => host.enchant(item, r, cost, ess), (res) => {
           if (res.ok && res.item) st.crafted = res.item;
           st.message = res.ok ? `Зачарована: ${res.item?.name ?? item.name}` : res.unknown ? res.reason ?? 'Нет ответа от кузнеца' : `Не вышло: ${res.reason}`;
         }), 'default', !!why || busy);

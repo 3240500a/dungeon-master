@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  CRAFT_SLOT_LIST, ConfigRegistry, addToInventory, availableMaterials, craftAction, craftWeapon, createRng, defaultParts, emptyStash, fullJournal,
+  CRAFT_SLOT_LIST, ConfigRegistry, addToInventory, availableMaterials, craftAction, craftTiers, craftWeapon, createRng, defaultParts, emptyStash, fullJournal,
   materialItem, newBotSave, normalizeJournal, type AccountStash, type CraftInput, type Item, type SaveState,
 } from '@dm/shared';
 import { craftWindow, initialCraftState, normalizeCraftState, type CraftHost, type CraftWindowState } from './craftPanel.js';
@@ -213,25 +213,34 @@ describe('⚠ R17-03: зачарование формы без цены — ок
 });
 
 /**
- * ⭐ 06.10: «разобрал топор у кузнеца — детали не открылись». После первого разбора вещи ступени t0 журнал куёт только t0, а окно
- * вставало на эталонную «ст. 2» (это ступень вещи t2): красное «Кузнец ещё не работал со ступенью Крепкий» и погашенная «Ковать» —
- * при открытых деталях. Новое окно с журналом встаёт на ступень, которую журнал куёт (`journalDefaultStep`); без журнала — 2.
+ * ⭐ 06.10: «разобрал топор у кузнеца — детали не открылись». После первого разбора вещи ступени t0 окно вставало на эталонную «ст. 2»
+ * с красным «Кузнец ещё не работал со ступенью Крепкий» и погашенной «Ковать» — при открытых деталях. ⭐ D3 (решение владельца 06.10):
+ * ворот ступени у ковки нет вовсе — окно с любым журналом (прежний потолок t0, «мифики» 0) куёт открытые детали на любой ступени,
+ * а держит его только сырьё.
  */
-describe('⭐ ступень нового окна — не выше потолка журнала', () => {
+describe('⭐ D3: у ковки нет ворот ступени — окно не встаёт красным ни при каком журнале', () => {
   const t0 = { ...fullJournal(reg), tierHi: 0, mythic: 0 };
   const reasonOf = (st: CraftWindowState, j: typeof t0): string => {
     normalizeCraftState(reg, st, j);
     return craftWeapon(reg, inputOf(st), { journal: j, materialsOn: true }).reason ?? '';
   };
-  it('первый разбор t0: окно топора встаёт без «Кузнец ещё не работал со ступенью…»; без журнала было бы с ним', () => {
-    expect(reasonOf(initialCraftState(reg, 'axe', 1), t0), 'контроль: прежнее окно (ст. 2) упирается в потолок').toMatch(/не работал со ступенью/);
-    const st = initialCraftState(reg, 'axe', 1, t0);
-    expect(reasonOf(st, t0), 'окно с журналом t0 обязано ковать').not.toMatch(/не работал со ступенью/);
-    expect(CRAFT_SLOT_LIST.map((s) => st.parts[s].step).every((k) => k <= 2)).toBe(true);
+  it('первый разбор t0 (прежний потолок t0, мификов 0): окно топора ст. 2 куётся — отказа «не работал со ступенью» нет', () => {
+    const st = initialCraftState(reg, 'axe', 1);
+    expect(CRAFT_SLOT_LIST.map((s) => st.parts[s].step).every((k) => k === 2)).toBe(true);
+    expect(reasonOf(st, t0)).toBe('');
   });
-  it('потолок ≥ t2 и песочница (без журнала) — прежняя эталонная ступень 2', () => {
-    const t2 = { ...fullJournal(reg), tierHi: 2, mythic: 0 };
-    expect(initialCraftState(reg, 'sword', 1, t2).parts).toEqual(initialCraftState(reg, 'sword', 1).parts);
-    expect(initialCraftState(reg, 'sword', 1, fullJournal(reg)).parts).toEqual(initialCraftState(reg, 'sword', 1).parts);
+  it('мифическая ступень из открытых деталей — без счётчика разобранных мификов', () => {
+    const last = craftTiers(reg).length - 1;
+    let mythic = 0;
+    for (const a of reg.get('weapon-anatomy')) {
+      for (const hands of [1, 2]) {
+        const parts = defaultParts(reg, a.id, hands, 5);
+        if (!parts) continue;
+        const pv = craftWeapon(reg, { weaponClass: a.id, hands, parts }, { journal: t0, materialsOn: true });
+        expect(pv.reason ?? '', `${a.id}/${hands}: отказа ворот нет`).not.toMatch(/мифическ|не работал со ступенью/i);
+        if (pv.ok && pv.tier === last) mythic++;
+      }
+    }
+    expect(mythic, 'мифик куётся из открытых деталей при журнале «потолок t0, мификов 0»').toBeGreaterThan(0);
   });
 });

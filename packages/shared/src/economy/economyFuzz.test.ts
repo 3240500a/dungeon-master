@@ -96,6 +96,16 @@ const BUGS: { name: string; want: string; bug: (w: World, op: Op, res: Res) => v
     name: 'разбор засчитал мифик', want: 'I6:journal:forgeSalvage',
     bug: (w, op, res) => { if (op.k === 'forgeSalvage' && res.ok && w.stash.forgeJournal) w.stash.forgeJournal = { ...w.stash.forgeJournal, mythic: w.stash.forgeJournal.mythic + 1 }; },
   },
+  // ⭐ §6.2: перекатка тратит эссенцию из сумки и сундука — «забыла» списать её: ловит сохранение сырья (I4).
+  {
+    name: 'перекатка не списала эссенцию', want: 'I4:mats-delta:reroll',
+    bug: (w, op, res) => { if (op.k === 'reroll' && res.ok) { const m = w.stash.materials ?? (w.stash.materials = {}); m['ench-essence'] = (m['ench-essence'] ?? 0) + 3; } },
+  },
+  // ⭐ §11.2: первый подъём пишет исходную ступень разбора (`bornTier`) — без неё «поднять и разобрать» отдало бы оплаченное подъёмом.
+  {
+    name: 'подъём забыл исходную ступень разбора', want: 'rule:extra:upgrade',
+    bug: (w, op, res) => { if (op.k === 'upgrade' && res.ok) for (const it of w.heroes[op.h].inventory) delete it.bornTier; },
+  },
   {
     name: 'подъём сделал вещь дороже, чем заплачено', want: 'I5:ledger:upgrade',
     bug: (w, op, res) => { if (op.k === 'upgrade' && res.ok) { const it = w.heroes[op.h].inventory.find((i) => i.tierForged); if (it) it.itemLevel += 5_000; } },

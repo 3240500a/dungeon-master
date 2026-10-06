@@ -7,6 +7,7 @@ import {
   ConfigRegistry, newCharacterSave, clientFrameSchema, validateInput, shopBuyPrice, ATTRIBUTES, stashDims, emptyStash,
   generateItem, createRng, addToInventory, materialItem, uuidv7,
   CRAFT_SLOT_LIST, keySlotOf, keyVariantsByBase, variantsFor, craftWeapon, emptyJournal, sketchable, normalizeCraftNonces,
+  upgradeCost, repairCost, rerollMaterials, enchantMaterials,
   type SaveState, type Item, type TownCommand, type CraftInput, type CraftJournal, type AccountStash,
 } from '@dm/shared';
 import { counters } from './metrics.js';
@@ -1341,7 +1342,9 @@ class Run {
       case 'forgeRepair': case 'forgeUpgrade': case 'forgeReroll': {
         if (!town) return null;
         const it = nth([...Object.values(save.equipment).filter((x): x is Item => !!x), ...inv.filter((i) => i.slot)]);
-        return it ? { cmd: kind, uid: it.uid, maxGold: save.gold } as TownCommand : null;
+        // Честный — как веб (`forgeBench`): сырьё и эссенция карточки — согласием `maxMaterials` (без него сервер с сырьём в цене откажет).
+        const maxMaterials = !it ? {} : kind === 'forgeUpgrade' ? upgradeCost(cfg, it) : kind === 'forgeRepair' ? repairCost(cfg, it) : rerollMaterials(cfg, it);
+        return it ? { cmd: kind, uid: it.uid, maxGold: save.gold, maxMaterials } as TownCommand : null;
       }
       case 'salvage': case 'forgeSalvage': {
         // ⭐ E2E 29.09: через раз — скованное (переплавка), иначе любое (разбор найденного, отказ по зелью или сырью — нет, их не берём).
@@ -1353,7 +1356,8 @@ class Run {
         // ⭐ E2E 29.09: зачаровать можно только скованное — через раз берём его (удача), иначе любое надеваемое (отказ).
         const forged = pick % 4 ? inv.filter((i) => !!i.parts) : [];
         const it = nth(forged.length ? forged : inv.filter((i) => i.slot));
-        return it && town ? { cmd: 'forgeEnchant', uid: it.uid, rarity: pick % 2 ? 'magic' : 'rare', maxGold: save.gold } : null;
+        const rarity = pick % 2 ? 'magic' : 'rare';
+        return it && town ? { cmd: 'forgeEnchant', uid: it.uid, rarity, maxGold: save.gold, maxMaterials: enchantMaterials(cfg, it, rarity) } : null;
       }
       // ⭐ E2E 29.09: половина — деталь, которую эскиз журнала открывает (удача), половина — чужой id (отказ).
       case 'forgeSketch': return town ? { cmd: 'forgeSketch', variantId: pick % 2 ? `v-${pick % 7}` : FORGE.sketchable[(pick >> 1) % FORGE.sketchable.length]! } : null;

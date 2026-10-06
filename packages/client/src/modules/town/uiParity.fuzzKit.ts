@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import {
-  ATTRIBUTES, CONFIG_CONSENT_CMDS, CONFIG_REV_HEADER, CRAFT_SLOT_LIST, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng,
-  defaultParts, enchantCost, enchantItem, equip, familiesOf, finalAttributes, forgeGold, forgeSalvage, fullJournal, keySlotOf, keyVariantsByBase,
+  ATTRIBUTES, CONFIG_CONSENT_CMDS, CONFIG_REV_HEADER, CRAFT_SLOT_LIST, ESSENCE_ID, PRICE_CHANGED, addToInventory, anatomyOf, availableMaterials, canEnchantItem, craftMissing, craftWeapon, createRng,
+  defaultParts, enchantCost, enchantItem, enchantMaterials, equip, familiesOf, finalAttributes, forgeGold, forgeSalvage, fullJournal, keySlotOf, keyVariantsByBase,
   legacyStartAttributes, materialItem, modifiersFromItems, normalizeJournal, offhandRefusal, parseClientFrame, repairCost, respec, salvageRange, shopBuyPrice,
   shopSellPrice, unequip, upgradeCost, variantsFor,
   ConfigRegistry, defaultConfigData,
@@ -506,8 +506,10 @@ export class Rig {
     const s = this.srv(), c = this.cli();
     const save = s.gold === c.gold && canon(s.inventory) === canon(c.inventory) && canon(s.equipment) === canon(c.equipment);
     const st = this.dbStash(), cs = this.app.stash;
-    const stash = !!cs && canonMats(st.materials) === canonMats(cs.materials)
-      && canon(normalizeJournal(st.forgeJournal)) === canon(normalizeJournal(cs.forgeJournal));
+    // ⭐ D3: прежние ворота ковки (`tierHi`, `mythic`) кадр сундука шлёт открытыми (`legacyGateOpen` — для Unity до переноса), база хранит их
+    // как есть; их не читает ни сервер, ни веб — сверяем журнал без них.
+    const journalOf = (j: unknown): string => canon({ ...normalizeJournal(j), tierHi: 0, mythic: 0 });
+    const stash = !!cs && canonMats(st.materials) === canonMats(cs.materials) && journalOf(st.forgeJournal) === journalOf(cs.forgeJournal);
     const out = { cfg, save, stash, all: cfg && save && stash && !this.tabStale };
     this.snaps.push(out);
     return out;
@@ -927,8 +929,24 @@ function parseBench(lines: readonly string[], ids: Map<string, string>): BenchSh
   for (const l of lines) {
     let m = /^(✓ |✕ )(\d+) золота$/.exec(l);
     if (m) { out.gold = Number(m[2]); if (m[1] === '✕ ') out.missGold = true; continue; }
-    m = /^(✓ |✕ )(.+) (\d+)(?: \(есть \d+\))?$/.exec(l);
+    // §15.4: «Кордован 3 (есть 12)», нехватка — ещё «— не хватает».
+    m = /^(✓ |✕ )(.+) (\d+)(?: \(есть \d+\))?(?: — не хватает)?$/.exec(l);
     if (m && ids.has(m[2]!)) { out.mats[ids.get(m[2]!)!] = (out.mats[ids.get(m[2]!)!] ?? 0) + Number(m[3]); if (m[1] === '✕ ') out.missMats = true; continue; }
+    // ⭐ §15.2: карточка разбора — «Сырьё: + Уклад 3 · + Варёная кожа 2–3 (оговорка)» одной строкой и «Эссенция: + 2».
+    const raw = /^Сырьё: (.*)$/.exec(l);
+    if (raw) {
+      const body = raw[1]!.replace(/ — вернётся .*$/, '').replace(/ \([^()]*\)$/, '');
+      let any = false;
+      for (const part of body.split(' · ')) {
+        const y = /^\+ (.+) (\d+)(?:–(\d+))?$/.exec(part);
+        if (y && ids.has(y[1]!)) { out.yields[ids.get(y[1]!)!] = [Number(y[2]), Number(y[3] ?? y[2])]; any = true; }
+      }
+      if (!any) out.dim.push(l);
+      continue;
+    }
+    const ess = /^Эссенция: \+ (\d+)(?:–(\d+))?$/.exec(l);
+    if (ess) { out.yields[ESSENCE_ID] = [Number(ess[1]), Number(ess[2] ?? ess[1])]; continue; }
+    if (/^(Эссенция|Каталог|Эскиз): /.test(l)) continue;   // нулевые строки карточки разбора и каталог — не цена и не выход
     m = /^\+ (.+) (\d+)(?:–(\d+))?$/.exec(l);
     if (m && ids.has(m[1]!)) { out.yields[ids.get(m[1]!)!] = [Number(m[2]), Number(m[3] ?? m[2])]; continue; }
     out.dim.push(l);
@@ -946,9 +964,9 @@ const baseLines = (item: Item): string[] => itemDescLines(item).filter((l) => !l
 function benchCommand(a: BenchAction, uid: string): TownCommand {
   const price = a.gold !== undefined ? { maxGold: a.gold } : {};
   const mats = a.materials !== undefined ? { maxMaterials: a.materials } : {};
-  return a.cmd === 'forgeEnchant' ? { cmd: 'forgeEnchant', uid, rarity: a.rarity ?? 'magic', ...price }
+  return a.cmd === 'forgeEnchant' ? { cmd: 'forgeEnchant', uid, rarity: a.rarity ?? 'magic', ...price, ...mats }
     : a.cmd === 'forgeSalvage' ? { cmd: 'forgeSalvage', uid, ...(a.minYield !== undefined ? { minYield: a.minYield } : {}), ...(a.avgYield !== undefined ? { avgYield: a.avgYield } : {}) }
-    : a.cmd === 'forgeReroll' ? { cmd: 'forgeReroll', uid, ...price }
+    : a.cmd === 'forgeReroll' ? { cmd: 'forgeReroll', uid, ...price, ...mats }
     : { cmd: a.cmd, uid, ...price, ...mats } as TownCommand;
 }
 
@@ -1009,7 +1027,7 @@ async function opBench(g: Rig, r: Rng): Promise<string> {
   if (!root) return `верстак «${item.name}»: окно бросило`;
   const cards = benchCards(root);
   let acts: BenchAction[];
-  try { acts = benchActions(g.app.config, item, save.gold, save.inventory, g.app.stash?.materials ?? {}); } catch (e) {
+  try { acts = benchActions(g.app.config, item, save.gold, save.inventory, g.app.stash?.materials ?? {}, g.app.stash?.forgeJournal); } catch (e) {
     g.violate(`ui-throw:benchActions:${String((e as Error)?.message).slice(0, 50)}`, String((e as Error)?.stack));
     return `верстак «${item.name}»: карточки бросили`;
   }
@@ -1882,7 +1900,7 @@ function someShownPrice(g: Rig, r: Rng, craftBias = 0): { gold?: number; mats?: 
   const x = r.chance(craftBias) ? 1 : r.int(0, 3);
   if (x === 0 && save.inventory.length) {
     const it = pickBagItem(save.inventory, r)!;
-    const acts = benchActions(reg, it, save.gold, save.inventory, g.app.stash?.materials ?? {}).filter((a) => a.gold !== undefined || a.materials);
+    const acts = benchActions(reg, it, save.gold, save.inventory, g.app.stash?.materials ?? {}, g.app.stash?.forgeJournal).filter((a) => a.gold !== undefined || a.materials);
     if (acts.length) { const a = r.pick(acts); return { gold: a.gold, mats: a.materials, what: `${a.title} «${it.name}»` }; }
   }
   if (x === 1) {
@@ -1897,7 +1915,8 @@ function someShownPrice(g: Rig, r: Rng, craftBias = 0): { gold?: number; mats?: 
   if (crafted.length) {
     const it = r.pick(crafted);
     const rar = r.chance(0.5) ? 'magic' : 'rare';
-    return { gold: enchantCost(reg, it, rar), what: `зачарование «${it.name}»` };
+    // §6.2: и эссенция — её тоже копит «хватает на» (`opFund`) и ставит на грань (`opMatsEdge`).
+    return { gold: enchantCost(reg, it, rar), mats: enchantMaterials(reg, it, rar), what: `зачарование «${it.name}»` };
   }
   const it = save.inventory.find(nonMat);
   if (it) return { gold: forgeGold(reg, it, it.broken ? 'repair' : 'upgrade'), mats: it.broken ? repairCost(reg, it) : upgradeCost(reg, it), what: `кузница «${it.name}»` };
@@ -1971,10 +1990,11 @@ async function opJournal(g: Rig, r: Rng): Promise<string> {
     st.forgeJournal = j;
     what = `эскизов ${j.sketches}`;
   } else {
-    j.tierHi = r.int(0, 6);
-    j.mythic = r.int(0, g.reg.get('balance').craft.journal.mythicSalvages);
+    // Прежние поля ворот ковки (наследие, D3): журнал старого аккаунта несёт их — окно и сервер их не читают.
+    j.tierHi = r.int(-1, 6);
+    j.mythic = r.int(0, 6);
     st.forgeJournal = j;
-    what = `потолок t${j.tierHi}, мификов ${j.mythic}`;
+    what = `наследие: потолок t${j.tierHi}, мификов ${j.mythic}`;
   }
   await g.pushStash();
   return `журнал: ${what}`;
@@ -2022,10 +2042,12 @@ function editConfig(reg: ConfigRegistry, r: Rng): string {
       let d = '';
       reloadTable(reg, 'balance', (b) => {
         const fp = b.forgePrices;
-        const which = r.pick(['upgradeMaterials', 'repairMaterials'] as const);
-        const t = r.pick(['tier1', 'tier2', 'tier3'] as const);
-        fp[which][t] = Math.max(0, fp[which][t] + r.int(-2, 4));
-        d = `forgePrices.${which}.${t} → ${fp[which][t]}`;
+        // ⭐ §7: сырьё подъёма и починки — по ступени: основа (доля верха вилки разбора), расходник I, главный сорт починки.
+        const y = r.int(0, 3);
+        if (y === 0) { fp.upgradeMaterials.consumable = Math.max(0, fp.upgradeMaterials.consumable + r.int(-2, 4)); d = `forgePrices.upgradeMaterials.consumable → ${fp.upgradeMaterials.consumable}`; }
+        else if (y === 1) { fp.upgradeMaterials.baseShare = r.pick([0.5, 1, 1.5]); d = `forgePrices.upgradeMaterials.baseShare → ${fp.upgradeMaterials.baseShare}`; }
+        else if (y === 2) { fp.repairMaterials.consumable = Math.max(0, fp.repairMaterials.consumable + r.int(-2, 4)); d = `forgePrices.repairMaterials.consumable → ${fp.repairMaterials.consumable}`; }
+        else { fp.repairMaterials.main = Math.max(0, fp.repairMaterials.main + r.int(-2, 4)); d = `forgePrices.repairMaterials.main → ${fp.repairMaterials.main}`; }
       });
       return d;
     }
@@ -2034,10 +2056,12 @@ function editConfig(reg: ConfigRegistry, r: Rng): string {
       let d = '';
       reloadTable(reg, 'balance', (b) => {
         const c = b.craft;
-        const y = r.int(0, 2);
+        const y = r.int(0, 3);
         if (y === 0) { const sl = r.pick(['strike', 'grip', 'bind', 'head'] as const); c.cost.units[sl] = Math.max(0, c.cost.units[sl] + r.int(-3, 6)); d = `craft.cost.units.${sl} → ${c.cost.units[sl]}`; }
         else if (y === 1) { c.cost.goldPerReqMult = Math.max(1, f(c.cost.goldPerReqMult)); d = `craft.cost.goldPerReqMult → ${c.cost.goldPerReqMult}`; }
-        else { c.cost.enchantGold = Math.max(1, f(c.cost.enchantGold)); d = `craft.cost.enchantGold → ${c.cost.enchantGold}`; }
+        else if (y === 2) { c.cost.enchantGold = Math.max(1, f(c.cost.enchantGold)); d = `craft.cost.enchantGold → ${c.cost.enchantGold}`; }
+        // ⭐ §6.2: эссенция чар и перекатки — в обе стороны.
+        else { c.cost.essence.perTier = Math.max(0, c.cost.essence.perTier + r.int(-1, 2)); c.cost.essence.base = Math.max(0, c.cost.essence.base + r.int(-1, 2)); d = `craft.cost.essence → ${c.cost.essence.base}+${c.cost.essence.perTier}×t`; }
       });
       return d;
     }
@@ -2062,7 +2086,7 @@ function editConfig(reg: ConfigRegistry, r: Rng): string {
         if (y === 0) { const sl = r.pick(['strike', 'grip', 'bind', 'head'] as const); c.salvage.units[sl] = Math.max(0, c.salvage.units[sl] + r.int(-1, 2)); d = `разбор: ${sl} → ${c.salvage.units[sl]}`; }
         else if (y === 1) { c.melt.share = r.pick([0.2, 0.4, 0.6, 0.8]); d = `переплавка → ${c.melt.share}`; }
         else if (y === 2) { b.salvage.fieldYield = r.pick([0.05, 0.15, 0.3, 0.5]); d = `поле → ${b.salvage.fieldYield}`; }
-        else { c.journal.sketchAfter = Math.max(1, c.journal.sketchAfter + r.int(-6, 4)); c.journal.mythicSalvages = Math.max(1, c.journal.mythicSalvages + r.int(-3, 3)); d = `журнал: эскиз каждые ${c.journal.sketchAfter}, мификов ${c.journal.mythicSalvages}`; }
+        else { c.journal.sketchAfter = Math.max(1, c.journal.sketchAfter + r.int(-6, 4)); d = `журнал: эскиз каждые ${c.journal.sketchAfter}`; }
       });
       return d;
     }

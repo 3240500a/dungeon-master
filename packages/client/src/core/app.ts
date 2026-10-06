@@ -3,6 +3,7 @@ import type { GameState } from './gameState.js';
 import { passiveModifiers } from '../modules/skills-passive/passiveStats.js';
 import { activeModifiers } from '../modules/skills-active/activeStats.js';
 import { setItemLabelResolvers } from '../modules/inventory/itemView.js';
+import { materialNote } from '../modules/inventory/materialsModel.js';
 import { setDamageTypeMeta } from './damageTypes.js';
 import { setRarityMeta } from '../modules/loot/rarity.js';
 import { NetClient } from '../net/netClient.js';
@@ -264,6 +265,9 @@ export class App {
         return sub ? `${sub.name.toLowerCase()} → ${debuffLabel(this.config.get('debuffs'), sub.kind).toLowerCase()}` : id;
       },
       skill: (id) => this.config.get('skill-tree').nodes.find((n) => n.id === id)?.name ?? id,
+      // §15.3–15.4: строка происхождения («была «Отличный»») и подсказка стопки сырья — из тех же живых конфигов.
+      tierName: (id) => this.config.get('item-tiers').find((t) => t.id === id)?.name,
+      materialNote: (item) => materialNote(this.config, item),
     });
     // Метаданные каналов урона из ДВУХ конфигов: 'physical' — из damage-kinds (тип урона),
     // стихии (fire/cold/lightning/poison) — из magic-subtypes (маг. подтипы, у них есть ailment).

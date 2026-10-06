@@ -110,7 +110,7 @@ function patched(patch: (b: ConfigShapes['balance']) => void): ConfigRegistry {
  * (в′)), поэтому здесь видна прибыль любого отдельного шага — у любой базы, ступени и редкости.
  */
 function profitableUpgradeSteps(
-  r: ConfigRegistry, only: { rarities?: readonly Rarity[]; kinds?: readonly string[] } = {},
+  r: ConfigRegistry, only: { rarities?: readonly Rarity[]; kinds?: readonly string[]; forgetBorn?: boolean } = {},
 ): { n: number; bad: string[] } {
   const ts = craftTiers(r);
   const priced = new Map(r.get('craft-materials').map((m) => [m.id, m.sellPrice]));
@@ -136,7 +136,10 @@ function profitableUpgradeSteps(
           const wallet = Object.fromEntries(r.get('craft-materials').map((m) => [m.id, 5000]));
           const w0 = value(wallet);
           if (!forgeUpgrade(r, save, it.uid, wallet).ok) continue;
-          const after = worthOf(save.inventory.find((i) => i.uid === it.uid)!);
+          const up = save.inventory.find((i) => i.uid === it.uid)!;
+          // Самопроверка зубов: «забыть» исходную ступень — разбор пойдёт по нынешней (как до `bornTier`, но и без «как купленная»).
+          if (only.forgetBorn) { delete up.bornTier; delete up.tierForged; }
+          const after = worthOf(up);
           const paid = (100_000_000 - save.gold) + (w0 - value(wallet));
           n++;
           if (after - before >= paid) bad.push(`${base.id} ${tier.id}→ ${rarity} ур.${it.itemLevel}: ценность +${after - before}, шаг стоил ${paid}`);
@@ -181,9 +184,12 @@ describe('D21: цена видит ступень', () => {
     }
   });
 
-  it('⭐ покупка не дешевле сырья разбора: «Крепкий» с булатным клинком стоит как три булата, а не как «Крепкий»', () => {
-    // Ступень вещи — средняя по массе (§11): булатный клинок при прочем из первой ступени даёт t2.
+  it('⭐ детали сорт не «протекают»: «Крепкий» с булатным клинком разбирается как «Крепкий», а не в три булата (рецепт ступени, §4.1)', () => {
+    // Ступень вещи — средняя по массе (§11): булатный клинок при прочем из первой ступени даёт t2. Раньше разбор отдавал
+    // материалы деталей ИХ ступеней — три булата с «Крепкого», и лавке нужен был пол цены покупки по сырью разбора (D21).
+    // Теперь сорт — рецепт ступени вещи (t2 — II), и купленное — не выше III: такая вещь стоит как «Крепкий».
     const t2 = tiers.findIndex((t) => t.id === 't2');
+    const recipe = reg.get('balance').salvage.recipeByTier[t2]!;
     let found = 0;
     for (const base of weaponBases) {
       const cls = base.weaponClass, hands = base.hands ?? 1;
@@ -200,11 +206,15 @@ describe('D21: цена видит ступень', () => {
       if (!ok || baseTierRange(reg, base).hi < t2 || baseTierRange(reg, base).lo > t2) continue;
       const raw = shopItem(base, tiers[t2]!.minItemLevel, tiers[t2]!.minItemLevel, 'normal', 5);
       if (raw.tier !== 't2') continue;
-      const it = shapeFoundWeapon(reg, { ...raw, foundParts: parts });
-      const w = salvageWorth(reg, it);
-      expect(w, base.id).toBeGreaterThan(shopItemValue(reg, it));   // без пола лавка продавала бы сырьё дешевле его цены
-      expect(shopBuyPrice(reg, it), base.id).toBe(w);
+      for (const origin of ['shop', 'drop'] as const) {
+        const it = shapeFoundWeapon(reg, { ...raw, origin, foundParts: parts });
+        const grades = Object.keys(salvageRange(reg, it, false).range).map((id) => Number(id.split('-').pop()));
+        expect(Math.max(...grades), `${base.id} ${origin}: сорт — рецепт t2`).toBe(Math.max(...recipe));
+        expect(salvageWorth(reg, it), `${base.id} ${origin}`).toBeLessThanOrEqual(shopItemValue(reg, it));
+        expect(shopBuyPrice(reg, it), `${base.id} ${origin}: пол покупки по сырью не нужен`).toBe(shopItemValue(reg, it));
+      }
       // Петля целиком: купил → разобрал → продал сырьё — не в плюс.
+      const it = shapeFoundWeapon(reg, { ...raw, foundParts: parts });
       const save = mkSave(shopBuyPrice(reg, it));
       expect(buyItem(reg, save, it).ok).toBe(true);
       expect(forgeSalvage(reg, save, emptyStash(reg), it.uid, MAX).ok).toBe(true);
@@ -312,26 +322,39 @@ describe('⚠ R2-16: надбавка ступени — только в цен�
     return { sold: sold / 2000, best: best / 2000, salvaged };
   }
 
-  it('⭐ R6-23: лучшее из «сдать находку / разобрать у кузнеца и сдать сырьё» — тоже в бюджете числом (замер + 10 %)', () => {
+  it('⭐ R6-23 + D4: лучшее из «сдать находку / разобрать у кузнеца и сдать сырьё» — ВСЕГДА продажа; и в бюджете числом', () => {
     for (const level of [20, 50, 90]) {
       const { sold, best, salvaged } = findGold(reg, level);
       const tag = `ур.${level}: золото за находку лучшим путём (продажей — ${sold.toFixed(1)})`;
+      // ⭐ D4 (решение владельца 06.10): разобрать и сдать сырьё не выгоднее, чем сдать саму вещь, — ни у одной находки.
+      expect(best, `${tag}: разбор ни разу не обогнал продажу`).toBe(sold);
       expect(best, tag).toBeLessThanOrEqual(BEST_BUDGET[level]!);
       expect(best, `${tag}: бюджет не пустой — сторож не выродился`).toBeGreaterThan(BEST_BUDGET[level]! / 1.1 * 0.8);
       expect(salvaged, `ур.${level}: разбор идёт — сторож не выродился в R3-21`).toBeGreaterThan(1500);
     }
   });
 
-  it('R6-23: у сторожа есть зубы — дорогое сырьё ступеней 4–5 и лишняя единица разбора R3-21 не видит, а он видит', () => {
+  it('R6-23 + D4: у сторожа есть зубы — дорогое сырьё и лишние единицы разбора реестр не пускает, а мимо реестра их держит пол цены вещи', () => {
     const now = findGold(reg, 90);
+    const dearMats = (m: ConfigShapes['craft-materials'][number]): ConfigShapes['craft-materials'][number] => (m.tier >= 4 ? { ...m, sellPrice: m.sellPrice * 3 } : m);
+    // Реестр (файлы, оверрайды, редактор) не пускает: сырьё с вещи дороже самой вещи (`salvageSellIssues`).
+    const strict = new ConfigRegistry();
+    strict.loadAll();
+    expect(() => strict.reload({ 'craft-materials': strict.get('craft-materials').map(dearMats) })).toThrow(/D4 разбор не выгоднее продажи/);
+    expect(() => patched((b) => { for (const k of CRAFT_SLOT_LIST) b.craft.salvage.units[k] += 1; })).toThrow(/D4 разбор не выгоднее продажи/);
+    // Мимо реестра (`cross: false` — как сборка с инцидентом): правило ядра — лавка платит за вещь не меньше её разбора.
     const dear = new ConfigRegistry();
     dear.loadAll();
-    dear.reload({ 'craft-materials': dear.get('craft-materials').map((m) => (m.tier >= 4 ? { ...m, sellPrice: m.sellPrice * 1.5 } : m)) });
-    const more = patched((b) => { for (const k of CRAFT_SLOT_LIST) b.craft.salvage.units[k] += 1; });
-    for (const [label, r] of [['сырьё 4–5 ×1.5', dear], ['разбор +1 единица на деталь', more]] as const) {
+    dear.reload({ 'craft-materials': dear.get('craft-materials').map(dearMats) }, { cross: false });
+    const more = new ConfigRegistry();
+    more.loadAll();
+    const b = structuredClone(more.get('balance'));
+    for (const k of CRAFT_SLOT_LIST) b.craft.salvage.units[k] += 1;
+    more.reload({ balance: b }, { cross: false });
+    for (const [label, r] of [['сырьё 4–5 ×3', dear], ['разбор +1 единица на деталь', more]] as const) {
       const g = findGold(r, 90);
-      expect(g.sold, `${label}: продажа находки та же — бюджет R3-21 правку не видит`).toBe(now.sold);
-      expect(g.best, `${label}: лучшим путём`).toBeGreaterThan(BEST_BUDGET[90]!);
+      expect(g.best, `${label}: разбор не обгоняет продажу и тут — пол цены вещи`).toBe(g.sold);
+      expect(g.sold, `${label}: пол цены поднял продажу — бюджет R3-21 это видит`).toBeGreaterThan(now.sold);
     }
   });
 
@@ -473,16 +496,22 @@ describe('D21: инварианты «не прачечная» — настоя
     expect(n, 'сторож не выродился: шагов тысячи').toBeGreaterThan(5000);
   });
 
-  it('в″) у сторожа есть зубы: прибыльный шаг, подложенный в конфиг, он видит', () => {
-    // Золото подъёма вдесятеро дешевле (200 → 20): (в′) и (г) это пропускают — у (в′) прибыль шага прячет цена покупки
-    // с надбавкой ступени, у (г) — разбор, которого он не смотрит. А разбор найденного после шага уже дороже шага.
-    const cheapGold = patched((b) => { b.forgePrices.upgradeTier = 20; });
-    const r1 = profitableUpgradeSteps(cheapGold, { rarities: ['normal'], kinds: ['weapon'] });
-    expect(r1.bad.length, 'дешёвое золото подъёма — шаг в плюс').toBeGreaterThan(0);
-    // Сырьё подъёма почти даром — то же у редкой брони и оружия.
-    const cheapMats = patched((b) => { b.forgePrices.upgradeTier = 1; b.forgePrices.upgradeMaterials = { tier1: 0, tier2: 0, tier3: 1 }; });
-    const r2 = profitableUpgradeSteps(cheapMats, { rarities: ['rare'], kinds: ['weapon', 'armor'] });
-    expect(r2.bad.length, 'дешёвый подъём находки — в плюс').toBeGreaterThan(0);
+  it('⭐ в″) у сторожа есть зубы: подъём почти даром — в плюс ТОЛЬКО без `bornTier`; с ним подъём — чистый расход при любом конфиге', () => {
+    // Подъём почти даром (золото 1, основа ×0 и расходник 1 — §7), сырьё дорогое: разбор вещи после шага — по ИСХОДНОЙ ступени (`bornTier`, §11.2),
+    // поэтому шаг не прибавляет ни разбора, ни продажи — в плюс он не бывает, какие бы цены ни стояли в конфиге.
+    // Сырьё вдесятеро дороже (мимо реестра, `cross: false`): разбор дороже вещи, цену держит пол — и шаг меняет пол, если разбор по нынешней.
+    const cheap = new ConfigRegistry();
+    cheap.loadAll();
+    const cb = structuredClone(cheap.get('balance'));
+    cb.forgePrices.upgradeTier = 1;
+    cb.forgePrices.upgradeMaterials = { baseShare: 0, consumable: 1 };
+    cheap.reload({ balance: cb, 'craft-materials': cheap.get('craft-materials').map((m) => ({ ...m, sellPrice: m.sellPrice * 10 })) }, { cross: false });
+    const held = profitableUpgradeSteps(cheap, { rarities: ['normal', 'rare'], kinds: ['weapon', 'armor'] });
+    expect(held.n, 'сторож видит шаги').toBeGreaterThan(20);
+    expect(held.bad, held.bad.slice(0, 5).join('\n')).toEqual([]);
+    // Без `bornTier` (разбор по нынешней ступени) тот же конфиг даёт шаг в плюс — сторож его видит.
+    const lost = profitableUpgradeSteps(cheap, { rarities: ['normal', 'rare'], kinds: ['weapon', 'armor'], forgetBorn: true });
+    expect(lost.bad.length, 'без исходной ступени дешёвый подъём находки — в плюс').toBeGreaterThan(0);
   });
 
   it('⭐ г) подъём ступени → продажа: прибавка меньше цены подъёма на ЛЮБОМ уровне вещи (надбавка не множит уровень)', () => {

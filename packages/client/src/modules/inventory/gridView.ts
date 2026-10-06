@@ -89,7 +89,9 @@ function itemEl(item: Item, h: GridHandlers): HTMLElement {
 
 // ── Контекст-меню (общее для инвентаря/сундука) ──────────────────────────────
 let openMenu: HTMLElement | null = null;
-export function showContextMenu(x: number, y: number, options: { label: string; run: () => void }[]): void {
+/** Пункт меню: подпись, действие и (опц.) подсказка HTML при наведении — карточка «что выйдет» у «Разобрать здесь». */
+export interface MenuOption { label: string; run: () => void; tip?: () => string }
+export function showContextMenu(x: number, y: number, options: MenuOption[]): void {
   openMenu?.remove();
   const menu = mk('div',
     `position:fixed;left:${x}px;top:${y}px;z-index:10001;background:${COLORS.panel2};` +
@@ -99,6 +101,7 @@ export function showContextMenu(x: number, y: number, options: { label: string; 
     b.addEventListener('mouseenter', () => (b.style.background = COLORS.border));
     b.addEventListener('mouseleave', () => (b.style.background = 'transparent'));
     b.addEventListener('click', () => { close(); opt.run(); });
+    if (opt.tip) attachTooltip(b, opt.tip);
     menu.appendChild(b);
   }
   const close = (): void => { menu.remove(); openMenu = null; window.removeEventListener('pointerdown', onDoc, true); };

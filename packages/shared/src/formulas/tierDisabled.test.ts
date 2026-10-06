@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import {
-  bakeParts, baseTierRange, craftWeapon, defaultParts, emptyJournal, enchantCost, enchantItem, fullJournal, keyVariantsByBase, resolveParts, salvageIntoJournal,
+  bakeParts, baseTierRange, craftWeapon, defaultParts, emptyJournal, enchantCost, enchantItem, fullJournal, keyVariantsByBase, resolveParts, salvageGrades, salvageIntoJournal,
   shapeFoundWeapon, tierIndex, variantsFor, type CraftInput,
 } from './craft.js';
 import { generateItem, itemFromBaseId, pickTierClamped, rollTierLevel } from './itemgen.js';
@@ -166,20 +166,22 @@ describe('⭐ R12-08: выключенная ступень — ковка и з
     expect(pv.reason).toMatch(/не куёт/);
   });
 
-  it('потолок журнала (индекс в базе) не переезжает: знал t4 — t5 не открылся от того, что t4 выключили', () => {
+  it('⭐ D3: ворот ступени у ковки нет, а индексы не переезжают: при выключенной t4 сборка ступени 4 — отказ, ступени 5 — ровно t5', () => {
     const off = tiersOff('t4');
+    // Прежний потолок журнала (наследие в старом журнале) ковку не запирает ни в живом конфиге, ни при выключенной ступени.
     const knewT4 = { ...fullJournal(live), tierHi: tierIndex(live, 't4') };
-    expect(craftWeapon(live, inputAt(5), { journal: knewT4 }).ok, 'живой конфиг: t5 закрыт').toBe(false);
-    for (const t of [4, 5]) {
-      const pv = craftWeapon(off, inputAt(t), { journal: knewT4 });
-      expect(pv.ok && pv.item?.tier === 't5', `сборка ступени ${t}`).toBe(false);
-    }
+    expect(craftWeapon(live, inputAt(5), { journal: knewT4 }).item?.tier, 'живой конфиг: t5 куётся').toBe('t5');
+    expect(craftWeapon(off, inputAt(4), { journal: knewT4 }).ok, 'выключенная t4 не куётся и не съезжает на t5').toBe(false);
+    expect(craftWeapon(off, inputAt(5), { journal: knewT4 }).item?.tier, 'материалы t5 — та же t5').toBe('t5');
   });
 
-  it('разбор найденной вещи выключенной ступени поднимает потолок журнала до НЕЁ, а не до t0', () => {
+  it('разбор найденной вещи выключенной ступени: сорт — по рецепту ЕЁ ступени (индекс полной лестницы), а не t0', () => {
     const item = found('long-sword', 't5');
     const off = tiersOff('t5');
-    expect(salvageIntoJournal(off, emptyJournal(), item).journal.tierHi).toBe(salvageIntoJournal(live, emptyJournal(), item).journal.tierHi);
+    expect(salvageGrades(off, item)).toEqual(salvageGrades(live, item));
+    expect(salvageGrades(live, item).row).toEqual(live.get('balance').salvage.recipeByTier[tierIndex(live, 't5')]);
+    // Журнал разбора — каталог (тип, детали) тот же; прежних ворот (потолок, мифики) разбор не двигает вовсе (D3).
+    expect(salvageIntoJournal(off, emptyJournal(), item).journal).toEqual(salvageIntoJournal(live, emptyJournal(), item).journal);
   });
 });
 

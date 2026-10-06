@@ -1,5 +1,5 @@
 import {
-  salvageJournalGains, salvageMean, salvageRange, type ConfigRegistry, type CraftJournal, type Item,
+  salvageJournalGains, salvageMean, salvagePreview, salvageRange, type ConfigRegistry, type CraftJournal, type Item, type SalvageCardLine,
 } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { askInGame } from '../../ui/kit.js';
@@ -12,7 +12,7 @@ import { askInGame } from '../../ui/kit.js';
  *   доводка, а назад переплавка вернёт лишь часть.
  * - **Полевой разбор и продажа предупреждают, что журнал это не засчитает** (§12.2): журнал пополняет только
  *   разбор у кузнеца, и без вопроса разбор в поле — тихая ловушка: игрок сжигает единственный носитель штучной
- *   детали (или мифик к воротам t6) ради трети сырья и не узнаёт об этом никогда. Продажа — та же потеря.
+ *   детали ради трети сырья и не узнаёт об этом никогда. Продажа — та же потеря.
  *
  * Сама проверка — ТА ЖЕ функция, которой кузнец пополняет журнал (`salvageIntoJournal`) над копией
  * журнала: что засчитал бы разбор у кузнеца, того в поле и в лавке и не хватит. Своих правил здесь нет.
@@ -21,16 +21,34 @@ import { askInGame } from '../../ui/kit.js';
 /**
  * ЧТО ЗАСЧИТАЛ БЫ ЖУРНАЛУ РАЗБОР У КУЗНЕЦА — строками для вопроса; пусто — терять нечего.
  *
- * ⚠ R2-07: ВСЁ, что возвращает `salvageIntoJournal`, а не только тип и детали: кодекс, потолок ступени (первая вещь
- * новой ступени — частый случай в начале), мифик к воротам t6, эскиз. Раньше мифик с известными деталями уходил в
- * поле без вопроса — и с ним потолок ковки и счёт ворот: полевой разбор журнал не трогает вовсе.
- * Две оговорки — чтобы вопрос не звал зря: мифик — только пока ворота закрыты (сверх `mythicSalvages` счёт ничего не
- * даёт); эскиз — только когда разбор ДОВОДИТ счёт жалости до него и эскиз есть на что потратить. Сам счёт к эскизу
- * (1 из 8…) вопросом не зовём: он копится любым разбором найденного у кузнеца — вопрос висел бы на каждой вещи.
+ * ⚠ R2-07: ВСЁ, что возвращает `salvageIntoJournal`, а не только тип и детали: кодекс, снаряжение, эскиз. Потолка ступени и мификов
+ * больше нет (решение владельца D3: у ковки нет ворот ступени — её держит сырьё). Оговорка — чтобы вопрос не звал зря: эскиз — только
+ * когда разбор ДОВОДИТ счёт жалости до него и эскиз есть на что потратить. Сам счёт к эскизу (1 из 8…) вопросом не зовём: он копится
+ * любым разбором найденного у кузнеца — вопрос висел бы на каждой вещи.
  */
 export function journalGainsOf(reg: ConfigRegistry, item: Item, journal: CraftJournal | null | undefined): string[] {
-  // Одно правило с карточкой разбора у кузнеца (`salvageJournalPreview`): обе строки — из `salvageJournalGains` (@dm/shared).
+  // Одно правило с карточкой разбора у кузнеца (`salvagePreview`): обе строки — из `salvageJournalGains` (@dm/shared).
   return salvageJournalGains(reg, item, journal);
+}
+
+/**
+ * ⭐ КАРТОЧКА РАЗБОРА В ПОЛЕ — строками для подсказки пункта «Разобрать здесь (30 %)» (предложение «Разбор, сырьё и чары» §15.2):
+ * заголовок, «Сырьё: ≈ …», «Эссенция: ≈ 0–1 / нет — почему», эскиз и мягкая подсказка «у кузнеца втрое больше…». Строки КАТАЛОГА нет:
+ * разбор в поле каталог не пишет вовсе (решение владельца D2) — что потеряешь, говорит подсказка и вопрос перед разбором. Всё — из
+ * `salvagePreview` (те же функции, что у разбора сервера); своих правил здесь нет.
+ */
+export function fieldSalvageLines(reg: ConfigRegistry, item: Item, journal: CraftJournal | null | undefined): { text: string; tone: SalvageCardLine['tone'] | 'title' | 'hint' }[] {
+  const c = salvagePreview(reg, item, journal, true);
+  const line = (l: SalvageCardLine): { text: string; tone: SalvageCardLine['tone'] } => ({ text: `${l.label}: ${l.text}`, tone: l.tone });
+  return [
+    { text: c.title, tone: 'title' },
+    ...(c.ok ? [] : [{ text: c.reason ?? 'нельзя', tone: 'warn' as const }]),
+    line(c.materials),
+    line(c.essence),
+    ...(c.catalog ? [line(c.catalog)] : []),
+    ...(c.sketch ? [line(c.sketch)] : []),
+    ...(c.hint ? [{ text: c.hint[0]!.toUpperCase() + c.hint.slice(1), tone: 'hint' as const }] : []),
+  ];
 }
 
 /** Где вещь исчезает: разбор в поле, разбор (переплавка) у кузнеца, продажа. */
@@ -109,6 +127,8 @@ export async function salvageInField(
   const avg = salvageMean(app.config, item, true);
   void app.request({ cmd: 'salvage', uid: item.uid, minYield: low, ...(avg ? { avgYield: avg } : {}) }).then((r) => {
     if (r && !r.ok) app.bus.emit('log:message', { text: `Разбор не удался: ${r.reason ?? 'сервер отказал'}`, kind: 'system' });
+    // ⭐ §15.2: итог — строкой в лог ВСЕГДА («Получено: … · каталог пополняет только разбор у кузнеца»): разбор в поле не молчит.
+    else if (r?.ok && r.summary) app.bus.emit('log:message', { text: `Разбор «${item.name}»: ${r.summary}`, kind: 'loot' });
   });
   return true;
 }

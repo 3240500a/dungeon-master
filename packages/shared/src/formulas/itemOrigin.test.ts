@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { defaultConfigData } from '../config/defaults.js';
 import {
-  MYTHIC_ORIGINS, baseTierRange, countsAsMythicFind, craftTiers, craftWeapon, defaultParts, emptyJournal, partById,
+  baseTierRange, countsAsFind, craftTiers, craftWeapon, defaultParts, emptyJournal, normalizeJournal, partById,
   partsOf, resolveParts, restepParts, salvageIntoJournal, shapeFoundWeapon, tierIndex, tierOfSteps,
 } from './craft.js';
 import { keySlotOf } from './craftType.js';
@@ -24,6 +24,9 @@ import type { Item, ItemOrigin, Rarity } from '../types/items.js';
 import type { QuestDef } from '../types/quest.js';
 import type { SaveState } from '../types/save.js';
 import type { SalvageRng } from './salvage.js';
+import { ESSENCE_ID } from './salvage.js';
+/** §6.2: зачарование и перекатка тратят эссенцию — кошелёк сундука с запасом (тесту важно не это). */
+const essWallet = (): Record<string, number> => ({ [ESSENCE_ID]: 1_000_000 });
 
 /**
  * ⭐ К2: ОТКУДА ВЕЩЬ (D16) и ЗАМОРОЖЕННЫЕ ДЕТАЛИ (D17).
@@ -205,31 +208,34 @@ describe('D16: происхождение пишет тот, кто родил �
   });
 });
 
-describe('D16: ворота t6 считают только НАЙДЕННЫЕ мифики', () => {
+/**
+ * ⭐ D3 (решение владельца 06.10: «разобрал вещь — получил чертежи и можно сразу делать её, всё упирается только в количество ресурсов,
+ * никаких доп. заграждений»): ворот t6 больше нет — ни счётчика разобранных мификов (было D16: «только найденные»), ни потолка ступени
+ * журнала. Разбор любого происхождения эти поля не двигает; ступень ковки держит сырьё (V — только у найденных t6, по рецепту).
+ */
+describe('⭐ D3: ворот t6 нет — разбор не считает мифики и не двигает потолок ступени', () => {
   const ALL: (ItemOrigin | undefined)[] = ['drop', 'chest', 'boss', 'shop', 'quest', 'start', 'craft', undefined];
 
-  it('счётчик растёт только у drop / chest / boss; потолок ступени — у всех', () => {
-    expect([...MYTHIC_ORIGINS].sort()).toEqual(['boss', 'chest', 'drop']);
+  it('мифик любого происхождения: счётчик и потолок журнала — как были (наследие)', () => {
     for (const o of ALL) {
       const it = shapeFoundWeapon(reg, drop(mythicBase.id, t6.minItemLevel, 7, o));
       expect(it.tier).toBe(t6.id);
       const u = salvageIntoJournal(reg, emptyJournal(), it);
-      const counts = o === 'drop' || o === 'chest' || o === 'boss';
-      expect(u.mythic, String(o)).toBe(counts);
-      expect(u.journal.mythic, String(o)).toBe(counts ? 1 : 0);
-      expect(u.journal.tierHi, String(o)).toBe(LAST);
+      expect(u.journal.mythic, String(o)).toBe(0);
+      expect(u.journal.tierHi, String(o)).toBe(-1);
+      expect('mythic' in u, 'в итоге разбора нет поля «засчитан мифик»').toBe(false);
     }
   });
 
-  it('⚠ подделку поля не спасает ничто: мусор в origin — не счётчик', () => {
+  it('⚠ мусор в origin ничего не засчитывает', () => {
     const it = shapeFoundWeapon(reg, drop(mythicBase.id, t6.minItemLevel, 8, 'drop'));
     for (const junk of ['DROP', 'loot', '', '__proto__', 'constructor']) {
-      expect(countsAsMythicFind({ origin: junk as ItemOrigin }), junk).toBe(false);
+      expect(countsAsFind({ origin: junk as ItemOrigin }), junk).toBe(false);
       expect(salvageIntoJournal(reg, emptyJournal(), { ...it, origin: junk as ItemOrigin }).journal.mythic, junk).toBe(0);
     }
   });
 
-  it('⭐ подъём t5 → t6 у кузнеца метит вещь: такой мифик воротам не засчитывается, потолок ступени — да', () => {
+  it('⭐ подъём t5 → t6 у кузнеца метит вещь (`tierForged`, `bornTier`); разбор журнальных ворот не двигает', () => {
     // Форма, чьи детали дотягиваются до t6 (R4-31: иначе выше t5 она не куётся).
     let found = shapeFoundWeapon(reg, drop(mythicBase.id, t5.minItemLevel, 9, 'drop'));
     for (let seed = 10; !upgradedItem(reg, found) && seed < 60; seed++) found = shapeFoundWeapon(reg, drop(mythicBase.id, t5.minItemLevel, seed, 'drop'));
@@ -243,23 +249,25 @@ describe('D16: ворота t6 считают только НАЙДЕННЫЕ м
     expect(up.origin).toBe('drop');                     // происхождение не переписывается
     expect(upgradedItem(reg, found)!.tierForged).toBe(true); // предпросмотр = то, за что платят
 
+    expect(up.bornTier, 'исходная ступень разбора записана первым подъёмом').toBe(t5.id);
     const stash = emptyStash(reg);
     const r = forgeSalvage(reg, save, stash, up.uid, MAX);
     expect(r.ok, r.reason).toBe(true);
     expect(stash.forgeJournal!.mythic).toBe(0);
-    expect(stash.forgeJournal!.tierHi).toBe(LAST);
-    expect((r.unlocked ?? []).some((s) => /Мифических/.test(s))).toBe(false);
+    expect(stash.forgeJournal!.tierHi).toBe(-1);
+    expect((r.unlocked ?? []).some((s) => /Мифических|Ступень/.test(s))).toBe(false);
   });
 
-  it('разбор у кузнеца end-to-end: мифик из лавки — ноль, с пола — единица и строка в окне', () => {
-    for (const [o, want] of [['shop', 0], ['drop', 1], ['chest', 1], ['boss', 1], [undefined, 0]] as const) {
+  it('разбор у кузнеца end-to-end: мифик любого происхождения — журнальные ворота ноль, строк «к воротам» нет (ковку держит сырьё, D3)', () => {
+    for (const o of ['shop', 'drop', 'chest', 'boss', undefined] as const) {
       const it = shapeFoundWeapon(reg, drop(mythicBase.id, t6.minItemLevel, 11, o));
       const save = { gold: 0, inventory: [{ ...it, pos: null }] } as unknown as SaveState;
       const stash = emptyStash(reg);
       const r = forgeSalvage(reg, save, stash, it.uid, MAX);
       expect(r.ok, `${o}: ${r.reason}`).toBe(true);
-      expect(stash.forgeJournal!.mythic, String(o)).toBe(want);
-      expect((r.unlocked ?? []).some((s) => /Мифических/.test(s)), String(o)).toBe(want === 1);
+      expect(stash.forgeJournal!.mythic, String(o)).toBe(0);
+      expect(stash.forgeJournal!.tierHi, String(o)).toBe(-1);
+      expect((r.unlocked ?? []).some((s) => /Мифических/.test(s)), String(o)).toBe(false);
     }
   });
 });
@@ -323,7 +331,7 @@ describe('D17: детали замораживаются у любого най�
   });
 });
 
-describe('⚠ R1-04: жалость и детали — только у НАЙДЕННОГО; бесплатное и купленное учит лишь типу и ступени', () => {
+describe('⚠ R1-04 (пересмотрено решением D1, 06.10): жалость-эскиз — только у НАЙДЕННОГО; каталог (тип, детали, кодекс) — у любой вещи', () => {
   const k = reg.get('balance').craft.journal;
   /** Восемь разборов ОДНОГО класса у кузнеца в один сундук — ровно порог эскиза. */
   function salvageEight(origin: ItemOrigin | undefined): ReturnType<typeof emptyStash> {
@@ -346,27 +354,26 @@ describe('⚠ R1-04: жалость и детали — только у НАЙД
     }
   });
 
-  it('⚠ наградное, купленное, «скованное» без деталей и вещь без поля — ни эскиза, ни счёта, ни деталей', () => {
-    // Стартовое кузнец не разбирает вовсе (R3-04) — см. «ферму стартовых наборов» ниже.
+  it('⭐ наградное, купленное, «скованное» без деталей и вещь без поля — каталог пополняют (D1), но ни эскиза, ни счёта жалости', () => {
+    // Детали — вид, а не сила: каталог из лавки разрешён намеренно (§9.6). Эскиз и эссенция — только у находок.
     for (const o of ['quest', 'shop', 'craft', undefined] as const) {
       const j = salvageEight(o).forgeJournal!;
       const tag = String(o);
       expect(j.sketches, tag).toBe(0);
       expect(j.classSalvages, tag).toEqual({});
-      expect(j.variants, `${tag}: детали узнаются только из найденного`).toEqual([]);
-      expect(j.typesSeen, `${tag}: кодекс — тоже`).toEqual([]);
+      expect(j.variants.length, `${tag}: детали — в каталог`).toBeGreaterThan(0);
+      expect(j.typesSeen.length, `${tag}: кодекс — тоже`).toBeGreaterThan(0);
       expect(j.mythic, tag).toBe(0);
-      // Тип и потолок ступени — «что это за вещь и какой ступени»: за ними честно ходят в лавку (§12.4).
       expect(j.bases, tag).toEqual([mythicBase.id]);
-      expect(j.tierHi, tag).toBeGreaterThanOrEqual(0);
+      expect(j.tierHi, `${tag}: потолка журнала нет (D3)`).toBe(-1);
     }
   });
 
-  it('⚠ ферма стартовых наборов: создал героя → снял оружие → к кузнецу → удалил — разбор отказан, журнал пуст', () => {
-    // R3-04: кузнец стартовое не разбирает вовсе — ни эскизов, ни сырья (раньше оно было краном первой ступени).
+  it('⚠ ферма стартовых наборов: создал героя → снял оружие → к кузнецу → удалил — каталог конечен, эскизов и сырья ноль', () => {
+    // R3-04 + D1: стартовое кузнец разбирает только в каталог — без сырья и жалости; когда нового нет — отказ ДО разбора (вещь цела).
     const classes = reg.get('classes').filter((c) => c.enabled !== false);
     const stash = emptyStash(reg);
-    let tried = 0;
+    let tried = 0, taken = 0;
     for (const cls of classes) {
       for (let i = 0; i < k.sketchAfter * 2; i++) {
         const save = newCharacterSave(reg, cls.id, 'Альт', `alt-${cls.id}-${i}`);
@@ -374,13 +381,19 @@ describe('⚠ R1-04: жалость и детали — только у НАЙД
         if (!w || w.kind !== 'weapon') break;
         expect(w.origin).toBe('start');
         expect(unequip(reg, save, 'weapon').ok).toBe(true);
-        expect(forgeSalvage(reg, save, stash, w.uid, MAX).ok, cls.id).toBe(false);
-        expect(save.inventory.some((x) => x.uid === w.uid), `${cls.id}: вещь цела`).toBe(true);
+        const r = forgeSalvage(reg, save, stash, w.uid, MAX);
+        if (r.ok) taken++;
+        else expect(save.inventory.some((x) => x.uid === w.uid), `${cls.id}: вещь цела`).toBe(true);
+        if (i > 0) expect(r.ok, `${cls.id}: второй и дальше комплект класса — нового нет, отказ`).toBe(false);
         tried++;
       }
     }
     expect(tried, 'сторож видит хоть один класс').toBeGreaterThanOrEqual(k.sketchAfter * 2);
-    expect(stash.forgeJournal).toEqual(emptyJournal());
+    expect(taken, 'каталог конечен: не больше одного комплекта на класс').toBeLessThanOrEqual(classes.length);
+    expect(taken).toBeGreaterThan(0);
+    const j = normalizeJournal(stash.forgeJournal);
+    expect(j.sketches).toBe(0);
+    expect(j.classSalvages).toEqual({});
     expect(stash.materials ?? {}).toEqual({});
   });
 });
@@ -601,7 +614,7 @@ describe('⚠ R7-17: перекатка аффиксов не меняет де�
         const save = { gold: 1e12, inventory: [{ ...structuredClone(it), pos: { x: 0, y: 0 } }] } as unknown as SaveState;
         for (let k = 0; k < 3; k++) {
           const affixes = JSON.stringify(save.inventory[0]!.affixes);
-          expect(forgeReroll(reg, save, it.uid, createRng(seed * 1000 + k)).ok, `${b.id}#${seed}`).toBe(true);
+          expect(forgeReroll(reg, save, it.uid, createRng(seed * 1000 + k), undefined, essWallet()).ok, `${b.id}#${seed}`).toBe(true);
           if (JSON.stringify(save.inventory[0]!.affixes) !== affixes) rerolled++;
           expect(upgradedItem(reg, save.inventory[0]!)!.foundParts, `${b.id}#${seed}: перекатка ${k + 1}`).toEqual(up0.foundParts);
         }

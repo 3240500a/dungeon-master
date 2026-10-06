@@ -107,6 +107,8 @@ export interface CraftReport {
   enabled: boolean;
   crafted: number;
   enchanted: number;
+  /** ⭐ Перекачено свойств у кузнеца (§6.2: золото + эссенция). */
+  rerolled: number;
   /** Скованных переплавлено (у кузнеца и на месте). */
   melted: number;
   /** Найденных разобрано у кузнеца (открывает журнал) и на месте (не открывает). */
@@ -116,9 +118,36 @@ export interface CraftReport {
   unlocked: number;
   goldOnCraft: number;
   goldOnEnchant: number;
+  goldOnReroll: number;
+  /**
+   * ⭐ ЗОЛОТО ПО СТАТЬЯМ: приход (`monsters` — с тел, `sold` — продажи лута и снятого) и расход (лавка, пояс зелий, починка, подъём тира,
+   * перекатка, ковка, зачарование, пассивы, смерть). Ответ на «держит ли золото» — рядом с эссенцией (`flow`), а не одной суммой.
+   */
+  gold: {
+    monsters: number; sold: number;
+    shop: number; belt: number; repair: number; upgrade: number; reroll: number; craft: number; enchant: number; passives: number; death: number;
+  };
+  /**
+   * ⭐ СЫРЬЁ И ЭССЕНЦИЯ ПО ID: приход по источникам (тела, разбор на месте, разбор у кузнеца, переплавка) и расход по статьям (ковка, подъём,
+   * починка, зачарование, перекатка) — отсюда «сорт × семья в час» и эссенция «пришло / ушло». `fieldAtForge` — сколько В СРЕДНЕМ дал бы
+   * у кузнеца тот же разобранный на месте найденный и купленный хлам: верхняя оценка «всё несу кузнецу».
+   */
+  flow: {
+    in: Record<'monsters' | 'field' | 'forge' | 'melt', Record<string, number>>;
+    out: Record<'craft' | 'upgrade' | 'repair' | 'enchant' | 'reroll', Record<string, number>>;
+    fieldAtForge: Record<string, number>;
+  };
+  /** Сколько раз бот ХОТЕЛ зачаровать, перекатить или поднять, но не хватило золота сверх запаса или сырья (эссенции). */
+  blocked: {
+    enchantGold: number; enchantEssence: number; rerollGold: number; rerollEssence: number; upgradeGold: number; upgradeMats: number;
+  };
+  /** Скованное по ступеням (индекс `craftTiers`) и первая ковка каждой ступени: часы прогона и уровень героя. */
+  craftedByTier: Record<number, number>;
+  firstCraft: Record<number, { hours: number; level: number }>;
   materials: {
     in: { monsters: number; field: number; forge: number; melt: number; total: number };
-    out: { craft: number; forge: number; total: number };
+    /** `enchant` — эссенция на зачарование, `reroll` — на перекатку (§6.2). */
+    out: { craft: number; forge: number; enchant: number; reroll: number; total: number };
     /** Потеряно смертью (половина стека) и не влезшее — остаток сверки. */
     lost: number;
     /** Запас на конец (сумка + сундук), всего и по ступеням. */
@@ -143,8 +172,8 @@ export interface CraftReport {
     weaponDps: number;
     weaponSource: string;
   };
-  /** Журнал аккаунта на конец: открытые базы, детали, потолок ступени, мифики. */
-  journal: { bases: number; variants: number; tierHi: number; mythic: number };
+  /** Журнал аккаунта на конец: открытые базы и детали (ворот ступени у ковки нет — решение D3). */
+  journal: { bases: number; variants: number };
 }
 
 export interface RunReport {
@@ -174,6 +203,7 @@ export interface RunReport {
   meltedPerHour: number;
   salvagedPerHour: number;
   enchantedPerHour: number;
+  rerolledPerHour: number;
   xpPerHour: number;
   lootPerHour: number;
   /** Золото на конец прогона: сальдо всех приходов и стоков. */

@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import {
-  canSalvageItem, equip, fieldSalvage, forgeSalvage, forgeUpgrade, salvageRange, salvageWorth, sellItem, shopSellPrice, unequip, upgradedItem,
+  STARTER_FIELD, STARTER_KNOWN, canSalvageItem, equip, fieldSalvage, forgeSalvage, forgeUpgrade, salvageRange, salvageWorth, sellItem, shopSellPrice,
+  unequip, upgradedItem,
 } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { emptyStash, stashMove } from './stashActions.js';
 import { createRng } from '../formulas/rng.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
-import { shapeFoundWeapon } from '../formulas/craft.js';
+import { emptyJournal, normalizeJournal, salvageIntoJournal, shapeFoundWeapon } from '../formulas/craft.js';
 import { unmetWorn } from '../formulas/stats.js';
 import { newBotSave } from '../sim/playerBot.js';
 import type { Attribute } from '../types/attributes.js';
@@ -21,9 +22,12 @@ import type { SaveState } from '../types/save.js';
  * комплект, переложил в сундук аккаунта (или бросил соседу), удалил героя — и заново. Слот героя освобождается
  * сразу, лимита на создание нет. Лавка платила 35 золота за комплект, разбор давал 11–21 единицу сырья первой
  * ступени — ровно той, что ест лестница подъёма. Скрипт гонял круг за 2–3 с: 40–60 тыс. золота в час на аккаунт,
- * больше, чем дают убийства на низких и средних уровнях. Журнал R1-04 закрыл (`countsAsFind`), золото и сырьё — нет.
+ * больше, чем дают убийства на низких и средних уровнях.
  *
- * Теперь стартовая вещь за пределами своего героя ничего не стоит: лавка берёт её за 1, кузнец не разбирает.
+ * Теперь стартовая вещь за пределами своего героя ничего не стоит: лавка берёт её за 1, а кузнец разбирает её ТОЛЬКО В КАТАЛОГ
+ * (решение владельца D1, предложение «Разбор, сырьё и чары» §9.3): ни сырья, ни эссенции, ни эскиза. Каталог конечен — детали стартового
+ * оружия одни на класс, — поэтому второй такой же комплект кузнец не берёт: отказ с причиной ДО разбора («разобрать и не получить ничего
+ * нельзя»). В поле — отказ всегда: сырья комплект не даёт, а каталог пишет только кузнец (D2).
  */
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
 const classes = reg.get('classes').filter((c) => c.enabled !== false);
@@ -31,7 +35,7 @@ const kitOf = (s: SaveState): Item[] => [...Object.values(s.equipment).filter((i
 const MAX = { int: (_a: number, b: number) => b, chance: () => true };
 
 describe('⚠ R3-04: стартовый комплект вне своего героя ничего не стоит', () => {
-  it('⭐ у каждого класса: продажа комплекта ≤ 5 золота, разбор — ноль сырья (у кузнеца и в поле)', () => {
+  it('⭐ у каждого класса: продажа комплекта ≤ 5 золота, сырья — ноль; у кузнеца — только каталог, в поле — отказ', () => {
     expect(classes.length).toBeGreaterThan(0);
     for (const cls of classes) {
       const save = newCharacterSave(reg, cls.id, 'Альт', `alt-${cls.id}`);
@@ -42,26 +46,44 @@ describe('⚠ R3-04: стартовый комплект вне своего г�
       expect(sell, `${cls.id}: лавка за комплект`).toBeLessThanOrEqual(5);
       for (const it of kit) {
         expect(salvageWorth(reg, it), `${cls.id}: ${it.baseId}`).toBe(0);
-        for (const inField of [false, true]) {
-          expect(canSalvageItem(reg, it, inField).ok, `${cls.id}: ${it.baseId} ${inField ? 'поле' : 'кузница'}`).toBe(false);
-          expect(salvageRange(reg, it, inField).ok).toBe(false);
-        }
+        // У кузнеца — разбор в каталог: сырья нет, вилка пустая.
+        expect(canSalvageItem(reg, it, false, emptyJournal()).ok, `${cls.id}: ${it.baseId} кузница, каталог пуст`).toBe(true);
+        expect(salvageRange(reg, it, false), `${cls.id}: ${it.baseId}`).toEqual({ ok: true, range: {} });
+        // Всё уже в каталоге — отказ ДО нажатия, с причиной.
+        const known = salvageIntoJournal(reg, emptyJournal(), it).journal;
+        expect(canSalvageItem(reg, it, false, known), `${cls.id}: ${it.baseId} — всё известно`).toEqual({ ok: false, reason: STARTER_KNOWN });
+        // В поле — отказ всегда.
+        expect(canSalvageItem(reg, it, true), `${cls.id}: ${it.baseId} поле`).toEqual({ ok: false, reason: STARTER_FIELD });
+        expect(salvageRange(reg, it, true).ok).toBe(false);
       }
     }
   });
 
-  it('⭐ разбор стартовой вещи — отказ ДО траты: вещь цела, сырья и журнала нет', () => {
+  it('⭐ разбор стартовой вещи у кузнеца: в каталог тип/детали (снаряжение), ни сырья, ни эскиза; второй такой же комплект — отказ ДО траты', () => {
     for (const cls of classes) {
-      const save = newCharacterSave(reg, cls.id, 'Альт', `alt2-${cls.id}`);
-      for (const slot of Object.keys(save.equipment)) expect(unequip(reg, save, slot).ok, `${cls.id} ${slot}`).toBe(true);
-      for (const it of [...save.inventory]) {
-        const stash = emptyStash(reg);
-        const before = JSON.stringify([save, stash]);
-        const r = forgeSalvage(reg, save, stash, it.uid, MAX);
-        expect(r.ok, `${cls.id}: ${it.baseId}`).toBe(false);
-        expect(r.reason).toMatch(/стартов/i);
-        expect(fieldSalvage(reg, save, it.uid, createRng(1)).ok).toBe(false);
-        expect(JSON.stringify([save, stash]), `${cls.id}: ${it.baseId} — ничего не тронуто`).toBe(before);
+      const stash = emptyStash(reg);
+      for (const round of [0, 1]) {
+        const save = newCharacterSave(reg, cls.id, 'Альт', `alt2-${cls.id}-${round}`);
+        for (const slot of Object.keys(save.equipment)) expect(unequip(reg, save, slot).ok, `${cls.id} ${slot}`).toBe(true);
+        for (const it of [...save.inventory]) {
+          expect(fieldSalvage(reg, save, it.uid, createRng(1)).ok, `${cls.id}: ${it.baseId} в поле`).toBe(false);
+          const before = JSON.stringify([save, stash]);
+          const r = forgeSalvage(reg, save, stash, it.uid, MAX);
+          if (round === 0) {
+            expect(r.ok, `${cls.id}: ${it.baseId} — первый комплект в каталог`).toBe(true);
+            expect(r.summary, `${cls.id}: итоговая строка`).toMatch(/^Получено: сырья нет · Каталог: \+/);
+            expect(save.inventory.some((i) => i.kind === 'material'), `${cls.id}: сырья в сумке нет`).toBe(false);
+            expect(stash.materials ?? {}, `${cls.id}: сырья в сундуке нет`).toEqual({});
+            const j = normalizeJournal(stash.forgeJournal);
+            if (it.kind === 'weapon') expect(j.bases, `${cls.id}: тип в каталоге`).toContain(it.baseId);
+            else expect(j.gearSeen, `${cls.id}: снаряжение в каталоге`).toContain(it.baseId);
+            expect(j.sketches, 'эскиза нет').toBe(0);
+            expect(j.classSalvages, 'жалость не копится').toEqual({});
+          } else {
+            expect(r, `${cls.id}: ${it.baseId} — второй комплект`).toEqual({ ok: false, reason: STARTER_KNOWN });
+            expect(JSON.stringify([save, stash]), `${cls.id}: ${it.baseId} — ничего не тронуто`).toBe(before);
+          }
+        }
       }
     }
   });
@@ -72,6 +94,7 @@ describe('⚠ R3-04: стартовый комплект вне своего г�
       const main = newCharacterSave(reg, cls.id, 'Главный', `main-${cls.id}`);
       main.inventory = [];
       main.gold = 0;
+      const forge = emptyStash(reg);
       for (let round = 0; round < 3; round++) {
         const alt = newCharacterSave(reg, cls.id, 'Альт', `churn-${cls.id}-${round}`);
         for (const slot of Object.keys(alt.equipment)) expect(unequip(reg, alt, slot).ok).toBe(true);
@@ -79,15 +102,15 @@ describe('⚠ R3-04: стартовый комплект вне своего г�
         kit.forEach((it, i) => expect(stashMove(reg, alt, stash, it.uid, 0, i * 3, 0).ok, `${cls.id}: в сундук`).toBe(true));
         // Альта удалили — комплект у аккаунта. Главный забирает и сдаёт.
         kit.forEach((it, i) => expect(stashMove(reg, main, stash, it.uid, 'inv', i * 2, 0).ok, `${cls.id}: из сундука`).toBe(true));
-        for (const it of kit) {
-          const st = emptyStash(reg);
-          expect(forgeSalvage(reg, main, st, it.uid, MAX).ok, `${cls.id}: разбор`).toBe(false);
-          expect(st.materials ?? {}).toEqual({});
-        }
-        for (const it of kit) expect(sellItem(reg, main, it.uid).ok).toBe(true);
+        // Разбор у кузнеца: первый круг — в каталог, дальше — отказ; сырья — ноль всегда.
+        for (const it of kit) expect(forgeSalvage(reg, main, forge, it.uid, MAX).ok, `${cls.id}: разбор, круг ${round}`).toBe(round === 0);
+        expect(forge.materials ?? {}).toEqual({});
+        expect(main.inventory.some((i) => i.kind === 'material')).toBe(false);
+        for (const it of main.inventory.filter((i) => kit.some((k) => k.uid === i.uid))) expect(sellItem(reg, main, it.uid).ok).toBe(true);
       }
       expect(main.gold, `${cls.id}: золото за три круга`).toBeLessThanOrEqual(15);
       expect(main.inventory).toEqual([]);
+      expect(normalizeJournal(forge.forgeJournal).sketches).toBe(0);
     }
   });
 

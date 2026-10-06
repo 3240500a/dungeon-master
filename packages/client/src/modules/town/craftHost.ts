@@ -143,9 +143,11 @@ export function gameCraftHost(link: ForgeLink, memo: CraftMemo = pageMemo): Craf
         return got ? { ok: true, item: got.item } : { ok: true, reason: 'Скована раньше: этой вещи уже нет в сумке' };
       }, CRAFT_UNKNOWN);
     },
-    enchant: (item, rarity: Rarity, maxGold) => {
+    enchant: (item, rarity: Rarity, maxGold, maxMaterials) => {
       if (rarity !== 'magic' && rarity !== 'rare') return { ok: false, reason: 'Зачаровать можно до магической или редкой' };
-      return send({ cmd: 'forgeEnchant', uid: item.uid, rarity, ...(maxGold !== undefined ? { maxGold } : {}) }, (r) => {
+      // ⭐ §6.2: и эссенция кнопки — согласием `maxMaterials` (R8-14): больше неё сервер не возьмёт.
+      return send({ cmd: 'forgeEnchant', uid: item.uid, rarity, ...(maxGold !== undefined ? { maxGold } : {}),
+        ...(maxMaterials !== undefined ? { maxMaterials } : {}) }, (r) => {
         if (!r.ok) return { ok: false, reason: r.reason ?? 'Кузнец отказал' };
         const got = findOwned(save(), r.uid ?? item.uid);
         return { ok: true, item: got?.item };

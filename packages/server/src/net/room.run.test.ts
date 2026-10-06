@@ -3,6 +3,7 @@ import type { GameConn } from './conn.js';
 import {
   ConfigRegistry, newCharacterSave, generateItem, itemFromBaseId, materialItem, createRng, uuidv7,
   craftWeapon, defaultParts, keyVariantsByBase, variantsFor, keySlotOf, CRAFT_SLOT_LIST, emptyJournal, fullJournal, emptyStash, enchantCost, sketchable,
+  enchantMaterials, ESSENCE_ID, PRICE_CHANGED, legacyGateOpen, normalizeJournal,
   addToInventory, carriedMaterials, shopBuyPrice, Cell, addDebuffStack, acceptQuest,
   type ServerFrame, type RunPlan, type RunNode, type SaveState, type Item, type AccountStash, type CraftInput, type CraftJournal,
   type CraftCost,
@@ -709,6 +710,8 @@ function foundWeaponInBag(save: SaveState, seed = 7): Item {
 const crafted = (save: SaveState): Item[] => save.inventory.filter((i) => i.parts);
 const craftCmd = (nonce: string, input: unknown): unknown => ({ cmd: 'craft', nonce, input });
 
+/** Эссенция в кошельке сундука у `craftSetup` (§6.2): на зачарование до редкой с запасом; ковка её не трогает. */
+const ESSENCE_STOCK = 100;
 /**
  * Герой в городе с ровно тем, что нужно на одну ковку `sample()`: половина сырья в сумке, остальное
  * (+3 сверх) в кошельке сундука, золото — цена + `spareGold`, журнал открыт ровно под заявку.
@@ -719,6 +722,7 @@ async function craftSetup(userId: string, spareGold = 0) {
   await settle();
   const bag: Record<string, number> = {}, wallet: Record<string, number> = {};
   for (const [id, n] of Object.entries(s.cost.materials)) { bag[id] = Math.ceil(n / 2); wallet[id] = n - bag[id]! + 3; }
+  wallet[ESSENCE_ID] = ESSENCE_STOCK;   // §6.2: зачарование тратит и эссенцию — из сундука
   bagMaterials(r.save, bag);
   seedStash(userId, journalFor(s), wallet);
   r.save.gold = s.cost.gold + spareGold;
@@ -1053,7 +1057,7 @@ describe('Room — ковка на сервере: ковка, зачарова�
     expect(ws.last('cmdResult')).toMatchObject({ id: 3, ok: true });
   });
 
-  it('⭐ D5: зачарование скованной вещи — только золото, uid в ответе, причина enchant; отказы до оплаты', async () => {
+  it('⭐ D5: зачарование скованной вещи — золото и эссенция (§6.2), uid в ответе, причина enchant; отказы до оплаты', async () => {
     const user = 'user-enchant';
     const { room, ws, pid, save, s } = await craftSetup(user);
     await room.handleCmd(pid, craftCmd('ench-nonce-01', s.input), 1);
@@ -1072,33 +1076,45 @@ describe('Room — ковка на сервере: ковка, зачарова�
       expect(JSON.stringify(save), `${JSON.stringify(cmd)}: сейв цел`).toBe(before);
       expect(dbSnap(user, save.charId), `${JSON.stringify(cmd)}: база цела`).toBe(snap);
     };
+    // Согласие на эссенцию — как у веба (`forgeBench`/`craftHost`: эссенция карточки в `maxMaterials`).
+    const ess = enchantMaterials(cfg, item, 'magic');
     save.gold = cost - 1;
-    await refused({ cmd: 'forgeEnchant', uid, rarity: 'magic' }, 2, /золота/);
+    await refused({ cmd: 'forgeEnchant', uid, rarity: 'magic', maxMaterials: ess }, 2, /золота/);
     save.gold = cost + 7;
-    await refused({ cmd: 'forgeEnchant', uid: found.uid, rarity: 'magic' }, 3, /скованную/);
-    await refused({ cmd: 'forgeEnchant', uid: 'нет-такой-вещи', rarity: 'rare' }, 4, /не в инвентаре/);
+    await refused({ cmd: 'forgeEnchant', uid: found.uid, rarity: 'magic', maxMaterials: ess }, 3, /скованную/);
+    await refused({ cmd: 'forgeEnchant', uid: 'нет-такой-вещи', rarity: 'rare', maxMaterials: ess }, 4, /не в инвентаре/);
+    // ⭐ Без `maxMaterials` (клиент по старым правилам — Unity до переноса) эссенция в цене — отказ «Цена изменилась» до траты: прежде сервер
+    // молча снимал её из сумки и сундука, хотя карточка её не показывала (R8-14 в обход).
+    await refused({ cmd: 'forgeEnchant', uid, rarity: 'magic' }, 41, new RegExp(`^${PRICE_CHANGED}: Чародейская эссенция ${ess[ESSENCE_ID]}`));
+    expect(db.stashes.get(user)!.data.materials![ESSENCE_ID], 'эссенция цела').toBe(ESSENCE_STOCK);
 
     limits.forgeCmd.reset(userOf(pid));
     const w0 = db.writes.length;
-    await room.handleCmd(pid, { cmd: 'forgeEnchant', uid, rarity: 'magic' }, 5);
+    await room.handleCmd(pid, { cmd: 'forgeEnchant', uid, rarity: 'magic', maxMaterials: ess }, 5);
     expect(ws.last('cmdResult'), JSON.stringify(ws.last('cmdResult'))).toMatchObject({ id: 5, cmd: 'forgeEnchant', ok: true, uid });
     const after = save.inventory.find((i) => i.uid === uid)!;
     expect(after.rarity).toBe('magic');
     expect(after.affixes.length).toBeGreaterThan(0);
     expect(after.parts, 'детали на месте').toEqual(s.input.parts);
     expect(save.gold, 'списано ровно по цене').toBe(7);
+    expect(db.stashes.get(user)!.data.materials![ESSENCE_ID], 'эссенция — из сундука, той же транзакцией')
+      .toBe(ESSENCE_STOCK - enchantMaterials(cfg, item, 'magic')[ESSENCE_ID]!);
     expect(db.writes.slice(w0)).toEqual([{ kind: 'stash', charId: save.charId, reason: 'enchant' }]);
     expect(db.data.get(save.charId)!.inventory.find((i) => i.uid === uid)!.rarity, 'в базе — зачарованная').toBe('magic');
 
     save.gold = 1_000_000;
-    await refused({ cmd: 'forgeEnchant', uid, rarity: 'rare' }, 6, /уже зачарована/);
+    await refused({ cmd: 'forgeEnchant', uid, rarity: 'rare', maxMaterials: ess }, 6, /уже зачарована/);
   });
 
   it('⭐ D6: разбор найденного у кузнеца открывает журнал (unlocked в ответе, журнал в кадре); скованное — переплавка', async () => {
     const user = 'user-salvage-journal';
     const { room, ws, pid, save } = makeRoom(user);
     await settle();
-    expect(ws.last('stash')?.forgeJournal, 'журнал приходит уже на входе — пустой у нового аккаунта').toEqual(emptyJournal());
+    // Пустой у нового аккаунта; прежние ворота ковки (`tierHi`, `mythic`) — открытыми, только в кадре (D3, `legacyGateOpen`): их держит
+    // лишь клиент Unity до переноса, и разбор их больше не двигает.
+    expect(ws.last('stash')?.forgeJournal, 'журнал приходит уже на входе — пустой у нового аккаунта').toEqual(legacyGateOpen(cfg, emptyJournal()));
+    expect(ws.last('stash')!.forgeJournal.tierHi, 'потолок ступени в кадре — верхняя ступень').toBe(cfg.get('item-tiers').length - 1);
+    expect(normalizeJournal(db.stashes.get(user)?.data.forgeJournal).tierHi, 'в базе — как есть').toBe(-1);
     const found = foundWeaponInBag(save);
     const base = cfg.get('items.base').find((b) => b.id === found.baseId)!;
     await room.handleCmd(pid, { cmd: 'forgeSalvage', uid: found.uid }, 1);
@@ -1123,7 +1139,9 @@ describe('Room — ковка на сервере: ковка, зачарова�
     await room.handleCmd(pid, { cmd: 'forgeSalvage', uid }, 2);
     const r = ws.last('cmdResult')!;
     expect(r, JSON.stringify(r)).toMatchObject({ id: 2, ok: true });
-    expect(r.unlocked, 'переплавка ничего не открывает').toBeUndefined();
+    // Скованное сковали из открытого — каталог его знает: нового нет, а итоговая строка разбора есть всегда.
+    expect(r.unlocked, 'переплавка нового не открывает').toEqual([]);
+    expect(r.summary, 'итоговая строка разбора доходит до клиента').toMatch(/^Получено: .* · Каталог: все детали уже в каталоге/);
     expect(db.writes.at(-1)).toEqual({ kind: 'stash', charId: save.charId, reason: 'melt' });
     expect(db.stashes.get(user)!.data.forgeJournal).toEqual(journal);
     expect(save.inventory.some((i) => i.uid === uid)).toBe(false);
@@ -1190,7 +1208,7 @@ describe('Room — ковка на сервере: ковка, зачарова�
 
     save.gold = 1_000_000;
     limits.forgeCmd.reset(userOf(pid));
-    await room.handleCmd(pid, { cmd: 'forgeEnchant', uid, rarity: 'magic' }, 5);
+    await room.handleCmd(pid, { cmd: 'forgeEnchant', uid, rarity: 'magic', maxMaterials: enchantMaterials(cfg, save.inventory.find((i) => i.uid === uid)!, 'magic') }, 5);
     expect(ws.last('cmdResult')!.ok).toBe(true);
     expect(tm.enchanted).toBe(1);
     expect(delta('forgeEnchanted')).toBe(1);
@@ -2291,7 +2309,8 @@ describe('Room — ковка открыта в данных (R4-03)', () => {
     expect(r, JSON.stringify(r)).toMatchObject({ id: 1, cmd: 'craft', ok: true });
     expect(save.inventory.some((i) => i.uid === r.uid)).toBe(true);
     limits.forgeCmd.reset(userOf(pid));
-    await room.handleCmd(pid, { cmd: 'forgeEnchant', uid: r.uid!, rarity: 'magic' }, 2);
+    const forged = save.inventory.find((i) => i.uid === r.uid)!;
+    await room.handleCmd(pid, { cmd: 'forgeEnchant', uid: r.uid!, rarity: 'magic', maxMaterials: enchantMaterials(cfg, forged, 'magic') }, 2);
     expect(ws.last('cmdResult'), JSON.stringify(ws.last('cmdResult'))).toMatchObject({ id: 2, cmd: 'forgeEnchant', ok: true });
   });
 });

@@ -41,7 +41,7 @@ export function renderCraftCatalog(main: HTMLElement, reg: ConfigRegistry, sb: C
       const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
         dropBias: 1, itemLevel: sb.level, tierLevel: rollTierLevel(sb.level, bal.loot.tierWindow, rng), categoryWeights: { weapon: 1 },
         tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), rareNames: reg.get('rare-names'), maxReqTotal: bal.maxTotalRequirement,
-        baseRoll: bal.loot.baseRoll, origin: 'drop',   // как дроп игры: иначе мифики не засчитались бы воротам t6
+        baseRoll: bal.loot.baseRoll, origin: 'drop',   // как дроп игры: жалость-эскиз копят только находки
       }, rng));
       if (it.kind === 'weapon' && it.rarity !== 'unique') sb.drops.push(it);
     }
@@ -60,7 +60,6 @@ export function renderCraftCatalog(main: HTMLElement, reg: ConfigRegistry, sb: C
       if (r.unlocked.length) sb.log.unshift(`${it.name} → открыто: ${r.unlocked.map((id) => partById(reg, id)?.name ?? id).join(', ')}${r.newBase ? ' · новый тип' : ''}`);
       if (r.newType && cls) { types++; sb.log.unshift(`📜 Кодекс: ${typeName(cls.weaponClass, r.newType)}`); }
       if (r.sketch) sb.log.unshift(`✦ Эскиз за ${reg.get('balance').craft.journal.sketchAfter} разборов класса`);
-      if (r.tierUp) sb.log.unshift(`▲ Потолок ступени: ${tiers[sb.journal.tierHi]?.id} ${tiers[sb.journal.tierHi]?.name}`);
       for (const [id, n] of Object.entries(craftSalvageYield(reg, it))) { mats[id] = (mats[id] ?? 0) + n; sb.wallet[id] = (sb.wallet[id] ?? 0) + n; }
     }
     const name = (id: string): string => reg.get('craft-materials').find((m) => m.id === id)?.name ?? id;
@@ -93,9 +92,8 @@ export function renderCraftCatalog(main: HTMLElement, reg: ConfigRegistry, sb: C
   const allBases = reg.get('items.base').filter((b) => b.kind === 'weapon').length;
   const allVar = reg.get('weapon-parts').length;
   const allTypes = reg.get('weapon-types').reduce((s, r) => s + r.names.filter((n) => n.enabled !== false).length, 0);
-  const mythicNeed = reg.get('balance').craft.journal.mythicSalvages;
   jr.append(h('div', 'color:#e39a3c;font-weight:600;margin-bottom:6px', 'Журнал кузнеца'));
-  jr.append(h('div', 'line-height:1.7', `Типов (баз): <b>${j.bases.length}</b> / ${allBases} · деталей: <b>${j.variants.length}</b> / ${allVar} · кодекс: видел <b>${j.typesSeen.length}</b>, сковал <b>${j.typesForged.length}</b> / ${allTypes} · потолок ступени: <b>${j.tierHi >= 0 ? `${tiers[j.tierHi]?.id} ${tiers[j.tierHi]?.name}` : '—'}</b> · мифических разобрано: <b>${j.mythic}</b> / ${mythicNeed} для t6 · эскизов: <b>${j.sketches}</b>`));
+  jr.append(h('div', 'line-height:1.7', `Типов (баз): <b>${j.bases.length}</b> / ${allBases} · деталей: <b>${j.variants.length}</b> / ${allVar} · кодекс: видел <b>${j.typesSeen.length}</b>, сковал <b>${j.typesForged.length}</b> / ${allTypes} · эскизов: <b>${j.sketches}</b> · ворот ступени нет (D3): любую ступень открытой базы держит только сырьё`));
   if (j.sketches > 0) {
     const sel = document.createElement('select'); sel.style.cssText = 'padding:4px 7px;background:#0f0f16;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;font-size:12px;margin-right:6px';
     for (const p of reg.get('weapon-parts').filter((x) => sketchable(reg, j, x.id))) { const o = document.createElement('option'); o.value = p.id; o.textContent = `${p.name} (${p.classes.join(', ')})`; sel.append(o); }

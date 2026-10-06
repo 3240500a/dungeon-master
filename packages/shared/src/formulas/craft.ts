@@ -4,8 +4,9 @@ import type { BaseRoll, CraftPartPick, CraftParts, Item, ItemOrigin, Rarity, Rol
 import type { StatModifier } from '../types/attributes.js';
 import type { MaterialCost } from '../economy/materials.js';
 import { createRng, type Rng } from './rng.js';
+import { ESSENCE_ID } from './salvage.js';
 import { isSafeKey } from '../session/wireLimits.js';
-import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
+import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, pickTierClamped, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
 import { axisOf, balanceAxisOf, bladeStats, strikeAxisOf } from './bladeStats.js';
 import {
   CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType,
@@ -125,22 +126,31 @@ export interface CraftJournal {
   bases: string[];
   /** Открытые варианты деталей. */
   variants: string[];
-  /** Высший тир (индекс), который игрок когда-либо разбирал. */
+  /**
+   * ⚠ НАСЛЕДИЕ: прежний потолок ковки (высший разобранный тир). Ворот ступени у ковки больше нет (решение владельца D3, 06.10): поле
+   * читается из старых журналов, хранится как есть и НИЧЕМ не читается и не пишется — ступень ковки держит только сырьё.
+   */
   tierHi: number;
   /** Разборы оружия по классам — счётчик к «эскизу» (жалость). */
   classSalvages: Record<string, number>;
   /** Неизрасходованные эскизы: каждый открывает любой неоткрытый вариант на выбор. */
   sketches: number;
-  /** Разобрано мифических (t6) вещей — ворота t6. */
+  /** ⚠ НАСЛЕДИЕ: прежний счётчик разобранных мификов (ворота t6 сняты решением D3). Хранится как есть, не читается и не пишется. */
   mythic: number;
   /** Кодекс: исторические типы, которые игрок видел на разобранных вещах. */
   typesSeen: string[];
   /** Кодекс: исторические типы, которые игрок сковал сам. */
   typesForged: string[];
+  /**
+   * ⭐ КАТАЛОГ СНАРЯЖЕНИЯ: базы брони, щитов и украшений, разобранных у кузнеца (предложение «Разбор, сырьё и чары» §9.1). Любая
+   * разобранная вещь пополняет каталог, а не только оружие: без этого списка правило не выполнялось бы для 60–70 % разборов.
+   * Пока — коллекция (тиров по базам не храним); позже на ней можно строить ковку брони. Нет поля (журнал старше) — пусто.
+   */
+  gearSeen?: string[];
 }
 
 export function emptyJournal(): CraftJournal {
-  return { bases: [], variants: [], tierHi: -1, classSalvages: {}, sketches: 0, mythic: 0, typesSeen: [], typesForged: [] };
+  return { bases: [], variants: [], tierHi: -1, classSalvages: {}, sketches: 0, mythic: 0, typesSeen: [], typesForged: [], gearSeen: [] };
 }
 
 /**
@@ -165,6 +175,7 @@ export function normalizeJournal(raw: unknown): CraftJournal {
   j.variants = strs(r.variants);
   j.typesSeen = strs(r.typesSeen);
   j.typesForged = strs(r.typesForged);
+  j.gearSeen = strs(r.gearSeen);
   j.tierHi = typeof r.tierHi === 'number' && Number.isInteger(r.tierHi) && r.tierHi >= -1 ? r.tierHi : -1;
   j.sketches = count(r.sketches);
   j.mythic = count(r.mythic);
@@ -213,20 +224,24 @@ export function fullJournal(reg: ConfigRegistry): CraftJournal {
     tierHi: craftTiers(reg).length - 1,
     classSalvages: {},
     sketches: 0,
-    mythic: reg.get('balance').craft.journal.mythicSalvages,
+    mythic: 0,
     typesSeen: [],
     typesForged: [],
+    gearSeen: reg.get('items.base').filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry').map((b) => b.id),
   };
 }
 
+/** Счёт мификов, который `legacyGateOpen` шлёт клиенту: выше любого бывшего порога `craft.journal.mythicSalvages` (умолчание было 5). */
+export const LEGACY_MYTHIC_OPEN = 1000;
+
 /**
- * Потолок ступени, который разрешает журнал. t6 — особый случай ровно в одном месте, где его
- * просил владелец: мало разобрать ОДНУ мифическую вещь, нужно `mythicSalvages` штук.
+ * ⭐ D3: ПРЕЖНИЕ ВОРОТА КОВКИ — ОТКРЫТЫМИ В КАДРЕ. Потолок ступени (`tierHi`) и счёт мификов (`mythic`) ковку больше не ограничивают и разбором
+ * не двигаются (решение владельца: «всё должно упираться только в количество ресурсов»), а сервер и веб их не читают. Клиент Unity до
+ * переноса ещё зажимает ступень окна ковки по ним (`JournalTierCap`) — журнал, который ему шлёт сервер (`stash.forgeJournal`), несёт
+ * верхнюю ступень и счёт выше любого порога. Только КАДР: в базу пишется журнал как есть.
  */
-export function journalTierCap(reg: ConfigRegistry, j: CraftJournal): number {
-  const last = craftTiers(reg).length - 1;
-  const mythicOk = j.mythic >= reg.get('balance').craft.journal.mythicSalvages;
-  return Math.min(j.tierHi, mythicOk ? last : last - 1);
+export function legacyGateOpen(reg: ConfigRegistry, j: CraftJournal): CraftJournal {
+  return { ...j, tierHi: Math.max(j.tierHi, craftTiers(reg).length - 1), mythic: Math.max(j.mythic, LEGACY_MYTHIC_OPEN) };
 }
 
 // ── Анатомия и варианты ─────────────────────────────────────────────────────────────────────────
@@ -659,19 +674,9 @@ export function craftWeapon(
   if (tiers[t]?.enabled === false && tiers.some((x) => x.enabled !== false)) {
     return { ok: false, reason: `Ступень ${tiers[t]!.name} кузнец сейчас не куёт: возьми материалы другой ступени`, ...view };
   }
-  if (opts.journal) {
-    const cap = journalTierCap(reg, opts.journal);
-    if (t > cap) {
-      const last = tiers.length - 1;
-      const need = reg.get('balance').craft.journal.mythicSalvages;
-      return {
-        ok: false, ...view,
-        reason: t === last && opts.journal.tierHi >= last
-          ? `Мифическую ступень кузнец откроет после ${need} разобранных мифических вещей (сейчас ${opts.journal.mythic})`
-          : `Кузнец ещё не работал со ступенью ${tiers[t]?.name}: разбери вещь такой ступени или выше`,
-      };
-    }
-  }
+  // ⭐ D3 (решение владельца 06.10: «разобрал вещь — получил чертежи и можно сразу делать её, всё упирается только в количество
+  // ресурсов, никаких доп. заграждений»): ВОРОТ СТУПЕНИ У КОВКИ НЕТ — ни потолка журнала (`tierHi`), ни счётчика мификов. Ступень держит
+  // сырьё её сорта: V бывает только с найденных t6 (рецепт разбора), и мифик стоит десятков таких разборов. Журнал — только тип и детали.
   const tier = tiers[t]!;
   const bake = bakeParts(reg, base, t, res.parts);
   // ⚠ R17-03: у формы нет цены — отказ, а не сырьё ×1 (цена самой бедной формы). Схема такую таблицу не пропускает; это страховка.
@@ -824,9 +829,32 @@ export function rolledFormMult(reg: ConfigRegistry, item: Item, rarity: Rarity):
  */
 export function enchantCost(reg: ConfigRegistry, item: Item, rarity: Rarity): number {
   const k = reg.get('balance').craft;
-  const tier = craftTiers(reg)[tierIndexOfItem(reg, item)];
+  const tier = craftTiers(reg)[priceTierIndex(reg, item)];
   const rDef = reg.get('rarities').find((r) => r.id === rarity);
   return Math.round(k.cost.enchantGold * (tier?.reqMult ?? 1) * (rDef?.priceMult ?? 1) * (rolledFormMult(reg, item, rarity) ?? Number.NaN));
+}
+
+/**
+ * ⭐ ЭССЕНЦИЯ ЗАЧАРОВАНИЯ И ПЕРЕКАТКИ — сверх прежнего золота (предложение «Разбор, сырьё и чары» §6.2, `balance.craft.cost.essence`):
+ * зачарование до магической — `base + perTier × ступень`, до редкой — × `rareMult`; перекатка — доля `rerollShare` зачарования до
+ * `rarity` (редкость самой вещи). Ступень — нынешняя (`priceTierIndex`): «перекатить на низкой ступени, потом поднять» выигрывает не
+ * больше трёх перекаток на вещь — принято осознанно (§11.1). Дробное — вверх: эссенции не бывает «полштуки», и недоплатить нельзя.
+ * Не магическая и не редкая — 0 (катать нечего; отказ скажут `canEnchantItem`/`canRerollItem`). Эссенция выключена в редакторе
+ * (`craft-materials`) — тоже 0: выключенный материал «не падает и не участвует в рецептах» (R2-28), и чары не запираются навсегда.
+ */
+export function essenceCost(reg: ConfigRegistry, item: Item, rarity: Rarity, op: 'enchant' | 'reroll'): number {
+  if (rarity !== 'magic' && rarity !== 'rare') return 0;
+  if (!reg.get('craft-materials').some((m) => m.id === ESSENCE_ID && m.enabled)) return 0;
+  const k = reg.get('balance').craft.cost.essence;
+  const enchant = (k.base + k.perTier * priceTierIndex(reg, item)) * (rarity === 'rare' ? k.rareMult : 1);
+  const n = op === 'reroll' ? enchant * k.rerollShare : enchant;
+  return Number.isFinite(n) && n > 0 ? Math.ceil(n - 1e-9) : 0;
+}
+
+/** Эссенция действия словарём сырья (`{ 'ench-essence': n }`, пусто — 0) — для цены, согласия `maxMaterials` и траты из сумки и сундука. */
+export function essenceMaterials(reg: ConfigRegistry, item: Item, rarity: Rarity, op: 'enchant' | 'reroll'): MaterialCost {
+  const n = essenceCost(reg, item, rarity, op);
+  return n > 0 ? { [ESSENCE_ID]: n } : {};
 }
 
 /**
@@ -1116,72 +1144,135 @@ export interface SalvageUnlock {
   newBase: boolean;
   /** Впервые увиденный исторический тип (кодекс). */
   newType?: string;
+  /** Впервые разобранная база брони, щита или украшения (каталог снаряжения `gearSeen`). */
+  newGear?: boolean;
   /** Выдан эскиз (жалость). */
   sketch: boolean;
-  tierUp: boolean;
-  /** Засчитан мифик: t6 и найден (`countsAsMythicFind`), а не куплен, не скован и не поднят кузнецом. */
-  mythic: boolean;
 }
 
 /**
- * Откуда вещь НАЙДЕНА (§12.2): дроп, сундук, босс. Только такая вещь учит журнал деталям и кодексу, копит
- * жалость-эскиз и ворота t6. Лавка, награда, старт и ковка — нет; вещь без поля (сейв старше него) — тоже
- * нет: доверять нечему.
+ * Откуда вещь НАЙДЕНА (§12.2): дроп, сундук, босс. Только такая вещь копит жалость-эскиз. Лавка, награда, старт и ковка — нет; вещь без
+ * поля (сейв старше него) — тоже нет: доверять нечему. ⚠ Каталог (тип, детали, кодекс, снаряжение) это правило БОЛЬШЕ НЕ ЗАПИРАЕТ
+ * (решение владельца D1, 06.10): любая разобранная у кузнеца вещь пополняет каталог. Счёта мификов больше нет (D3).
  */
 export const FIND_ORIGINS: ReadonlySet<ItemOrigin> = new Set<ItemOrigin>(['drop', 'chest', 'boss']);
-
-/** Откуда должна прийти мифическая вещь, чтобы её разбор засчитался воротам t6: те же найденные. */
-export const MYTHIC_ORIGINS: ReadonlySet<ItemOrigin> = FIND_ORIGINS;
 
 /** Найдена ли вещь (`FIND_ORIGINS`), а не куплена, выдана или без происхождения. */
 export const countsAsFind = (item: Pick<Item, 'origin'>): boolean => !!item.origin && FIND_ORIGINS.has(item.origin);
 
-/** Засчитается ли разбор этой вещи счётчику мификов: найдена, а не куплена, и ступень не поднята кузнецом. */
-export const countsAsMythicFind = (item: Pick<Item, 'origin' | 'tierForged'>): boolean =>
-  countsAsFind(item) && !item.tierForged;
+/**
+ * ⭐ ОТКУДА ВЕЩЬ ДАЁТ ПОЛНЫЙ СОРТ И ЭССЕНЦИЮ — СПИСОК РАЗРЕШЁННЫХ (предложение «Разбор, сырьё и чары» §5): находки (дроп, сундук, босс) и
+ * награды за задание. Лавка, вещь без происхождения (сейв старше поля), стартовый набор, ковка и любое БУДУЩЕЕ происхождение — нет, пока
+ * их явно не добавят сюда: «нет поля — доверять нечему».
+ */
+export const ESSENCE_ORIGINS: ReadonlySet<ItemOrigin> = new Set<ItemOrigin>(['drop', 'chest', 'boss', 'quest']);
 
 /**
- * ⭐ РАЗОБРАЛ — ОТКРЫЛ (§12). Разбор вещи у кузнеца открывает её базу и четыре её детали, двигает
- * потолок ступени, отмечает тип в кодексе и копит жалость: каждые `sketchAfter` разборов своего
- * класса дают «эскиз». 95-й перцентиль ожидания редкой детали без него — 36 часов, и каталог
- * превращается в издевательство.
- * Скованное сюда не идёт: у него свой глагол «переплавить», иначе ковка стала бы прачечной знаний.
- * ⚠ Детали, кодекс, жалость и ворота t6 — только у НАЙДЕННОГО (`countsAsFind`). Стартовый набор бесплатен и
- * бесконечен (создал героя → разобрал → удалил), а лавка катается по уровню первого в комнате: альт первого
- * уровня скупал бы каталог деталей и эскизы по ценам t0. Купленное, выданное и вещь без происхождения
- * открывают только ТИП и ПОТОЛОК СТУПЕНИ — «что это за вещь и какой она ступени»: цена лавки видит ступень (§12.4).
+ * Полный сорт (до V) и эссенция: происхождение из `ESSENCE_ORIGINS`. ⚠ Вещь, поднятая кузнецом ДО записи `bornTier` (только тестовая база,
+ * §14.3), читается как купленная: с какой ступени её взяли, неизвестно, и разбор по нынешней отдал бы оплаченное подъёмом.
+ */
+export const salvageFullOrigin = (item: Pick<Item, 'origin' | 'tierForged' | 'bornTier'>): boolean =>
+  !!item.origin && ESSENCE_ORIGINS.has(item.origin) && !(item.tierForged && !item.bornTier);
+
+/**
+ * ⭐ СТУПЕНЬ, ПО КОТОРОЙ ВЕЩЬ РАЗБИРАЕТСЯ (индекс в `craftTiers`):
+ * - поднятая кузнецом — ИСХОДНАЯ (`bornTier`, пишет первый подъём): «поднять и разобрать» — всегда чистый расход, при любом конфиге (§11.2);
+ * - иначе записанная (`tier`);
+ * - нет поля (сейв старше Ч5, прод 08.08) — по УРОВНЮ вещи в пределах базы (`pickTierClamped`), как она родилась, а НЕ по статам: прежний
+ *   подъём-заглушка множил статы ×1.2 со «★», и вывод по статам (`inferTierId`) читал старый короткий меч как t6 (§14.2).
+ */
+export function salvageTierIndex(reg: ConfigRegistry, item: Item): number {
+  const born = item.bornTier ? tierIndex(reg, item.bornTier) : -1;
+  if (born >= 0) return born;
+  return priceTierIndex(reg, item);
+}
+
+/**
+ * ⭐ СТУПЕНЬ ЦЕНЫ работы кузнеца над вещью — перекатки, зачарования, починки (золото `forgeGold`, эссенция `essenceCost`): записанная
+ * ступень вещи, а у вещи без поля (сейв старше ступеней — прод 08.08) — ступень по её УРОВНЮ в пределах базы, ровно как читает её разбор
+ * (`salvageTierIndex`, предложение §14.2). ⚠ Прежде цена читала такую вещь по статам (`inferTierId`), а разбор — по уровню: короткий меч
+ * прода с десятью «★» разбирался как t0, а перекатка просила 14 эссенции и золото t6. Свойства катаются на уровне вещи (`itemLevel`), не на
+ * её ступени, — платить за перекатку надутой «★»-ступенью не за что. Подъём (`upgradedItem`, `forgeGold('upgrade')`) по-прежнему читает
+ * ступень по статам: он пересобирает статы от базы, и вещь из старого сейва, прочитанная ниже своих статов, «улучшалась» бы в слабую.
+ */
+export function priceTierIndex(reg: ConfigRegistry, item: Item): number {
+  const own = item.tier ? tierIndex(reg, item.tier) : -1;
+  if (own >= 0) return own;
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  const t = pickTierClamped(reg.get('item-tiers'), item.itemLevel, base?.minTier ?? '', base?.maxTier ?? '');
+  return Math.max(0, tierIndex(reg, t?.id));
+}
+
+/** Сорта разбора вещи: ступень, сорта четырёх деталей оружия (ударная, держак, обвязка, оголовье), нижний (броня, щит, украшение), потолок. */
+export interface SalvageGrades { tier: number; row: number[]; low: number; cap: number }
+
+/**
+ * ⭐ СОРТ СЫРЬЯ = РЕЦЕПТ СТУПЕНИ ВЕЩИ (`balance.salvage.recipeByTier`, §4): строка ступени разбора (`salvageTierIndex`), зажатая потолком
+ * не-находки (`nonFindMaxGrade`: купленное, без происхождения — не выше III, решение D1). Редкость на сорт не влияет: за неё платит эссенция.
+ */
+export function salvageGrades(reg: ConfigRegistry, item: Item): SalvageGrades {
+  const s = reg.get('balance').salvage;
+  const tier = salvageTierIndex(reg, item);
+  const rows = s.recipeByTier;
+  const raw = rows[Math.min(tier, rows.length - 1)] ?? [1, 1, 1, 1];
+  const cap = salvageFullOrigin(item) ? MATERIAL_STEPS : Math.min(MATERIAL_STEPS, s.nonFindMaxGrade);
+  const row = raw.map((g) => Math.max(1, Math.min(cap, g)));
+  return { tier, row, low: Math.min(...row), cap };
+}
+
+/** Каталог деталей класса: сколько вариантов класса открыто из скольких включённых — строка «меч: 24 из 41». */
+export function catalogProgress(reg: ConfigRegistry, journal: CraftJournal, weaponClass: string): { known: number; total: number } {
+  const all = reg.get('weapon-parts').filter((p) => p.enabled !== false && (p.classes as string[]).includes(weaponClass));
+  return { known: all.filter((p) => journal.variants.includes(p.id)).length, total: all.length };
+}
+
+/**
+ * ⭐ РАЗОБРАЛ У КУЗНЕЦА — ПОПОЛНИЛ КАТАЛОГ (§12, предложение «Разбор, сырьё и чары» §9). ЛЮБАЯ вещь, разобранная у кузнеца, пополняет
+ * каталог: найденная, купленная, награда, без происхождения, стартовая, скованная (решение владельца D1, 06.10) — разобрать у кузнеца и
+ * не получить в каталог ничего нельзя (если нового нет — карточка так и говорит: «уже в каталоге, меч: 24 из 41»).
+ * - ОРУЖИЕ: база (тип), четыре его детали, кодекс исторического типа.
+ * - СКОВАННОЕ: НИЧЕГО НЕ ПИШЕТ — его база и детали известны по построению (ковка требует их в журнале), и строка карточки «все детали уже
+ *   в каталоге» правдива без записи. ⚠ Писать нельзя: со стендовым флагом `DM_CRAFT_FULL_JOURNAL` ковка берёт детали мимо журнала, и
+ *   «сковать → переплавить» навсегда копировало бы в настоящий журнал аккаунта всё, что флаг открыл (обещание флага — «в базу не пишется»).
+ * - БРОНЯ, ЩИТ, УКРАШЕНИЕ: база в каталог снаряжения (`gearSeen`).
+ * ⚠ ЖАЛОСТЬ-ЭСКИЗ (каждые `sketchAfter` разборов своего класса) — только у НАЙДЕННОГО (`countsAsFind`): иначе альт 1-го уровня, скупая
+ * оружие лавки, получал бы ≈ 6 эскизов в час, а стартовый набор — эскиз с каждого нового героя. Детали — вид, а не сила, поэтому
+ * каталог из лавки разрешён намеренно (§9.6). ⭐ Ни потолка ступени (`tierHi`), ни счёта мификов (`mythic`) разбор больше не двигает
+ * (решение владельца D3): у ковки нет ворот ступени, её держит только сырьё. Поля старых журналов остаются как есть.
+ * ⚠ Разбор В ПОЛЕ каталог НЕ пополняет (решение владельца D2): его зовёт только кузница (`forgeSalvage`).
  */
 export function salvageIntoJournal(reg: ConfigRegistry, journal: CraftJournal, item: Item): SalvageUnlock {
   const j: CraftJournal = {
     ...journal, bases: [...journal.bases], variants: [...journal.variants], classSalvages: { ...journal.classSalvages },
-    typesSeen: [...(journal.typesSeen ?? [])], typesForged: [...(journal.typesForged ?? [])],
+    typesSeen: [...(journal.typesSeen ?? [])], typesForged: [...(journal.typesForged ?? [])], gearSeen: [...(journal.gearSeen ?? [])],
   };
-  const none = { journal: j, unlocked: [], newBase: false, sketch: false, tierUp: false, mythic: false };
-  if (item.parts) return none; // скованное открывает только переплавка — и то нет
+  const none: SalvageUnlock = { journal: j, unlocked: [], newBase: false, sketch: false };
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base) return none;
+  if (base.kind !== 'weapon') {
+    if (base.kind !== 'armor' && base.kind !== 'shield' && base.kind !== 'jewelry') return none;
+    const seen = j.gearSeen ?? (j.gearSeen = []);
+    const newGear = !seen.includes(base.id);
+    if (newGear) seen.push(base.id);
+    return { ...none, newGear };
+  }
+  if (item.parts) return none;   // скованное: всё известно по построению — журнал не трогаем (см. выше)
   const parts = partsOf(reg, item);
-  if (!base || base.kind !== 'weapon' || !parts) return none;
+  if (!parts) return none;
   const newBase = !j.bases.includes(base.id);
   if (newBase) j.bases.push(base.id);
-  const t = tierIndexOfItem(reg, item);
-  const tierUp = t > j.tierHi;
-  if (tierUp) j.tierHi = t;
-  if (!countsAsFind(item)) return { journal: j, unlocked: [], newBase, sketch: false, tierUp, mythic: false };
   const unlocked: string[] = [];
   for (const slot of CRAFT_SLOT_LIST) if (!j.variants.includes(parts[slot].id)) { j.variants.push(parts[slot].id); unlocked.push(parts[slot].id); }
   const type = typeOfItem(reg, item);
   const newType = type?.typeId && !j.typesSeen.includes(type.typeId) ? type.typeId : undefined;
   if (newType) j.typesSeen.push(newType);
+  if (!countsAsFind(item)) return { journal: j, unlocked, newBase, newType, sketch: false };
   const k = reg.get('balance').craft.journal;
   const n = (j.classSalvages[base.weaponClass] ?? 0) + 1;
   const sketch = n >= k.sketchAfter;
   j.classSalvages[base.weaponClass] = sketch ? n - k.sketchAfter : n;
   if (sketch) j.sketches += 1;
-  // ⚠ Ворота t6 считают только НАЙДЕННЫЕ мифики (`countsAsMythicFind`): иначе лавка на 80-м уровне,
-  // где вся витрина мифическая, продавала бы их за золото (§12.4), а кузница поднимала бы t5 до t6.
-  const mythic = t === craftTiers(reg).length - 1 && countsAsMythicFind(item);
-  if (mythic) j.mythic += 1;
-  return { journal: j, unlocked, newBase, newType, sketch, tierUp, mythic };
+  return { journal: j, unlocked, newBase, newType, sketch };
 }
 
 /**
@@ -1209,8 +1300,10 @@ export function useSketch(reg: ConfigRegistry, journal: CraftJournal, variantId:
 }
 
 /**
- * Сырьё с разбора оружия — ровно то, из чего вещь сделана: каждая деталь отдаёт свой материал
- * своей ступени (§10.9). Редкость добавляет единицы ударной части.
+ * Сырьё с разбора оружия у кузнеца: каждая деталь отдаёт материал СВОЕЙ СЕМЬИ (клинок — железо, держак меча — кожа, дубина — дерево) по
+ * своим единицам (`craft.salvage.units`), а СОРТ — по рецепту ступени вещи (`salvageGrades`), а не по ступени детали: детали отвечают за
+ * вид и каталог, рецепт — за сорт (предложение «Разбор, сырьё и чары» §4.1). Поэтому V идёт только с t6, IV — с t4+, и неровные детали
+ * больше ничего не «протекают» (было: обычный топор t4 с деталями 5/3/3/3 давал Булат). ⚠ Надбавки за редкость нет: за неё — эссенция.
  */
 export function craftSalvageYield(reg: ConfigRegistry, item: Item): MaterialCost {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
@@ -1218,14 +1311,15 @@ export function craftSalvageYield(reg: ConfigRegistry, item: Item): MaterialCost
   const picks = partsOf(reg, item);
   if (!anat || !picks) return {};
   const k = reg.get('balance').craft.salvage;
+  const { row } = salvageGrades(reg, item);
   const out: MaterialCost = {};
-  for (const slot of CRAFT_SLOT_LIST) {
+  CRAFT_SLOT_LIST.forEach((slot, i) => {
     const p = partById(reg, picks[slot].id);
-    if (!p) continue;
-    const id = materialId(partFamily(anat, slot, p), picks[slot].step);
-    const n = k.units[slot] + (slot === 'strike' ? (k.rarityBonus[item.rarity as keyof typeof k.rarityBonus] ?? 0) : 0);
+    if (!p) return;
+    const id = materialId(partFamily(anat, slot, p), row[i] ?? 1);
+    const n = k.units[slot];
     if (n > 0) out[id] = (out[id] ?? 0) + n;
-  }
+  });
   return out;
 }
 

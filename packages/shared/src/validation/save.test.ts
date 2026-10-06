@@ -9,6 +9,9 @@ import { emptyStash } from '../economy/stashActions.js';
 import type { Item } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
 import { saveStateSchema } from './save.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
+/** §6.2: зачарование и перекатка тратят эссенцию — кошелёк сундука с запасом (тесту важно не это). */
+const essWallet = (): Record<string, number> => ({ [ESSENCE_ID]: 1_000_000 });
 
 /**
  * ⭐ СХЕМА СЕЙВА НИЧЕГО НЕ СРЕЗАЕТ. zod по умолчанию молча выкидывает незнакомые ключи, а схема
@@ -30,7 +33,7 @@ function craftedRare(): Item {
   const parts = defaultParts(reg, 'sword', 1, 3)!;
   const r = craftAction(reg, save, stash, 'nonce-save-rt-01', { weaponClass: 'sword', hands: 1, parts }, createRng(11));
   expect(r.ok, r.reason).toBe(true);
-  const e = enchantAction(reg, save, r.uid!, 'rare', createRng(12));
+  const e = enchantAction(reg, save, r.uid!, 'rare', createRng(12), undefined, essWallet());
   expect(e.ok, e.reason).toBe(true);
   return save.inventory.find((i) => i.uid === e.uid)!;
 }

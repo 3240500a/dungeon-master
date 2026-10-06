@@ -47,8 +47,8 @@ export function renderCraftTab(app: App, body: HTMLElement): void {
   const who = `${app.auth?.userId ?? ''}|${app.state?.save.charId ?? ''}`;
   if (who !== owner) { st = null; owner = who; }
   const host = gameCraftHost(app);
-  // Ступень нового окна — не выше потолка журнала (`journalDefaultStep`): после первого разбора t0 окно не встаёт красным.
-  if (!st) st = initialCraftState(reg, startClass(app), undefined, host.journal());
+  // Ступень нового окна — эталонная 2: ворот ступени у ковки нет (D3), журнал на неё не влияет.
+  if (!st) st = initialCraftState(reg, startClass(app));
   const row = mk('div', 'display:flex;gap:10px;align-items:flex-start');
   const winBox = mk('div', 'flex:1;min-width:0');
   const side = mk('div', `flex:0 0 ${STAND.width + 18}px`);

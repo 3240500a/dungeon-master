@@ -1,8 +1,8 @@
 import { ConfigRegistry } from '../config/registry.js';
 import { generateItem, rollTierLevel } from '../formulas/itemgen.js';
 import {
-  baseTierRange, capacityOf, craftTiers, craftWeapon, enchantCost, enchantItem, enchantSlots, formMult, formOf, fullJournal,
-  journalTierCap, keyVariantsByBase, materialId, normalizeJournal, partFamily, salvageIntoJournal, shapeFoundWeapon,
+  baseTierRange, capacityOf, craftTiers, craftWeapon, enchantCost, enchantItem, enchantSlots, essenceMaterials, formMult, formOf, fullJournal,
+  keyVariantsByBase, materialId, normalizeJournal, partFamily, salvageIntoJournal, shapeFoundWeapon,
   tierIndexOfItem, tierOfSteps, variantsFor, type CraftCost, type CraftInput, type CraftJournal,
 } from '../formulas/craft.js';
 import { CRAFT_SLOT_LIST, anatomyRow, keySlotOf, type CraftSlot, type WeaponPart } from '../formulas/craftType.js';
@@ -11,10 +11,12 @@ import { createRng } from '../formulas/rng.js';
 import { nextTier, retierItem } from '../formulas/itemgen.js';
 import { availableMaterials, carriedMaterials, type MaterialCost } from '../economy/materials.js';
 import {
-  craftAction, enchantAction, forgeRepair, forgeSalvage, forgeUpgrade, fieldSalvage as doFieldSalvage,
-  shopBuyPrice, shopSellPrice,
+  canRerollItem, craftAction, enchantAction, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade, fieldSalvage as doFieldSalvage,
+  rerollMaterials, salvageMean, shopBuyPrice, shopSellPrice,
 } from '../economy/townActions.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
 import { depositCarried } from '../economy/materials.js';
+import { shopTierCap } from '../economy/shopGear.js';
 import { addToInventory } from '../inventory/grid.js';
 import type { CraftParts, EquipSlot } from '../types/items.js';
 import type { AccountStash } from '../types/stash.js';
@@ -136,35 +138,105 @@ export interface DropResult {
   salvagedItems?: number;
   /** Скованных вещей переплавлено на месте (снятых ради лучшей находки). */
   melted?: number;
+  /** ⭐ Выход разбора и переплавки на месте ПО ID (сырьё и эссенция) — для отчёта «сорт × семья» и прихода эссенции. */
+  gains?: MaterialCost;
+  /**
+   * ⭐ Сколько В СРЕДНЕМ дал бы тот же разбор У КУЗНЕЦА (по id, `salvageMean`) — только у разобранного на месте найденного или купленного,
+   * не у переплавки. Верхняя оценка «всё несу кузнецу» для отчёта: сумка у бота не резиновая, а у игрока бывает пустой.
+   */
+  forgeMean?: MaterialCost;
+  /** Снятая ради находки вещь, которую бот несёт кузнецу (`carryToForge`), а не разбирает на месте: вызывающий кладёт её в сумку. */
+  carried?: Item;
+}
+
+/** Единиц в словаре сырья. */
+const unitsOf = (m: MaterialCost): number => Object.values(m).reduce((a, b) => a + b, 0);
+
+/** Разница запасов по id (`after − before`), без нулей: что пришло (плюс) или ушло (минус) за шаг. */
+function matsDelta(before: MaterialCost, after: MaterialCost): MaterialCost {
+  const out: MaterialCost = {};
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const d = (after[id] ?? 0) - (before[id] ?? 0);
+    if (d !== 0) out[id] = d;
+  }
+  return out;
+}
+
+/** Сложить словарь сырья `add` (со знаком `sign`) в копилку `into`. */
+export function addMats(into: MaterialCost, add: MaterialCost | undefined, sign = 1): void {
+  for (const [id, n] of Object.entries(add ?? {})) if (n) into[id] = (into[id] ?? 0) + sign * n;
 }
 
 /**
- * НОША К КУЗНЕЦУ (ковка открыта). Найденное оружие, которое бот и так пустил бы в разбор, он несёт
- * домой: у кузнеца выход по деталям целиком, в поле — доля `balance.salvage.fieldYield`, и журнал
- * открывает только кузнец (§12.2). Так играет тот, кто куёт: сырьё обвязки и оголовья иначе не набрать.
+ * ⭐ ЦЕННОСТЬ РАЗБОРА У КУЗНЕЦА СВЕРХ РАЗБОРА НА МЕСТЕ (предложение «Разбор, сырьё и чары», решения D1/D2): у кузнеца выход и эссенция —
+ * целиком, в поле — доля `balance.salvage.fieldYield`. Средние НАСТОЯЩЕГО броска (`salvageMean`) в ценах лавки (`craft-materials.sellPrice`,
+ * эссенция — своей): той же мерой бот выбирает и самую дешёвую сборку ковки. Не разбирается — 0.
+ */
+export function forgeSalvageGain(reg: ConfigRegistry, item: Item): number {
+  const smith = salvageMean(reg, item, false);
+  if (!smith) return 0;
+  const field = salvageMean(reg, item, true) ?? {};
+  const price = new Map(reg.get('craft-materials').map((m) => [m.id, m.sellPrice]));
+  const worth = (m: MaterialCost): number => Object.entries(m).reduce((s, [id, n]) => s + n * (price.get(id) ?? 0), 0);
+  return worth(smith) - worth(field);
+}
+
+/**
+ * НОША К КУЗНЕЦУ (ковка открыта). Вещь, которую бот и так пустил бы в разбор, он несёт домой, если у кузнеца она даст больше: там выход
+ * и эссенция целиком, в поле — доля `balance.salvage.fieldYield`, а каталог пишет только кузнец (решение D2). Так играет тот, кто куёт:
+ * сырьё обвязки и оголовья, высокие сорта и эссенцию иначе не набрать. Первым делом — оружие, которое что-то ОТКРОЕТ в каталоге, затем —
+ * что даст у кузнеца больше всего сверх поля на клетку (`carryPriority`; в каком порядке вещи приходят сюда, решает вызывающий).
  * То, что без ковки ушло бы в золото (не по силам), несём, только если его разбор что-то ОТКРОЕТ:
  * иначе сравнение «с ковкой / без» мерило бы не ковку, а отказ от продажи.
- * `carryCells` — бюджет клеток сумки под ношу (остальное место — под добычу и сырьё); последние
- * `JOURNAL_RESERVE` клеток — только под открытия. `journal` — рабочая копия: взятая ноша в неё уже
- * записана, чтобы второй такой же меч не занимал запас «ради журнала».
+ * `carryCells` — бюджет клеток сумки под ношу (остальное место — под добычу и сырьё); последние `reserve` (по умолчанию
+ * `JOURNAL_RESERVE`) клеток — только под открытия. `journal` — рабочая копия: взятая ноша в неё уже записана, чтобы второй такой же меч не
+ * занимал запас «ради журнала». Прогон, который подаёт вещи по `carryPriority`, ставит `reserve: 0`: открытия и так идут первыми.
+ * `salvageAll` — политика КРАФТЕРА: и то, что не по силам, идёт в разбор (к кузнецу или на месте), а не в золото.
  */
-export interface FieldCarry { journal: CraftJournal; carryCells: number; }
+export interface FieldCarry { journal: CraftJournal; carryCells: number; reserve?: number; salvageAll?: boolean; }
 
 /** Клетки ноши, которые держим под оружие с неоткрытым в журнале (одна большая двуручная вещь). */
 const JOURNAL_RESERVE = 8;
+
+/** Откроет ли разбор этой вещи у кузнеца что-то в каталоге ковки (тип или деталь оружия). Броня копится в `gearSeen` — ковке она пока не нужна. */
+function opensCatalog(reg: ConfigRegistry, journal: CraftJournal, item: Item): ReturnType<typeof salvageIntoJournal> | null {
+  if (item.kind !== 'weapon' || item.parts) return null;
+  const u = salvageIntoJournal(reg, journal, item);
+  return u.newBase || u.unlocked.length > 0 ? u : null;
+}
+
+/** Носимая вещь, которую кузнец разбирает (не уник, не скованная — у той свой путь, не сырьё и не зелье). */
+const forgeable = (item: Item): boolean =>
+  !!item.slot && !item.parts && item.rarity !== 'unique' && item.kind !== 'material' && item.kind !== 'consumable';
+
+/**
+ * ⭐ ОЧЕРЁДНОСТЬ НОШИ: открытие каталога — выше всего, дальше выгода кузнеца над полем (`forgeSalvageGain`) на клетку сумки. 0 — нести
+ * незачем (сырьё, зелье, уник, скованное, ничего сверх поля). Прогон подаёт сумку в `considerDrop` по убыванию этого числа — бюджет ноши
+ * достаётся самому ценному, а не самому свежему.
+ */
+export function carryPriority(reg: ConfigRegistry, journal: CraftJournal, item: Item): number {
+  if (!forgeable(item)) return 0;
+  const area = Math.max(1, item.gridW * item.gridH);
+  if (opensCatalog(reg, journal, item)) return 1e6;
+  return Math.max(0, forgeSalvageGain(reg, item)) / area;
+}
 
 /**
  * Возьмёт ли бот эту вещь кузнецу. `scrap` — без ноши она ушла бы в разбор на месте (а не в золото).
  * Берёт — списывает бюджет; открытие пишет в рабочую копию журнала.
  */
 function carryToForge(reg: ConfigRegistry, item: Item, carry: FieldCarry, scrap: boolean): boolean {
-  if (item.kind !== 'weapon' || item.parts || item.rarity === 'unique') return false;
+  if (!forgeable(item)) return false;
   const area = Math.max(1, item.gridW * item.gridH);
   if (area > carry.carryCells) return false;
-  const u = salvageIntoJournal(reg, carry.journal, item);
-  const opens = u.newBase || u.unlocked.length > 0 || u.tierUp || u.mythic;
-  if (!opens && (!scrap || area > carry.carryCells - JOURNAL_RESERVE)) return false;
-  if (opens) carry.journal = u.journal;
+  const u = opensCatalog(reg, carry.journal, item);
+  if (u) {
+    carry.journal = u.journal;
+    carry.carryCells -= area;
+    return true;
+  }
+  if (!scrap || area > carry.carryCells - (carry.reserve ?? JOURNAL_RESERVE)) return false;
+  if (!(forgeSalvageGain(reg, item) > 0)) return false;
   carry.carryCells -= area;
   return true;
 }
@@ -182,13 +254,13 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
   };
   const scrap = (it: Item): DropResult => {
     const r = sellOrSalvage(reg, save, it);
-    return { equipped: false, sold: r.sold, salvaged: r.mats, salvagedItems: r.took ? 1 : 0 };
+    return { equipped: false, sold: r.sold, salvaged: r.mats, salvagedItems: r.took ? 1 : 0, gains: r.gains, forgeMean: r.forgeMean };
   };
   // Скованное в сумке (сейв из игры): переплавка на месте, а не вышло (сумка полна) — несём кузнецу.
   // В золото — никогда: `sellForGold` на нём бросает.
   const meltOrCarry = (it: Item): DropResult => {
-    const mats = fieldSalvage(reg, save, it);
-    return mats !== null ? { equipped: false, sold: 0, salvaged: mats, melted: 1 } : { equipped: false, sold: 0, kept: true };
+    const g = fieldSalvage(reg, save, it);
+    return g !== null ? { equipped: false, sold: 0, salvaged: unitsOf(g), melted: 1, gains: g } : { equipped: false, sold: 0, kept: true };
   };
 
   // ⚠ СТЕК СЫРЬЯ НЕСЁМ ДОМОЙ. Без этой ветки бот продавал бы его как вещь без слота — сим
@@ -204,8 +276,11 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
     }
     if (item.parts) return meltOrCarry(item);
     if (carry && carryToForge(reg, item, carry, true)) return { equipped: false, sold: 0, kept: true };
-    const mats = fieldSalvage(reg, save, item);
-    return { equipped: false, sold: 0, salvaged: mats ?? 0, salvagedItems: mats !== null ? 1 : 0 };
+    const mean = salvageMean(reg, item, false) ?? undefined;
+    const g = fieldSalvage(reg, save, item);
+    return g !== null
+      ? { equipped: false, sold: 0, salvaged: unitsOf(g), salvagedItems: 1, gains: g, forgeMean: mean }
+      : { equipped: false, sold: 0, salvaged: 0, salvagedItems: 0 };
   }
 
   // Расходники бот не экипирует — сразу в золото (нет слота).
@@ -215,24 +290,31 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
     // ⭐ Снятое СКОВАННОЕ — только в переплавку, прямо на месте (в золото ковка не уходит, §13). Не вышло
     // (сумка полна под выход) — остаётся в руках до кузницы, а находка идёт своим путём.
     if (cur?.parts) {
-      const mats = fieldSalvage(reg, save, cur);
-      if (mats !== null) {
+      const g = fieldSalvage(reg, save, cur);
+      if (g !== null) {
         save.equipment[item.slot] = item;
-        return { equipped: true, sold: 0, salvaged: mats, melted: 1 };
+        return { equipped: true, sold: 0, salvaged: unitsOf(g), melted: 1, gains: g };
       }
     } else {
+      // ⭐ Снятое — к кузнецу, если ноша его берёт (у кузнеца выход и эссенция целиком, каталог — только там, D2).
+      if (cur && carry && carryToForge(reg, cur, carry, true)) {
+        save.equipment[item.slot] = item;
+        return { equipped: true, sold: 0, carried: cur };
+      }
       // ⚠ Заменённую вещь НЕ продаём вслепую: разобрать её на месте выгоднее по смыслу игры
       // (материалы дефицитны, золото — нет), а уники разбору не поддаются вовсе.
       const r = cur ? sellOrSalvage(reg, save, cur) : { sold: 0, mats: 0, took: false };
       save.equipment[item.slot] = item;
-      return { equipped: true, sold: r.sold, salvaged: r.mats, salvagedItems: r.took ? 1 : 0 };
+      return { equipped: true, sold: r.sold, salvaged: r.mats, salvagedItems: r.took ? 1 : 0, gains: r.gains, forgeMean: r.forgeMean };
     }
   }
   if (item.parts) return meltOrCarry(item);
   const wearable = meetsRequirements(item, save.attributes);
-  if (carry && carryToForge(reg, item, carry, wearable)) return { equipped: false, sold: 0, kept: true };
-  // Не по силам — в золото, как было: разбирать то, что ещё может пригодиться, бот не спешит.
-  if (!wearable) return { equipped: false, sold: sellForGold(reg, save, item) };
+  // Не по силам — в золото, как было: разбирать то, что ещё может пригодиться, бот не спешит. Крафтер (`salvageAll`) — в разбор: в
+  // золоте продажа вещи не дешевле её разбора (D4), но ему нужны сырьё и эссенция, а золота на глубине и так в избытке.
+  const scrapIt = wearable || !!carry?.salvageAll;
+  if (carry && carryToForge(reg, item, carry, scrapIt)) return { equipped: false, sold: 0, kept: true };
+  if (!scrapIt) return { equipped: false, sold: sellForGold(reg, save, item) };
   return scrap(item);
 }
 
@@ -242,62 +324,104 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
  * иначе бот копил бы золото, которого в игре и так избыток, и не копил бы материалы.
  * Возвращает выручку золотом (0, если ушло в материалы) и сколько единиц сырья вышло.
  */
-function sellOrSalvage(reg: ConfigRegistry, save: SaveState, item: Item): { sold: number; mats: number; took: boolean } {
-  const mats = fieldSalvage(reg, save, item);
-  if (mats !== null) return { sold: 0, mats, took: true };
+function sellOrSalvage(
+  reg: ConfigRegistry, save: SaveState, item: Item,
+): { sold: number; mats: number; took: boolean; gains?: MaterialCost; forgeMean?: MaterialCost } {
+  const mean = item.parts ? undefined : salvageMean(reg, item, false) ?? undefined;
+  const g = fieldSalvage(reg, save, item);
+  if (g !== null) return { sold: 0, mats: unitsOf(g), took: true, gains: g, forgeMean: mean };
   return { sold: sellForGold(reg, save, item), mats: 0, took: false };
 }
 
-/** Единиц сырья в сумке — разбор кладёт выход именно туда (стеками), а не в кошелёк сейва. */
-const bagUnits = (save: SaveState): number => Object.values(carriedMaterials(save.inventory)).reduce((a, b) => a + b, 0);
-
 /**
- * Разбор на месте через АВТОРИТЕТНОЕ действие: цены и правила одни с игрой. Сколько единиц вышло; `null` — отказ (вещь цела).
+ * Разбор на месте через АВТОРИТЕТНОЕ действие: цены и правила одни с игрой. Что вышло ПО ID (сырьё и эссенция); `null` — отказ (вещь цела).
  * ⚠ Мерить — по СУМКЕ. Раньше мерили `totalMaterials(save)` — старый кошелёк сейва, куда разбор больше
  * не кладёт: выходил 0, и `sellOrSalvage` уже разобранную вещь ЕЩЁ И продавал — двойной выход в симе.
  * ⚠ R9-03: 0 единиц — не отказ: пустой бросок разбирает вещь в ничто (как в игре), и продать её после этого уже нечего.
  */
-function fieldSalvage(reg: ConfigRegistry, save: SaveState, item: Item): number | null {
-  const before = bagUnits(save);
+function fieldSalvage(reg: ConfigRegistry, save: SaveState, item: Item): MaterialCost | null {
+  const before = carriedMaterials(save.inventory);
   save.inventory.push(item);
   const r = doFieldSalvage(reg, save, item.uid, createRng(((item.uid.length * 2654435761) ^ save.gold) >>> 0 || 1));
   if (!r.ok) { save.inventory = save.inventory.filter((i) => i.uid !== item.uid); return null; }
-  return bagUnits(save) - before;
+  return matsDelta(before, carriedMaterials(save.inventory));
 }
 
 /** Золото, которое бот держит на магазин: пассивы и зачарование его не трогают. */
 const goldReserve = (save: SaveState): number => 60 + save.level * 12;
 
+/** Статьи сырья у кузнеца (по id): пришло разбором и переплавкой, ушло на ковку, подъём, починку, зачарование и перекатку. */
+export type ForgeFlow = 'salvage' | 'melt' | 'craft' | 'upgrade' | 'repair' | 'enchant' | 'reroll';
+const FORGE_FLOWS: readonly ForgeFlow[] = ['salvage', 'melt', 'craft', 'upgrade', 'repair', 'enchant', 'reroll'];
+
 /**
- * Итог похода в кузницу. `spent` — золото на починку и подъём тира; ковка и зачарование — отдельно
- * (`goldCraft`, `goldEnchant`): это разные стоки, и отчёт обязан их различать.
+ * Чего не хватило боту на действие, которое он ХОТЕЛ сделать (зачарование скованного, перекатка с выгодой, подъём надетого):
+ * золота сверх запаса или сырья (у чар — эссенции). Ответ на «ограничивают ли эссенция и золото оба» (§6.3) — счётом, а не оценкой.
+ */
+export interface ForgeBlocked {
+  enchantGold: number; enchantEssence: number;
+  rerollGold: number; rerollEssence: number;
+  upgradeGold: number; upgradeMats: number;
+}
+
+/**
+ * Итог похода в кузницу. `spent` — золото на починку, подъём тира и перекатку (`goldRepair` + `goldUpgrade` + `goldReroll`); ковка и
+ * зачарование — отдельно (`goldCraft`, `goldEnchant`): это разные стоки, и отчёт обязан их различать.
  */
 export interface ForgeResult {
   spent: number;
   repaired: number;
   upgraded: number;
   deposited?: number;
-  /** Ковка (K7): скованно, зачаровано, переплавлено скованных, разобрано найденных у кузнеца. */
+  /** Ковка (K7): скованно, зачаровано, переплавлено скованных, разобрано найденных у кузнеца. ⭐ Перекачено свойств (§6.2). */
   crafted: number;
   enchanted: number;
+  rerolled: number;
   melted: number;
   salvaged: number;
-  /** Строк открытий журнала за визит (тип, детали, ступень, мифики, эскиз). */
+  /** Строк открытий журнала за визит (тип, детали, снаряжение, эскиз). */
   unlocked: number;
   goldCraft: number;
   goldEnchant: number;
-  /** Сырьё, единиц: пришло разбором найденного; пришло переплавкой; ушло на ковку; ушло на починку и подъём тира. */
+  /** Статьи `spent`. */
+  goldRepair: number;
+  goldUpgrade: number;
+  goldReroll: number;
+  /**
+   * Сырьё, единиц: пришло разбором найденного; пришло переплавкой; ушло на ковку; ушло на починку и подъём тира; ⭐ ушло на
+   * зачарование и на перекатку (эссенция, §6.2).
+   */
   matsIn: number;
   matsMelt: number;
   matsOutCraft: number;
   matsOutForge: number;
+  matsOutEnchant: number;
+  matsOutReroll: number;
+  /** ⭐ То же ПО ID, по статьям (`ForgeFlow`): и приход, и расход — положительными числами (сколько пришло, сколько ушло). */
+  flow: Record<ForgeFlow, MaterialCost>;
+  /** Ступени скованного за визит (индекс `craftTiers`). */
+  craftedTiers: number[];
+  blocked: ForgeBlocked;
   /** Золото с продажи того, что кузнец не берёт (уникальное). */
   sold: number;
 }
 
+/** Пустой итог визита. */
+export function emptyForgeResult(): ForgeResult {
+  return {
+    spent: 0, repaired: 0, upgraded: 0, crafted: 0, enchanted: 0, rerolled: 0, melted: 0, salvaged: 0, unlocked: 0,
+    goldCraft: 0, goldEnchant: 0, goldRepair: 0, goldUpgrade: 0, goldReroll: 0,
+    matsIn: 0, matsMelt: 0, matsOutCraft: 0, matsOutForge: 0, matsOutEnchant: 0, matsOutReroll: 0,
+    flow: Object.fromEntries(FORGE_FLOWS.map((f) => [f, {}])) as Record<ForgeFlow, MaterialCost>,
+    craftedTiers: [],
+    blocked: { enchantGold: 0, enchantEssence: 0, rerollGold: 0, rerollEssence: 0, upgradeGold: 0, upgradeMats: 0 },
+    sold: 0,
+  };
+}
+
 /** Кузница бота. Без `craft` бот ведёт себя как до ковки — это «до» в сравнении на одном сиде. */
 export interface ForgeOpts {
-  /** Ковка открыта: разбор у кузнеца (журнал), ковка лучшего доступного, зачарование, переплавка. */
+  /** Ковка открыта: разбор у кузнеца (журнал), ковка лучшего доступного, зачарование, перекатка, переплавка. */
   craft?: boolean;
   /** Броски городских действий. Свой поток, не мировой: ковка не должна сдвигать забег того же сида. */
   rng?: Rng;
@@ -312,19 +436,30 @@ const allUnits = (save: SaveState, wallet: MaterialCost): number =>
   Object.values(availableMaterials(save.inventory, wallet)).reduce((a, b) => a + b, 0);
 
 /**
+ * Шаг кузницы с учётом сырья по id: `fn` меняет сумку и сундук, разница запасов ложится в статью `flow` положительными числами
+ * (приход у `salvage`/`melt`, расход у остальных). Возвращает эти единицы и то, что вернул `fn`.
+ */
+function tracked<T>(save: SaveState, wallet: MaterialCost, out: ForgeResult, flow: ForgeFlow, fn: () => T): { res: T; units: number } {
+  const before = availableMaterials(save.inventory, wallet);
+  const res = fn();
+  const d = matsDelta(before, availableMaterials(save.inventory, wallet));
+  const sign = flow === 'salvage' || flow === 'melt' ? 1 : -1;
+  addMats(out.flow[flow], d, sign);
+  return { res, units: sign * unitsOf(d) };
+}
+
+/**
  * НА ВЕРСТАК: разбор у кузнеца авторитетным `forgeSalvage` — найденное открывает журнал и отдаёт
  * сырьё по деталям, скованное переплавляется. Вещь, которой нет в сумке (снятая с руки), кладётся туда.
- * Кузнец не берёт (уникальное) — в золото; скованное бот не продаёт никогда и оставляет в сумке.
+ * Кузнец не берёт (уникальное, стартовое без нового в каталоге) — в золото; скованное бот не продаёт никогда и оставляет в сумке.
  */
 function salvageAtForge(reg: ConfigRegistry, save: SaveState, stash: AccountStash, item: Item, rng: Rng, out: ForgeResult): void {
   if (!save.inventory.includes(item)) save.inventory.push(item);
   const wallet = stash.materials ?? (stash.materials = {});
-  const m0 = allUnits(save, wallet);
-  const r = forgeSalvage(reg, save, stash, item.uid, rng);
+  const { res: r, units } = tracked(save, wallet, out, item.parts ? 'melt' : 'salvage', () => forgeSalvage(reg, save, stash, item.uid, rng));
   if (r.ok) {
-    const got = allUnits(save, wallet) - m0;
-    if (item.parts) { out.melted++; out.matsMelt += got; }
-    else { out.salvaged++; out.matsIn += got; out.unlocked += r.unlocked?.length ?? 0; }
+    if (item.parts) { out.melted++; out.matsMelt += units; }
+    else { out.salvaged++; out.matsIn += units; out.unlocked += r.unlocked?.length ?? 0; }
     return;
   }
   if (item.parts) return;
@@ -339,42 +474,41 @@ function salvageAtForge(reg: ConfigRegistry, save: SaveState, stash: AccountStas
  * золота и материалов. Все операции — АВТОРИТЕТНЫЕ действия игры, а не копия их логики:
  * иначе цены в симе и в игре разойдутся, и балансировать будет нечего.
  *
- * ⭐ С ОТКРЫТОЙ КОВКОЙ (`opts.craft`) бот делает то же, что игрок у кузнеца: разбирает принесённое
- * оружие (журнал растёт), куёт лучшее, на что хватает сырья и золота, если оно заметно сильнее
- * надетого, зачаровывает скованное, когда золото сверх запаса, а снятое скованное — переплавляет.
- * Сырьё — из сумки и сундука аккаунта (`stash.materials`), журнал — `stash.forgeJournal`.
+ * ⭐ С ОТКРЫТОЙ КОВКОЙ (`opts.craft`) бот делает то же, что игрок у кузнеца: разбирает ВСЁ принесённое (оружие и снаряжение — каталог,
+ * сырьё и эссенция целиком, решение D1), куёт лучшее, на что хватает сырья и золота, если оно заметно сильнее надетого, зачаровывает
+ * скованное, когда золото сверх запаса, ⭐ перекатывает свойства надетого, когда средний бросок заметно лучше нынешнего (§6.2), а снятое —
+ * разбирает или переплавляет. Сырьё — из сумки и сундука аккаунта (`stash.materials`), журнал — `stash.forgeJournal`.
  */
 export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy, stash: AccountStash, opts: ForgeOpts = {}): ForgeResult {
-  const out: ForgeResult = {
-    spent: 0, repaired: 0, upgraded: 0, crafted: 0, enchanted: 0, melted: 0, salvaged: 0, unlocked: 0,
-    goldCraft: 0, goldEnchant: 0, matsIn: 0, matsMelt: 0, matsOutCraft: 0, matsOutForge: 0, sold: 0,
-  };
+  const out = emptyForgeResult();
   const wallet = stash.materials ?? (stash.materials = {});
   const rng = opts.rng ?? createRng(1);
-  const units = (): number => allUnits(save, wallet);
   const curScore = (slot: EquipSlot): number => { const c = save.equipment[slot]; return c ? scoreItem(reg, save, c, policy) : -Infinity; };
   const worthRepair = (it: Item): boolean =>
     !!it.broken && !!it.slot && meetsRequirements(it, save.attributes) && scoreItem(reg, save, it, policy) > curScore(it.slot);
-  // Снятое с руки: оружие при открытой ковке и любое скованное — на верстак, остальное как раньше.
+  // На верстак: скованное — всегда (переплавка, D13); при открытой ковке — и любая носимая вещь (каталог, сырьё и эссенция целиком, D1).
+  const toBench = (it: Item): boolean => !!it.parts || (!!opts.craft && !!it.slot && it.kind !== 'material' && it.kind !== 'consumable');
+  // Снятое с руки: на верстак или как раньше.
   const retire = (it: Item): void => {
-    if (it.parts || (opts.craft && it.kind === 'weapon')) salvageAtForge(reg, save, stash, it, rng, out);
+    if (toBench(it)) salvageAtForge(reg, save, stash, it, rng, out);
     else sellOrSalvage(reg, save, it);
   };
   // ⭐ Сперва СДАЁМ сырьё в сундук — так игрок и делает, вернувшись из забега: сумка пустеет,
   // а запас становится общим и перестаёт быть под угрозой смерти.
   out.deposited = depositCarried(save.inventory, wallet);
   // 0. На верстак: скованное из сумки — всегда в переплавку (разбор работает и при закрытой ковке, D13);
-  // при открытой ковке — и принесённое найденное оружие (журнал и сырьё), кроме сломанного апгрейда под починку.
+  // при открытой ковке — и всё принесённое (журнал, сырьё, эссенция), кроме сломанного апгрейда под починку.
   for (const item of [...save.inventory]) {
-    if (item.parts || (opts.craft && item.kind === 'weapon' && !worthRepair(item))) salvageAtForge(reg, save, stash, item, rng, out);
+    if (toBench(item) && !worthRepair(item)) salvageAtForge(reg, save, stash, item, rng, out);
   }
   // 1. Починка принесённого: чиним и надеваем, если лучше текущего.
   for (const item of [...save.inventory]) {
     if (!item.broken || !item.slot) continue;
-    const gold0 = save.gold, m0 = units();
-    if (!forgeRepair(reg, save, item.uid, wallet).ok) continue;
-    out.spent += gold0 - save.gold;
-    out.matsOutForge += m0 - units();
+    const gold0 = save.gold;
+    const { res: ok, units } = tracked(save, wallet, out, 'repair', () => forgeRepair(reg, save, item.uid, wallet).ok);
+    if (!ok) continue;
+    out.goldRepair += gold0 - save.gold;
+    out.matsOutForge += units;
     out.repaired++;
     const cur = save.equipment[item.slot];
     if (scoreItem(reg, save, item, policy) > (cur ? scoreItem(reg, save, cur, policy) : -Infinity)) {
@@ -399,21 +533,95 @@ export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPo
       spread: reg.get('balance').loot.baseRoll,
     });
     if (!meetsRequirements(after, save.attributes)) continue;
-    const gold0 = save.gold, m0 = units();
+    const gold0 = save.gold;
     save.inventory.push(item);
-    const ok = forgeUpgrade(reg, save, item.uid, wallet).ok;
+    const { res: r, units } = tracked(save, wallet, out, 'upgrade', () => forgeUpgrade(reg, save, item.uid, wallet));
     // `forgeUpgrade` ЗАМЕНЯЕТ объект в сумке (D14) — надеваем то, что лежит там теперь.
     const upgraded = save.inventory.find((i) => i.uid === item.uid) ?? item;
     save.inventory = save.inventory.filter((i) => i.uid !== item.uid);
-    if (!ok) continue;
+    if (!r.ok) {
+      if (r.reason === 'Недостаточно золота') out.blocked.upgradeGold++;
+      else if (r.reason?.startsWith('Не хватает материалов')) out.blocked.upgradeMats++;
+      continue;
+    }
     save.equipment[slot] = upgraded;
-    out.spent += gold0 - save.gold;
-    out.matsOutForge += m0 - units();
+    out.goldUpgrade += gold0 - save.gold;
+    out.matsOutForge += units;
     out.upgraded++;
   }
+  // 4. Перекатка свойств надетого (§6.2): только при открытой ковке — эссенцию даёт разбор у кузнеца.
+  if (opts.craft) rerollAtForge(reg, save, stash, policy, rng, out);
+  out.spent = out.goldRepair + out.goldUpgrade + out.goldReroll;
   // Выход разбора и переплавки лёг в сумку — туда же, в сундук.
   out.deposited += depositCarried(save.inventory, wallet);
   return out;
+}
+
+/**
+ * Бросков перекатки на оценку «стоит ли»: тем же `forgeReroll` на копии вещи, ПОСТОЯННЫМИ сидами — не от uid: uid вещей идут от часов
+ * (`uuidv7`), и сид от них сделал бы прогон неповторяемым.
+ */
+const REROLL_SAMPLES = 4;
+/** Во сколько раз средний бросок должен быть лучше нынешних свойств, чтобы бот платил за перекатку. */
+const REROLL_MARGIN = 0.05;
+
+/**
+ * ⭐ ВЫГОДА ПЕРЕКАТКИ надетой вещи: средний скор после броска (`REROLL_SAMPLES` бросков АВТОРИТЕТНЫМ `forgeReroll` на копии, с копией
+ * в руке — скор героя считается с ней) минус нынешний. Не перекатывается (уник, обычная, лимит, сломана) — `null`. Сама ничего не тратит.
+ */
+export function rerollGain(reg: ConfigRegistry, save: SaveState, slot: EquipSlot, policy: BuildPolicy): number | null {
+  const item = save.equipment[slot];
+  if (!item || !canRerollItem(reg, item).ok) return null;
+  const cur = scoreItem(reg, save, item, policy);
+  let sum = 0, n = 0;
+  try {
+    for (let k = 1; k <= REROLL_SAMPLES; k++) {
+      const probe = structuredClone(item);
+      const scratch = { ...save, inventory: [probe], gold: Number.MAX_SAFE_INTEGER } as SaveState;
+      const r = forgeReroll(reg, scratch, probe.uid, createRng(k * 7919), undefined, { [ESSENCE_ID]: 1e9 });
+      if (!r.ok) return null;
+      save.equipment[slot] = probe;
+      sum += scoreItem(reg, save, probe, policy);
+      n++;
+    }
+  } finally {
+    save.equipment[slot] = item;
+  }
+  return n ? sum / n - cur : null;
+}
+
+/**
+ * Перекатка у кузнеца: каждую надетую вещь, у которой средний бросок лучше нынешнего на `REROLL_MARGIN`, — по одной перекатке за визит,
+ * самую выгодную на золото первой, пока золото остаётся сверх запаса и хватает эссенции (§6.2: сумка + сундук). АВТОРИТЕТНЫМ `forgeReroll`
+ * (вещь на миг кладётся в сумку, как при подъёме тира). Хотел, но не хватило — счёт в `blocked`.
+ */
+function rerollAtForge(reg: ConfigRegistry, save: SaveState, stash: AccountStash, policy: BuildPolicy, rng: Rng, out: ForgeResult): void {
+  const wallet = stash.materials ?? (stash.materials = {});
+  const cands: { slot: EquipSlot; item: Item; gain: number; gold: number }[] = [];
+  for (const [slot, item] of Object.entries(save.equipment) as [EquipSlot, Item | undefined][]) {
+    if (!item) continue;
+    const gain = rerollGain(reg, save, slot, policy);
+    const cur = scoreItem(reg, save, item, policy);
+    if (gain === null || !(gain > REROLL_MARGIN * Math.max(1, Math.abs(cur)))) continue;
+    cands.push({ slot, item, gain, gold: forgeGold(reg, item, 'reroll') });
+  }
+  cands.sort((a, b) => b.gain / b.gold - a.gain / a.gold);
+  for (const c of cands) {
+    const have = availableMaterials(save.inventory, wallet);
+    const goldOk = save.gold - c.gold >= goldReserve(save);
+    const essOk = Object.entries(rerollMaterials(reg, c.item)).every(([id, n]) => (have[id] ?? 0) >= n);
+    if (!goldOk) out.blocked.rerollGold++;
+    if (!essOk) out.blocked.rerollEssence++;
+    if (!goldOk || !essOk) continue;
+    const gold0 = save.gold;
+    save.inventory.push(c.item);
+    const { res: r, units } = tracked(save, wallet, out, 'reroll', () => forgeReroll(reg, save, c.item.uid, rng, undefined, wallet));
+    save.inventory = save.inventory.filter((i) => i.uid !== c.item.uid);
+    if (!r.ok) continue;
+    out.rerolled++;
+    out.goldReroll += gold0 - save.gold;
+    out.matsOutReroll += units;
+  }
 }
 
 // ── Ковка бота ──────────────────────────────────────────────────────────────
@@ -446,8 +654,8 @@ export function bestCraft(
   reg: ConfigRegistry, save: SaveState, stash: AccountStash, policy: BuildPolicy, opts: { fullJournal?: boolean } = {},
 ): CraftPlan | null {
   const journal = opts.fullJournal ? fullJournal(reg) : normalizeJournal(stash.forgeJournal);
-  const cap = journalTierCap(reg, journal);
-  if (cap < 0 || !journal.bases.length) return null;
+  // ⭐ D3: ворот ступени у ковки нет — бот куёт любую ступень открытой базы, на какую хватит сырья.
+  if (!journal.bases.length) return null;
   const have = availableMaterials(save.inventory, stash.materials ?? {});
   const k = reg.get('balance').craft;
   const tiers = craftTiers(reg);
@@ -482,7 +690,7 @@ export function bestCraft(
     }
     if (!complete) continue;
     const range = baseTierRange(reg, base);
-    const hi = Math.min(range.hi, cap);
+    const hi = range.hi;
     if (hi < range.lo) continue;
     // Деталь гнезда под ступень материала: из открытых — та, чьего сырья больше всего, потом ближе к эталону.
     const memo = new Map<string, WeaponPart | null>();
@@ -531,7 +739,7 @@ export function bestCraft(
       const input: CraftInput = { weaponClass: base.weaponClass, hands, parts: cheapest.get(t)!.picks };
       const pv = craftWeapon(reg, input, { journal, materialsOn: true });
       if (!pv.ok || !pv.item || !pv.cost || !fits(pv.cost) || !meetsRequirements(pv.item, save.attributes)) continue;
-      const { score, enchant } = planScore(reg, save, pv.item, pv.cost.gold, policy);
+      const { score, enchant } = planScore(reg, save, pv.item, pv.cost.gold, policy, stash.materials ?? {});
       if (!best || score > best.score) best = { input, item: pv.item, cost: pv.cost, tier: t, score, enchant };
       break;
     }
@@ -542,7 +750,7 @@ export function bestCraft(
     const input: CraftInput = { ...best.input, finish: f };
     const pv = craftWeapon(reg, input, { journal, materialsOn: true });
     if (!pv.ok || !pv.item || !pv.cost || !fits(pv.cost)) continue;
-    const scored = planScore(reg, save, pv.item, pv.cost.gold, policy);
+    const scored = planScore(reg, save, pv.item, pv.cost.gold, policy, stash.materials ?? {});
     if (scored.score >= best.score) return { input, item: pv.item, cost: pv.cost, tier: best.tier, ...scored };
   }
   return best;
@@ -554,16 +762,27 @@ function tierOfStepsFast(reg: ConfigRegistry, s: number[]): number {
 }
 
 /**
- * Зачарование, на которое бот готов потратиться: редкое, иначе магическое — если пул наберёт и золото
- * (`gold`, по умолчанию всё, что есть) останется сверх запаса.
+ * Зачарование, на которое бот готов потратиться: редкое, иначе магическое — если пул наберёт, золото (`gold`, по умолчанию всё,
+ * что есть) останется сверх запаса и хватит ЭССЕНЦИИ (§6.2: сумка + кошелёк сундука `wallet`).
  */
-function enchantChoice(reg: ConfigRegistry, save: SaveState, item: Item, gold = save.gold): Rarity | null {
+function enchantChoice(
+  reg: ConfigRegistry, save: SaveState, item: Item, gold = save.gold, wallet: MaterialCost = {}, why?: ForgeBlocked,
+): Rarity | null {
   if (!item.parts || item.rarity !== 'normal' || item.broken) return null;
+  const have = availableMaterials(save.inventory, wallet);
+  // Чего не хватило хоть на одну редкость (`why`): счёт — один раз на решение, а не на каждую редкость.
+  let noGold = false, noEssence = false;
   for (const r of ['rare', 'magic'] as const) {
     const fit = enchantSlots(reg, item, r);
     if (!fit?.fillable || Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0) continue;
-    if (gold - enchantCost(reg, item, r) >= goldReserve(save)) return r;
+    const essOk = Object.entries(essenceMaterials(reg, item, r, 'enchant')).every(([id, n]) => (have[id] ?? 0) >= n);
+    const goldOk = gold - enchantCost(reg, item, r) >= goldReserve(save);
+    if (essOk && goldOk) return r;
+    noGold ||= !goldOk;
+    noEssence ||= !essOk;
   }
+  if (why && noGold) why.enchantGold++;
+  if (why && noEssence) why.enchantEssence++;
   return null;
 }
 
@@ -574,9 +793,11 @@ const ENCHANT_SAMPLES = 3;
  * Скор скованной вещи для решения «ковать ли»: с зачарованием, если на него хватит золота после ковки, —
  * средним по нескольким броскам ТЕМ ЖЕ `enchantItem`, что у кузнеца (детерминированные сиды: сим повторяем).
  */
-function planScore(reg: ConfigRegistry, save: SaveState, item: Item, craftGold: number, policy: BuildPolicy): { score: number; enchant?: Rarity } {
+function planScore(
+  reg: ConfigRegistry, save: SaveState, item: Item, craftGold: number, policy: BuildPolicy, wallet: MaterialCost = {},
+): { score: number; enchant?: Rarity } {
   const bare = scoreItem(reg, save, item, policy);
-  const r = enchantChoice(reg, save, item, save.gold - craftGold);
+  const r = enchantChoice(reg, save, item, save.gold - craftGold, wallet);
   if (!r) return { score: bare };
   let sum = 0, n = 0;
   for (let k = 1; k <= ENCHANT_SAMPLES; k++) {
@@ -586,13 +807,16 @@ function planScore(reg: ConfigRegistry, save: SaveState, item: Item, craftGold: 
   return n ? { score: Math.max(bare, sum / n), enchant: r } : { score: bare };
 }
 
-/** Зачаровать вещь из сумки, если бот готов (`enchantChoice`). Ядро само откажет до оплаты. */
-function enchantInBag(reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng, out: ForgeResult): void {
+/** Зачаровать вещь из сумки, если бот готов (`enchantChoice`): золото и эссенция (сумка + сундук `wallet`). Ядро само откажет до оплаты. */
+function enchantInBag(reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng, out: ForgeResult, wallet: MaterialCost): void {
   const item = save.inventory.find((i) => i.uid === uid);
-  const r = item ? enchantChoice(reg, save, item) : null;
+  const r = item ? enchantChoice(reg, save, item, save.gold, wallet, out.blocked) : null;
   if (!r) return;
   const gold0 = save.gold;
-  if (enchantAction(reg, save, uid, r, rng).ok) { out.enchanted++; out.goldEnchant += gold0 - save.gold; }
+  const { res: ok, units } = tracked(save, wallet, out, 'enchant', () => enchantAction(reg, save, uid, r, rng, undefined, wallet).ok);
+  if (ok) {
+    out.enchanted++; out.goldEnchant += gold0 - save.gold; out.matsOutEnchant += units;
+  }
 }
 
 /**
@@ -605,21 +829,24 @@ function craftAtForge(
   reg: ConfigRegistry, save: SaveState, stash: AccountStash, policy: BuildPolicy, rng: Rng, opts: ForgeOpts, out: ForgeResult,
 ): void {
   const wallet = stash.materials ?? (stash.materials = {});
-  const units = (): number => allUnits(save, wallet);
   const cur = save.equipment.weapon;
   const curScore = cur ? scoreItem(reg, save, cur, policy) : -Infinity;
   const plan = bestCraft(reg, save, stash, policy, { fullJournal: opts.fullJournal });
+  let tried: string | undefined;
   const worth = !!plan && (!cur || (
     (!cur.parts || plan.tier > tierIndexOfItem(reg, cur)) && plan.score > curScore * (1 + CRAFT_MARGIN)));
   if (plan && worth) {
-    const gold0 = save.gold, m0 = units();
-    const r = craftAction(reg, save, stash, opts.nonce?.() ?? `sim-craft-${++simNonceSeq}`, plan.input, rng, { fullJournal: opts.fullJournal });
+    const gold0 = save.gold;
+    const { res: r, units } = tracked(save, wallet, out, 'craft', () =>
+      craftAction(reg, save, stash, opts.nonce?.() ?? `sim-craft-${++simNonceSeq}`, plan.input, rng, { fullJournal: opts.fullJournal }));
     // Повтор ключа ядро отвечает прежним uid и НИЧЕГО не кует — такой «успех» ковкой не считается.
     if (r.ok && r.uid && save.inventory.some((i) => i.uid === r.uid)) {
       out.crafted++;
+      out.craftedTiers.push(plan.tier);
       out.goldCraft += gold0 - save.gold;
-      out.matsOutCraft += m0 - units();
-      enchantInBag(reg, save, r.uid, rng, out);
+      out.matsOutCraft += units;
+      enchantInBag(reg, save, r.uid, rng, out, wallet);
+      tried = r.uid;
       const made = save.inventory.find((i) => i.uid === r.uid);
       if (made && scoreItem(reg, save, made, policy) > curScore) {
         // Надевается так же, как любая находка бота (по слоту, `considerDrop`): иначе скованный двуручник
@@ -635,10 +862,11 @@ function craftAtForge(
   }
   // Надетое скованное без свойств — зачаровать, когда накопилось золото. Ядро зачаровывает из сумки —
   // вещь на миг кладётся туда, как при подъёме тира.
+  // Только что скованное уже примеряло зачарование (`enchantInBag` выше) — второй раз в тот же визит не считаем.
   const w = save.equipment.weapon;
-  if (w && enchantChoice(reg, save, w)) {
+  if (w && w.uid !== tried && w.parts && w.rarity === 'normal' && !w.broken) {
     save.inventory.push(w);
-    enchantInBag(reg, save, w.uid, rng, out);
+    enchantInBag(reg, save, w.uid, rng, out, wallet);
     save.equipment.weapon = save.inventory.find((i) => i.uid === w.uid) ?? w;
     save.inventory = save.inventory.filter((i) => i.uid !== w.uid);
   }
@@ -650,9 +878,12 @@ export interface ShopResult { spent: number; sold: number; bought: Item[]; }
 /**
  * Магазин: сток на (level+1) — как `rollGear` сервера: ступень базы БРОСКОМ в окне (D21), происхождение
  * `shop` (D16), цена — `shopBuyPrice` игры. Покупает апгрейды по карману. Заменённое продаёт ценой игры;
- * скованное не продаёт — кладёт в сумку, и кузница его переплавит. Мутирует save.
+ * скованное не продаёт — кладёт в сумку, и кузница его переплавит. `toForge` (ковка открыта) — и прочее снятое кладёт в сумку к кузнецу
+ * (каталог, сырьё и эссенция — решение D1), продаёт, только если не влезло. Мутирует save.
  */
-export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, rng: Rng, policy: BuildPolicy): ShopResult {
+export function visitShop(
+  reg: ConfigRegistry, save: SaveState, level: number, rng: Rng, policy: BuildPolicy, opts: { toForge?: boolean } = {},
+): ShopResult {
   const itemsBase = reg.get('items.base');
   const affixes = reg.get('affixes');
   const uniques = reg.get('uniques');
@@ -660,9 +891,14 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
   const loot = reg.get('balance').loot;
   const dims = reg.get('balance').inventory;
   let spent = 0, sold = 0; const bought: Item[] = [];
+  // Лавка не выше `balance.shop.maxTier` (`shopTierCap`, как `rollShopGear` сервера): бросок уровня ступени и потолок базы.
+  const cap = shopTierCap(reg);
+  /** Снятое — в сумку (к кузнецу); не влезло — `false`. */
+  const toBag = (it: Item): boolean => { it.pos = null; return addToInventory(save.inventory, it, dims); };
   for (let i = 0; i < 8; i++) {
+    const rolled = rollTierLevel(level + 1, loot.tierWindow, rng);
     const item = shapeFoundWeapon(reg, generateItem(itemsBase, affixes, uniques,
-      { dropBias: 1.3, itemLevel: level + 1, tierLevel: rollTierLevel(level + 1, loot.tierWindow, rng),
+      { dropBias: 1.3, itemLevel: level + 1, tierLevel: Math.min(rolled, cap.levelCap), maxTier: cap.id,
         tiers: reg.get('item-tiers'), rarities, baseRoll: loot.baseRoll, origin: 'shop', noUnique: true }, rng));   // R13-09: уников в лавке нет
     const price = shopBuyPrice(reg, item);
     if (!item.slot || save.gold < price || !meetsRequirements(item, save.attributes)) continue;
@@ -673,6 +909,8 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
         // Скованное — в сумку к кузнецу (переплавка), не на прилавок. Места нет — не покупаем.
         cur.pos = null;
         if (!addToInventory(save.inventory, cur, dims)) continue;
+      } else if (cur && opts.toForge && cur.rarity !== 'unique' && toBag(cur)) {
+        // ⭐ Ковка открыта: снятое — тоже кузнецу (каталог, сырьё и эссенция, D1), он рядом; места нет — на прилавок, как раньше.
       } else if (cur) sold += sellForGold(reg, save, cur);
       save.gold -= price; spent += price;
       save.equipment[item.slot] = item; bought.push(item);

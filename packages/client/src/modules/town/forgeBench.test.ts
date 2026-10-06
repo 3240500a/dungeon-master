@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  ConfigRegistry, buildCraftShell, craftAction, createRng, defaultParts, emptyStash, enchantCost, forgeGold, fullJournal, newBotSave,
-  repairCost, salvageMean, salvageRange, upgradeCost, type Item, type SaveState, type TownCommand,
+  ConfigRegistry, buildCraftShell, craftAction, createRng, defaultParts, emptyStash, enchantCost, enchantMaterials, forgeGold, fullJournal, newBotSave,
+  repairCost, rerollMaterials, salvageMean, salvageRange, upgradeCost, type Item, type SaveState, type TownCommand,
 } from '@dm/shared';
 import type { CmdReply } from '../../net/cmdReplies.js';
 import { forgeBench } from './forgeBench.js';
@@ -94,7 +94,8 @@ describe('⭐ R3-16: действие верстака в полёте', () => {
     const card = root.card('Реролл')!;
     expect(card, 'карточка реролла горит').toBeDefined();
     card.click(); card.click();                        // двойной клик: второй — по той же, ещё не перерисованной карточке
-    expect(b.requests, 'было: две команды forgeReroll подряд').toEqual([{ cmd: 'forgeReroll', uid: 'bench-x', maxGold: forgeGold(reg, magicWeapon(), 'reroll') }]);
+    // §6.2: с эссенцией карточки (`maxMaterials`).
+    expect(b.requests, 'было: две команды forgeReroll подряд').toEqual([{ cmd: 'forgeReroll', uid: 'bench-x', maxGold: forgeGold(reg, magicWeapon(), 'reroll'), maxMaterials: rerollMaterials(reg, magicWeapon()) }]);
     expect(b.fired, 'мимо ожидания ответа не уходит ничего').toEqual([]);
     // Перерисовка кадром сейва, ответа ещё нет: карточки погашены, нажатая — «⏳».
     const busy = b.render();
@@ -121,6 +122,34 @@ describe('⭐ R3-16: действие верстака в полёте', () => {
   });
 });
 
+describe('⭐ §15.2: итог разбора у кузнеца — строкой над верстаком ВСЕГДА', () => {
+  const G = globalThis as unknown as { document?: unknown; window?: unknown };
+  beforeEach(() => { G.document = { createElement: (t: string) => new El(t), body: new El('body') }; G.window = { confirm: () => true }; });
+  afterEach(() => { delete G.document; delete G.window; });
+
+  it('сервер прислал итоговую строку — она и видна, даже когда нового в каталоге нет (`unlocked` пуст)', async () => {
+    const b = bench({ ...magicWeapon(), uid: 'bench-sum' });
+    b.render().card('Разобрать')!.click();
+    const summary = 'Получено: Болотное железо 3 · Сыромять 2 · Чёрное железо 2 · Чародейская эссенция 1 · Каталог: всё из этой вещи уже в каталоге (меч: 9 из 41)';
+    await b.reply({ ...reply('forgeSalvage', true), summary, unlocked: [] });
+    expect(b.note(), 'было: пустой `unlocked` — успех молча, полученного сырья не видно').toBe(`♻ ${summary}`);
+  });
+
+  it('сервер старше итоговой строки — по-старому: строки открытий; нет и их — пусто', async () => {
+    const b = bench({ ...magicWeapon(), uid: 'bench-old' });
+    b.render().card('Разобрать')!.click();
+    await b.reply({ ...reply('forgeSalvage', true), unlocked: ['Деталь «Тесная»'] });
+    expect(b.note()).toBe('📖 Открыто в каталоге кузнеца: Деталь «Тесная»');
+  });
+
+  it('карточка разбора — четыре строки «Подпись: текст», без значков цены', () => {
+    const card = bench({ ...magicWeapon(), uid: 'bench-4' }).render().card('Разобрать')!;
+    const lines = card.children.slice(2).map((c) => c.textContent);
+    expect(lines.map((l) => l.split(':')[0])).toEqual(['Сырьё', 'Эссенция', 'Каталог', 'Эскиз']);
+    expect(lines[1]).toBe('Эссенция: + 1');
+  });
+});
+
 describe('⭐ R5-15: платное действие верстака несёт цену, которую показала карточка', () => {
   const G = globalThis as unknown as { document?: unknown };
   beforeEach(() => { G.document = { createElement: (t: string) => new El(t), body: new El('body') }; });
@@ -138,7 +167,7 @@ describe('⭐ R5-15: платное действие верстака несёт
     await broken.reply(reply('forgeRepair', true));
     expect(b.requests, 'было: без цены — сервер брал по своему конфигу, какой бы ни видел игрок').toEqual([
       { cmd: 'forgeUpgrade', uid: 'bench-x', maxGold: forgeGold(reg, item, 'upgrade'), maxMaterials: upgradeCost(reg, item) },
-      { cmd: 'forgeReroll', uid: 'bench-x', maxGold: forgeGold(reg, item, 'reroll') },
+      { cmd: 'forgeReroll', uid: 'bench-x', maxGold: forgeGold(reg, item, 'reroll'), maxMaterials: rerollMaterials(reg, item) },
     ]);
     expect(broken.requests).toEqual([{ cmd: 'forgeRepair', uid: 'bench-br', maxGold: forgeGold(reg, { ...item, broken: true }, 'repair'),
       maxMaterials: repairCost(reg, { ...item, broken: true }) }]);
@@ -180,7 +209,7 @@ describe('⭐ R3-09: скованную вещь зачаровывают с в�
     expect(magic, 'было: зачаровать с верстака нельзя вовсе').toBeDefined();
     expect(root.card('Редкий')).toBeDefined();
     magic!.click();
-    expect(b.requests).toEqual([{ cmd: 'forgeEnchant', uid: item.uid, rarity: 'magic', maxGold: enchantCost(liveReg, item, 'magic') }]);
+    expect(b.requests).toEqual([{ cmd: 'forgeEnchant', uid: item.uid, rarity: 'magic', maxGold: enchantCost(liveReg, item, 'magic'), maxMaterials: enchantMaterials(liveReg, item, 'magic') }]);
     await b.reply(reply('forgeEnchant', true));
   });
 
@@ -195,7 +224,7 @@ describe('⭐ R3-09: скованную вещь зачаровывают с в�
     const item = forged();
     const b = bench(item, reg);
     b.render().card('Редкий')!.click();
-    expect(b.requests).toEqual([{ cmd: 'forgeEnchant', uid: item.uid, rarity: 'rare', maxGold: enchantCost(reg, item, 'rare') }]);
+    expect(b.requests).toEqual([{ cmd: 'forgeEnchant', uid: item.uid, rarity: 'rare', maxGold: enchantCost(reg, item, 'rare'), maxMaterials: enchantMaterials(reg, item, 'rare') }]);
     await b.reply(reply('forgeEnchant', true));
   });
 });

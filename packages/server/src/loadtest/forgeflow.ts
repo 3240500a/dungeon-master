@@ -2,7 +2,8 @@ import WebSocket from 'ws';
 import pg from 'pg';
 import {
   CONFIG_REV_HEADER, CRAFT_SLOT_LIST, ConfigRegistry, WIRE_FULL, applyWorldDelta, availableMaterials, craftWeapon, decodeWorldFrame,
-  emptyJournal, emptySnapshot, emptyStash, enchantCost, keySlotOf, keyVariantsByBase, normalizeJournal, salvageRange, sketchable, variantsFor,
+  emptyJournal, emptySnapshot, emptyStash, enchantCost, enchantMaterials, ESSENCE_ID, keySlotOf, keyVariantsByBase, normalizeJournal, salvageRange,
+  sketchable, variantsFor,
   type CraftInput, type FloorInit, type SaveState, type ServerFrame, type WorldSnapshot,
 } from '@dm/shared';
 
@@ -219,7 +220,8 @@ async function main(): Promise<void> {
     // Засев, пока героя нет в игре: золото, кошелёк ровно на четыре ковки, журнал базы и её деталей, один эскиз.
     const GOLD = 50_000;
     await db.query(`UPDATE characters SET data = jsonb_set(data, '{gold}', to_jsonb($2::int)), version = version + 1 WHERE char_id = $1`, [character.charId, GOLD]);
-    const wallet = Object.fromEntries(Object.entries(cost.materials).map(([id, n]) => [id, 4 * n]));
+    const wallet: Record<string, number> = Object.fromEntries(Object.entries(cost.materials).map(([id, n]) => [id, 4 * n]));
+    wallet[ESSENCE_ID] = (wallet[ESSENCE_ID] ?? 0) + 200;   // ⭐ §6.2: зачарование тратит и эссенцию
     const journal = { ...emptyJournal(), bases: [baseId], variants: CRAFT_SLOT_LIST.map((s) => input.parts[s].id), tierHi: 0, sketches: 1 };
     await db.query(`INSERT INTO account_stash (user_id, data, updated_at, version) VALUES ($1, $2, now(), 1) ON CONFLICT (user_id) DO NOTHING`,
       [userId, JSON.stringify(emptyStash(reg))]);
@@ -279,7 +281,7 @@ async function main(): Promise<void> {
     const m3 = availableMaterials(c.save!.inventory, (await c.refreshStash()).materials);
     const idE = c.id(), idM = c.id();
     const e3 = c.errors.length;
-    c.send({ t: 'cmd', id: idE, command: { cmd: 'forgeEnchant', uid: u3, rarity: 'magic', maxGold: eCost, cfgRev: rev } });
+    c.send({ t: 'cmd', id: idE, command: { cmd: 'forgeEnchant', uid: u3, rarity: 'magic', maxGold: eCost, maxMaterials: enchantMaterials(reg, it3, 'magic'), cfgRev: rev } });
     c.send({ t: 'cmd', id: idM, command: { cmd: 'forgeSalvage', uid: u3, cfgRev: rev } });
     const rE = await c.wait(idE), rM = await c.wait(idM);
     if (!rE.ok) await c.dropErr(e3, rE.reason);

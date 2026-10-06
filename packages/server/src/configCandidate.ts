@@ -1,6 +1,6 @@
 import {
-  ConfigRegistry, configSchemas, configCrossIssues, upgradeStoredOverride,
-  type ConfigCrossIssue, type ConfigKey,
+  ConfigRegistry, configSchemas, configCrossIssues, upgradeStoredOverride, CONFIG_CROSS_CORE,
+  type ConfigCrossIssue, type ConfigCrossRule, type ConfigKey,
 } from '@dm/shared';
 
 /**
@@ -94,6 +94,15 @@ export function buildCandidate(base: Record<string, unknown>, stored: Record<str
   return { raw, reg, applied, fixes, fileFixes, skipped, crossLeft };
 }
 
+/**
+ * Нарушения по правилам — текст, где у каждого правила сказано, что делает ядро, пока оно нарушено (`CONFIG_CROSS_CORE`): прежде строка
+ * про любое нарушение говорила «ядро зажимает откаты», хотя у правил разбора откатов нет вовсе.
+ */
+function byRule(issues: readonly ConfigCrossIssue[]): string {
+  const rules = [...new Set(issues.map((i) => i.rule))] as ConfigCrossRule[];
+  return rules.map((r) => `[${r}: ${CONFIG_CROSS_CORE[r]}] ${issues.filter((i) => i.rule === r).map((i) => `${i.key}: ${i.msg}`).join(' | ')}`).join(' || ');
+}
+
 /** Строки для лога по приведённому и пропущенному — одним текстом у сервера и `db:repair`. */
 export const candidateText = {
   skipped: (s: ConfigCandidate['skipped'][number]): string =>
@@ -101,7 +110,9 @@ export const candidateText = {
   fixed: (key: string, lines: readonly string[]): string =>
     `оверрайд конфига "${key}" сохранён под прежней схемой — приведён при загрузке (в базе прежний: записать — «Применить» в редакторе или npm run db:repair -- --fix): ${lines.join(', ')}`,
   fileFixed: (key: string, lines: readonly string[]): string =>
-    `файл данных «${key}» вместе с прочими таблицами (файлы и оверрайды базы) нарушает правило поверх таблиц (⭐ D4, время баффа) — приведён при сборке, в игре приведённое (поправить data/${key}.json или связанный оверрайд в редакторе): ${lines.join(', ')}`,
+    `файл данных «${key}» вместе с прочими таблицами (файлы и оверрайды базы) нарушает правило времени баффа (⭐ D4) — приведён при сборке, в игре приведённое (поправить data/${key}.json или связанный оверрайд в редакторе): ${lines.join(', ')}`,
   crossLeft: (issues: readonly ConfigCrossIssue[]): string =>
-    `живой конфиг нарушает правило поверх таблиц и после приведения — собран без проверки, ядро зажимает откаты с логом: ${issues.map((i) => `${i.key}: ${i.msg}`).join(' | ')}`,
+    `живой конфиг нарушает правило поверх таблиц и после приведения — собран без проверки: ${byRule(issues)}`,
+  filesAlone: (issues: readonly ConfigCrossIssue[]): string =>
+    `файлы данных сами по себе (без оверрайдов базы) нарушают правило поверх таблиц — на деплое старт соберёт их с инцидентом: ${byRule(issues)}`,
 };

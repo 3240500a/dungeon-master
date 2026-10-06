@@ -16,10 +16,14 @@ import { applyDeathPenalty } from '../economy/death.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
 import type { Item } from '../types/items.js';
 import { newBotSave, classProfileAttr, allocateAttributes } from '../sim/playerBot.js';
-import { considerDrop, visitShop, visitForge, allocateSkillsAndPassives, weaponDps, type FieldCarry } from '../sim/economy.js';
+import {
+  addMats, carryPriority, considerDrop, visitShop, visitForge, allocateSkillsAndPassives, weaponDps, type FieldCarry, type ForgeBlocked,
+} from '../sim/economy.js';
+import { ESSENCE_ID } from '../formulas/salvage.js';
+import { addToInventory } from '../inventory/grid.js';
 import type { BuildPolicy } from '../sim/types.js';
 import { emptyStash, sanitizeStash } from '../economy/stashActions.js';
-import { availableMaterials, materialItem } from '../economy/materials.js';
+import { availableMaterials, materialItem, type MaterialCost } from '../economy/materials.js';
 import { normalizeJournal } from '../formulas/craft.js';
 import { shopBuyPrice, shopSellPrice, SHOP_CONSUMABLE_STOCK, shopConsumableIds } from '../economy/townActions.js';
 import type { AccountStash } from '../types/stash.js';
@@ -70,6 +74,11 @@ export interface SessionSimSettings {
   craft?: boolean;
   /** Флаг разработчика «полный журнал» (как `DM_CRAFT_FULL_JOURNAL`): замер ковки без петли открытия. */
   fullJournal?: boolean;
+  /**
+   * Политика КРАФТЕРА (с ковкой): и не по силам вещь — в разбор, а не в золото (`FieldCarry.salvageAll`). По умолчанию нет — тогда сравнение
+   * «с ковкой / без» на одном сиде мерит ковку, а не отказ от продажи.
+   */
+  salvageAll?: boolean;
   /** Стартовый сундук аккаунта (сырьё, журнал) — например, настоящий из базы. Нет — пустой, как у нового. */
   stash?: AccountStash;
   /** Стартовый сейв (копируется). Нет — новый бот класса `classId`. */
@@ -110,13 +119,13 @@ function openDoors(layout: DungeonLayout): void {
   for (const d of layout.doors) for (const c of d.cells) { const row = layout.grid[c.cy]; if (row) row[c.cx] = Cell.Floor; }
 }
 
-/** Материалы по ступеням: для баланса важна ступень, а не пятнадцать отдельных id. */
+/** Материалы по сортам: для баланса важен сорт, а не сорок отдельных id. Эссенция — отдельной строкой: это не сырьё I сорта. */
 function tierSums(reg: ConfigRegistry, mats: Record<string, number>): Record<string, number> {
   const defs = reg.get('craft-materials');
   const out: Record<string, number> = {};
   for (const [id, n] of Object.entries(mats)) {
     const t = defs.find((d) => d.id === id)?.tier;
-    const key = t ? `ступень ${t}` : 'прочее';
+    const key = id === ESSENCE_ID ? 'эссенция' : t ? `ступень ${t}` : 'прочее';
     out[key] = (out[key] ?? 0) + n;
   }
   return out;
@@ -218,8 +227,17 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const units = (): number => Object.values(availableMaterials(save.inventory, stash.materials ?? {})).reduce((a, b) => a + b, 0);
   const matsStart = units();
   // Ковка (K7): счётчики, поток сырья и прирост силы оружия по источникам.
-  let crafted = 0, enchanted = 0, meltedForge = 0, meltedField = 0, salvagedForge = 0, salvagedField = 0, unlocked = 0;
-  let goldCraft = 0, goldEnchant = 0, matsForge = 0, matsMelt = 0, matsOutCraft = 0, matsOutForge = 0;
+  let crafted = 0, enchanted = 0, rerolled = 0, meltedForge = 0, meltedField = 0, salvagedForge = 0, salvagedField = 0, unlocked = 0;
+  let goldCraft = 0, goldEnchant = 0, goldReroll = 0, matsForge = 0, matsMelt = 0, matsOutCraft = 0, matsOutForge = 0, matsOutEnchant = 0, matsOutReroll = 0;
+  // ⭐ Сырьё и эссенция ПО ID: приход по источникам, расход по статьям; «всё к кузнецу» — что дал бы разобранный на месте у кузнеца.
+  const flowIn: Record<'monsters' | 'field' | 'forge' | 'melt', MaterialCost> = { monsters: {}, field: {}, forge: {}, melt: {} };
+  const flowOut: Record<'craft' | 'upgrade' | 'repair' | 'enchant' | 'reroll', MaterialCost> = { craft: {}, upgrade: {}, repair: {}, enchant: {}, reroll: {} };
+  const fieldAtForge: MaterialCost = {};
+  // ⭐ Золото по статьям: приход (монстры, продажи) и расход (лавка, пояс, починка, подъём, перекатка, ковка, чары, пассивы, смерть).
+  let goldShop = 0, goldBelt = 0, goldRepair = 0, goldUpgrade = 0, goldDeath = 0;
+  const blocked: ForgeBlocked = { enchantGold: 0, enchantEssence: 0, rerollGold: 0, rerollEssence: 0, upgradeGold: 0, upgradeMats: 0 };
+  const craftedByTier: Record<number, number> = {};
+  const firstCraft: Record<number, { hours: number; level: number }> = {};
   const gains: Record<PowerSource, number> = { found: 0, shop: 0, craft: 0, upgrade: 0 };
   /**
    * Прирост ДПС оружия в руке от шага `fn`, разнесённый по источнику новой вещи. ДПС до и после — в ОДНОМ
@@ -263,17 +281,31 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   };
   const drainNow = (): void => {
     const keep: Item[] = [];
-    // Ковка открыта — найденное оружие несём кузнецу. Бюджет клеток — на каждый дренаж
-    // заново: вся ноша пересматривается, и свежая находка может вытеснить старую.
-    const carry: FieldCarry | undefined = craftOn ? { journal: normalizeJournal(stash.forgeJournal), carryCells: carryCellsOf(reg) } : undefined;
+    // Ковка открыта — ценное несём кузнецу. Бюджет клеток — на каждый дренаж заново: вся ноша пересматривается, и вещи идут по
+    // очерёдности ноши (`carryPriority`: открытие каталога, потом выгода кузнеца на клетку) — бюджет достаётся самому ценному, а не
+    // самому свежему; поэтому и запаса «под открытия» не нужно (`reserve: 0`).
+    const journal = normalizeJournal(stash.forgeJournal);
+    const carry: FieldCarry | undefined = craftOn ? { journal, carryCells: carryCellsOf(reg), reserve: 0, salvageAll: settings.salvageAll } : undefined;
+    if (carry) {
+      const prio = new Map(save.inventory.map((i) => [i, carryPriority(reg, journal, i)]));
+      save.inventory.sort((a, b) => prio.get(a)! - prio.get(b)!);   // `pop` берёт с конца — самое ценное первым
+    }
     while (save.inventory.length) {
       const it = save.inventory.pop()!;
       const r = considerDrop(reg, save, it, settings.build, carry);
       goldSold += r.sold;
-      if (r.melted) { meltedField += r.melted; matsMelt += r.salvaged ?? 0; }
-      else matsGained += r.salvaged ?? 0;
+      if (r.melted) { meltedField += r.melted; matsMelt += r.salvaged ?? 0; addMats(flowIn.melt, r.gains); }
+      else { matsGained += r.salvaged ?? 0; addMats(flowIn.field, r.gains); }
+      addMats(fieldAtForge, r.forgeMean);
       salvagedField += r.salvagedItems ?? 0;
       if (r.kept) keep.push(it);
+      // Снятое ради находки, которое несём кузнецу: в сумку; не влезло — как раньше, разбор на месте.
+      if (r.carried && !addToInventory(keep, r.carried, reg.get('balance').inventory)) {
+        const back = considerDrop(reg, save, r.carried, settings.build);
+        goldSold += back.sold; matsGained += back.salvaged ?? 0; salvagedField += back.salvagedItems ?? 0;
+        addMats(flowIn.field, back.gains); addMats(fieldAtForge, back.forgeMean);
+        if (back.kept) keep.push(r.carried);
+      }
     }
     save.inventory = keep;
     keptUids = new Set(keep.map((i) => i.uid));
@@ -293,13 +325,13 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     allocateSkillsAndPassives(reg, save, settings.build, rng);
     goldOnPassives += Math.max(0, before - save.gold);
   };
-  const stockBelt = (): void => { goldSpent += stockBeltFromShop(reg, save); };
+  const stockBelt = (): void => { const g = stockBeltFromShop(reg, save); goldSpent += g; goldBelt += g; };
   /** Городская остановка: распределение + пара заходов в магазин + полный пояс зелий (эконом-бот). */
   const doTown = (): void => {
     allocate();
     for (let k = 0; k < 2; k++) {
-      const r = watched(() => visitShop(reg, save, save.level, rng, settings.build));
-      goldSpent += r.spent; goldSold += r.sold; itemsBought += r.bought.length;
+      const r = watched(() => visitShop(reg, save, save.level, rng, settings.build, { toForge: craftOn }));
+      goldSpent += r.spent; goldShop += r.spent; goldSold += r.sold; itemsBought += r.bought.length;
     }
     // Кузница ПОСЛЕ магазина: чинить и качать имеет смысл то, что уже отобрано как лучшее.
     const f = watched(() => visitForge(reg, save, settings.build, stash, {
@@ -307,9 +339,17 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
       nonce: () => `sim-${settings.seed >>> 0}-${++nonceSeq}`,
     }));
     goldSpent += f.spent; goldSold += f.sold; repaired += f.repaired; upgraded += f.upgraded;
-    crafted += f.crafted; enchanted += f.enchanted; meltedForge += f.melted; salvagedForge += f.salvaged; unlocked += f.unlocked;
-    goldCraft += f.goldCraft; goldEnchant += f.goldEnchant;
-    matsForge += f.matsIn; matsMelt += f.matsMelt; matsOutCraft += f.matsOutCraft; matsOutForge += f.matsOutForge;
+    crafted += f.crafted; enchanted += f.enchanted; rerolled += f.rerolled; meltedForge += f.melted; salvagedForge += f.salvaged; unlocked += f.unlocked;
+    goldCraft += f.goldCraft; goldEnchant += f.goldEnchant; goldReroll += f.goldReroll; goldRepair += f.goldRepair; goldUpgrade += f.goldUpgrade;
+    matsForge += f.matsIn; matsMelt += f.matsMelt; matsOutCraft += f.matsOutCraft; matsOutForge += f.matsOutForge; matsOutEnchant += f.matsOutEnchant;
+    matsOutReroll += f.matsOutReroll;
+    addMats(flowIn.forge, f.flow.salvage); addMats(flowIn.melt, f.flow.melt);
+    for (const k of ['craft', 'upgrade', 'repair', 'enchant', 'reroll'] as const) addMats(flowOut[k], f.flow[k]);
+    for (const k of Object.keys(blocked) as (keyof ForgeBlocked)[]) blocked[k] += f.blocked[k];
+    for (const t of f.craftedTiers) {
+      craftedByTier[t] = (craftedByTier[t] ?? 0) + 1;
+      firstCraft[t] ??= { hours: Math.round((totalTime / 3600) * 100) / 100, level: save.level };
+    }
     stockBelt();
   };
 
@@ -328,6 +368,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
       if (e.item.broken) brokenItems++;
     } else if (e.type === 'materials') {
       for (const [id, n] of Object.entries(e.gains)) materials[id] = (materials[id] ?? 0) + n;
+      addMats(flowIn.monsters, e.gains);
     } else if (e.type === 'chest-opened') chestsOpened++;
     else if (e.type === 'xp') xp += e.amount;
     else if (e.type === 'player-died') deaths++;
@@ -400,7 +441,9 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
 
     if (!p.alive) {
       // Смерть: авторитетный штраф (золото + часть инвентаря), возврат в город, возрождение.
+      const goldAlive = save.gold;
       applyDeathPenalty(save, deathPenalty, rng);
+      goldDeath += goldAlive - save.gold;
       reviveFull(p, save, reg);
       node = null; // новый забег с города
       totalTime += townTripSec;
@@ -419,7 +462,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const perHour = (n: number): number => (hours > 0 ? Math.round((n / hours) * 10) / 10 : 0);
   const matsMonsters = Object.values(materials).reduce((a, b) => a + b, 0);
   const matsIn = matsMonsters + matsGained + matsForge + matsMelt;
-  const matsOut = matsOutCraft + matsOutForge;
+  const matsOut = matsOutCraft + matsOutForge + matsOutEnchant + matsOutReroll;
   const matsEnd = units();
   const endMats = availableMaterials(save.inventory, stash.materials ?? {});
   const journal = normalizeJournal(stash.forgeJournal);
@@ -449,6 +492,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     meltedPerHour: perHour(meltedForge + meltedField),
     salvagedPerHour: perHour(salvagedForge + salvagedField),
     enchantedPerHour: perHour(enchanted),
+    rerolledPerHour: perHour(rerolled),
     xpPerHour: hours > 0 ? Math.round(xp / hours) : 0,
     lootPerHour: hours > 0 ? Math.round((items / hours) * 10) / 10 : 0,
     goldEnd: save.gold,
@@ -466,16 +510,25 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     },
     craft: {
       enabled: craftOn,
-      crafted, enchanted,
+      crafted, enchanted, rerolled,
       melted: meltedForge + meltedField,
       salvagedAtForge: salvagedForge,
       salvagedInField: salvagedField,
       unlocked,
       goldOnCraft: goldCraft,
       goldOnEnchant: goldEnchant,
+      goldOnReroll: goldReroll,
+      gold: {
+        monsters: gold, sold: goldSold, shop: goldShop, belt: goldBelt, repair: goldRepair, upgrade: goldUpgrade, reroll: goldReroll,
+        craft: goldCraft, enchant: goldEnchant, passives: goldOnPassives, death: goldDeath,
+      },
+      flow: { in: flowIn, out: flowOut, fieldAtForge },
+      blocked,
+      craftedByTier,
+      firstCraft,
       materials: {
         in: { monsters: matsMonsters, field: matsGained, forge: matsForge, melt: matsMelt, total: matsIn },
-        out: { craft: matsOutCraft, forge: matsOutForge, total: matsOut },
+        out: { craft: matsOutCraft, forge: matsOutForge, enchant: matsOutEnchant, reroll: matsOutReroll, total: matsOut },
         lost: matsStart + matsIn - matsOut - matsEnd,
         end: matsEnd,
         endByTier: tierSums(reg, endMats),
@@ -489,7 +542,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
         weaponDps: weapon ? r1(weaponDps(reg, save, weapon)) : 0,
         weaponSource: !weapon ? '—' : weapon.parts ? 'craft' : (weapon.origin ?? 'found'),
       },
-      journal: { bases: journal.bases.length, variants: journal.variants.length, tierHi: journal.tierHi, mythic: journal.mythic },
+      journal: { bases: journal.bases.length, variants: journal.variants.length },
     },
     levelCurve: curve,
     finalBuild: buildSnapshot(reg, save),

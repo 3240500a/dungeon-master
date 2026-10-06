@@ -3,12 +3,12 @@ import { ConfigRegistry } from '../config/registry.js';
 import { defaultConfigData } from '../config/defaults.js';
 import {
   CRAFT_NONCES_KEEP, affixSlotsFillable, affixSlotsFor, craftSalvageYield, craftWeapon, emptyJournal, enchantCost, enchantItem,
-  fullJournal, keyVariantsByBase, meltReturn, partsOf, salvageIntoJournal, variantsFor, type CraftInput, type CraftJournal,
+  fullJournal, keyVariantsByBase, meltReturn, normalizeJournal, partsOf, salvageGrades, salvageIntoJournal, variantsFor, type CraftInput, type CraftJournal,
 } from '../formulas/craft.js';
 import { CRAFT_SLOT_LIST, keySlotOf, type CraftSlot } from '../formulas/craftType.js';
 import { generateItem, rollAffixes } from '../formulas/itemgen.js';
 import { createRng } from '../formulas/rng.js';
-import { canSalvage, type SalvageRng } from '../formulas/salvage.js';
+import { ESSENCE_ID, canSalvage, type SalvageRng } from '../formulas/salvage.js';
 import {
   canSalvageItem, craftAction, enchantAction, fieldSalvage, forgeGold, forgeReroll, forgeSalvage, salvageRange, salvageWorth, salvageYield,
 } from './townActions.js';
@@ -17,6 +17,8 @@ import { emptyStash } from './stashActions.js';
 import type { AccountStash } from '../types/stash.js';
 import type { CraftParts, Item } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
+/** §6.2: зачарование и перекатка тратят эссенцию — кошелёк сундука с запасом (тесту важно не это). */
+const essWallet = (): Record<string, number> => ({ [ESSENCE_ID]: 1_000_000 });
 
 /**
  * ⭐ КОВКА НА СЕРВЕРЕ — ЧИСТОЕ ЯДРО ДЕЙСТВИЙ (К1). Главный закон: каждый отказ случается ДО траты,
@@ -259,7 +261,7 @@ describe('⭐ craftAction — ковка по заявке', () => {
     expectRefused(craftAction(off, save, stash, NONCE, INPUT, createRng(1)), before, save, stash, /Нет такой детали/);
   });
 
-  it('⚠ ворота журнала: база, деталь, потолок ступени, мифики', () => {
+  it('⚠ ворота журнала — только база и детали; ⭐ D3: ни потолка ступени, ни счётчика мификов', () => {
     const t2 = craftWeapon(reg, INPUT).tier!;
     const probe = (j: CraftJournal, input: CraftInput, re: RegExp): void => {
       const save = mkSave(), stash = mkStash(j);
@@ -268,16 +270,20 @@ describe('⭐ craftAction — ковка по заявке', () => {
     };
     probe({ ...journalFor(INPUT, 6, 99), bases: [] }, INPUT, /не открыт/);
     probe({ ...journalFor(INPUT, 6, 99), variants: journalFor(INPUT, 6).variants.slice(1) }, INPUT, /не открыта/);
-    probe(journalFor(INPUT, t2 - 1, 99), INPUT, /не работал со ступенью/);
-    // Мифик: ступень t6 при поднятом потолке, но разобрано меньше `mythicSalvages`.
+    // Решение владельца D3 (06.10): «разобрал вещь — получил чертежи и можно сразу делать; всё упирается только в количество ресурсов».
+    // Прежний потолок журнала ниже ступени сборки (наследие в старом журнале) — НЕ отказ.
+    const low = mkSave(), lowStash = mkStash(journalFor(INPUT, t2 - 1, 0));
+    expect(craftAction(reg, low, lowStash, NONCE, INPUT, createRng(1)).ok, 'потолок журнала ковку не запирает').toBe(true);
+    // Мифик t6 — без единого разобранного мифика (и при потолке −1): держит его только сырьё V сорта.
     const top = inputAt(reg, 'sword', 1, 5);
     const pvTop = craftWeapon(reg, top);
     expect(pvTop.tier, 'сборка из ступени 5 даёт t6').toBe(6);
-    const need = reg.get('balance').craft.journal.mythicSalvages;
-    probe(journalFor(top, 6, need - 1), top, /Мифическую/);
-    // И при всех воротах открытыми — куётся.
-    const save = mkSave(), stash = mkStash(journalFor(top, 6, need));
-    expect(craftAction(reg, save, stash, NONCE, top, createRng(1)).ok).toBe(true);
+    const save = mkSave(), stash = mkStash(journalFor(top, -1, 0));
+    expect(craftAction(reg, save, stash, NONCE, top, createRng(1)).ok, 'мифик без счётчика мификов').toBe(true);
+    // А без сырья — отказ «Не хватает», а не ворота.
+    const poor = mkSave(), poorStash = { ...mkStash(journalFor(top, -1, 0)), materials: {} };
+    const before = frozen(poor, poorStash);
+    expectRefused(craftAction(reg, poor, poorStash, NONCE, top, createRng(1)), before, poor, poorStash, /^Не хватает/);
   });
 
   it('⚠ кривая заявка: лишние ключи, не те типы, не четыре гнезда, доводка вне списка', () => {
@@ -381,7 +387,7 @@ describe('⭐ enchantAction — зачарование скованной', () =
     const { save, item } = forged();
     const cost = enchantCost(reg, item, 'rare');
     const gold0 = save.gold;
-    const r = enchantAction(reg, save, item.uid, 'rare', createRng(3));
+    const r = enchantAction(reg, save, item.uid, 'rare', createRng(3), undefined, essWallet());
     expect(r.ok, r.reason).toBe(true);
     const got = save.inventory.find((i) => i.uid === item.uid)!;
     expect(got.rarity).toBe('rare');
@@ -402,26 +408,26 @@ describe('⭐ enchantAction — зачарование скованной', () =
       [found.uid, 'rare', /только скованную/], ['нет-такой', 'rare', /не в инвентаре/],
       [item.uid, 'unique', /магической или редкой/], [item.uid, 'normal', /магической или редкой/], [item.uid, 'legendary', /магической или редкой/],
     ] as const) {
-      expectRefused(enchantAction(reg, save, uid, rarity, createRng(1)), before, save, noStash, re);
+      expectRefused(enchantAction(reg, save, uid, rarity, createRng(1), undefined, essWallet()), before, save, noStash, re);
     }
-    expectRefused(enchantAction(reg, save, item.uid, undefined as unknown as string, createRng(1)), before, save, noStash);
+    expectRefused(enchantAction(reg, save, item.uid, undefined as unknown as string, createRng(1), undefined, essWallet()), before, save, noStash);
     // Уже зачарованная — второй раз нельзя (в том числе «перекатить» зачарованием).
-    expect(enchantAction(reg, save, item.uid, 'magic', createRng(1)).ok).toBe(true);
+    expect(enchantAction(reg, save, item.uid, 'magic', createRng(1), undefined, essWallet()).ok).toBe(true);
     const after = frozen(save, noStash);
-    expectRefused(enchantAction(reg, save, item.uid, 'rare', createRng(1)), after, save, noStash, /уже зачарована/);
+    expectRefused(enchantAction(reg, save, item.uid, 'rare', createRng(1), undefined, essWallet()), after, save, noStash, /уже зачарована/);
     // Надетая — не в сумке.
     const eq = forged();
     const worn = eq.save.inventory.splice(eq.save.inventory.findIndex((i) => i.uid === eq.item.uid), 1)[0]!;
     (eq.save as unknown as { equipment: Record<string, Item> }).equipment = { weapon: worn };
     const b2 = frozen(eq.save, noStash);
-    expectRefused(enchantAction(reg, eq.save, worn.uid, 'rare', createRng(1)), b2, eq.save, noStash, /не в инвентаре/);
+    expectRefused(enchantAction(reg, eq.save, worn.uid, 'rare', createRng(1), undefined, essWallet()), b2, eq.save, noStash, /не в инвентаре/);
   });
 
   it('⚠ золота на рубль меньше цены — отказ до броска', () => {
     const { save, item } = forged();
     save.gold = enchantCost(reg, item, 'rare') - 1;
     const before = frozen(save, noStash);
-    expectRefused(enchantAction(reg, save, item.uid, 'rare', createRng(1)), before, save, noStash, /золота/);
+    expectRefused(enchantAction(reg, save, item.uid, 'rare', createRng(1), undefined, essWallet()), before, save, noStash, /золота/);
   });
 
   it('⭐ пул не наберёт оплаченную форму — отказ ДО оплаты (§17), хотя бросок недобрал бы молча', () => {
@@ -432,7 +438,7 @@ describe('⭐ enchantAction — зачарование скованной', () =
     const silently = enchantItem(noSuffix, item, 'rare', createRng(1))!;
     expect(new Set(silently.affixes.map((a) => a.affixId)).size).toBeLessThan(item.affixCap!.prefix + item.affixCap!.suffix);
     const before = frozen(save, noStash);
-    expectRefused(enchantAction(noSuffix, save, item.uid, 'rare', createRng(1)), before, save, noStash, /не хватит свойств/);
+    expectRefused(enchantAction(noSuffix, save, item.uid, 'rare', createRng(1), undefined, essWallet()), before, save, noStash, /не хватит свойств/);
   });
 
   it('⚠ базы нет в конфиге — явный отказ, а не «вещь как была» за деньги', () => {
@@ -440,7 +446,7 @@ describe('⭐ enchantAction — зачарование скованной', () =
     const i = save.inventory.findIndex((x) => x.uid === item.uid);
     save.inventory[i] = { ...item, baseId: 'no-such-base' };
     const before = frozen(save, noStash);
-    expectRefused(enchantAction(reg, save, item.uid, 'rare', createRng(1)), before, save, noStash, /не знает/);
+    expectRefused(enchantAction(reg, save, item.uid, 'rare', createRng(1), undefined, essWallet()), before, save, noStash, /не знает/);
     expect(enchantItem(reg, save.inventory[i]!, 'rare', createRng(1)), 'ядро сигналит отказ').toBeNull();
   });
 });
@@ -491,7 +497,7 @@ describe('affixSlotsFillable — «пул наберёт форму при лю�
       for (const rarity of ['magic', 'rare'] as const) {
         const rDef = reg.get('rarities').find((r) => r.id === rarity);
         const s = affixSlotsFor(rDef, item.affixCap);
-        expect(enchantAction(reg, { gold: 1e9, inventory: [structuredClone(item)] } as unknown as SaveState, item.uid, rarity, createRng(1)).ok, `${cls} ${rarity} ${JSON.stringify(s)}`).toBe(true);
+        expect(enchantAction(reg, { gold: 1e9, inventory: [structuredClone(item)] } as unknown as SaveState, item.uid, rarity, createRng(1), undefined, essWallet()).ok, `${cls} ${rarity} ${JSON.stringify(s)}`).toBe(true);
       }
     }
   });
@@ -501,10 +507,10 @@ describe('D15: перекатка скованной держит форму и 
   it('редкая: ровно форма; магическая: не больше формы и не выше магической', () => {
     for (const rarity of ['rare', 'magic'] as const) {
       const { save, item } = forged();
-      expect(enchantAction(reg, save, item.uid, rarity, createRng(2)).ok).toBe(true);
+      expect(enchantAction(reg, save, item.uid, rarity, createRng(2), undefined, essWallet()).ok).toBe(true);
       const cap = item.affixCap!;
       for (let i = 0; i < 3; i++) {
-        expect(forgeReroll(reg, save, item.uid, createRng(70 + i)).ok).toBe(true);
+        expect(forgeReroll(reg, save, item.uid, createRng(70 + i), undefined, essWallet()).ok).toBe(true);
         const it = save.inventory.find((x) => x.uid === item.uid)!;
         expect(it.rarity).toBe(rarity);
         const kinds = new Map(it.affixes.map((a) => [a.affixId, a.kind]));
@@ -524,7 +530,7 @@ describe('D15: перекатка скованной держит форму и 
     const i = save.inventory.findIndex((x) => x.uid === item.uid);
     save.inventory[i] = { ...item, rarity: 'rare' };
     const before = frozen(save, noStash);
-    expectRefused(forgeReroll(noSuffix, save, item.uid, createRng(1)), before, save, noStash, /не хватит свойств/);
+    expectRefused(forgeReroll(noSuffix, save, item.uid, createRng(1), undefined, essWallet()), before, save, noStash, /не хватит свойств/);
   });
 });
 
@@ -534,10 +540,10 @@ describe('⚠ R2-13: у обычной и уникальной перекаты�
     expect(item.rarity).toBe('normal');
     const before = frozen(save, noStash);
     // Было: 264 золота за ноль аффиксов и минус одна из трёх перекаток, которую зачарованная вещь потом наследовала.
-    expectRefused(forgeReroll(reg, save, item.uid, createRng(1)), before, save, noStash, /нечего перекатывать/);
-    expect(enchantAction(reg, save, item.uid, 'rare', createRng(2)).ok).toBe(true);
+    expectRefused(forgeReroll(reg, save, item.uid, createRng(1), undefined, essWallet()), before, save, noStash, /нечего перекатывать/);
+    expect(enchantAction(reg, save, item.uid, 'rare', createRng(2), undefined, essWallet()).ok).toBe(true);
     let n = 0;
-    while (n < 10 && forgeReroll(reg, save, item.uid, createRng(10 + n)).ok) n++;
+    while (n < 10 && forgeReroll(reg, save, item.uid, createRng(10 + n), undefined, essWallet()).ok) n++;
     expect(n).toBe(reg.get('balance').forgePrices.rerollLimit);
   });
 
@@ -547,7 +553,7 @@ describe('⚠ R2-13: у обычной и уникальной перекаты�
       expect(it.rarity).toBe(rarity);
       const save = mkSave(1_000_000, [it]);
       const before = frozen(save, noStash);
-      expectRefused(forgeReroll(reg, save, it.uid, createRng(1)), before, save, noStash, re);
+      expectRefused(forgeReroll(reg, save, it.uid, createRng(1), undefined, essWallet()), before, save, noStash, re);
     }
   });
 
@@ -555,7 +561,7 @@ describe('⚠ R2-13: у обычной и уникальной перекаты�
     for (const rarity of ['magic', 'rare'] as const) {
       const it = foundSword(rarity, 5);
       const save = mkSave(1_000_000, [it]);
-      expect(forgeReroll(reg, save, it.uid, createRng(1)).ok, rarity).toBe(true);
+      expect(forgeReroll(reg, save, it.uid, createRng(1), undefined, essWallet()).ok, rarity).toBe(true);
       expect(save.inventory[0]!.affixes.length, rarity).toBeGreaterThan(0);
     }
   });
@@ -586,10 +592,10 @@ describe('⚠ R2-10 / R2-23: форма свойств в цене — плат�
       expect(item.tier).toBe(tier);
       const save = mkSave(10_000_000, [item]);
       const enchant = enchantCost(reg, item, 'rare');
-      expect(paidFor(save, () => enchantAction(reg, save, item.uid, 'rare', createRng(3)))).toBe(enchant);
+      expect(paidFor(save, () => enchantAction(reg, save, item.uid, 'rare', createRng(3), undefined, essWallet()))).toBe(enchant);
       // Было: 1 958 за полный набор 3+2 против 9 743 за зачарование — три броска формы со скидкой 80 %.
       for (let i = 0; i < reg.get('balance').forgePrices.rerollLimit; i++) {
-        expect(paidFor(save, () => forgeReroll(reg, save, item.uid, createRng(40 + i))), `перекатка ${i + 1}`).toBeGreaterThanOrEqual(enchant);
+        expect(paidFor(save, () => forgeReroll(reg, save, item.uid, createRng(40 + i), undefined, essWallet())), `перекатка ${i + 1}`).toBeGreaterThanOrEqual(enchant);
       }
     });
   }
@@ -602,11 +608,11 @@ describe('⚠ R2-10 / R2-23: форма свойств в цене — плат�
     // Редкая катает ровно 3+2 — её цена по-прежнему с множителем формы.
     expect(enchantCost(reg, item, 'rare')).toBeGreaterThan(enchantCost(reg, asOneOne, 'rare') * 5);
     const save = mkSave(10_000_000, [item]);
-    expect(paidFor(save, () => enchantAction(reg, save, item.uid, 'magic', createRng(3)))).toBe(want);
+    expect(paidFor(save, () => enchantAction(reg, save, item.uid, 'magic', createRng(3), undefined, essWallet()))).toBe(want);
     const magic = save.inventory[0]!;
     expect(magic.affixes.length).toBeLessThanOrEqual(2);
     // Перекатка магической — тоже по форме 1+1: так же, как у магической вещи формы 1+1.
-    expect(paidFor(save, () => forgeReroll(reg, save, item.uid, createRng(5))))
+    expect(paidFor(save, () => forgeReroll(reg, save, item.uid, createRng(5), undefined, essWallet())))
       .toBe(forgeGold(reg, { ...magic, affixCap: { prefix: 1, suffix: 1 } }, 'reroll'));
   });
 });
@@ -647,19 +653,46 @@ describe('⭐ forgeSalvage — разбор у кузнеца (D6)', () => {
     expect(r2.unlocked!.some((s) => s.startsWith('Деталь «') || s.startsWith('Тип «'))).toBe(false);
   });
 
-  it('⭐ скованное — ПЕРЕПЛАВКА: ровно meltReturn, журнал не тронут, открытий нет', () => {
+  it('⭐ скованное — ПЕРЕПЛАВКА: ровно meltReturn (эссенции нет даже у зачарованной), детали — уже в каталоге', () => {
     const { save, item } = forged();
-    expect(enchantAction(reg, save, item.uid, 'rare', createRng(1)).ok).toBe(true);
+    expect(enchantAction(reg, save, item.uid, 'rare', createRng(1), undefined, essWallet()).ok).toBe(true);
     const rare = save.inventory.find((i) => i.uid === item.uid)!;
-    const stash = emptyStash(reg);
+    // Каталог уже знает скованное (его сковали из открытого) — переплавка его не меняет, а строка говорит «уже в каталоге».
+    const stash = { ...emptyStash(reg), forgeJournal: { ...emptyJournal(), bases: [rare.baseId], variants: [...new Set(CRAFT_SLOT_LIST.map((sl) => rare.parts![sl].id))] } };
     const journal0 = JSON.stringify(stash.forgeJournal);
     const bag0 = bagUnits(save.inventory);
     const r = forgeSalvage(reg, save, stash, item.uid, createRng(1));
     expect(r.ok, r.reason).toBe(true);
-    expect(r.unlocked).toBeUndefined();
+    expect(r.unlocked).toEqual([]);
+    expect(r.summary).toMatch(/Каталог: все детали уже в каталоге \(/);
     const gained = Object.fromEntries(Object.entries(bagUnits(save.inventory)).map(([id, n]) => [id, n - (bag0[id] ?? 0)]).filter(([, n]) => (n as number) > 0));
-    expect(gained, 'зачарованная до редкой отдаёт то же, что обычная: редкость не в счёт').toEqual(meltReturn(reg, rare));
+    expect(gained, 'зачарованная до редкой отдаёт то же, что обычная: редкость не в счёт, эссенции нет').toEqual(meltReturn(reg, rare));
+    expect(gained[ESSENCE_ID]).toBeUndefined();
     expect(JSON.stringify(stash.forgeJournal)).toBe(journal0);
+  });
+
+  it('⭐ скованное: переплавка журнал НЕ пишет — тип и детали известны по построению (ковка требует их в журнале)', () => {
+    const { save, item } = forged();
+    const stash = emptyStash(reg);
+    const r = forgeSalvage(reg, save, stash, item.uid, createRng(1));
+    expect(r.ok, r.reason).toBe(true);
+    expect(normalizeJournal(stash.forgeJournal)).toEqual(normalizeJournal(emptyStash(reg).forgeJournal));
+    expect(r.summary).toMatch(/Каталог: все детали уже в каталоге \(/);
+  });
+
+  it('⚠ стендовый флаг: «сковать мимо журнала (DM_CRAFT_FULL_JOURNAL) → переплавить» не копирует в настоящий журнал ничего', () => {
+    // Прежде переплавка писала тип и детали скованного: флаг куёт детали, которых в журнале аккаунта нет, и круг «сковать → переплавить»
+    // переносил весь каталог класса в настоящий журнал навсегда — флаг обещает «в базу не пишется».
+    const save = mkSave(10_000_000), stash = mkStash(emptyJournal());
+    const c = craftAction(reg, save, stash, nextNonce(), INPUT, createRng(1), { fullJournal: true });
+    expect(c.ok, c.reason).toBe(true);
+    const before = JSON.stringify({ ...normalizeJournal(stash.forgeJournal), typesForged: [] });
+    const r = forgeSalvage(reg, save, stash, c.uid!, createRng(2));
+    expect(r.ok, r.reason).toBe(true);
+    const j = normalizeJournal(stash.forgeJournal);
+    expect(j.bases, 'тип не утёк').toEqual([]);
+    expect(j.variants, 'детали не утекли').toEqual([]);
+    expect(JSON.stringify({ ...j, typesForged: [] })).toBe(before);
   });
 
   it('⚠ скованное не ходит путём «по редкости» — и формулы это держат сами', () => {
@@ -710,17 +743,29 @@ describe('⭐ forgeSalvage — разбор у кузнеца (D6)', () => {
     expect(sum(stash.materials!), 'часть ушла в сундук').toBeGreaterThan(0);
   });
 
-  it('броня — прежним правилом по редкости, журнал не тронут', () => {
+  it('броня — правилом разбора, нижний сорт ступени; база — в каталог снаряжения, повтор — «уже в каталоге»', () => {
     const armorBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.enabled !== false)!;
     const arm = { ...generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
-      { dropBias: 1, itemLevel: 10, baseId: armorBase.id, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal' }, createRng(3)), pos: { x: 0, y: 0 } };
+      { dropBias: 1, itemLevel: 10, baseId: armorBase.id, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: 'normal', origin: 'drop' }, createRng(3)), pos: { x: 0, y: 0 } };
     const save = mkSave(0, [arm]), stash = emptyStash(reg);
-    const j0 = JSON.stringify(stash.forgeJournal);
     const r = forgeSalvage(reg, save, stash, arm.uid, createRng(1));
     expect(r.ok, r.reason).toBe(true);
-    expect(r.unlocked).toBeUndefined();
-    expect(sum(bagUnits(save.inventory))).toBeGreaterThan(0);
-    expect(JSON.stringify(stash.forgeJournal)).toBe(j0);
+    expect(r.unlocked).toEqual([`Снаряжение «${armorBase.name}»`]);
+    expect(r.summary).toContain(`Каталог: + «${armorBase.name}»`);
+    const got = bagUnits(save.inventory);
+    expect(sum(got)).toBeGreaterThan(0);
+    const low = salvageGrades(reg, arm).low;
+    for (const id of Object.keys(got)) expect(id, 'сорт — нижний сорт рецепта ступени вещи').toMatch(new RegExp(`-${low}$`));
+    const j = normalizeJournal(stash.forgeJournal);
+    expect(j.gearSeen).toEqual([armorBase.id]);
+    expect({ ...j, gearSeen: [] }).toEqual(emptyJournal());
+    // Вторая такая же — сырьё есть, каталог прежний, строка — «уже в каталоге».
+    const arm2 = { ...arm, uid: 'arm-2' };
+    save.inventory.push(arm2);
+    const r2 = forgeSalvage(reg, save, stash, 'arm-2', createRng(1));
+    expect(r2.ok).toBe(true);
+    expect(r2.unlocked).toEqual([]);
+    expect(r2.summary).toContain(`Каталог: «${armorBase.name}» уже в каталоге`);
   });
 });
 
@@ -847,7 +892,7 @@ describe('⚠ R1-12: переплавка возвращает долю ЗАПЛ
     const r = craftAction(reg, save, stash, nextNonce(), wide, createRng(9));
     expect(r.ok, r.reason).toBe(true);
     const paid = Object.fromEntries(Object.entries(diff(stash.materials!, w0)));   // сколько ушло из кошелька
-    if (enchant) expect(enchantAction(reg, save, r.uid!, enchant, createRng(3)).ok).toBe(true);
+    if (enchant) expect(enchantAction(reg, save, r.uid!, enchant, createRng(3), undefined, essWallet()).ok).toBe(true);
     const bag0 = bagUnits(save.inventory), w1 = { ...stash.materials! };
     const m = forgeSalvage(pricier, save, stash, r.uid!, createRng(1));
     expect(m.ok, m.reason).toBe(true);

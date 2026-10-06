@@ -175,6 +175,11 @@
         "materialId": "cloth-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "stave-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -189,6 +194,11 @@
         "materialId": "hide-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "stave-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -203,6 +213,11 @@
         "materialId": "plate-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -217,6 +232,11 @@
         "materialId": "plate-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -231,6 +251,11 @@
         "materialId": "plate-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },
@@ -249,6 +274,49 @@
         "materialId": "iron-1",
         "min": 1,
         "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "jewelry-ring",
+    "enabled": true,
+    "name": "Кольца",
+    "kind": "jewelry",
+    "slot": "ring",
+    "yields": [
+      {
+        "materialId": "trim-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "focus-1",
+        "min": 0,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "jewelry-amulet",
+    "enabled": true,
+    "name": "Амулеты",
+    "kind": "jewelry",
+    "slot": "amulet",
+    "yields": [
+      {
+        "materialId": "focus-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "trim-1",
+        "min": 0,
+        "max": 1
       }
     ]
   },

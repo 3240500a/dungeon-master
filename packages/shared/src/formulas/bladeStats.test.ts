@@ -6,7 +6,7 @@ import {
 } from './bladeStats.js';
 import {
   anatomyOf, bakeParts, clampStep, craftSalvageYield, craftTiers, craftWeapon, defaultParts, emptyJournal, keyVariantsByBase,
-  materialId, partById, partFamily, partsOf, salvageIntoJournal, shapeFoundWeapon, shapeOfBake, statusKindOf, tierIndexOfItem,
+  materialId, partById, partFamily, partsOf, salvageGrades, salvageIntoJournal, shapeFoundWeapon, shapeOfBake, statusKindOf, tierIndexOfItem,
   tierIndex, tierOfSteps, typeOfItem, variantsFor, type CraftInput,
 } from './craft.js';
 import { CRAFT_SLOT_LIST, baseOfKeyPart, tagValue, type PartSet, type WeaponPart } from './craftType.js';
@@ -518,28 +518,32 @@ describe('⭐ §26 найденный меч = скованный из тех ж
     const it = shapeFoundWeapon(reg, drop('long-sword', 30, 21));
     expect(partsOf(reg, it)).toBe(it.foundParts);
     expect(partsOf(reg, { ...it, uid: 'совсем-другой' })).toEqual(it.foundParts);
-    // Сырьё — ровно из замороженных деталей их ступеней.
+    // Сырьё — СЕМЬИ замороженных деталей, а сорт — по рецепту ступени вещи (`salvageGrades`), не по ступени детали.
     const anat = anatomyOf(reg, 'sword')!;
     const k = CK.salvage;
     const want = (parts: CraftParts): Record<string, number> => {
       const out: Record<string, number> = {};
-      for (const slot of CRAFT_SLOT_LIST) {
+      const row = salvageGrades(reg, it).row;
+      CRAFT_SLOT_LIST.forEach((slot, i) => {
         const p = partById(reg, parts[slot].id)!;
-        const id = materialId(partFamily(anat, slot, p), parts[slot].step);
-        const n = k.units[slot] + (slot === 'strike' ? (k.rarityBonus[it.rarity as keyof typeof k.rarityBonus] ?? 0) : 0);
+        const id = materialId(partFamily(anat, slot, p), row[i]!);
+        const n = k.units[slot];
         if (n > 0) out[id] = (out[id] ?? 0) + n;
-      }
+      });
       return out;
     };
     expect(craftSalvageYield(reg, it)).toEqual(want(it.foundParts!));
-    // Сдвинь ступень клинка в замороженных деталях — сырьё поедет за ней: читается именно `foundParts`.
+    // Сдвинь ступень клинка в замороженных деталях — сорт сырья НЕ поедет за ней: детали — вид и каталог, сорт — рецепт ступени вещи.
     const s = partById(reg, it.foundParts!.strike.id)!;
     const other = [s.stepMin, s.stepMax].find((x) => x !== it.foundParts!.strike.step)!;
     const moved = { ...it, foundParts: { ...it.foundParts!, strike: { ...it.foundParts!.strike, step: other } } };
-    expect(craftSalvageYield(reg, moved)).toEqual(want(moved.foundParts));
-    expect(craftSalvageYield(reg, moved)).not.toEqual(craftSalvageYield(reg, it));
+    expect(craftSalvageYield(reg, moved)).toEqual(craftSalvageYield(reg, it));
+    // А каталог пишет именно замороженные детали (`foundParts`), а не вывод по uid.
     const j = salvageIntoJournal(reg, emptyJournal(), it).journal;
     for (const slot of CRAFT_SLOT_LIST) expect(j.variants).toContain(it.foundParts![slot].id);
+    const alt = reg.get('weapon-parts').find((p) => p.slot === 'strike' && (p.classes as string[]).includes('sword') && p.id !== it.foundParts!.strike.id)!;
+    const swapped = { ...it, foundParts: { ...it.foundParts!, strike: { id: alt.id, step: alt.stepMin } } };
+    expect(salvageIntoJournal(reg, emptyJournal(), swapped).journal.variants).toContain(alt.id);
   });
   it('⭐ подъём тира сохраняет форму и вклад клинка; повторная форма после подъёма ничего не меняет', () => {
     for (const b of swordBases) {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
+import { ESSENCE_FAMILY, ESSENCE_ID } from '../formulas/salvage.js';
 import {
   addMaterials, canAfford, spendMaterials, missingFor, materialCount, totalMaterials, walletOf,
 } from './materials.js';
@@ -71,40 +72,46 @@ describe('кошелёк материалов', () => {
 describe('секция конфига craft-materials', () => {
   const reg = new ConfigRegistry();
   reg.loadAll();
-  const mats = reg.get('craft-materials');
+  const all = reg.get('craft-materials');
+  /** Сырьё — без эссенции: у неё своя семья и одна строка. */
+  const mats = all.filter((m) => m.id !== ESSENCE_ID);
 
-  it('восемь семей по пять ступеней (docs/CRAFT_WEAPONS.md §10)', () => {
+  it('восемь семей по пять сортов (docs/CRAFT_WEAPONS.md §10) и одна эссенция своей семьёй', () => {
     expect(mats).toHaveLength(40);
     const byFamily = new Map<string, number>();
     for (const m of mats) byFamily.set(m.family, (byFamily.get(m.family) ?? 0) + 1);
     expect([...byFamily.keys()].sort()).toEqual(['cloth', 'focus', 'hide', 'iron', 'plate', 'stave', 'trim', 'wood']);
     for (const [, n] of byFamily) expect(n).toBe(5);
+    const ess = all.filter((m) => m.family === ESSENCE_FAMILY);
+    expect(ess.map((m) => m.id)).toEqual([ESSENCE_ID]);
   });
 
-  it('у каждой семьи ступени 1…5 и цена ×3 со второй ступени (1 · 4 · 12 · 36 · 108)', () => {
+  it('⭐ D4: у каждой семьи сорта 1…5, и ВСЕ продаются — дёшево: 1 · 2 · 5 · 10 · 15 (не дороже вещи, из которой вышли)', () => {
     for (const fam of new Set(mats.map((m) => m.family))) {
       const steps = mats.filter((m) => m.family === fam).sort((a, b) => a.tier - b.tier);
       expect(steps.map((t) => t.tier)).toEqual([1, 2, 3, 4, 5]);
-      expect(steps.map((t) => t.sellPrice)).toEqual([1, 4, 12, 36, 108]);
+      expect(steps.map((t) => t.sellPrice)).toEqual([1, 2, 5, 10, 15]);
     }
+    // Эссенция тоже продаётся (решение D4), но дёшево: ценна она для чар, а не лавке.
+    const ess = all.find((m) => m.id === ESSENCE_ID)!;
+    expect(ess.sellPrice).toBeGreaterThan(0);
+    expect(ess.sellPrice).toBeLessThanOrEqual(5);
   });
 
-  it('⭐ в игре все 40 материалов: разбор оружия по деталям (§10.9) роняет и ступени 4–5, и прибор, плечи, фокус', () => {
+  it('⭐ в игре все 40 материалов и эссенция: разбор отдаёт все пять сортов (по ступени вещи), прибор, плечи, фокус', () => {
     // Раньше жили 15: склад рисовал три столбца «обычные / магические / редкие», и полки, которые ничто не
-    // наполняет, были бы враньём. Разбор найденного оружия отдаёт материалы ЕГО деталей их ступеней — теперь
-    // есть чем наполнять все пять ступеней, а ковке без них не из чего ковать ни одно семейство (D18, К2).
+    // наполняет, были бы враньём. Разбор отдаёт сорт рецепта ступени вещи — им наполняются все пять сортов (D18, К2).
     expect(mats.filter((m) => m.enabled)).toHaveLength(40);
+    expect(all.find((m) => m.id === ESSENCE_ID)?.enabled).toBe(true);
   });
 
   it('id уникальны, иначе кошелёк схлопнет два материала в один', () => {
-    expect(new Set(mats.map((m) => m.id)).size).toBe(mats.length);
+    expect(new Set(all.map((m) => m.id)).size).toBe(all.length);
   });
 
   it('⚠ продажа держится дешёвой: золото должно оставаться дефицитным', () => {
-    // Пятой ступени хватает на 108: шестая (≈330) превратила бы один стек верхнего сырья в состояние.
-    for (const m of mats) expect(m.sellPrice).toBeLessThanOrEqual(108);
-    // Дорогие ступени (36 и 108) не падают с монстров и не выходят из разбора по редкости: потолок `rarityTier`
-    // — третья ступень. Их даёт только разбор оружия высоких ступеней (сторож — `materialsLive.test.ts`).
-    expect(Math.max(...Object.values(reg.get('balance').salvage.rarityTier))).toBeLessThanOrEqual(3);
+    for (const m of all) expect(m.sellPrice).toBeLessThanOrEqual(15);
+    // Сорт с тел монстров — только первый: дорогие сорта даёт лишь разбор вещей высоких ступеней (сторож — `materialsLive.test.ts`).
+    expect(reg.get('balance').salvage.nonFindMaxGrade, 'купленное — не выше III').toBeLessThanOrEqual(3);
   });
 });

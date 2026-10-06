@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import {
-  salvageFromMonster, piecesDropped, shiftTier, salvageRuleFor, salvageMult, canSalvage, salvageFromItem,
+  salvageFromMonster, piecesDropped, shiftTier, gradeId, salvageRuleFor, salvageMult, canSalvage, salvageFromItem,
   type SalvageableGear, type SalvageableItem,
 } from './salvage.js';
 import type { MonsterGearRoll } from '../types/world.js';
@@ -184,55 +184,63 @@ describe('⭐ разбор вещи: поле дешевле, кузница п�
     expect(canSalvage(potion, undefined, rules, tuning, false).ok).toBe(false);
   });
 
-  it('⭐ редкость задаёт СТУПЕНЬ материала, а не количество', () => {
+  it('⭐ СОРТ задаёт ступень вещи (`grade`), а не редкость: редкость не меняет ни сорта, ни количества', () => {
     const known = { knownMaterial: (id: string) => reg.get('craft-materials').some((c) => c.id === id) };
     const white = salvageFromItem(item({ rarity: 'normal' }), 'sword', rules, tuning, rich, known);
     const blue = salvageFromItem(item({ rarity: 'magic' }), 'sword', rules, tuning, rich, known);
     const yellow = salvageFromItem(item({ rarity: 'rare' }), 'sword', rules, tuning, rich, known);
     expect(Object.keys(white)).toEqual(['iron-1']);
-    expect(Object.keys(blue)).toEqual(['iron-2']);
-    expect(Object.keys(yellow)).toEqual(['iron-3']);
-    // ⚠ количество ОДИНАКОВОЕ: дай редкости ещё и его — разбирать стало бы выгоднее, чем носить
-    expect(white['iron-1']).toBe(yellow['iron-3']);
+    expect(blue).toEqual(white);
+    expect(yellow).toEqual(white);
+    for (const g of [1, 2, 3, 4, 5]) {
+      const got = salvageFromItem(item({ rarity: 'rare' }), 'sword', rules, tuning, rich, { ...known, grade: g });
+      expect(Object.keys(got), `сорт ${g}`).toEqual([`iron-${g}`]);
+      expect(got[`iron-${g}`], 'количество от сорта не зависит').toBe(white['iron-1']);
+    }
   });
 
-  it('уровень вещи на ступень больше НЕ влияет — только редкость', () => {
+  it('сорта нет в конфиге — спускаемся до ближайшего ниже (`gradeId`)', () => {
+    const only13 = (id: string): boolean => id === 'iron-1' || id === 'iron-3';
+    expect(gradeId('iron-1', 5, only13)).toBe('iron-3');
+    expect(gradeId('iron-1', 2, only13)).toBe('iron-1');
+    expect(gradeId('iron-4', 1, only13)).toBe('iron-1');
+    expect(gradeId('strange', 3, only13)).toBe('strange');
+    expect(gradeId('iron-1', 4)).toBe('iron-4');
+  });
+
+  it('уровень вещи на сорт сам по себе НЕ влияет — только переданный сорт', () => {
     const known = { knownMaterial: (id: string) => reg.get('craft-materials').some((c) => c.id === id) };
     const low = salvageFromItem(item({ itemLevel: 1 }), 'sword', rules, tuning, rich, known);
     const high = salvageFromItem(item({ itemLevel: 99 }), 'sword', rules, tuning, rich, known);
     expect(high).toEqual(low);
   });
 
-  it('⭐ с монстра ступень берёт редкость КОНКРЕТНОЙ надетой вещи', () => {
+  it('⭐ с монстра — только I сорт, какой бы редкости ни была надетая вещь (§10)', () => {
     const byGear = (id: string): SalvageableGear | undefined => reg.get('monster-gear').find((g) => g.id === id);
     const worn = (rarity: string): MonsterGearRoll =>
       ({ slot: 'weapon', gearId: 'u-sword1h', name: 'меч', rarity, affixes: [], mods: [], base: {} } as MonsterGearRoll);
-    const opt = { rarityTier: tuning.rarityTier, knownMaterial: (id: string) => reg.get('craft-materials').some((c) => c.id === id) };
-    // Меч даёт железо клинка и прибор гарды (F2) — ОБА на ступени редкости этой вещи.
-    for (const [rarity, step] of [['normal', 1], ['magic', 2], ['rare', 3]] as const) {
-      expect(Object.keys(salvageFromMonster([worn(rarity)], byGear, maxRng, opt)).sort(), rarity).toEqual([`iron-${step}`, `trim-${step}`]);
+    const opt = { knownMaterial: (id: string) => reg.get('craft-materials').some((c) => c.id === id) };
+    // Меч даёт железо клинка и прибор гарды (F2) — ОБА первого сорта у любой редкости вещи.
+    for (const rarity of ['normal', 'magic', 'rare', 'unique'] as const) {
+      expect(Object.keys(salvageFromMonster([worn(rarity)], byGear, maxRng, opt)).sort(), rarity).toEqual(['iron-1', 'trim-1']);
     }
   });
 
-  it('⚠ у редкого монстра прокачан НЕ ВЕСЬ гир: ржавая броня даёт ржавое', () => {
+  it('⭐ БОСС (все вещи уникальные) роняет сырьё — с НАСТОЯЩЕЙ картой конфига (раньше `rarityTier.unique = 0` глушил его)', () => {
     const byGear = (id: string): SalvageableGear | undefined => reg.get('monster-gear').find((g) => g.id === id);
     const rolls = [
-      { slot: 'weapon', gearId: 'u-sword1h', name: 'меч', rarity: 'rare', affixes: [], mods: [], base: {} },
-      { slot: 'armor', gearId: 'u-chain', name: 'кольчуга', rarity: 'normal', affixes: [], mods: [], base: {} },
+      { slot: 'weapon', gearId: 'u-sword1h', name: 'меч', rarity: 'unique', affixes: [], mods: [], base: {} },
+      { slot: 'armor', gearId: 'u-chain', name: 'кольчуга', rarity: 'unique', affixes: [], mods: [], base: {} },
     ] as MonsterGearRoll[];
     const got = salvageFromMonster(rolls, byGear, maxRng, {
       rarity: 'unique', // две вещи разбираются
-      rarityTier: tuning.rarityTier,
-      knownMaterial: (id) => reg.get('craft-materials').some((c) => c.id === id),
+      knownMaterial: (id) => reg.get('craft-materials').some((c) => c.id === id && c.enabled),
     });
-    // ⚠ Проверяем ПРАВИЛО (ступень берётся с конкретной вещи), а не список выходов: у доспеха их
-    // несколько (пластины + поддоспешник), и список меняется при правке данных, а правило — нет.
     const keys = Object.keys(got);
-    expect(keys, 'меч редкий → калёная сталь').toContain('iron-3');
-    expect(keys, 'меч редкий → и прибор гарды его ступени').toContain('trim-3');
-    expect(keys, 'кольчуга обычная → ржавые пластины').toContain('plate-1');
-    expect(keys.filter((k) => !k.startsWith('iron') && !k.startsWith('trim')).every((k) => k.endsWith('-1')),
-      'всё бронное с обычной вещи — первой ступени').toBe(true);
+    expect(keys.length, 'с тела босса — сырьё').toBeGreaterThan(0);
+    expect(keys).toContain('iron-1');
+    expect(keys).toContain('plate-1');
+    expect(keys.every((k) => k.endsWith('-1')), 'с тела — только I сорт').toBe(true);
   });
 
   it('дробный выход округляется вероятностно: не «всегда ноль» и не «всегда единица»', () => {

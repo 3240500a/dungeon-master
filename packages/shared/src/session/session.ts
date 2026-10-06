@@ -1900,14 +1900,17 @@ export class GameSession {
     // ── Материалы: основной поток наград (docs/ECONOMY.md) ──
     // ⭐ ПРАВИЛО №1: суммарная частота наград не падает, меняется только их ВИД. Вещь роняется
     // редко (10 %), но материалы — часто, и берутся они из ТОГО, ЧТО НА МОНСТРЕ НАДЕТО.
-    if (this.rng.chance(loot.materials.chance)) {
+    // ⭐ ТЕЛО БОССА ДАЁТ СЫРЬЁ ВСЕГДА (предложение «Разбор, сырьё и чары» §10): его гир — главная награда этажа, а не лотерея 0.35.
+    // Бросок шанса делается и у босса — поток кубика прочих убийств тот же, что был. ⚠ Прежде сырья с боссов не падало ВООБЩЕ: все
+    // их вещи уникальные, а сорт брался по редкости (`rarityTier.unique = 0` — «не разбирается»). Тело теперь даёт I сорт по семье вещи.
+    const bodyRoll = this.rng.chance(loot.materials.chance);
+    if (bodyRoll || m.def.rarity === 'unique') {
       const gains = salvageFromMonster(
         m.def.gearRolls,
         (id) => this.cfg.get('monster-gear').find((g) => g.id === id),
         this.rng,
         {
           rarity: m.def.rarity,
-          rarityTier: this.cfg.get('balance').salvage.rarityTier,
           knownMaterial: (id) => this.cfg.get('craft-materials').some((c) => c.id === id && c.enabled),
         },
       );

@@ -1,13 +1,14 @@
 /**
- * ПРОДЮСЕР эталона «РАЗБЕРЁШЬ — ЧТО ОТКРОЕТСЯ» для Unity-клиента: строка карточки «♻ Разобрать» у кузнеца ДО разбора
- * (`salvageJournalPreview`, `salvageJournalGains` — salvagePreview.ts). Unity показывает её на верстаке; веб — источник правила.
+ * ПРОДЮСЕР эталона КАРТОЧКИ РАЗБОРА для Unity-клиента (предложение «Разбор, сырьё и чары» §15.2): четыре строки — сырьё, эссенция, каталог,
+ * эскиз — и заголовок, вилка выхода, отказ с причиной (`salvagePreview`, salvagePreview.ts), у кузнеца и в поле. Unity показывает её на
+ * верстаке и в меню разбора; веб — источник правила.
  *
  * Вещи — какими они бывают в игре: найденные по каждой включённой базе оружия (дроп, сундук, босс; редкость по кругу; детали записаны
  * при рождении, как у дропа сессии) и их копии — купленные, награды, без происхождения (сейв старше поля), с непонятным происхождением,
- * поднятые кузнецом, сломанные, без записанных деталей (сейв старше §26); найденный мифик и купленный мифик; оружие выключенной базы
- * (путь «по редкости»); стартовый набор (разбор запрещён); скованные трёх семейств (переплавка); броня, сырьё. Журналы — те же, что у
- * вопросов панели (`journalsFor` unityPanelsGolden): нет кадра, пустой, «всё из вещи», без детали, без базы, всё, всё без ворот, на шаг
- * до эскиза; Unity строит их сама по `parts`, `type`, `tierIndex` вещи и `fullJournal` эталона.
+ * поднятые кузнецом (с `bornTier` и до него), сломанные, без записанных деталей (сейв старше §26); найденный мифик и купленный мифик;
+ * оружие выключенной базы (путь по правилу); стартовый набор (только каталог); скованные трёх семейств (переплавка); броня, щит,
+ * украшение; сырьё. Журналы — нет кадра, пустой, «всё из вещи», без детали, без базы, всё, на шаг до эскиза; Unity строит их сама по
+ * `parts`, `type`, `tierIndex` вещи и `fullJournal` эталона.
  *
  * Эталон: `__golden__/unity_salvage.json` → Unity `Assets/DM/UI/Tests/unity_salvage_golden.json` (`tools/unity-check/golden_sync.py`),
  * проверка — `SalvagePreviewCheck`. Перезапись: `npx vitest run packages/shared/src/economy/unitySalvageGolden.gen.test.ts`.
@@ -26,7 +27,8 @@ import { generateItem } from '../formulas/itemgen.js';
 import { createRng } from '../formulas/rng.js';
 import { newCharacterSave } from './newCharacter.js';
 import { materialItem } from './materials.js';
-import { salvageJournalPreview } from './salvagePreview.js';
+import { itemOriginNote, salvagePreview } from './salvagePreview.js';
+import { upgradedItem } from './townActions.js';
 import type { CraftParts, Item } from '../types/items.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -101,6 +103,12 @@ function items(): Item[] {
   }
   const m = mythicDrop();
   out.push(m, { ...m, origin: 'shop' }, { ...m, tierForged: true });
+  // Поднятые кузнецом по-настоящему (`upgradedItem` пишет `bornTier`): разбор — по исходной ступени.
+  for (const it of first.slice(0, 6)) {
+    if (it.rarity === 'unique') continue;
+    const up = upgradedItem(reg, it);
+    if (up) out.push(up);
+  }
   // Выключенная база (гладиус): деталей кузнеца у неё нет — разбор по редкости.
   const off = reg.get('items.base').find((b) => b.kind === 'weapon' && b.enabled === false);
   if (off) out.push(found(off.id, 5, 'magic', 'drop', seed++), found(off.id, 5, 'normal', 'shop', seed++));
@@ -111,8 +119,13 @@ function items(): Item[] {
     const w = forgedWeapon(cls, hands, step);
     if (w) out.push(w);
   }
-  const armor = reg.get('items.base').find((b) => b.kind === 'armor' && b.enabled !== false)!;
-  out.push(found(armor.id, 5, 'magic', 'drop', seed++));
+  for (const kind of ['armor', 'shield', 'jewelry'] as const) {
+    const gear = reg.get('items.base').filter((b) => b.kind === kind && b.enabled !== false);
+    for (const [i, b] of gear.slice(0, 3).entries()) {
+      out.push(found(b.id, [5, 35, 80][i]!, (['normal', 'magic', 'rare'] as const)[i]!, 'drop', seed++));
+      out.push(found(b.id, 50, 'rare', 'shop', seed++));
+    }
+  }
   out.push(materialItem(reg.get('craft-materials')[0]!, 7, 'mat'));
   return out.map((it, i) => ({ ...it, uid: `sv-${i}` }));
 }
@@ -142,29 +155,47 @@ function journalsFor(item: Item): { name: string; j: CraftJournal | null }[] {
   return out;
 }
 
-describe('unitySalvageGolden — продюсер эталона строки разбора у кузнеца (пишет __golden__/unity_salvage.json)', () => {
+/** Имя ступени по id — резолвер строки происхождения (`itemOriginNote`), как его ставит клиент из `item-tiers`. */
+const tierName = (id: string): string | undefined => reg.get('item-tiers').find((t) => t.id === id)?.name;
+
+describe('unitySalvageGolden — продюсер эталона карточки разбора (пишет __golden__/unity_salvage.json)', () => {
   it('генерит эталон и пишет на диск', () => {
     const cases = items().map((item) => {
       const type = typeOfItem(reg, item);
       return {
         item,
         parts: partsOf(reg, item), type: type ? { id: type.typeId ?? null, name: type.name } : null, tierIndex: tierIndexOfItem(reg, item),
-        journals: journalsFor(item).map(({ name, j }) => ({ name, preview: salvageJournalPreview(reg, item, j) })),
+        // ⭐ §15.3: строка происхождения подсказки вещи (`itemOriginNote`) — Unity `DmItem` показывает ту же.
+        origin: itemOriginNote(item, tierName),
+        journals: journalsFor(item).map(({ name, j }) => ({ name, smith: salvagePreview(reg, item, j, false), field: salvagePreview(reg, item, j, true) })),
       };
     });
-    const all = cases.flatMap((c) => c.journals.map((j) => j.preview));
-    // Каждый исход строки — хотя бы раз, и каждое «почему».
-    expect(new Set(all.map((p) => p.kind))).toEqual(new Set(['found', 'known', 'typeOnly', 'melt', 'rules', 'none']));
-    expect(new Set(all.filter((p) => p.why).map((p) => p.why))).toEqual(new Set([
-      'вещь куплена', 'вещь — награда за задание', 'вещь без происхождения (из старого сейва)', 'вещь не найдена',
-    ]));
-    expect(all.some((p) => p.kind === 'typeOnly' && p.gains.length > 0), 'купленная открывает тип').toBe(true);
-    expect(all.some((p) => p.kind === 'typeOnly' && p.gains.length === 0), 'купленная — тип уже открыт').toBe(true);
-    for (const w of ['тип', 'деталь', 'кодекс', 'ступень', 'мифик', 'эскиз']) {
-      expect(all.some((p) => p.kind === 'found' && p.gains.some((g) => g.startsWith(w))), `находка: ${w}`).toBe(true);
+    const smith = cases.flatMap((c) => c.journals.map((j) => j.smith));
+    const field = cases.flatMap((c) => c.journals.map((j) => j.field));
+    const all = [...smith, ...field];
+    // Каждый исход карточки — хотя бы раз: разбор и переплавка, отказ, эссенция и её отсутствие по каждой причине, каталог «новое/всё есть».
+    expect(new Set(all.map((p) => p.verb))).toEqual(new Set(['salvage', 'melt']));
+    expect(all.some((p) => !p.ok) && all.some((p) => p.ok)).toBe(true);
+    for (const t of ['+ ', '≈ ', 'нет — вещь куплена', 'нет — вещь из прежней версии', 'нет — стартовый набор', 'нет — переплавка эссенцию не возвращает', 'нет — у обычной вещи чар нет']) {
+      expect(all.some((p) => p.essence.text.startsWith(t)), `эссенция: ${t}`).toBe(true);
     }
+    expect(smith.some((p) => p.catalog?.tone === 'gain') && smith.some((p) => p.catalog?.tone === 'dim'), 'каталог: новое и «уже в каталоге»').toBe(true);
+    expect(smith.some((p) => /уже в каталоге/.test(p.catalog?.text ?? ''))).toBe(true);
+    expect(field.every((p) => p.catalog === null), 'в поле каталог не пишется — и строки нет (D2)').toBe(true);
+    expect(smith.every((p) => p.catalog !== null), 'у кузнеца строка каталога есть всегда').toBe(true);
+    expect(field.some((p) => p.hint?.includes('втрое больше')), 'подсказка поля').toBe(true);
+    expect(new Set(cases.map((c) => c.origin)), 'строка происхождения: все варианты').toEqual(new Set([
+      null, 'Куплено в лавке', 'Награда за задание', 'Стартовый набор', 'Скована кузнецом', 'Вещь из прежней версии',
+      ...cases.map((c) => c.origin).filter((o): o is string => !!o && /поднята кузнецом/.test(o)),
+    ]));
+    expect(cases.some((c) => /^Ступень поднята кузнецом \(была «/.test(c.origin ?? '')), 'поднятая — с исходной ступенью').toBe(true);
+    expect(smith.some((p) => p.sketch?.text === 'копят только находки') && smith.some((p) => p.sketch?.tone === 'gain'), 'эскиз: только находки и сам эскиз').toBe(true);
+    expect(smith.some((p) => p.materials.text.includes('не выше III сорта')), 'потолок сорта не-находки').toBe(true);
+    expect(smith.some((p) => p.materials.text.includes('ступень поднята кузнецом')), 'поднятая — по исходной ступени').toBe(true);
+    expect(smith.some((p) => p.materials.text === 'сырья нет — стартовый набор бесплатный')).toBe(true);
+    expect(new Set(all.filter((p) => !p.ok).map((p) => p.reason)).size, 'причины отказа разные').toBeGreaterThan(2);
     const golden = {
-      note: 'Эталон паритета Unity ↔ веб строки разбора у кузнеца («Откроет: …» / «Детали не откроются: …»). Генерит packages/shared/src/economy/unitySalvageGolden.gen.test.ts.',
+      note: 'Эталон паритета Unity ↔ веб карточки разбора (сырьё, эссенция, каталог, эскиз; у кузнеца и в поле). Генерит packages/shared/src/economy/unitySalvageGolden.gen.test.ts.',
       config: {
         rarities: reg.get('rarities').map((r) => pick(r, ['id', 'priceMult', 'minAffixes', 'maxAffixes', 'maxPrefix', 'maxSuffix'])),
         'craft-materials': reg.get('craft-materials').map((m) => pick(m, ['id', 'name', 'family', 'tier', 'enabled', 'sellPrice'])),
@@ -182,6 +213,7 @@ describe('unitySalvageGolden — продюсер эталона строки р
               live: b.craft.live, tierFromParts: b.craft.tierFromParts, formMult: b.craft.formMult, rarityWeight: b.craft.rarityWeight,
               cost: b.craft.cost, melt: b.craft.melt, salvage: b.craft.salvage, journal: b.craft.journal, foundEvenness: b.craft.foundEvenness,
             },
+            forgePrices: { upgradeReqDiscount: b.forgePrices.upgradeReqDiscount },
           };
         })(),
       },

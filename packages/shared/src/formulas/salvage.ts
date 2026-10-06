@@ -37,6 +37,11 @@ export function piecesDropped(rarity: string | undefined, rng: IntRng): number {
   return 1;
 }
 
+/** ⭐ id ЧАРОДЕЙСКОЙ ЭССЕНЦИИ — валюты чар с разбора (`balance.salvage.essence`). Стопка в сумке и кошелёк сундука — как у сырья. */
+export const ESSENCE_ID = 'ench-essence';
+/** Семья эссенции: своя, ни с одной семьёй сырья не смешивается (лестница сорта, ковка и правила разбора её не видят). */
+export const ESSENCE_FAMILY = 'ench';
+
 /**
  * Материалы с убитого монстра.
  *
@@ -50,15 +55,17 @@ export function piecesDropped(rarity: string | undefined, rng: IntRng): number {
  * оружейное сырьё (железо 404, дерево 40), ткани и пластин за 3.3 часа игры НОЛЬ. Броня в игре есть,
  * монстры её носят, а сырья с неё не приходило вовсе.
  *
- * `tierShift` поднимает ступень материала на глубине: на id вида `iron-1` прибавка даёт `iron-2`.
- * ⚠ Сдвиг применяется ТОЛЬКО если такой id есть в конфиге — иначе остаётся исходный. Без этой
- * проверки глубокий забег ронял бы несуществующие материалы, и они молча пропадали бы.
+ * ⭐ ТЕЛО ДАЁТ ТОЛЬКО «ВЕТОШЬ» I СОРТА (предложение «Разбор, сырьё и чары» §10): семья — по надетой вещи, количество прежнее, а сорт —
+ * всегда первый, какой бы редкости ни была вещь. Сорт сырья = ступень вещи, и у тела исключений нет; редкость монстра даёт больше
+ * ВЕЩЕЙ с тела (`piecesDropped`), но не сорт. ⚠ Раньше сорт брался по редкости надетого (`rarityTier`), а уникальная редкость давала
+ * «не разбирается» (0) — с тела босса, где все вещи уникальные, сырья не падало никогда (замер: 400 боссов — 0 сырья).
+ * ⚠ R6-22: выключенное не падает: сорт I выключенной семьи — пусто.
  */
 export function salvageFromMonster(
   rolls: readonly MonsterGearRoll[] | undefined,
   gearById: (id: string) => SalvageableGear | undefined,
   rng: IntRng,
-  opts: { rarity?: string; rarityTier?: Record<string, number>; knownMaterial?: (id: string) => boolean } = {},
+  opts: { rarity?: string; knownMaterial?: (id: string) => boolean } = {},
 ): MaterialCost {
   const out: MaterialCost = {};
   if (!rolls || !rolls.length) return out;
@@ -70,16 +77,10 @@ export function salvageFromMonster(
   for (let k = 0; k < count; k++) {
     const roll = rolls[order[k]!];
     const gear = roll?.gearId ? gearById(roll.gearId) : undefined;
-    // ⭐ Ступень берёт редкость ИМЕННО ЭТОЙ надетой вещи, а не монстра целиком: у редкого зомби
-    // прокачан не весь гир, и его ржавая броня обязана дать ржавые пластины, а не латные.
-    const tier = tierOfRarity(roll?.rarity, opts.rarityTier);
-    if (tier <= 0) continue;
     for (const y of gear?.salvageTo ?? []) {
       const n = rng.int(Math.max(0, y.min), Math.max(0, y.max));
       if (n <= 0) continue;
-      const id = shiftTier(y.materialId, tier - 1, opts.knownMaterial);
-      // ⚠ R6-22: выключенное не падает и с тел — как у разбора и переплавки (`knownOnly`). `shiftTier` отдаёт исходный id без
-      // проверки (сдвиг 0 у обычной вещи, откат, когда ступени выше нет), и выключенная семья сыпалась с каждого монстра.
+      const id = gradeId(y.materialId, 1);
       if (opts.knownMaterial && !opts.knownMaterial(id)) continue;
       out[id] = (out[id] ?? 0) + n;
     }
@@ -88,17 +89,19 @@ export function salvageFromMonster(
 }
 
 /**
- * СТУПЕНЬ МАТЕРИАЛА ЗАДАЁТ РЕДКОСТЬ ВЕЩИ, а не глубина.
- *
- * Обычная даёт ржавое, магическая — чистое, редкая — калёное; 0 значит «не разбирается вовсе»
- * (так выключены уникальные). Правило выбрано ради ЧИТАЕМОСТИ: цвет вещи и цвет имени монстра
- * видно сразу, а глубину игрок в голове не держит. Заодно это единственный сигнал, который
- * у нас есть: пул снаряжения монстров один и тот же на любом этаже, и «ржавый топор» на
- * двадцатом этаже не выглядит лучше, чем на первом.
+ * `iron-3` → сорт `grade` той же семьи (`iron-1`). Сорта такого нет (`known`) — СПУСКАЕМСЯ до ближайшего существующего ниже; ниже нет
+ * ни одного — исходный id (`knownOnly` разбора и проверка тела его отсеют). Без `known` — id сорта как есть. Не «семья-N» — как есть.
  */
-export function tierOfRarity(rarity: string | undefined, map?: Record<string, number>): number {
-  if (!map) return 1;
-  return map[rarity ?? 'normal'] ?? 1;
+export function gradeId(id: string, grade: number, known?: (id: string) => boolean): string {
+  const m = /^(.*)-(\d+)$/.exec(id);
+  if (!m) return id;
+  const g = Math.max(1, Math.floor(grade));
+  if (!known) return `${m[1]}-${g}`;
+  for (let s = g; s >= 1; s--) {
+    const cand = `${m[1]}-${s}`;
+    if (known(cand)) return cand;
+  }
+  return id;
 }
 
 /**
@@ -153,18 +156,18 @@ export interface SalvageableItem {
   rarity: string;
   itemLevel: number;
   /**
-   * Детали СКОВАННОЙ вещи. Есть — путь «по редкости» закрыт: скованное переплавляют (`meltReturn`),
-   * иначе ковка стала бы прачечной — скуй дешёвую обычную, зачаруй, разбери как редкую за калёное.
+   * Детали СКОВАННОЙ вещи. Есть — путь «по правилу» закрыт: скованное переплавляют (`meltReturn`),
+   * иначе ковка стала бы прачечной — скуй дешёвую обычную, зачаруй, разбери как редкую за эссенцию.
    */
   parts?: unknown;
 }
 
-/** Числа разбора из `balance.salvage`. */
+/** Числа разбора из `balance.salvage` (в части, важной для пути «по правилу»). */
 export interface SalvageTuning {
   fieldYield: number;
-  /** Редкость → ступень материала (0 — вещь не разбирается). См. `tierOfRarity`. */
-  rarityTier: Record<string, number>;
   armorSlotMult: Record<string, number>;
+  /** Разбираются ли уникальные (`balance.salvage.uniqueSalvage`): нет поля — нет (решение В2). */
+  uniqueSalvage?: boolean;
 }
 
 /** Бросок для разбора: целые + вероятностное округление дробного остатка. */
@@ -190,9 +193,8 @@ export function salvageRuleFor(
 
 /**
  * Во сколько раз КОЛИЧЕСТВО отличается от «нагрудник у кузнеца».
- * ⚠ Редкости здесь НЕТ намеренно: редкость решает, КАКОЙ материал выйдет (ступень), а не сколько.
- * Дай ей ещё и количество — редкая вещь стоила бы вдвое больше уже подорожавшего материала,
- * и разбирать было бы выгоднее, чем носить.
+ * ⚠ Редкости здесь НЕТ намеренно: за редкость платит эссенция (`balance.salvage.essence`), а сорт сырья — ступень вещи.
+ * Дай ей ещё и количество — редкая вещь платила бы дважды, и разбирать было бы выгоднее, чем носить.
  */
 export function salvageMult(item: SalvageableItem, t: SalvageTuning, inField: boolean): number {
   const slot = item.kind === 'armor' ? (t.armorSlotMult[item.slot ?? ''] ?? 1) : 1;
@@ -211,7 +213,8 @@ export function canSalvage(
   t: SalvageTuning,
   inField: boolean,
 ): { ok: boolean; reason?: string } {
-  if (tierOfRarity(item.rarity, t.rarityTier) <= 0) return { ok: false, reason: 'Уникальные вещи не разбираются' };
+  // Явный выключатель (`uniqueSalvage`), а не «ступень 0» у редкости: прежний `rarityTier.unique = 0` глушил заодно и тела боссов.
+  if (item.rarity === 'unique' && !t.uniqueSalvage) return { ok: false, reason: UNIQUE_NO_SALVAGE };
   if (item.parts) return { ok: false, reason: 'Скованную вещь переплавляют, а не разбирают' };
   const rule = salvageRuleFor(item, weaponClass, rules);
   if (!rule?.yields?.length) return { ok: false, reason: 'Эту вещь не из чего разбирать' };
@@ -219,10 +222,14 @@ export function canSalvage(
   return { ok: true };
 }
 
+/** Отказ разбора уникальной вещи — одна строка для кузницы, поля и карточки. */
+export const UNIQUE_NO_SALVAGE = 'Уникальные вещи не разбираются — их можно продать';
+
 /**
  * Что выйдет из вещи. Дробный выход округляется ВЕРОЯТНОСТНО (0.6 → шесть раз из десяти единица),
  * чтобы 30 % от одной доски не превращались в «всегда ноль» и не ломали мелкие вещи.
- * Ступень материала задаёт РЕДКОСТЬ предмета (`tierOfRarity`), с защитой от несуществующей ступени.
+ * ⭐ СОРТ сырья — `opts.grade` (по ступени вещи: нижний сорт рецепта её ступени, `salvageGrades`), а не редкость. Правило разбора
+ * пишет семью (`iron-1` — железо); сорта нет в конфиге — спускаемся до ближайшего ниже (`gradeId`). Нет `grade` — I.
  */
 export function salvageFromItem(
   item: SalvageableItem,
@@ -230,20 +237,19 @@ export function salvageFromItem(
   rules: readonly SalvageRule[],
   t: SalvageTuning,
   rng: SalvageRng,
-  opts: { inField?: boolean; knownMaterial?: (id: string) => boolean } = {},
+  opts: { inField?: boolean; knownMaterial?: (id: string) => boolean; grade?: number } = {},
 ): MaterialCost {
   const out: MaterialCost = {};
   const rule = salvageRuleFor(item, weaponClass, rules);
   const mult = salvageMult(item, t, !!opts.inField);
-  const tier = tierOfRarity(item.rarity, t.rarityTier);
-  if (!rule?.yields?.length || mult <= 0 || tier <= 0 || item.parts) return out;
-  const shift = tier - 1;
+  if (!rule?.yields?.length || mult <= 0 || item.parts || (item.rarity === 'unique' && !t.uniqueSalvage)) return out;
+  const grade = Math.max(1, Math.floor(opts.grade ?? 1));
   for (const y of rule.yields) {
     const raw = rng.int(Math.max(0, y.min), Math.max(0, y.max)) * mult;
     const whole = Math.floor(raw);
     const n = whole + (rng.chance(raw - whole) ? 1 : 0);
     if (n <= 0) continue;
-    const id = shiftTier(y.materialId, shift, opts.knownMaterial);
+    const id = gradeId(y.materialId, grade, opts.knownMaterial);
     out[id] = (out[id] ?? 0) + n;
   }
   return out;
