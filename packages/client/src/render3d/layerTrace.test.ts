@@ -26,8 +26,8 @@ afterEach(() => { layerTrace.on = false; Object.assign(POSE, POSE0); Object.assi
 const BASE: Pose = { RightUpperArm: [-0.2, 0, 0.3], LeftUpperArm: [-0.2, 0, -0.3], Chest: [0, 0, 0] };
 const SWORD: Pose = { ...BASE, RightUpperArm: [-0.9, 0.2, 0.5] };
 const SHIELD: Pose = { ...BASE, LeftUpperArm: [-1.1, -0.1, -0.6] };
-// ⚠ Ключей ПАР («sword+shield») здесь нет нарочно: пока есть авторская поза на точный ключ, резолвер
-// берёт её целиком и НИЧЕГО не собирает. Ровно это и проверяет последний тест раздела.
+// ⚠ Ключей ПАР («sword+shield») здесь нет нарочно: авторская пара на точный ключ кладёт обе руки ОДНИМ слоем —
+// это отдельный случай, его проверяет свой тест раздела.
 const POSES: Record<string, Pose> = { none: BASE, sword: SWORD, shield: SHIELD, dagger: SHIELD, greatsword2: SWORD };
 const find = (_k: 'idle' | 'combat_idle', item: string): Pose | null => POSES[item] ?? null;
 
@@ -66,12 +66,18 @@ describe('состав стойки приходит из резолвера, а
    *
    * Теперь рука держит предмет ровно тогда, когда он есть в КЛЮЧЕ, а `applied` говорит, лёг ли слой.
    */
-  it('⭐⭐ ЕСТЬ авторская поза на точный ключ — слои не легли, но РУКИ ЗАНЯТЫ', () => {
+  it('⭐⭐ ЕСТЬ авторская ПАРА на точный ключ — обе руки заняты, и слой их обеих лёг', () => {
     const trace: StanceLayerInfo[] = [];
     const withPair = (k: 'idle' | 'combat_idle', item: string): Pose | null => (item === 'sword+shield' ? SWORD : find(k, item));
     resolveStancePose(withPair, 'sword+shield', 0, { trace }, 0);
     expect(trace.map((l) => [l.item, l.hand, l.applied]), 'состав рук обязан быть известен всегда')
-      .toEqual([['sword', 'main', false], ['shield', 'off', false]]);
+      .toEqual([['sword', 'main', true], ['shield', 'off', true]]);
+  });
+
+  it('⭐ ОДИНОЧНЫЙ предмет со своей стойкой — его рука занята, и слой лёг (тело — база)', () => {
+    const trace: StanceLayerInfo[] = [];
+    resolveStancePose(find, 'sword', 0, { trace }, 0);
+    expect(trace.map((l) => [l.item, l.hand, l.applied])).toEqual([['sword', 'main', true]]);
   });
 
   it('⚠ ПРЕДМЕТ БЕЗ АВТОРСКОЙ ПОЗЫ всё равно занимает руку — иначе его мах не настроить', () => {

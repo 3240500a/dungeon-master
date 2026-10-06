@@ -252,6 +252,52 @@ function atk3Overlay(atk: Store): Overlay {
   return { base: 'atk', keys: { pe_attacks: attacks }, patch: [],
     add: [cloneAs(atk, 'hit_spear', 'hit_axe_c', 'axe', { 1: [{ type: 'combo', dur: 0.25 }], 2: [{ type: 'impact' }] })] };
 }
+/**
+ * `owner` поверх `stand` (06.10) — КАК КОНТЕНТ ВЛАДЕЛЬЦА, но из данных репо: живая безоружная база (айдл мокапа, 8 ключей), своя
+ * однокадровая боевая база, стойки меча и щита в слоте офф-руки, привязанные `pe_anim` к ТОЧНОМУ ключу, — снятые когда-то от ДРУГОЙ
+ * безоружной базы (свои ноги и таз: бёдра на 0.5/0.7 рад, таз (−1, 0.08, 0.65), как у владельца), ручки `pe_gait`/`pe_twist`/
+ * `pe_layers`/`pe_swing` владельца. На нём до 06.10 одиночный предмет отдавал стойку ЦЕЛИКОМ и стопы в покое плыли; правило
+ * владельца — тело всегда безоружное, от стойки предмета только рука.
+ */
+function ownerOverlay(stand: Store): Overlay {
+  const at = (name: string): RawClip => stand.pe_clips[clipAt(stand, name)]!;
+  const relax = stand.pe_clips.find((c) => c.character === 'warrior' && c.name === 'idle_none_relax')!.keys[0]!.pose;
+  const legs = (p: Pose, d: number): Pose => ({ ...p,
+    LeftUpperLeg: [0.5 * d, 0.05, 0.2], RightUpperLeg: [-0.7 * d, -0.04, -0.12], LeftLowerLeg: [0.22 * d, 0, 0], RightLowerLeg: [0.24 * d, 0, 0],
+    LeftFoot: [-0.19 * d, 0.1, 0], RightFoot: [-0.45 * d, -0.12, 0] });
+  const pick = (p: Pose, keys: string[]): Pose => Object.fromEntries(keys.filter((k) => p[k]).map((k) => [k, p[k]!]));
+  const ARM_R = ['RightShoulder', 'RightUpperArm', 'RightLowerArm', 'RightHand', '__wpnMain', '__wpnMainP'];
+  const ARM_L = ['LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand'];
+  const one = (name: string, weapon: string, pose: Pose): RawClip => ({ name, character: 'warrior', weapon, loop: false, keys: [{ t: 0, pose }] });
+  // боевая база: своя присадка и таз; меч/щит в бою — та же поза с рукой предмета (у владельца боевые стойки совпадают телом)
+  const combat: Pose = { ...legs(relax, 0.6), __hipsD: [-1, -1.06, 0.65] };
+  const sword = at('idle_sword').keys[0]!.pose, shield = at('idle_none+shield').keys[0]!.pose;
+  const add: RawClip[] = [
+    one('idle_none_incombat', 'none', combat),
+    one('idle_sword_relax_2', 'sword', { ...legs(sword, 1), __hipsD: [-1, 0.08, 0.65] }),
+    one('idle_sword_incombat', 'sword', { ...combat, ...pick(sword, ARM_R) }),
+    one('idle_none+shield_relax', 'none+shield', { ...legs(shield, 1), __hipsD: [-1, 0.08, 0.65] }),
+    one('idle_none+shield_incombat', 'none+shield', { ...combat, ...pick(shield, [...ARM_L, '__wpnMain', '__wpnMainP']) }),
+  ];
+  const gait = clone(stand.pe_gait as Record<string, Record<string, unknown>>);
+  const w = gait.warrior!;
+  w.gait = { ...(w.gait as Record<string, number>), stancePelvis: 1, stancePelvisYaw: 1, gndLag: 1, warpOn: 1, warpMax: 50, combatBlend: 0.18 };
+  w.gx = { ...(w.gx as Record<string, number>), armDown: 1.52, elbowBend: 0, armDownRun: 1.08 };
+  return {
+    base: 'stand',
+    keys: {
+      pe_gait: gait,
+      pe_anim: { warrior: {
+        base: { idle: 'idle_none_relax', combatIdle: 'idle_none_incombat' },
+        items: { sword: { idle: 'idle_sword_relax_2', combatIdle: 'idle_sword_incombat' }, 'none+shield': { idle: 'idle_none+shield_relax', combatIdle: 'idle_none+shield_incombat' } },
+      } },
+      pe_twist: { warrior: { stand: { threshold: 1.571, turnRate: 8, maxTwist: 1.222, headLook: 0.5 } } },
+      pe_layers: { warrior: { none: { run: { chest: 1 }, walk: { chest: 1 } } } },
+      pe_swing: { warrior: { sword: { run: { arm: { k: 0.15 } } } } },
+    },
+    patch: [], add,
+  };
+}
 function applyOverlay(base: Store, ov: Overlay): Store {
   const s = clone(base);
   Object.assign(s, clone(ov.keys));
@@ -288,7 +334,7 @@ interface Seg {
 }
 /** `yaw0` — курс на старте (таз снапнут на прицел); `fb` — донор контента (монстр → воин); `breaks` — редкие вставки включены (игровая кукла). */
 interface Scn {
-  id: string; store: 'stand' | 'rich' | 'stale' | 'warp' | 'atk' | 'calm' | 'idle' | 'atk3'; char: string; weapon: string;
+  id: string; store: 'stand' | 'rich' | 'stale' | 'warp' | 'atk' | 'calm' | 'idle' | 'atk3' | 'owner'; char: string; weapon: string;
   rig?: 'knight' | 'slim' | 'scaled'; idlePhase?: number; yaw0?: number;
   fb?: string; breaks?: boolean; segs: Seg[];
   /** Подъём стопы рига (pe_phys.footLift, юниты): высота стоя без `__hipsD` и цель заземления. */
@@ -313,6 +359,8 @@ const hold = (n: number, aim: number, v: [number, number] = [0, 0], combat?: boo
 const dirV = (deg: number, spd = 80): [number, number] => [spd * Math.sin(deg * DEG), spd * Math.cos(deg * DEG)];
 /** Медленный разгон вперёд до `to` u/с за `n` кадров при прицеле `aim` (пороги «стоим» 0.06 / 0.16 скорости ходьбы — разные кадры). */
 const creep = (n: number, to: number, aim: number): Seg[] => Array.from({ length: n }, (_, i) => ({ n: 1, vx: 0, vz: (to * (i + 1)) / n, aim }));
+/** Общее у сценариев контента владельца: хранилище, персонаж, риг рыцаря, подъём стопы `pe_phys` владельца, фаза живой стойки. */
+const OWNER = { store: 'owner', char: 'warrior', rig: 'knight', footLift: 2.59, idlePhase: 3.7 } as const;
 const SCN: Scn[] = [
   { id: 'idle_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [{ n: 50, vx: 0, vz: 0 }] },
   { id: 'fwd40_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 112, vx: 0, vz: 40 }] },
@@ -434,6 +482,21 @@ const SCN: Scn[] = [
   { id: 'snap_breaks_axe', store: 'idle', char: 'warrior', weapon: 'axe', breaks: true, idlePhase: 0.3,
     segs: [stand(130), { n: 20, vx: 0, vz: 0, breaks: false }, stand(30), ...aimRamp(6, 0, 1.2), hold(10, 1.2), { n: 1, vx: 0, vz: 0, aim: 2.6, snap: true }, hold(40, 2.6),
       { n: 1, vx: 0, vz: 0, aim: 2.6, breaks: true }, hold(120, 2.6)] },
+  // ── 06.10: контент как у владельца (`owner`, рыцарь, подъём стопы 2.59) — стойка с предметом = безоружная стойка + рука предмета ──
+  { id: 'owner_idle_none', ...OWNER, weapon: 'none', segs: [stand(300)] },
+  { id: 'owner_idle_sword', ...OWNER, weapon: 'sword', segs: [stand(300)] },
+  { id: 'owner_idle_noneshield', ...OWNER, weapon: 'none+shield', segs: [stand(240)] },
+  { id: 'owner_idle_swordshield', ...OWNER, weapon: 'sword+shield', segs: [stand(240)] },
+  { id: 'owner_combat_sword', ...OWNER, weapon: 'sword', segs: [stand(30), { n: 150, vx: 0, vz: 0, combat: true }, stand(60)] },
+  { id: 'owner_jiggle_sword', ...OWNER, weapon: 'sword',
+    segs: [stand(20), ...Array.from({ length: 180 }, (_, i): Seg => ({ n: 1, vx: 0, vz: 0, aim: 0.12 * Math.sin((2 * Math.PI * 0.7 * (i + 1)) / 60) }))] },
+  { id: 'owner_turn90R_sword', ...OWNER, weapon: 'sword', segs: [stand(20), ...aimRamp(12, 0, 90 * DEG), hold(120, 90 * DEG)] },
+  { id: 'owner_micro_sword', ...OWNER, weapon: 'sword', segs: [stand(20), { n: 8, vx: 0, vz: 80 }, stand(120)] },
+  { id: 'owner_attack_sword', ...OWNER, weapon: 'sword',
+    segs: [{ n: 20, vx: 0, vz: 0, combat: true }, { n: 1, vx: 0, vz: 0, combat: true, atk: { window: 0.5, windup: 0.25 } }, { n: 60, vx: 0, vz: 0, combat: true }, stand(40)] },
+  { id: 'owner_swap', ...OWNER, weapon: 'none',
+    segs: [stand(40), { n: 60, vx: 0, vz: 0, weapon: 'sword' }, { n: 60, vx: 0, vz: 0, weapon: 'sword+shield' }, { n: 60, vx: 0, vz: 0, weapon: 'none+shield' }, { n: 40, vx: 0, vz: 0, weapon: 'axe' }] },
+  { id: 'owner_hz144_idle_sword', ...OWNER, weapon: 'sword', segs: withDt(1 / 144, [stand(432)]) },
 ];
 /** Отрезки с заданной длительностью кадра. */
 function withDt(dt: number, segs: Seg[]): Seg[] { return segs.map((s) => ({ ...s, dt })); }
@@ -508,6 +571,8 @@ describe('эталон G2 локомоции, поворотов и действ
     stores.idle = applyOverlay(stores.calm, ovIdle);
     const ovAtk3 = atk3Overlay(stores.atk);
     stores.atk3 = applyOverlay(stores.atk, ovAtk3);
+    const ovOwner = ownerOverlay(stand);
+    stores.owner = applyOverlay(stand, ovOwner);
     const knight = RIG.atlas[0]!.look;
     const knightRig = { boneOffsets: knight.boneOffsets, boneScale: knight.boneScale, profile: knight.profile && Object.keys(knight.profile).length ? knight.profile : undefined };
     // Риги без модели: неединичный профиль тела (рост/ноги/руки/корпус) и только пер-костные множители (без офсетов).
@@ -704,10 +769,32 @@ describe('эталон G2 локомоции, поворотов и действ
     expect(mkOf('atk_in_turn_axe').some((m) => m[1] === 'footstep' && m[4] === 'turn_R_90')).toBe(true);   // шаги поворота — из меток
     expect(afOf('fidget_turnset_axe').every((f) => !f.fg)).toBe(true);   // набор поворотов — «решаем о повороте» стоя всегда
 
+    // ── 06.10: стойка с предметом = безоружная + рука предмета. Ноги, таз и заземление с мечом / щитом / парой — РОВНО
+    // безоружные на каждом кадре (до правки одиночный предмет отдавал стойку целиком, и опорные стопы плыли), а рука — своя.
+    type OF = { f: number; q: number[]; hp: number[]; gd: number[] };
+    const ofOf = (id: string): OF[] => scenarios.find((s) => s.id === id)!.frames as unknown as OF[];
+    const LEGS = [0, 14, 15, 16, 17, 18, 19, 20, 21];   // Hips + кости ног в `BONES`
+    const RUA = BONES.indexOf('RightUpperArm'), LUA = BONES.indexOf('LeftUpperArm');
+    const free = ofOf('owner_idle_none');
+    for (const [id, arm] of [['owner_idle_sword', RUA], ['owner_idle_noneshield', LUA], ['owner_idle_swordshield', RUA]] as const) {
+      const fr = ofOf(id);
+      expect(fr.length).toBeGreaterThan(50);
+      let armDiff = 0;
+      fr.forEach((x, i) => {   // безоружный сценарий длиннее — кадры совпадают номерами на общей длине
+        const y = free[i]!;
+        expect(x.f).toBe(y.f);
+        for (const b of LEGS) for (let j = 0; j < 4; j++) expect(Math.abs(x.q[b * 4 + j]! - y.q[b * 4 + j]!), `${id} кадр ${x.f} кость ${BONES[b]}`).toBeLessThan(2e-5);
+        for (let j = 0; j < 3; j++) expect(Math.abs(x.hp[j]! - y.hp[j]!), `${id} кадр ${x.f} таз`).toBeLessThan(2e-5);
+        for (let j = 0; j < x.gd.length; j++) expect(Math.abs(x.gd[j]! - y.gd[j]!), `${id} кадр ${x.f} заземление`).toBeLessThan(2e-5);
+        for (let j = 0; j < 4; j++) armDiff = Math.max(armDiff, Math.abs(x.q[arm * 4 + j]! - y.q[arm * 4 + j]!));
+      });
+      expect(armDiff, `${id}: рука предмета обязана отличаться от безоружной`).toBeGreaterThan(0.05);
+    }
+
     const golden = {
       note: 'Эталон G2 паритета Unity ↔ веб: локомоция, повороты и слот действия (удары, состояния, вставки, метки) клипами («только клипы») покадрово, заземление стоп показа (groundFeet), разная частота кадра — настоящий PosePlayer веба через стенд parityHarness на закреплённом контенте. Генерит packages/client/src/render3d/unityAnimFramesGolden.gen.test.ts.',
       dt: DT, bones: BONES,
-      stores: { stand, rich: { keys: ov.keys, patch: ov.patch, add: ov.add }, stale: ovStale, warp: ovWarp, atk: ovAtk, calm: ovCalm, idle: ovIdle, atk3: ovAtk3 },
+      stores: { stand, rich: { keys: ov.keys, patch: ov.patch, add: ov.add }, stale: ovStale, warp: ovWarp, atk: ovAtk, calm: ovCalm, idle: ovIdle, atk3: ovAtk3, owner: ovOwner },
       rigs: RIGS, groundBones: GROUND_BONES,
       scenarios,
     };

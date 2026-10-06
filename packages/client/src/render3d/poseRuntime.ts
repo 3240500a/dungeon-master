@@ -1474,12 +1474,10 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
   const layersOut: StanceLayerInfo[] = [];
   return {
     charId, fallbackId, gaitFallbackId,
-    // Idle-стойка: ПОЛНАЯ авторская поза per-оружие (idle_<weapon>) в приоритете — так стойка с щитом/дуалом целиком как в
-    // редакторе (оба оружия + грипы). Нет полной → по БАЗОВОМУ оружию (axe+shield → axe) + щит идёт оверлеем.
     /**
-     * Стойка под экипировку. Авторская поза на точный ключ побеждает всегда; нет её — стойка
-     * СОБИРАЕТСЯ из безоружной базы и дельт предметов по рукам (`resolveStancePose`). Тот же вызов
-     * стоит в редакторе — правило «редактор ≡ игра» держится кодом, а не дисциплиной.
+     * Стойка под экипировку: безоружная стойка (спокойная / боевая) плюс РУКА, которая держит предмет, из его стойки
+     * (`resolveStancePose`, правило владельца 06.10). Тот же вызов стоит в редакторе — правило «редактор ≡ игра» держится
+     * кодом, а не дисциплиной.
      */
     resolveUpper(weapon: string, combat = 0, t = 0, fidget: StanceFidget | null = null): UpperPose | null {
       // ⚠⚠ ЗДЕСЬ СТОЯЛ ФОЛБЭК «нет позы на точный ключ — возьми БАЗОВОЕ оружие» (`sword+shield` →
@@ -1489,8 +1487,7 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
       // прицепилось» — ровно про это.
       //
       // Фолбэк не нужен: у сборки он уже есть и правильный — нет безоружной базы, берётся стойка
-      // предмета главной руки (ветка 3 в `resolveStancePose`). Разница в том, что там он НЕ мешает
-      // подмешать офф-руку.
+      // предмета главной руки (ветка 2 в `resolveStancePose`).
       const look = (kind: 'idle' | 'combat_idle', item: string, tt: number): Pose | null => {
         const c = bound(kind, item);
         return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом, однокадровая держит кадр
@@ -1499,8 +1496,6 @@ export function localStorageContent(charId: string, fallbackId?: string, gaitFal
       // разбор ОДИН, а в инспектор состав КОПИРУЕТСЯ: отдать ему сам массив значило бы, что тот живёт до след. кадра.
       const pose = resolveStancePose(look, weapon, combat,
         { weight: (it) => anim.weightOf(it), kind: (it) => anim.kindOf(it), hand: (it) => anim.handOf(it),
-          // ⭐ живая ли стойка на ключе — тем же резолвом ролей, что и сама поза (иначе вторая правда)
-          live: (k, i) => (bound(k, i)?.keys.length ?? 0) > 1,
           ...(fidget ? { fidget } : {}),
           trace: layersOut }, t);
       if (layerTrace.on) { layerTrace.items.length = 0; for (const l of layersOut) layerTrace.items.push(l); }

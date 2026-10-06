@@ -125,12 +125,25 @@ describe('двуручное — override, а не дельта', () => {
 
 describe('спец-ключи позы', () => {
   it('позиции и скаляры складываются числами, а не кватернионами', () => {
-    const b: Pose = { __hipsD: [0, 1, 0], Chest: [0, 0, 0] };
-    const it: Pose = { __hipsD: [0, 3, 0], Chest: [0, 0, 0] };
-    const got = composeStance(b, [{ pose: it, base: b, mask: MAIN, weight: 1, kind: 'additive' }]);
+    const b: Pose = { __hipsD: [0, 1, 0], __wpnMainP: [1, 0, 0], Chest: [0, 0, 0] };
+    const it: Pose = { __hipsD: [0, 3, 0], __wpnMainP: [3, 0, 0], Chest: [0, 0, 0] };
+    const HIPS: BoneMask = { parts: { hips: 1 } };
+    const got = composeStance(b, [{ pose: it, base: b, mask: HIPS, weight: 1, kind: 'additive' }]);
     near(got['__hipsD']!, [0, 3, 0]);
-    const half = composeStance(b, [{ pose: it, base: b, mask: MAIN, weight: 0.5, kind: 'additive' }]);
+    near(got['__wpnMainP']!, [3, 0, 0]);
+    const half = composeStance(b, [{ pose: it, base: b, mask: HIPS, weight: 0.5, kind: 'additive' }]);
     near(half['__hipsD']!, [0, 2, 0]);
+    near(half['__wpnMainP']!, [2, 0, 0]);
+  });
+
+  it('⚠ МАСКА РУКИ ТАЗ НЕ НЕСЁТ: смещение таза стойки предмета остаётся базовым, а хват предмета едет', () => {
+    // Иначе каждая рука добавляла смещение таза своей стойки: у `sword+shield` владельца — ровно два смещения одной стойки.
+    const b: Pose = { __hipsD: [0, 1, 0], __hipsP: [0, 30, 0], Chest: [0, 0, 0] };
+    const it: Pose = { __hipsD: [-1, 3, 0.6], __hipsP: [0, 28, 0], __wpnMain: [0.5, 0, 0], Chest: [0, 0, 0] };
+    const got = composeStance(b, [{ pose: it, base: b, mask: MAIN, weight: 1, kind: 'additive' }, { pose: it, base: b, mask: OFF, weight: 1, kind: 'additive' }]);
+    near(got['__hipsD']!, [0, 1, 0]);
+    near(got['__hipsP']!, [0, 30, 0]);
+    near(got['__wpnMain']!, [1, 0, 0]);      // хват — спец-ключ предмета: идёт с каждым слоем, как и прежде
   });
 
   it('ключ есть только у предмета — дельта считается от нуля, а не падает', () => {
@@ -144,11 +157,27 @@ describe('резолвер стойки под экипировку', () => {
   const lib = (m: Record<string, Pose>): ((k: 'idle' | 'combat_idle', i: string, t: number) => Pose | null) =>
     (k, i) => m[k + '|' + i] ?? null;
 
-  it('АВТОРСКАЯ поза на точный ключ сильнее сборки — старые данные не поехали', () => {
-    const authored: Pose = { ...BASE, Chest: [0, 0.9, 0] };
+  it('ПАРА, заавторенная на точный ключ, даёт ОБЕ руки одной позой; тело — безоружная база', () => {
+    // Правило владельца (06.10): с оружием берётся безоружная стойка, от стойки предмета — только рука, которая его держит.
+    const authored: Pose = { ...BASE, RightUpperArm: [-1.2, 0.1, 0.4], LeftUpperArm: [-0.8, -0.2, -0.7], Chest: [0, 0.9, 0], Spine: [0.4, 0, 0] };
     const find = lib({ 'idle|sword+shield': authored, 'idle|none': BASE, 'idle|sword': SWORD, 'idle|shield': SHIELD });
     const got = resolveStancePose(find, 'sword+shield', 0)!;
-    near(got['Chest']!, authored['Chest']!);
+    near(got['RightUpperArm']!, authored['RightUpperArm']!);   // руки — из пары, а не из `idle_sword` / `idle_shield`
+    near(got['LeftUpperArm']!, authored['LeftUpperArm']!);
+    expect(got['Chest']![1], 'корпус — малая доля пары, а не она целиком').toBeCloseTo(0.9 * 0.15, 6);
+    expect(got['Spine']![0]).toBeCloseTo(0.4 * 0.08, 6);
+  });
+
+  it('⭐⭐ ОДИНОЧНЫЙ предмет со своей стойкой: тело — база, рука — стойки предмета', () => {
+    const SW: Pose = { ...SWORD, LeftUpperArm: [-1.5, 0.3, -0.9], Spine: [0.5, 0, 0] };   // стойка меча «трогает» и пустую руку, и спину
+    const find = lib({ 'idle|none': BASE, 'idle|sword': SW, 'idle|none+shield': SHIELD });
+    const got = resolveStancePose(find, 'sword', 0)!;
+    near(got['RightUpperArm']!, SW['RightUpperArm']!);
+    near(got['LeftUpperArm']!, BASE['LeftUpperArm']!);      // пустая рука — базы
+    expect(got['Spine']![0]).toBeCloseTo(0.5 * 0.08, 6);     // спина — малая доля, а не стойка меча
+    const sh = resolveStancePose(find, 'none+shield', 0)!;
+    near(sh['LeftUpperArm']!, SHIELD['LeftUpperArm']!);
+    near(sh['RightUpperArm']!, BASE['RightUpperArm']!);
   });
 
   it('нет авторской на ключ — собирается из базы и дельт обеих рук', () => {

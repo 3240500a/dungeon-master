@@ -1,94 +1,113 @@
 /**
- * ⭐⭐ ЖИВАЯ СТОЙКА ПОД СТАТИЧНОЙ ПОЗОЙ ОРУЖИЯ.
+ * ⭐⭐ СТОЙКА С ОРУЖИЕМ = БЕЗОРУЖНАЯ СТОЙКА + РУКА ПРЕДМЕТА (правило владельца, 06.10).
  *
- * Жалоба владельца: «хочу, чтобы безоружный айдл работал, когда не в бою, и руки с оружием
- * подмешивались к нему». Без этого шва данными это не сделать В ПРИНЦИПЕ: у одноручного оружия ключ
- * точной стойки и ключ предмета — ОДНА И ТА ЖЕ строка (`splitHands('sword')` → `['sword','none']`),
- * поэтому `resolveStancePose` короткозамыкал сборку на авторской позе и тело с мечом вставало насмерть.
+ * «В безоружном есть спокойная и боевая, с оружием берутся ОНИ, но подмешивается рука, в которой что-то есть, — щит или
+ * оружие». До 06.10 одиночный предмет со своей стойкой (`sword`, `none+shield`) отдавал её ЦЕЛИКОМ (якорь + дыхание базы
+ * дельтой полной маски): ноги брались из стойки оружия, и дельта дыхания на чужих ногах уводила опорные стопы на 2–4 u за
+ * 10 с покоя (безоружный — 0.15–0.35). Теперь тело — всегда безоружное, от стойки предмета только его рука (с пальцами).
  */
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import { resolveStancePose, type StanceLookup } from './poseLayers.js';
 import { PosePlayer, emptyGrid, type PoseContent, type UpperPose } from './poseRuntime.js';
 import { makeStand } from './parityHarness.js';
 import type { Pose } from './clipModel.js';
 
-/** Безоружная база: «дышит» — грудь и шея ходят по синусу, плюс смещение таза. */
+/** Безоружная база: «дышит» — грудь, шея, ноги и таз ходят по синусу. */
 const liveBase = (t: number): Pose => ({
-  Hips: [0, 0, 0],
+  Hips: [0.02 * Math.sin(t), 0, 0],
   Spine: [0.02 * Math.sin(t), 0, 0],
   Chest: [0.06 * Math.sin(t), 0, 0],
   Neck: [0.20 * Math.sin(t), 0, 0],
   LeftUpperArm: [0, 0, 0.05 * Math.sin(t)],
   RightUpperArm: [0, 0, -0.05 * Math.sin(t)],
-  LeftUpperLeg: [0.01 * Math.sin(t), 0, 0],
-  __hipsD: [0.5 * Math.sin(t), 0, 0],
-  __swing: [1, 0, 0],            // служебный канал набора хода — в стойку попасть НЕ ДОЛЖЕН
-  __rootY: [1.23, 0, 0],
+  LeftUpperLeg: [0.04 * Math.sin(t), 0, 0.05], RightUpperLeg: [-0.03 * Math.sin(t), 0, -0.05],
+  LeftLowerLeg: [0.05, 0, 0], RightLowerLeg: [0.05 + 0.02 * Math.sin(t), 0, 0],
+  LeftFoot: [-0.05, 0.1, 0], RightFoot: [-0.05, -0.1, 0],
+  LeftIndexProximal: [0.1, 0, 0], RightIndexProximal: [0.1, 0, 0],
+  __hipsD: [0.5 * Math.sin(t), -0.2, 0],
+  __swing: [1, 0, 0],            // служебный канал набора хода — у стойки с предметом ровно тот же, что у безоружной
 });
-/** Авторская поза меча — ОДИН кадр: рука с оружием, корпус чуть довёрнут. */
+/** Боевая база — однокадровая, со своими ногами и тазом. */
+const combatBase: Pose = { ...liveBase(0), LeftUpperLeg: [0.3, 0, 0.1], RightUpperLeg: [-0.25, 0, -0.1], LeftLowerLeg: [0.4, 0, 0], __hipsD: [-1, -1.06, 0.65] };
+/**
+ * Авторская поза меча — ОДИН кадр, снятый когда-то от ДРУГОЙ безоружной базы: у неё свои ноги, таз и голова (как у
+ * контента владельца: бёдра 29°/41°, смещение таза (−1, 0.25, 0.65)), а рука держит меч, пальцы обеих рук — свои.
+ */
 const swordPose: Pose = {
-  Hips: [0, 0.1, 0],
-  Spine: [0.3, 0, 0],
-  Chest: [0.2, 0, 0],
-  Neck: [0, 0, 0],
-  RightUpperArm: [0.4, 0, 0.9],
-  RightLowerArm: [0, 0, 1.1],
-  __wpnMain: [0, 0.2, 0],
+  Hips: [0, 0.1, 0], Spine: [0.3, 0, 0], Chest: [0.2, 0, 0], Neck: [0, 0, 0], Head: [0.17, 0, 0],
+  LeftUpperLeg: [0.5, 0, 0.2], RightUpperLeg: [-0.7, 0, -0.1], LeftLowerLeg: [0.25, 0, 0], RightFoot: [0.2, 0.3, 0],
+  RightUpperArm: [0.4, 0, 0.9], RightLowerArm: [0, 0, 1.1], RightIndexProximal: [1.2, 0, 0.1], LeftIndexProximal: [0.7, 0, 0],
+  __wpnMain: [0, 0.2, 0], __hipsD: [-1, 0.25, 0.65],
+};
+const swordCombat: Pose = { ...swordPose, RightUpperArm: [0.9, 0.1, 0.5], LeftUpperLeg: [0.6, 0, 0.3] };
+/** Щит в слоте офф-руки (`none+shield`) — тоже со своими ногами и тазом. */
+const shieldPose: Pose = { ...swordPose, RightUpperArm: [0, 0, -0.3], LeftUpperArm: [-1.1, -0.1, -0.6], LeftLowerArm: [0, -1.4, 0], __wpnOff: [0.3, 0.3, 0.3] };
+
+/** Резолвер: `none` — живая база (боевая — однокадровая), `sword` / `none+shield` — статичные авторские. */
+const look: StanceLookup = (kind, item, t) => {
+  if (item === 'none') return kind === 'idle' ? liveBase(t) : combatBase;
+  if (item === 'sword') return kind === 'idle' ? swordPose : swordCombat;
+  return item === 'none+shield' && kind === 'idle' ? shieldPose : null;
+};
+const BODY = ['Hips', 'Neck', 'Head', 'LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot', '__hipsD', '__swing'];
+const near = (a: readonly number[] | undefined, b: readonly number[] | undefined, eps: number, what: string): void => {
+  expect(!!a, `${what}: канал есть у одной стороны`).toBe(!!b);
+  if (a && b) for (let j = 0; j < 3; j++) expect(Math.abs(a[j]! - b[j]!), `${what}[${j}]`).toBeLessThan(eps);
 };
 
-/** Резолвер: `none` — живая база, `sword` — статичная авторская поза. */
-const look: StanceLookup = (kind, item, t) => (item === 'none' ? liveBase(t) : item === 'sword' ? swordPose : null);
-const isLive = (_k: 'idle' | 'combat_idle', item: string): boolean => item === 'none';
-
-/** Размах ключа позы за цикл (макс−мин по каждой из трёх компонент, наибольший), в градусах. */
-function span(weapon: string, key: string, opts: Parameters<typeof resolveStancePose>[3] = {}): number {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < 64; i++) {
-    const p = resolveStancePose(look, weapon, 0, opts, (i / 64) * Math.PI * 2);
-    const v = p?.[key];
-    if (!v) continue;
-    for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j]!, v[j]!); hi[j] = Math.max(hi[j]!, v[j]!); }
-  }
-  return Math.max(...[0, 1, 2].map((j) => (Number.isFinite(lo[j]!) ? hi[j]! - lo[j]! : 0))) * 180 / Math.PI;
-}
-
-describe('живая стойка под статичной позой оружия', () => {
-  it('⚠ БЕЗ поставщика `live` поведение прежнее БИТ В БИТ: с мечом тело стоит', () => {
-    expect(span('sword', 'Chest'), 'старая ветка обязана остаться нетронутой').toBeCloseTo(0, 6);
-    expect(span('sword', 'Neck')).toBeCloseTo(0, 6);
-  });
-
-  it('⭐⭐ СО швом дыхание базы доезжает до тела С ОРУЖИЕМ и НЕ СЖАТО', () => {
-    const o = { live: isLive };
-    const free = { chest: span('none', 'Chest'), neck: span('none', 'Neck'), leg: span('none', 'LeftUpperLeg') };
-    expect(free.chest, 'контроль: безоружный дышит и без шва').toBeGreaterThan(6);
-    expect(span('sword', 'Chest', o), 'грудь с мечом = грудь без оружия').toBeCloseTo(free.chest, 3);
-    expect(span('sword', 'Neck', o), 'шея с мечом = шея без оружия').toBeCloseTo(free.neck, 3);
-    expect(span('sword', 'LeftUpperLeg', o), 'ноги тоже живут — стойка это всё тело').toBeCloseTo(free.leg, 3);
-  });
-
-  it('⭐ ЯКОРЬ НЕ СДВИНУТ: на нуле цикла поза равна авторской бит в бит', () => {
-    const p = resolveStancePose(look, 'sword', 0, { live: isLive }, 0)!;
-    for (const k of ['Hips', 'Spine', 'Chest', 'RightUpperArm', 'RightLowerArm', '__wpnMain']) {
-      const got = p[k]!, want = swordPose[k]!;
-      for (let j = 0; j < 3; j++) expect(got[j], `${k}[${j}] уехал от авторской стойки`).toBeCloseTo(want[j]!, 6);
+describe('стойка с оружием = безоружная стойка + рука предмета', () => {
+  it('⭐⭐ ТЕЛО С ОРУЖИЕМ — тело БЕЗОРУЖНОЙ стойки: ноги, таз, шея, голова бит в бит (и в бою)', () => {
+    for (const w of ['sword', 'none+shield', 'sword+shield']) for (const c of [0, 1]) for (const t of [0, 0.7, 2.1, 4.4]) {
+      const p = resolveStancePose(look, w, c, {}, t)!, free = resolveStancePose(look, 'none', c, {}, t)!;
+      for (const k of BODY) near(p[k], free[k], 1e-12, `${w} бой=${c} t=${t} ${k}`);
     }
   });
 
-  it('⚠ СЛУЖЕБНЫЕ КАНАЛЫ НАБОРА ХОДА в стойку не пускаются, а смещение таза — пускается', () => {
-    const p = resolveStancePose(look, 'sword', 0, { live: isLive }, 1.0)!;
-    expect(p['__swing'], '⚠ канал опоры подменил бы опорную ногу').toBeUndefined();
-    expect(p['__rootY'], '⚠ канал курса развернул бы персонажа').toBeUndefined();
-    expect(span('sword', '__hipsD', { live: isLive }), 'смещение таза — часть дыхания').toBeGreaterThan(0);
+  it('⭐ РУКА ПРЕДМЕТА — авторская на нуле цикла: плечо, локоть, хват и пальцы ЭТОЙ руки', () => {
+    const p = resolveStancePose(look, 'sword', 0, {}, 0)!;
+    for (const k of ['RightUpperArm', 'RightLowerArm', 'RightIndexProximal', '__wpnMain']) near(p[k], swordPose[k], 1e-9, k);
+    // а пальцы ПУСТОЙ руки — базы: стойка меча её не держит
+    near(p['LeftIndexProximal'], liveBase(0)['LeftIndexProximal'], 1e-12, 'LeftIndexProximal');
+    const s = resolveStancePose(look, 'none+shield', 0, {}, 0)!;
+    for (const k of ['LeftUpperArm', 'LeftLowerArm', '__wpnOff']) near(s[k], shieldPose[k], 1e-9, `щит ${k}`);
+    near(s['RightUpperArm'], liveBase(0)['RightUpperArm'], 1e-12, 'щит: правая рука пустая — базы');
   });
 
-  it('ЖИВАЯ авторская стойка оружия ветку НЕ включает — автор главнее сборки', () => {
-    const allLive = (): boolean => true;                      // и `sword` считается живым
-    expect(span('sword', 'Chest', { live: allLive }), 'своя живая стойка оружия играется как есть').toBeCloseTo(0, 6);
+  it('⭐ дыхание базы проступает сквозь руку с предметом, а не гасится ею', () => {
+    const a = resolveStancePose(look, 'sword', 0, {}, 0)!, b = resolveStancePose(look, 'sword', 0, {}, Math.PI / 2)!;
+    const d = Math.hypot(...[0, 1, 2].map((j) => b['RightUpperArm']![j]! - a['RightUpperArm']![j]!));
+    expect(d, 'рука с мечом дышит вместе с базой').toBeGreaterThan(0.02);
   });
 
-  it('БЕЗОРУЖНЫЙ случай шов не трогает: сборка и без него отдаёт живую базу', () => {
-    expect(span('none', 'Chest', { live: isLive })).toBeCloseTo(span('none', 'Chest'), 6);
+  it('⚠ ТАЗ СТОЙКИ ПРЕДМЕТА в тело не уезжает — и у пары рук он не удваивается', () => {
+    for (const w of ['sword', 'none+shield', 'sword+shield']) {
+      near(resolveStancePose(look, w, 0, {}, 1.3)!['__hipsD'], liveBase(1.3)['__hipsD'], 1e-12, `${w} __hipsD`);
+    }
+  });
+
+  it('нет безоружной базы — стойка предмета целиком, как до слоёв', () => {
+    const noBase: StanceLookup = (k, i, t) => (i === 'none' ? null : look(k, i, t));
+    expect(resolveStancePose(noBase, 'sword', 0, {}, 0)).toBe(swordPose);
+  });
+
+  it('⭐⭐ НА КУКЛЕ: опорные стопы с мечом идут ровно как без оружия', () => {
+    // Настоящий `PosePlayer`: контент отдаёт собранную стойку под оружие. Ноги, таз и стопы с мечом обязаны совпасть
+    // с безоружными на каждом кадре — иначе «с оружием стопы плавают» вернётся.
+    const content = (): PoseContent => ({
+      charId: 'warrior',
+      resolveUpper: (w: string, c = 0, t = 0): UpperPose | null => { const pose = resolveStancePose(look, w, c, {}, t); return pose ? { swing: 0, pose } : null; },
+    } as unknown as PoseContent);
+    const feet = (w: string): THREE.Vector3[][] => {
+      const st = makeStand({ content: content(), grid: emptyGrid(), mix: 1, weapon: w });
+      const fr = st.run({ warm: 10, frames: 240, at: (pl, i) => { if (i === 120) pl.setCombat(true); } });
+      st.dispose();
+      return fr.map((f) => [f.foot[0].clone(), f.foot[1].clone()]);
+    };
+    const a = feet('sword'), b = feet('none');
+    let worst = 0;
+    for (let i = 0; i < a.length; i++) for (const k of [0, 1]) worst = Math.max(worst, a[i]![k]!.distanceTo(b[i]![k]!));
+    expect(worst, 'стопа с мечом разошлась с безоружной').toBeLessThan(1e-9);
   });
 });
 
@@ -140,36 +159,38 @@ describe('фаза живой стойки', () => {
  */
 describe('вставка в покой на шве стойки', () => {
   const fgPose: Pose = {
-    Chest: [0.9, 0, 0], Neck: [0.8, 0, 0], LeftUpperLeg: [0.3, 0, 0],
+    Chest: [0.9, 0, 0], Neck: [0.8, 0, 0], LeftUpperLeg: [0.3, 0, 0], RightUpperArm: [0.2, 0.1, -0.4],
     __swing: [0, 1, 0],            // служебные каналы набора хода — в стойку попасть НЕ ДОЛЖНЫ
     __rootY: [2.5, 0, 0],
   };
-  const withFg = (scope: 'base' | 'item', w: number): Pose =>
-    resolveStancePose(look, 'sword', 0, { live: isLive, fidget: { pose: fgPose, scope, w } }, 0.7)!;
+  const withFg = (scope: 'base' | 'item', w: number, weapon = 'sword'): Pose =>
+    resolveStancePose(look, weapon, 0, { fidget: { pose: fgPose, scope, w } }, 0.7)!;
+  const q = (e: readonly number[]): THREE.Quaternion => new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0], e[1], e[2], 'XYZ'));
 
-  it('⭐ БАЗОВАЯ вставка доезжает до тела С ОРУЖИЕМ', () => {
-    const off = resolveStancePose(look, 'sword', 0, { live: isLive }, 0.7)!;
+  it('⭐ БАЗОВАЯ вставка доезжает до тела С ОРУЖИЕМ — оно и есть безоружное', () => {
+    const off = resolveStancePose(look, 'sword', 0, {}, 0.7)!;
     const on = withFg('base', 1);
     expect(Math.abs(on['Neck']![0] - off['Neck']![0]), 'шея обязана уехать во вставку').toBeGreaterThan(0.3);
     expect(Math.abs(on['LeftUpperLeg']![0] - off['LeftUpperLeg']![0]), 'ноги тоже — стойка это всё тело').toBeGreaterThan(0.1);
+    const free = withFg('base', 1, 'none');
+    for (const k of ['Neck', 'LeftUpperLeg', 'Hips', '__hipsD']) near(on[k], free[k], 1e-12, `тело с мечом = безоружное со вставкой: ${k}`);
   });
 
-  it('⭐⭐ ЯКОРЬ ОРУЖИЯ ВСТАВКОЙ НЕ СДВИНУТ — меч держится как поставил автор', () => {
-    const on = withFg('base', 1);
-    for (const k of ['RightUpperArm', 'RightLowerArm', '__wpnMain']) {
-      const got = on[k]!, want = swordPose[k]!;
-      for (let j = 0; j < 3; j++) expect(got[j], `${k}[${j}] уехал от авторской стойки`).toBeCloseTo(want[j]!, 6);
-    }
+  it('⭐⭐ РУКА ПРЕДМЕТА ЛОЖИТСЯ ПОВЕРХ ВСТАВКИ: дельта меча к безоружной руке та же, что без вставки', () => {
+    // референс дельты — ЧИСТАЯ база на нуле: посчитай его от подменённой базы — и вставка с оружием пропала бы
+    const want = q(liveBase(0)['RightUpperArm']!).invert().multiply(q(swordPose['RightUpperArm']!));
+    const got = q(withFg('base', 1, 'none')['RightUpperArm']!).invert().multiply(q(withFg('base', 1)['RightUpperArm']!));
+    expect(got.angleTo(want), 'дельта руки с мечом поверх вставки').toBeLessThan(1e-6);
   });
 
   it('⚠ СЛУЖЕБНЫЕ КАНАЛЫ вставки в стойку не пускаются', () => {
     const on = withFg('base', 1);
-    expect(on['__swing'], '⚠ канал опоры подменил бы опорную ногу').toBeUndefined();
+    expect(on['__swing']?.[1], '⚠ канал опоры вставки подменил бы опорную ногу').not.toBe(1);
     expect(on['__rootY'], '⚠ канал курса развернул бы персонажа').toBeUndefined();
   });
 
   it('ВЕС огибающей работает как доля: 0 — прежняя поза, 1 — вставка целиком', () => {
-    const off = resolveStancePose(look, 'sword', 0, { live: isLive }, 0.7)!;
+    const off = resolveStancePose(look, 'sword', 0, {}, 0.7)!;
     expect(withFg('base', 0)['Neck']![0], 'нулевой вес = ветка не берётся').toBeCloseTo(off['Neck']![0]!, 6);
     const half = withFg('base', 0.5)['Neck']![0]!;
     const full = withFg('base', 1)['Neck']![0]!;
@@ -179,12 +200,12 @@ describe('вставка в покой на шве стойки', () => {
   it('⭐ ПОЗА С ПРЕДМЕТОМ (прокрут меча) кладётся ПОВЕРХ собранной стойки', () => {
     const on = withFg('item', 1);
     expect(on['Chest']![0], 'корпус обязан уехать в позу вставки').toBeCloseTo(fgPose['Chest']![0]!, 3);
-    expect(on['RightUpperArm']![0], '⚠ рука тоже — иначе мечом крутить нечем').not.toBeCloseTo(swordPose['RightUpperArm']![0]!, 3);
+    expect(on['RightUpperArm']![0], '⚠ рука тоже — иначе мечом крутить нечем').toBeCloseTo(fgPose['RightUpperArm']![0]!, 3);
   });
 
   it('БЕЗ поля `fidget` поведение прежнее БИТ В БИТ', () => {
-    const a = resolveStancePose(look, 'sword', 0, { live: isLive }, 0.7)!;
-    const b = resolveStancePose(look, 'sword', 0, { live: isLive, fidget: { pose: fgPose, scope: 'base', w: 0 } }, 0.7)!;
+    const a = resolveStancePose(look, 'sword', 0, {}, 0.7)!;
+    const b = resolveStancePose(look, 'sword', 0, { fidget: { pose: fgPose, scope: 'base', w: 0 } }, 0.7)!;
     for (const k in a) for (let j = 0; j < 3; j++) expect(b[k]![j]).toBeCloseTo(a[k]![j]!, 9);
   });
 });

@@ -17,7 +17,11 @@
  *  • `atlasSynthetic` — тот же `setAtlas` на синтетическом атласе: деталь без слота скрыта, слот из конфига у детали без
  *    префикса, перепутанный слот, волосы без префикса под hideHair;
  *  • `span` — пролёт таз→голова куклы-источника (`buildHumanoid` с офсетами/масштабами/профилем модели) — им Unity
- *    масштабирует модель, как веб.
+ *    масштабирует модель, как веб;
+ *  • `twist` (06.10) — твист-кости (`twistBones.findTwistChains` на модели в позе узлов + `driveTwistChains` покадрово): дерево с
+ *    локальными TRS, цепи (узел, доля-приращение, ось в кадре родителя, рест) и кадры (крен src-костей куклы за ±π → локальные
+ *    повороты твистов); рыцарь и синтетика UE (доля по положению, копия сабмеша, самодубль сегмента). Цепи игры (на модели,
+ *    сконформленной `makeRetargetRig`) сверяются с позой узлов здесь же.
  * Скопировать в Unity: `python tools/unity-check/golden_sync.py` (репо Unity) → Assets/DM/PoseEditor/Tests/unity_rig_golden.json.
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -36,7 +40,8 @@ vi.mock('./modelAssets.js', async (orig) => {
   return { ...m, loadModelUrl: async (): Promise<THREE.Group> => (glb.make ? glb.make() : m.parseModel(glb.buf!.slice(0), 'glb')) };
 });
 
-import { autoBoneMap, mergeBoneMap, boneIndex, upAxisAngle, OUR_BONES, OUR_FINGERS } from './retarget3d.js';
+import { autoBoneMap, mergeBoneMap, boneIndex, upAxisAngle, makeRetargetRig, OUR_BONES, OUR_FINGERS } from './retarget3d.js';
+import { findTwistChains, driveTwistChains } from './twistBones.js';
 import { parseModel, skeletonBoneNames } from './modelAssets.js';
 import { createModelSkin, resolveCharacterModel, classifySubmesh, type AssetConfig } from './modelSkin.js';
 import { buildHumanoid } from './humanoid.js';
@@ -366,10 +371,78 @@ describe('эталон карты костей и атласа для Unity', ()
     ];
     const span = LOOKS.map((l) => ({ label: l.label, look: l.look, span: spanOf(l.look as never) }));
 
+    // ── твист-кости (06.10, `twistBones.ts`): Unity их не вёл — кость-твист жёстко шла за родителем, и голенище сапога у
+    // опорной стопы крутилось против неё (на повороте 180° — до 26° у лодыжки). Цепи ищутся на модели в позе узлов (как Unity на
+    // привязке), доли и оси — оттуда; кадр — крен НАШЕЙ кости куклы, развёрнутый к прошлому кадру. Дерево — с локальными TRS (веб),
+    // Unity строит из них своё (зеркало X) и сверяет и состав цепей, и повороты твистов покадрово.
+    const twistCase = (label: string, root: THREE.Object3D, map: Record<string, string>, lookOf: Parameters<typeof buildHumanoid>[0]): Record<string, unknown> => {
+      root.updateMatrixWorld(true);
+      const { nodes, idx } = flatten(root);
+      const trs: number[][] = [];
+      root.traverse((o) => trs.push([...o.position.toArray(), ...o.quaternion.toArray(), ...o.scale.toArray()]));
+      const byName = boneIndex(root) as unknown as Map<string, THREE.Object3D>;
+      const drivers: Record<string, number> = {};
+      for (const our of OUR_BONES) { const b = byName.get(map[our] ?? ''); if (b) drivers[our] = idx.get(b)!; }
+      const chains = findTwistChains(byName, map);
+      const chainOut = chains.map((ch) => ({
+        src: ch.ourSrc, seg: ch.ourSeg, child: ch.ourChild,
+        links: ch.nodes.map((t) => ({ i: idx.get(t.node)!, name: t.node.name, gain: t.gain, axis: t.axis.toArray(), rest: t.restLocal.toArray() })),
+      }));
+      // Кадры: крен src-костей куклы гуляет за ±π (развёртка) поверх «качания» в сторону; на выходе — локальные повороты твистов.
+      const driver = buildHumanoid(lookOf);
+      const SRC = [...new Set(chains.map((c) => c.ourSrc))];
+      const frames: { src: Record<string, number[]>; out: number[][] }[] = [];
+      for (let f = 0; f < 48; f++) {
+        const src: Record<string, number[]> = {};
+        SRC.forEach((nm, k) => {
+          const ch = chains.find((c) => c.ourSrc === nm)!;
+          const axis = driver.bones.get(ch.ourChild)!.position.clone().normalize();
+          const roll = 0.35 * f * (k % 2 ? -1 : 1) + 0.2 * Math.sin(f * 0.7 + k);      // за 48 кадров — далеко за ±π
+          const swing = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4 * Math.sin(f * 0.31 + k), 0.2 * Math.cos(f * 0.17), 0.3 * Math.sin(f * 0.23 - k), 'XYZ'));
+          const q = swing.multiply(new THREE.Quaternion().setFromAxisAngle(axis, roll));
+          if (f % 7 === 3) q.set(-q.x, -q.y, -q.z, -q.w);                                    // знак кватерниона — кратчайшее представление
+          driver.bones.get(nm)!.quaternion.copy(q);
+          src[nm] = q.toArray();
+        });
+        driveTwistChains(chains, driver);
+        frames.push({ src, out: chains.flatMap((c) => c.nodes.map((t) => t.node.quaternion.toArray())) });
+      }
+      return { label, nodes, trs, map, drivers, look: lookOf, chains: chainOut, frames };
+    };
+    // Синтетика веток правил: UE-имена (`upperarm_twist_01_l`), твист ПОСЕРЕДИНЕ сегмента (доля по положению), копия сабмеша с
+    // суффиксом (`_5` — не твист сегмента), самодубль сегмента в поддереве (не обходится), один твист на голени.
+    const ueArm = (): THREE.Object3D => build(node('', [bone('pelvis', [
+      bone('upperarm_l', [
+        bone('upperarm_twist_01_l', [bone('upperarm_twist_01_l_5', [], [0, 0, 0])], [3, -12, 1]),
+        bone('upperarm_l', [], [0, 0, 0]),
+        bone('lowerarm_l', [bone('lowerarm_twist_01_l', [], [0.2, -6, 0.4]), bone('lowerarm_twist_02_l', [], [0.1, -11, 0.1]), bone('hand_l', [], [0, -24, 0])], [0, -27, 0]),
+      ], [11, 40, 0]),
+      bone('thigh_r', [bone('thigh_twist_01_r', [], [0, 0, 0]), bone('calf_r', [bone('calf_twist_01_r', [], [0, -19, 0]), bone('foot_r', [], [0, -38, 1])], [0, -40, 0])], [-9, -2, 0]),
+    ], [0, 90, 0])]));
+    const ueMap = { Hips: 'pelvis', LeftUpperArm: 'upperarm_l', LeftLowerArm: 'lowerarm_l', LeftHand: 'hand_l', RightUpperLeg: 'thigh_r', RightLowerLeg: 'calf_r', RightFoot: 'foot_r' };
+    const knightTw = await parseModel(glb.buf.slice(0), 'glb');
+    const twist = [
+      twistCase('knight_06 + карта конфига', knightTw, mergeBoneMap(autoBoneMap(skeletonBoneNames(knightTw)), stored, knightTw), look),
+      twistCase('ue: доля по положению, копия сабмеша, самодубль', ueArm(), ueMap, {}),
+    ];
+    // Игра ищет цепи на СКОНФОРМЛЕННОЙ модели (`makeRetargetRig` с куклой-источником) — у рыцаря итог обязан совпасть с позой узлов.
+    {
+      const g = await parseModel(glb.buf.slice(0), 'glb');
+      const src = buildHumanoid(look);
+      src.root.updateMatrixWorld(true);
+      const sh = src.bones.get('Hips')!.getWorldPosition(new THREE.Vector3()).distanceTo(src.bones.get('Head')!.getWorldPosition(new THREE.Vector3()));
+      const gameRig = makeRetargetRig(g, mergeBoneMap(autoBoneMap(skeletonBoneNames(g)), stored, g), sh / impSpan, src);   // масштаб — `scaleToSource`
+      const want = (twist[0]!.chains as { links: { name: string; gain: number }[] }[]).flatMap((c) => c.links.map((l) => [l.name, l.gain]));
+      const got = gameRig.twistBones().map((t) => [t.bone, t.gain]);
+      expect(got.length, 'у рыцаря есть твист-цепи').toBeGreaterThan(8);
+      expect(got.map(([n]) => n)).toEqual(want.map(([n]) => n));
+      got.forEach(([, gn], i) => expect(Math.abs((gn as number) - (want[i]![1] as number)), String(want[i]![0])).toBeLessThan(1e-3));
+    }
+
     const golden = {
-      note: 'Эталон паритета Unity ↔ веб: карта костей модели (autoBoneMap/mergeBoneMap/boneIndex), доворот к Y-up, выбор атласа, видимость деталей и масштаб. Генерит packages/client/src/render3d/unityRigGolden.gen.test.ts.',
+      note: 'Эталон паритета Unity ↔ веб: карта костей модели (autoBoneMap/mergeBoneMap/boneIndex), доворот к Y-up, выбор атласа, видимость деталей и масштаб, твист-кости (findTwistChains/driveTwistChains). Генерит packages/client/src/render3d/unityRigGolden.gen.test.ts.',
       ourBones: [...OUR_BONES], ourFingers: [...OUR_FINGERS],
-      autoMap, trees, upAxis, models, classify, atlas, atlasSynthetic, span,
+      autoMap, trees, upAxis, models, classify, atlas, atlasSynthetic, span, twist,
     };
     const dir = join(HERE, '__golden__');
     mkdirSync(dir, { recursive: true });

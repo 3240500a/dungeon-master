@@ -6316,8 +6316,8 @@ function combatStanceClip(w: string): Clip | null {
   return null;
 }
 let editorCombat = 0;   // превью боевой стойки в редакторе (0/1)
-/** Стойка под экипировку — ТОТ ЖЕ резолвер, что в игре (`resolveStancePose`): авторская на точный
- *  ключ в приоритете, иначе сборка из безоружной базы и дельт предметов по рукам. */
+/** Стойка под экипировку — ТОТ ЖЕ резолвер, что в игре (`resolveStancePose`): безоружная стойка (спокойная / боевая)
+ *  плюс рука, которая держит предмет, из его стойки (правило владельца 06.10). */
 function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   const cfg = animCfg();
   /** Клип стойки по тому же правилу, что у рантайма: привязка → конвенция. */
@@ -6338,9 +6338,7 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   // РАЗБОР ВХОДОВ у них один, а не тем, что числа похожи.
   const layersOut: StanceLayerInfo[] = [];
   const pose = resolveStancePose(look, wpn, combat,
-    { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it), trace: layersOut,
-      // ⭐ то же правило, что в игре: признак берётся у ТОГО ЖЕ клипа, что отдаёт позу (редактор ≡ игра)
-      live: (k, i) => (lookClip(k, i)?.keys.length ?? 0) > 1 }, t);
+    { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it), trace: layersOut }, t);
   const lk = layersFor(wpn);
   let main = 'none', off = 'none';
   for (const l of layersOut) { if (l.hand === 'main') main = l.item; else off = l.item; }

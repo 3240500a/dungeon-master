@@ -38,7 +38,7 @@ import { readLayerStore, lookupLayers, resolveLayers, newResolvedLayers, LAYER_L
 import { findLocoClip, locoClipName, locoClipNames, LOCO_DIRS, BASE_GAIT_CHAR, BASE_LOCO_WEAPON } from './locoBlend.js';
 import {
   TWO_HANDED, isTwoHanded, splitHands, offSlotKey, composeStance, asOffHandPose, stancePoseAt, resolveStancePose,
-  ARM_MAIN_MASK, ARM_OFF_MASK, UPPER_ALL_MASK, type PoseLayer, type StanceLayerInfo, type LayerKind,
+  ARM_MAIN_MASK, ARM_OFF_MASK, ARM_BOTH_MASK, UPPER_ALL_MASK, type PoseLayer, type StanceLayerInfo, type LayerKind,
 } from './poseLayers.js';
 import { fullMask, type BoneMask } from './boneMask.js';
 import {
@@ -413,7 +413,7 @@ describe('эталон G1 разбора контента анимации дл�
     const blend = BLENDS.flatMap(([a, b]) => [0, 0.25, 0.5, 1].map((t) => [a, b, t, P(blendTwo(a, b, t))]));
 
     // ── стойка: сборка слоями ──
-    const MASKS: Record<string, BoneMask> = { main: ARM_MAIN_MASK, off: ARM_OFF_MASK, upper: UPPER_ALL_MASK, full: fullMask() };
+    const MASKS: Record<string, BoneMask> = { main: ARM_MAIN_MASK, off: ARM_OFF_MASK, both: ARM_BOTH_MASK, upper: UPPER_ALL_MASK, full: fullMask() };
     const base = withX(syn(301), { __hipsD: [0, -1, 0], __wpnMain: [0.1, 0.2, 0.3] });
     const itemA = withX(syn(302), { __wpnMain: [-1.5, 0, 0.2], __swing: [1, 0, 0], LeftIndexProximal: [0.4, 0, 0], Jaw: [0.2, 0, 0] });
     const itemB = withX(syn(303, BODY.slice(6, 14)), { __wpnOff: [0.3, 0.3, 0.3], __hipsD: [0.5, 0.5, 0.5] });
@@ -423,6 +423,9 @@ describe('эталон G1 разбора контента анимации дл�
       { base, layers: [{ pose: itemA, base: syn(304), mask: 'full', weight: 1, kind: 'additive' }] },
       { base, layers: [{ pose: itemA, mask: 'upper', weight: 0.6, kind: 'override' }, { pose: itemB, mask: 'off', weight: 1.5, kind: 'additive' }] },
       { base, layers: [{ pose: itemB, mask: 'main', weight: 0, kind: 'additive' }, { pose: itemA, mask: 'full', weight: 1, kind: 'override' }] },
+      // пара на точный ключ — обе руки одним слоем (с пальцами обеих кистей); таз пары — нет
+      { base, layers: [{ pose: withX(itemA, { __hipsD: [2, 0.5, -1], RightIndexProximal: [0.3, 0.1, 0] }), mask: 'both', weight: 0.8, kind: 'additive' }] },
+      { base, layers: [{ pose: withX(itemB, { __hipsP: [0, 28, 0] }), mask: 'full', weight: 0.5, kind: 'additive' }] },
     ];
     const compose = COMPOSE.map((cs) => [cs, P(composeStance(cs.base, cs.layers.map((l): PoseLayer => ({ pose: l.pose, base: l.base, mask: MASKS[l.mask]!, weight: l.weight, kind: l.kind }))))]);
     const offHand = [itemA, { __wpnMain: [1, 2, 3], __wpnMainP: [4, 5, 6], __wpnOffP: [0, 0, 1] }, { __wpnOff: [1, 1, 1], __wpnMain: [2, 2, 2] }, {}]
@@ -440,12 +443,12 @@ describe('эталон G1 разбора контента анимации дл�
       staticBase: { 'idle|none': { pose: syn(321) }, 'idle|axe': { pose: syn(322) }, 'idle|shield': { pose: syn(323) }, 'combat_idle|axe': { pose: syn(324) } },
       noBase: { 'idle|sword': { pose: syn(331) }, 'idle|shield': { pose: syn(332) } },
     };
-    const OPTS: Record<string, { weight?: Record<string, number>; kind?: Record<string, LayerKind>; hand?: Record<string, 'main' | 'off'>; live?: boolean; fidget?: { pose: Pose; scope: 'base' | 'item'; w: number } }> = {
+    const OPTS: Record<string, { weight?: Record<string, number>; kind?: Record<string, LayerKind>; hand?: Record<string, 'main' | 'off'>; fidget?: { pose: Pose; scope: 'base' | 'item'; w: number } }> = {
       none: {},
-      cfg: { weight: { sword: 0.8, shield: 0.6 }, kind: { torch: 'override', shield: 'override' }, hand: { torch: 'off' }, live: true },
-      fidgetBase: { live: true, fidget: { pose: withX(syn(341), { __swing: [1, 0, 0], __rootY: [0.5, 0, 0], __hipsD: [0, -0.5, 0] }), scope: 'base', w: 0.6 } },
-      fidgetItem: { live: true, weight: { sword: 0.5 }, fidget: { pose: withX(syn(342), { __wpnMain: [1, 1, 1] }), scope: 'item', w: 1.4 } },
-      fidgetTiny: { live: true, fidget: { pose: syn(343), scope: 'base', w: 1e-5 } },
+      cfg: { weight: { sword: 0.8, shield: 0.6 }, kind: { torch: 'override', shield: 'override' }, hand: { torch: 'off' } },
+      fidgetBase: { fidget: { pose: withX(syn(341), { __swing: [1, 0, 0], __rootY: [0.5, 0, 0], __hipsD: [0, -0.5, 0] }), scope: 'base', w: 0.6 } },
+      fidgetItem: { weight: { sword: 0.5 }, fidget: { pose: withX(syn(342), { __wpnMain: [1, 1, 1] }), scope: 'item', w: 1.4 } },
+      fidgetTiny: { fidget: { pose: syn(343), scope: 'base', w: 1e-5 } },
     };
     /**
      * Какие наборы опций, оружия и (бой, время) гоняем на каждой таблице: живая база — всё, прочие — их ветки.
@@ -472,7 +475,6 @@ describe('эталон G1 разбора контента анимации дл�
             ...(o.weight ? { weight: (it: string) => o.weight![it] ?? 1 } : {}),
             ...(o.kind ? { kind: (it: string) => o.kind![it] ?? (isTwoHanded(it) ? 'override' : 'additive') } : {}),
             ...(o.hand ? { hand: (it: string) => o.hand![it] } : {}),
-            ...(o.live ? { live: (kd: 'idle' | 'combat_idle', it: string) => { const e = table[kd + '|' + it]; return !!e && e.clip !== undefined && rich[e.clip]!.keys.length > 1; } } : {}),
             ...(o.fidget ? { fidget: o.fidget } : {}),
             trace,
           }, t);

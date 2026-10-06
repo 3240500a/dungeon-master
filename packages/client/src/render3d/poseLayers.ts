@@ -22,8 +22,8 @@
  * Файл ЧИСТЫЙ (только математика поз и маски) — тестируется в node.
  */
 import * as THREE from 'three';
-import { blendTwo, clipPoseAt, isAngleKey, type Pose } from './clipModel.js';
-import { boneWeight, fullMask, type BoneMask } from './boneMask.js';
+import { blendTwo, clipPoseAt, isAngleKey, HIPS_DEL, HIPS_ABS, type Pose } from './clipModel.js';
+import { boneWeight, type BoneMask } from './boneMask.js';
 
 /** Двуручное держится ОБЕИМИ руками: его поза — не добавка к свободной руке, а другой верх целиком. */
 export const TWO_HANDED = new Set(['greatsword', 'greataxe', 'greatmaul', 'halberd', 'spear', 'staff', 'bow', 'crossbow']);
@@ -100,13 +100,22 @@ function keyBlend(key: string, cur: readonly [number, number, number], to: reado
   return toEuler(q(cur, _qA).slerp(q(to, _qB), Math.min(1, w)));
 }
 
-/** Вес ключа в маске. Спец-ключи (`__wpnMain`, `__hipsD`…) костями не являются — им маска не мешает. */
-const maskW = (mask: BoneMask, key: string): number => (key.startsWith('__') ? 1 : boneWeight(mask, key));
+/**
+ * Вес ключа в маске. Спец-ключи оружия (`__wpnMain`, `__lgripP`…) костями не являются — им маска не мешает: хват предмета
+ * обязан доехать вместе с рукой.
+ *
+ * ⚠⚠ КРОМЕ КАНАЛОВ ТАЗА (`__hipsD`, `__hipsP`) — они идут с весом КОСТИ ТАЗА в маске. Раньше вес был 1 у любого `__`-ключа,
+ * и слой РУКИ таскал за собой смещение таза своей стойки: ЗАМЕР на контенте владельца — `sword+shield` двигал таз на
+ * (−2.00, 0.50, 1.30) от безоружного, ровно ДВА смещения одной стойки (−1.00, 0.25, 0.65), по одному от каждой руки. Таз —
+ * часть тела, а не руки: у масок рук кости таза нет, и смещение остаётся базовым; полная маска (`fullMask`) таз держит.
+ */
+const PELVIS_KEYS: ReadonlySet<string> = new Set([HIPS_DEL, HIPS_ABS]);
+const maskW = (mask: BoneMask, key: string): number =>
+  (key.startsWith('__') ? (PELVIS_KEYS.has(key) ? boneWeight(mask, 'Hips') : 1) : boneWeight(mask, key));
 
 /**
- * ⚠ СЛУЖЕБНЫЕ КАНАЛЫ НАБОРА ХОДА В СТОЙКУ НЕ ПУСКАЕМ. `maskW` отдаёт любому `__`-ключу вес 1 (маска
- * костями не управляет), поэтому `__swing`/`__rootY`/`__rootP` живой базы уехали бы в собранную стойку
- * и подменили бы опору и курс. Смещение таза (`__hipsD`) — наоборот, часть дыхания и остаётся.
+ * ⚠ СЛУЖЕБНЫЕ КАНАЛЫ НАБОРА ХОДА ИЗ ВСТАВКИ В СТОЙКУ НЕ ПУСКАЕМ. Вставка (`fidget`) — клип мокапа, и её
+ * `__swing`/`__rootY`/`__rootP` подменили бы опору и курс. Смещение таза (`__hipsD`) — часть движения и остаётся.
  */
 const onlyBody = (p: Pose): Pose => {
   let drop = false;
@@ -151,10 +160,23 @@ export function composeStance(base: Pose, layers: readonly PoseLayer[]): Pose {
 // Главное оружие крепится к `RightHand`, щит/второе оружие — к `LeftHand` (`weapon3d.attachWeapons`).
 // Затухание на корпус небольшое: предмет ведёт руку, а корпус лишь слегка подворачивается за ней —
 // иначе два оверлея вдвоём перекрутят грудь.
-export const ARM_MAIN_MASK: BoneMask = { parts: {}, weights: { RightShoulder: 1, RightUpperArm: 1, RightLowerArm: 1, RightHand: 1, UpperChest: 0.25, Chest: 0.15, Spine: 0.08 } };
-export const ARM_OFF_MASK: BoneMask = { parts: {}, weights: { LeftShoulder: 1, LeftUpperArm: 1, LeftLowerArm: 1, LeftHand: 1, UpperChest: 0.25, Chest: 0.15, Spine: 0.08 } };
-/** Двуручное владеет верхом целиком — маска на обе руки и корпус. */
-export const UPPER_ALL_MASK: BoneMask = { parts: {}, weights: {
+//
+// ⭐ ПАЛЬЦЫ — ЧАСТЬ РУКИ, КОТОРАЯ ДЕРЖИТ ПРЕДМЕТ (`handR`/`handL`). Пока стойка оружия была полной позой на точный ключ,
+// хват её кисти ехал вместе с ней; теперь от стойки предмета берётся только рука — и пальцы обязаны ехать с ней, иначе
+// стойка с АНИМИРОВАННЫМИ пальцами (живой хват её не перебивает, `fingersAnimated`) держала бы меч пальцами базы.
+export const ARM_MAIN_MASK: BoneMask = { parts: { handR: 1 }, weights: { RightShoulder: 1, RightUpperArm: 1, RightLowerArm: 1, RightHand: 1, UpperChest: 0.25, Chest: 0.15, Spine: 0.08 } };
+export const ARM_OFF_MASK: BoneMask = { parts: { handL: 1 }, weights: { LeftShoulder: 1, LeftUpperArm: 1, LeftLowerArm: 1, LeftHand: 1, UpperChest: 0.25, Chest: 0.15, Spine: 0.08 } };
+/**
+ * Обе руки ОДНОЙ позой — пара, заавторенная на точный ключ (`idle_sword+shield`). Один слой, а не два: каналы хвата и
+ * корпус пары легли бы дважды. Корпус — та же доля, что у одной руки.
+ */
+export const ARM_BOTH_MASK: BoneMask = { parts: { handL: 1, handR: 1 }, weights: {
+  RightShoulder: 1, RightUpperArm: 1, RightLowerArm: 1, RightHand: 1,
+  LeftShoulder: 1, LeftUpperArm: 1, LeftLowerArm: 1, LeftHand: 1,
+  UpperChest: 0.25, Chest: 0.15, Spine: 0.08,
+} };
+/** Двуручное владеет верхом целиком — маска на обе руки (с пальцами) и корпус. */
+export const UPPER_ALL_MASK: BoneMask = { parts: { handL: 1, handR: 1 }, weights: {
   RightShoulder: 1, RightUpperArm: 1, RightLowerArm: 1, RightHand: 1,
   LeftShoulder: 1, LeftUpperArm: 1, LeftLowerArm: 1, LeftHand: 1,
   UpperChest: 1, Chest: 1, Spine: 0.5,
@@ -200,13 +222,23 @@ export type StanceLookup = (kind: 'idle' | 'combat_idle', item: string, t: numbe
 /**
  * СТОЙКА ПОД ЭКИПИРОВКУ — одна реализация на игру и редактор (правило «редактор ≡ игра»).
  *
+ * ⭐⭐ ПРАВИЛО ВЛАДЕЛЬЦА (06.10): «в безоружном есть спокойная и боевая, с оружием берутся ОНИ, но подмешивается РУКА, в
+ * которой что-то есть, — щит или оружие». То есть тело (ноги, таз, спина, шея, голова) — ВСЕГДА безоружная стойка нужной
+ * оси, а от стойки предмета — только рука, которая его держит.
+ *
+ * ⚠ БЫЛО ИНАЧЕ ровно у одиночного предмета со своей стойкой (`sword`, `none+shield`): точный ключ отдавал её ЦЕЛИКОМ, и
+ * живая база ложилась на неё дельтой полной маски. Ноги брались из стойки оружия (ЗАМЕР на контенте владельца: бёдра
+ * 29°/41°, голени 13°, стопы 11°/27° от безоружной — её авторили от прежней однокадровой базы), а дельта дыхания базы,
+ * положенная на ЧУЖИЕ ноги, — не жёсткая для стопы: опорные стопы в покое уезжали на 2–4 u за 10 с (безоружный — 0.15–0.35),
+ * и Unity с вебом показывали это одинаково (порт 1:1). Составной ключ (`sword+shield`) уже собирался так — правило одно.
+ *
  * Порядок решения:
- *  1. Есть авторская поза РОВНО на этот ключ (`idle_sword+shield`) — берём её. Явное намерение автора
- *     всегда сильнее сборки, и старые данные продолжают работать бит в бит.
- *  2. Нет — собираем: безоружная база + дельта предмета главной руки + дельта предмета офф-руки.
- *     Двуручное кладётся `override`-ом на весь верх, и офф-рука тогда не участвует — она занята.
- *  3. Нет даже безоружной базы — возвращаем то, что найдётся по ключу/базовому оружию, иначе null
- *     (как было до слоёв: полный процедурный мах).
+ *  1. Есть безоружная база — она и есть стойка; сверху РУКИ предметов (дельтой к базе на нуле, маской руки с пальцами,
+ *     корпус — малой долей). Рука предмета: точная поза ПАРЫ на ключ (обе руки одной позой) → поза главного предмета
+ *     (`idle_sword`) → для офф-руки работа в её слоте (`none+shield`), иначе предмет зеркалом хвата. Двуручное — `override`
+ *     на весь верх, офф-рука тогда не участвует — она занята. Таз и ноги стойки предмета не берутся НИКОГДА.
+ *  2. Нет безоружной базы — авторская поза на точный ключ, иначе стойка главного предмета, иначе null (как было до слоёв:
+ *     полный процедурный мах).
  */
 export interface StanceOpts {
   /** Сила подмешивания предмета 0..1. Нет → 1. */
@@ -226,21 +258,11 @@ export interface StanceOpts {
    */
   trace?: StanceLayerInfo[];
   /**
-   * ⭐⭐ МНОГОКАДРОВА ЛИ СТОЙКА НА ЭТОМ КЛЮЧЕ. Нужно ровно для одного решения: авторская поза оружия
-   * (один кадр) — ЯКОРЬ, а движение ЖИВОЙ безоружной базы кладётся на неё дельтой. Без этого точный
-   * ключ короткозамыкает всю сборку, и с мечом тело встаёт насмерть (замер: 0.00° на ВСЕХ костях
-   * против 3.42° по груди у безоружного).
-   *
-   * Не задано — прежнее поведение бит в бит (ветка не включается).
-   */
-  live?: (kind: 'idle' | 'combat_idle', item: string) => boolean;
-  /**
    * ⭐⭐ РЕДКАЯ ВСТАВКА В ПОКОЙ этого кадра (планировщик — `idleFidget.ts`). Нет — ветка не берётся и
    * поведение прежнее бит в бит.
    *
-   * `scope: 'base'` — вставка ПОДМЕНЯЕТ БЕЗОРУЖНУЮ БАЗУ, поэтому дельта предмета и авторский якорь
-   * ложатся ПОВЕРХ: одна пачка «переступил» играет со ВСЕМ оружием (замер: размах за вставку безоружный
-   * = с мечом, голова 26.8 → 26.8°, шея 31.2 → 31.2°; якорь меча не сдвинут — 1.7e-6°).
+   * `scope: 'base'` — вставка ПОДМЕНЯЕТ БЕЗОРУЖНУЮ БАЗУ, поэтому рука предмета ложится ПОВЕРХ: одна
+   * пачка «переступил» играет со ВСЕМ оружием (тело с оружием — это и есть база).
    * `scope: 'item'` — это ПОЛНАЯ авторская поза С ПРЕДМЕТОМ (прокрут меча): крутить мечом нечем, если
    * позы меча во вставке нет, поэтому она блендится поверх УЖЕ СОБРАННОЙ стойки.
    *
@@ -313,34 +335,10 @@ export function resolveStancePose(
   };
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
     const at = (k: 'idle' | 'combat_idle', i: string, tt: number): Pose | null => find(k, i, tt) ?? (k === 'combat_idle' ? find('idle', i, tt) : null);
-    const exact = find(kind, weapon, t);
-    if (exact) {
-      /**
-       * ⭐⭐ ЖИВАЯ БАЗА ПОД СТАТИЧНОЙ СТОЙКОЙ ОРУЖИЯ. Авторская поза на точный ключ — ЯКОРЬ (оружие
-       * держится ровно как поставил автор), а дыхание безоружного айдла приезжает на неё ДЕЛЬТОЙ.
-       *
-       * ⚠ БЕЗ ЭТОГО ДАННЫМИ НЕ ОБОЙТИСЬ В ПРИНЦИПЕ: у одноручного оружия ключ точной стойки и ключ
-       * предмета — ОДНА И ТА ЖЕ строка (`splitHands('sword')` → `['sword','none']`), поэтому сборка
-       * слоями для меча не запускается НИКОГДА. ЗАМЕР: с мечом размах позы в покое 0.00° на всех
-       * костях против 3.42° по груди и 11.5° по шее у безоружного — тело вставало насмерть.
-       *
-       * Референс дельты — база НА НУЛЕ (`at(kind,'none',0)`), как и у дельт предметов: считать её от
-       * живой базы значит ровно компенсировать дыхание (`Make Additive` в Unreal устроен так же).
-       * Якорь при этом не сдвигается: |поза(t=0) − авторская стойка| = 0.000000°.
-       */
-      // ⚠ УСЛОВИЕ ЖИВОЙ ВЕТКИ ПУСКАЕТ И ВСТАВКУ: сегодня оно требует МНОГОКАДРОВУЮ безоружную базу, и у
-      // персонажа с ОДНОКАДРОВОЙ базой вставка «переступил» не доехала бы до вооружённого тела вовсе.
-      const wantLive = !!opts.live && !opts.live(kind, weapon) && (opts.live(kind, 'none') || !!(fg && fg.scope === 'base'));
-      const liveNow = wantLive ? withFidget(at(kind, 'none', t)) : null;
-      const liveRef = liveNow ? at(kind, 'none', 0) : null;   // ⚠ референс — ЧИСТАЯ база, без вставки
-      if (liveNow && liveRef) {
-        return overItem(composeStance(exact, [{ pose: onlyBody(liveNow), base: liveRef, mask: fullMask(), weight: 1, kind: 'additive' }]));
-      }
-      return overItem(exact);                                 // 1. авторская на точный ключ
-    }
     const base = withFidget(at(kind, 'none', t));
     const [m, o] = splitHands(weapon);
-    if (!base) return overItem(at(kind, m, t));               // 3. базы нет — старое поведение
+    // 2. безоружной базы нет — стойка предмета целиком, как до слоёв: авторская на точный ключ, иначе главного предмета.
+    if (!base) return overItem(find(kind, weapon, t) ?? at(kind, m, t));
     // ⚠ РЕФЕРЕНС ДЕЛЬТЫ — БАЗА НА НУЛЕ, а не живая. Если считать дельту от дышащей базы, она будет
     // ровно компенсировать дыхание, и рука с предметом застынет: на маске оверлея жизнь пропадёт.
     // Так же устроен `Make Additive` в Unreal — базовая поза аддитива фиксированная.
@@ -348,6 +346,18 @@ export function resolveStancePose(
     const layers: PoseLayer[] = [];
     const mKind = m !== 'none' ? kindOf(m) : 'additive';
     const two = mKind === 'override';                         // override владеет верхом → офф-руки нет
+    /**
+     * ПАРА, заавторенная на точный ключ (`idle_sword+shield`): обе руки держат то, что поставил автор, — ОДНОЙ позой и
+     * одним слоем (два слоя одной позы положили бы хват и корпус дважды). Тело — всё равно база (правило владельца).
+     * Одиночный предмет (`sword`, `none+shield`) сюда не попадает: его точный ключ и ЕСТЬ поза его руки ниже.
+     */
+    const pair = m !== 'none' && o !== 'none' ? find(kind, weapon, t) : null;
+    if (pair) {
+      layers.push(two ? { pose: pair, mask: UPPER_ALL_MASK, weight: 1, kind: 'override' }
+        : { pose: pair, base: ref, mask: ARM_BOTH_MASK, weight: 1, kind: 'additive' });
+      if (kind === 'idle') { markApplied(m); if (!two) markApplied(o); }
+      return overItem(composeStance(base, layers));           // 1. база + обе руки пары
+    }
     const mp = m !== 'none' ? at(kind, m, t) : null;
     // Рука предмета: обычно её задаёт позиция в ключе, но конфиг может сказать иначе (факел «в левой»
     // при пустой правой — предмет стоит на месте главного, а руку берёт вторую).
@@ -362,8 +372,8 @@ export function resolveStancePose(
     if (!two && o !== 'none') {
       // ⭐⭐ СНАЧАЛА ИЩЕМ РАБОТУ, СДЕЛАННУЮ В СЛОТЕ ОФФ-РУКИ (`none+щит`): она УЖЕ на левой руке,
       // и переносить её нельзя. Нет такой — берём предмет из главного слота и зеркалим, как раньше.
-      // Так «настроил щит без оружия» само едет ко ВСЕМ оружиям, а точная настройка на пару
-      // (`sword+shield`) по-прежнему бьёт сборку целиком, выше по функции.
+      // Так «настроил щит без оружия» само едет ко ВСЕМ оружиям, а точная поза пары (`sword+shield`)
+      // кладёт обе руки сразу, выше по функции.
       const op = at(kind, offSlotKey(o), t) ?? at(kind, o, t);
       const off = (opts.hand?.(o) ?? 'off') === 'off';
       if (op) {
@@ -376,7 +386,7 @@ export function resolveStancePose(
         if (kind === 'idle') markApplied(o);
       }
     }
-    return overItem(layers.length ? composeStance(base, layers) : base);   // 2. сборка (нет предметов → чистая база)
+    return overItem(layers.length ? composeStance(base, layers) : base);   // 1. база + руки предметов (нет предметов → чистая база)
   };
   const relaxed = one('idle');
   if (!relaxed || combat <= 0.001) return relaxed;
