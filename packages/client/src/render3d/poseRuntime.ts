@@ -1117,7 +1117,7 @@ const stancePelvisKnob = (): number => clamp(stancePelvisOverride ?? GAIT.stance
  * Всё — В КАДРЕ ПЕРСОНАЖА (курс докладывает `applyTorsoTwist`). Высота (`__hipsD.y`) сюда НЕ кладётся: она уже
  * приезжает путём `standY` → `bobY` (см. `GAIT.stancePelvis`).
  */
-const _stancePelvis = { has: false, rx: 0, ry: 0, rz: 0, dx: 0, dz: 0 };
+const _stancePelvis = { has: false, rx: 0, ry: 0, rz: 0, dx: 0, dy: 0, dz: 0 };
 /**
  * ⭐ ПРИЛОЖЕННЫЙ РЫСК ТАЗА ПРОЦЕДУРНОГО КАЧАНИЯ (рад) — scratch с тем же контрактом, что `_stancePelvis`: пишет
  * `gaitToHumanoid`, читает СИНХРОННО `PosePlayer.step` того же кадра. Это ЗАМЕР (`pelvisHeading` до/после), а не
@@ -1130,8 +1130,26 @@ function readStancePelvis(idle: Pose | null, restY: number): void {
   const d = idle ? hipsOffset(idle, restY) : null;
   _stancePelvis.has = !!(e || d);
   _stancePelvis.rx = e?.[0] ?? 0; _stancePelvis.ry = e?.[1] ?? 0; _stancePelvis.rz = e?.[2] ?? 0;
-  _stancePelvis.dx = d?.[0] ?? 0; _stancePelvis.dz = d?.[2] ?? 0;
+  _stancePelvis.dx = d?.[0] ?? 0; _stancePelvis.dy = d?.[1] ?? 0; _stancePelvis.dz = d?.[2] ?? 0;
 }
+/** Дельта ДВИЖЕНИЯ живой стойки (`PosePlayer.applyStancePelvis`): кватернионы опоры, кадра, дельты и её доли — scratch, кадр не аллоцирует. */
+const _slQ0 = new THREE.Quaternion(), _slQ = new THREE.Quaternion(), _slD = new THREE.Quaternion(), _slE = new THREE.Euler();
+const _slP = new THREE.Vector3();
+/**
+ * ⭐⭐ ДВИЖЕНИЕ ЖИВОЙ СТОЙКИ ИГРАЕТ ВСЕГДА — без ручки `GAIT.stancePelvis` (06.10, жалоба владельца в Unity: «при идле ноги опять
+ * плавают, когда он чуть шевелится стоя на месте; мы это уже правили»). Правили 28.09 ДАННЫМИ — ручкой 1 в рабочей копии
+ * редактора; у опубликованного тюна она 0, и Unity (он читает только опубликованное) снова видел «таз стоит, стопы плавают».
+ * Ручка выбрасывала таз стойки ЦЕЛИКОМ, а у живого айдла её таз — это и есть движение: стопы в клипе стоят, потому что таз
+ * качается; сними качание — поедут стопы (замер, рыцарь, айдлы набора, 16 с: уход стопы 5.2–7.2 u при ручке 0 против
+ * 1.7–2.3 u в самом клипе).
+ * Правило: ручка решает судьбу СТАТИКИ стойки (её таз на времени 0 — у опубликованных однокадровых стоек это и был весь таз, их
+ * вид не меняется бит в бит), а ДВИЖЕНИЕ стойки — жёсткая дельта от её нулевого кадра `S₀⁻¹·S(t)` — ложится всегда, тем же
+ * гейтом ног `(1 − legMag)·(1 − доля клипа хода)`: поворот `Q₀⁻¹·Q(t)` и сдвиг `Q₀⁻¹·(d(t) − d₀)` вместе с ВЫСОТОЙ (дыхание по
+ * вертикали, которое `clipStandY` срезал по построению). Стопы живой стойки тогда стоят так же, как в клипе, при любой ручке;
+ * при ручке 1 итог = прежний `S(t)`. Перекрытие запекания (`setStancePelvisOverride(0)`) гасит и движение: таз стойки —
+ * дело рантайма, в клип он не печётся.
+ */
+const stanceLiveOn = (): boolean => stancePelvisOverride === null || stancePelvisOverride > 0;
 const _spE = new THREE.Euler(), _spQ = new THREE.Quaternion();
 /**
  * Поворот таза стойки с весом: `Rx(x·w)·Ry(y·wYaw)·Rz(z·w)` — покомпонентное масштабирование эйлера, как у `addEuler`
@@ -2724,7 +2742,9 @@ export class PosePlayer {
     // ⚠ Планты — С ТАЗОМ СТОЙКИ (его поворотом), тем же весом, что ляжет в кадре стоя: иначе цели планировщика и
     // нарисованные стопы разойдутся ровно на авторский поворот таза (см. `measureStancePlants`).
     this.stanceKnob = stancePelvisKnob();
-    const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null, this.stanceKnob);
+    const pose0 = this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null;
+    this.captureStanceRef(pose0);   // опора дельты движения живой стойки — тот же нулевой кадр, что у высоты стоя
+    const p = measureStancePlants(this.human, pose0, this.stanceKnob);
     this.clipStandY = p.standY;
     // «Только клипы»: планировщику стойку НЕ отдаём (в этом режиме к нему ни одного обращения), но высоту таза
     // держим сами — см. `clipStandY`. −1 = при возврате в планировщик замерить заново.
@@ -2870,15 +2890,50 @@ export class PosePlayer {
   }
   private applyStancePelvis(legFree: number, clipFree: number): number {
     const st = _stancePelvis;
-    const w = stancePelvisKnob() * clamp(legFree, 0, 1) * clamp(clipFree, 0, 1);
+    const g = clamp(legFree, 0, 1) * clamp(clipFree, 0, 1);
+    const w = stancePelvisKnob() * g;
     this.stanceWNow = w; this.stanceYawNow = 0;
-    if (!st.has || w <= 1e-4) return 0;
+    // ⭐⭐ Живая стойка (кадр ≠ её нулевому — см. `stanceLiveOn`): статика — с нулевого кадра весом ручки, движение — дельтой весом гейта.
+    // Однокадровая стойка (кадр бит в бит = нулевому) идёт ПРЕЖНЕЙ веткой: её вид не меняется ни на бит.
+    const r = this.stanceRef;
+    const live = st.has && r.has && g > 1e-4 && stanceLiveOn()
+      && (st.rx !== r.rx || st.ry !== r.ry || st.rz !== r.rz || st.dx !== r.dx || st.dy !== r.dy || st.dz !== r.dz);
+    if (!live) {
+      if (!st.has || w <= 1e-4) return 0;
+      const hb = this.human.bones.get('Hips')!;
+      const before = pelvisHeading(hb.quaternion);
+      hb.quaternion.premultiply(stancePelvisQuat(st.rx, st.ry, st.rz, w, w * clamp(GAIT.stancePelvisYaw, 0, 1)));
+      this.stanceYawNow = wrapPi(pelvisHeading(hb.quaternion) - before);
+      hb.position.x += st.dx * w; hb.position.z += st.dz * w;
+      return this.stanceYawNow;
+    }
     const hb = this.human.bones.get('Hips')!;
     const before = pelvisHeading(hb.quaternion);
-    hb.quaternion.premultiply(stancePelvisQuat(st.rx, st.ry, st.rz, w, w * clamp(GAIT.stancePelvisYaw, 0, 1)));
+    // Дельта `S₀⁻¹·S(t)` в кадре нулевого: поворот Q₀⁻¹·Q, сдвиг Q₀⁻¹·(d − d₀); доля гейта — slerp от единицы и сдвиг × g.
+    _slQ0.setFromEuler(_slE.set(r.rx, r.ry, r.rz, 'XYZ'));
+    _slQ.setFromEuler(_slE.set(st.rx, st.ry, st.rz, 'XYZ'));
+    _slD.copy(_slQ0).invert().multiply(_slQ);
+    _slP.set(st.dx - r.dx, st.dy - r.dy, st.dz - r.dz).applyQuaternion(_slQ0.invert()).multiplyScalar(g);
+    _slD.slerp(_qSeam.identity(), 1 - g);   // = slerp(I, Δ, g)
+    // Статика (вес ручки) СЛЕВА, дельта — в её кадре: S₀^w · Δ^g. При ручке 1 и гейте 1 — ровно S(t).
+    const qs = w > 1e-4 ? stancePelvisQuat(r.rx, r.ry, r.rz, w, w * clamp(GAIT.stancePelvisYaw, 0, 1)) : _qSeam.identity();
+    _slP.applyQuaternion(qs);
+    hb.quaternion.premultiply(_slD).premultiply(qs);
     this.stanceYawNow = wrapPi(pelvisHeading(hb.quaternion) - before);
-    hb.position.x += st.dx * w; hb.position.z += st.dz * w;
+    hb.position.x += r.dx * w + _slP.x; hb.position.y += _slP.y; hb.position.z += r.dz * w + _slP.z;
     return this.stanceYawNow;
+  }
+  /**
+   * Нулевой кадр стойки — опора дельты движения (`applyStancePelvis`): таз (эйлер и `__hipsD`) стойки этого оружия на ЕЁ времени 0
+   * и текущей боевой оси. Снимается `measureStance` (смена оружия, ручки, боя на 0.02) и каждым кадром, пока боевая ось едет
+   * (`step`), — у однокадровой стойки кадр и опора тогда совпадают бит в бит при любом бое.
+   */
+  private stanceRef = { has: false, combat: Number.NaN, rx: 0, ry: 0, rz: 0, dx: 0, dy: 0, dz: 0 };
+  private captureStanceRef(pose: Pose | null): void {
+    const r = this.stanceRef, e = pose ? pose['Hips'] : null, d = pose ? hipsOffset(pose, this.human.hipsRest.y) : null;
+    r.has = !!(e || d); r.combat = this.combat;
+    r.rx = e?.[0] ?? 0; r.ry = e?.[1] ?? 0; r.rz = e?.[2] ?? 0;
+    r.dx = d?.[0] ?? 0; r.dy = d?.[1] ?? 0; r.dz = d?.[2] ?? 0;
   }
   /**
    * Сменить оружие: стойка — его (`measureStance`).
@@ -3182,6 +3237,8 @@ export class PosePlayer {
       // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
       if (knobStale || Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
     } else if (knobStale || Math.abs(this.combat - this.clipStanceCombat) > 0.02) this.measureStance();   // высота таза стоя — та же ось (см. `clipStandY`)
+    // Опора дельты живой стойки — на ТОЙ ЖЕ боевой оси, что кадр (иначе посреди кроссфейда боя «движение» дала бы смена оси).
+    if (this.combat !== this.stanceRef.combat) this.captureStanceRef(this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null);
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     const twist = blendTwist(this.twistStates, spd);   // скрутка корпуса по состоянию (стой/ходьба/бег), плавно по скорости
