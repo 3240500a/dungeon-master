@@ -10,7 +10,7 @@ import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import type { BuildScale } from './humanoid.js';   // ⭐ телосложение: те же чистые функции, что у редактора
 import { makeFidgetState, stepIdleBreak, type FidgetState } from './idleFidget.js';
 import { IDLE_BREAK_DEF, type FidgetCfg, type IdleBreakCfg } from './animConfig.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, clipTempoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, blendLocoPair, locoPairWeights, locoDirWeights, bakedLocoSpeed, clipTempoSpeed, locoRunWeight, LOCO_ALL_DIRS, LOCO_DIR_SECTOR, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes, type LocoPair } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections, clipChannelAt } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
@@ -1984,8 +1984,12 @@ export function stepTorsoLead(
  *
  * Чистая функция (только числа) — проверяется в node без сцены.
  */
-/** Сектор хода: 0 вперёд, 1 +X (`strafe_R`), 2 назад, 3 −X (`strafe_L`). */
-export type WarpSector = 0 | 1 | 2 | 3;
+/**
+ * Сектор хода: 0 вперёд, 1 +X (`strafe_R`), 2 назад, 3 −X (`strafe_L`); с 07.10 ещё диагонали — 4 +45° (`diag_L45`),
+ * 5 +135° (`diag_L135`), 6 −135° (`diag_R135`), 7 −45° (`diag_R45`). Диагональный сектор бывает, только когда у набора
+ * есть такой клип (`cfg.avail`).
+ */
+export type WarpSector = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 /**
  * ⚠ ДОЛИ РАСКРЫТИЯ (`open`, `openFrac`) ЗДЕСЬ БОЛЬШЕ НЕТ — режим «таз открыт» снят 19.09 целиком. Поворот таза
  * стал обычной ручкой походки (`POSE.hipsTurn`), она печётся прямо в клипы страйфа и секторного гашения не
@@ -1997,8 +2001,34 @@ export const DIR_WARP0: DirWarp = { warp: 0, sector: 0, moving: false, rate: 0 }
 const BACK_HYST = 12 * Math.PI / 180;
 /** Гистерезис сектора: держим сектор, пока ход в пределах 45° + этого от его оси (Lyra CardinalDirectionDeadZone 10). */
 export const SECTOR_HYST = 10 * Math.PI / 180;
-/** Ось сектора (рад, от таза): вперёд, +X, назад, −X. */
-export const SECTOR_AXIS: readonly number[] = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+/** Ось сектора (рад, от таза): вперёд, +X, назад, −X, затем диагонали +45°, +135°, −135°, −45°. */
+export const SECTOR_AXIS: readonly number[] = [0, Math.PI / 2, Math.PI, -Math.PI / 2, Math.PI / 4, 3 * Math.PI / 4, -3 * Math.PI / 4, -Math.PI / 4];
+/** Кому отдаётся ничья между осями (меньше — главнее): вперёд, назад, диагонали, бок — зеркально по знаку. */
+const SECTOR_PRIO: readonly number[] = [0, 3, 1, 3, 2, 2, 2, 2];
+/** Набор — ровно четыре основных направления: тогда сектора считаются ПРЕЖНИМ кодом, бит-в-бит. */
+const isCardinalSet = (av: readonly WarpSector[]): boolean =>
+  av.length === 4 && av.includes(0) && av.includes(1) && av.includes(2) && av.includes(3);
+/** Ближайшая ось ИЗ ТЕХ, ЧТО ЕСТЬ (`av`); ничья — по `SECTOR_PRIO`, дальше — порядок списка. */
+export function nearestAvailSector(d: number, av: readonly WarpSector[]): WarpSector {
+  let best = av[0]!, bestE = Infinity, bestP = 99;
+  for (const s of av) {
+    const e = Math.abs(wrapPi(d - SECTOR_AXIS[s]!)), pr = SECTOR_PRIO[s]!;
+    if (e < bestE - SECTOR_TIE || (Math.abs(e - bestE) <= SECTOR_TIE && pr < bestP)) { best = s; bestE = e; bestP = pr; }
+  }
+  return best;
+}
+/** Половина зазора от оси `s` до соседней оси набора В СТОРОНУ хода `d` (одна ось — π): граница удержания сектора. */
+function halfGapToward(s: WarpSector, d: number, av: readonly WarpSector[]): number {
+  const a0 = SECTOR_AXIS[s]!, side = wrapPi(d - a0) >= 0 ? 1 : -1;
+  let g = 2 * Math.PI;
+  for (const t of av) {
+    if (t === s) continue;
+    let r = wrapPi(SECTOR_AXIS[t]! - a0) * side;
+    if (r <= 1e-12) r += 2 * Math.PI;
+    if (r < g) g = r;
+  }
+  return g >= 2 * Math.PI ? Math.PI : g / 2;
+}
 /** Допуск ничьей на границе сектора (рад). Отдаёт ничью оси вперёд/назад — зеркально по знаку. */
 const SECTOR_TIE = 1e-6;
 /** Ближайший сектор без памяти. `d` — угол хода от таза в (−π, π]. */
@@ -2012,13 +2042,19 @@ export function nearestWarpSector(d: number): WarpSector {
 export function stepDirWarp(
   prev: DirWarp, rootYaw: number, aimYaw: number, vx: number, vz: number,
   maxTwist: number, dt: number,
-  cfg: { on: number; maxDeg: number; smooth: number; sectors?: boolean; rateDeg?: number },
+  cfg: { on: number; maxDeg: number; smooth: number; sectors?: boolean; rateDeg?: number; avail?: readonly WarpSector[] },
 ): DirWarp {
   let want = 0, sector = prev.sector, prevRateOut = 0;
   const moving = Math.hypot(vx, vz) > MOVE_EPS_WARP;
   if (cfg.on > 0.5 && moving) {
     const d = wrapPi(Math.atan2(vx, vz) - rootYaw);
-    if (cfg.sectors ?? true) {
+    const av = cfg.avail;
+    if ((cfg.sectors ?? true) && av && av.length && !isCardinalSet(av)) {
+      // ⭐⭐ ОСИ НАБОРА (07.10): доворачиваем к ближайшему направлению, КЛИП КОТОРОГО ЕСТЬ, — хоть два, хоть восемь.
+      // Не дотянулся потолком `warpMax` — остаток доедает бленд пары, а нет пары — стопы едут (решение автора).
+      // Гистерезис тот же, но граница — половина зазора до соседней оси набора (у четырёх осей это ровно 45°).
+      if (!prev.moving || !av.includes(sector) || Math.abs(wrapPi(d - SECTOR_AXIS[sector]!)) > halfGapToward(sector, d, av) + SECTOR_HYST) sector = nearestAvailSector(d, av);
+    } else if (cfg.sectors ?? true) {
       // Гистерезис — только на ходу: после остановки сектор выбирается заново, без памяти.
       if (!prev.moving || Math.abs(wrapPi(d - SECTOR_AXIS[sector]!)) > Math.PI / 4 + SECTOR_HYST) sector = nearestWarpSector(d);
     } else {
@@ -2182,6 +2218,8 @@ const COL_FADE = 0.1;
 /** Скачок весов колонок за кадр, который считается подменой (мгновенный разворот). Перебросу сектора он не грозит:
  *  доворот едет за `warpSmooth`, и `st` меняется не больше ~0.2 за кадр даже на 90° переброса. */
 const COL_JUMP = 0.3;
+/** То же для бленда парой (набор с диагоналями): скачок направления хода за кадр, рад. Поворот хода по кругу его не задевает. */
+const COL_JUMP_ANG = Math.PI / 6;
 
 /**
  * ТОЛЬКО АДДИТИВНАЯ скрутка цепочки [Spine..Head] (веса сумм.=1), БЕЗ таза.
@@ -2644,6 +2682,22 @@ export class PosePlayer {
    * секунды, дальше сектора включаются сами.
    */
   private freshCache = { weapon: '', at: -1e9, val: true, has: false };
+  /**
+   * ⭐ КАКИЕ НАПРАВЛЕНИЯ ХОДА ЕСТЬ В НАБОРЕ (07.10): клип хоть одной скорости. Кэш — как у `freshCache` (16 поисков по
+   * библиотеке на куклу): смена оружия сразу, иначе не чаще `FRESH_TTL`. `diag` — есть хоть одна диагональ: только тогда
+   * бленд идёт парами (`locoPairWeights`), без неё — прежний бленд четырёх колонок бит-в-бит.
+   */
+  private availCache = { weapon: '', at: -1e9, has: false, dirs: [] as LocoDir[], sectors: [] as WarpSector[], diag: false };
+  private locoAvail(): { dirs: LocoDir[]; sectors: WarpSector[]; diag: boolean } {
+    const c = this.availCache, lc = this.content.locoClip;
+    if (c.has && c.weapon === this.weapon && this.stepClock - c.at < FRESH_TTL) return c;
+    const dirs: LocoDir[] = [];
+    if (lc) for (const d of LOCO_ALL_DIRS) if (lc(locoClipNames(d, false), this.weapon) || lc(locoClipNames(d, true), this.weapon)) dirs.push(d);
+    c.dirs = dirs; c.sectors = dirs.map((d) => LOCO_DIR_SECTOR[d] as WarpSector);
+    c.diag = dirs.some((d) => LOCO_DIR_SECTOR[d]! >= 4);
+    c.weapon = this.weapon; c.at = this.stepClock; c.has = true;
+    return c;
+  }
   private strafeClipsFresh(): boolean {
     const lc = this.content.locoClip; if (!lc) return true;
     const c = this.freshCache;
@@ -2691,8 +2745,8 @@ export class PosePlayer {
    * Колонка клипов прошлого кадра и уходящая колонка (кроссфейд `COL_FADE`). Поля ПЕРЕИСПОЛЬЗУЮТСЯ (`has`/`w` вместо
    * null): кадр куклы не должен аллоцировать — этим кодом шагают и монстры, и чужие игроки.
    */
-  private colPrev = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latPlusX: false, has: false };
-  private colFade = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latPlusX: false, w: 0 };
+  private colPrev = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latPlusX: false, has: false, pair: null as LocoPair | null };
+  private colFade = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latPlusX: false, w: 0, pair: null as LocoPair | null };
   /** Мемо разбора клипов `_open` НА ОДИН КАДР: слот = сторона (+X / −X) | бег·2, маска — что уже посчитано (см. `findOpen`). */
   readonly atk: AttackState = { clip: null, t: -1 };
   constructor(
@@ -3272,7 +3326,8 @@ export class PosePlayer {
     this.warpSectorsNow = !clipsInUse || this.strafeClipsFresh();
     if (dirWarpOverride !== null) this.dirWarp = { ...DIR_WARP0, warp: dirWarpOverride };   // съём: доворот ровно заданный
     else this.dirWarp = stepDirWarp(this.dirWarp, tl.rootYaw, this.aimYaw, vx, vz, twist.maxTwist, dt,
-      { on: GAIT.warpOn, maxDeg: GAIT.warpMax, smooth: GAIT.warpSmooth, sectors: this.warpSectorsNow, rateDeg: GAIT.warpRate });
+      { on: GAIT.warpOn, maxDeg: GAIT.warpMax, smooth: GAIT.warpSmooth, sectors: this.warpSectorsNow, rateDeg: GAIT.warpRate,
+        avail: clipsInUse ? this.locoAvail().sectors : undefined });
     const warp = this.dirWarp.warp;
     /**
      * ⭐⭐ КУРС ТАЗА = КОРЕНЬ + ДОВОРОТ, И БОЛЬШЕ НИЧЕГО.
@@ -3371,25 +3426,34 @@ export class PosePlayer {
       // настроек, которые здесь выбираются, исторически названы `strafe_R`/`STRAFE_R` — имена зеркальны анатомии
       // и НЕ переименовываются (опубликованные данные). Полная таблица — «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
       const latPlusX = latC >= 0;
+      // ⭐⭐ НАБОР С ДИАГОНАЛЯМИ — БЛЕНД ПАРОЙ соседних направлений из тех, что есть (`locoPairWeights`); без них — прежние
+      // три колонки бит-в-бит. Мах рук по направлению (`tg.dir`) остаётся геометрией хода — от набора не зависит.
+      const av = this.locoAvail();
+      const pair = av.diag ? locoPairWeights(fwdC, latC, av.dirs) : null;
       // ⭐ КРОССФЕЙД ПРИ ДИСКРЕТНОЙ СМЕНЕ КОЛОНКИ. Сторона страйфа и вперёд↔назад выбираются дискретно; на
       // непрерывном повороте хода вес колонки в точке смены нулевой, и подмены не видно. Но инерции хода нет
       // (`moveInertia` выключена), и мгновенный разворот (R90→L90, 0→180) менял клип за кадр: ЗАМЕР (критика O2)
       // скачок ноги 90° за кадр. Поэтому уходящая колонка доигрывает `COL_FADE` той же фазой (Sync Group) и гаснет.
       {
         const pc = this.colPrev;
-        const sideFlip = pc.has && pc.latPlusX !== latPlusX && pc.axes.st * (1 - pc.axes.bt) > 0.05;
-        const jump = pc.has && Math.abs(axes.st - pc.axes.st) + Math.abs(axes.bt - pc.axes.bt) > COL_JUMP;
+        // Пара: подмена — скачок направления за кадр (`COL_JUMP_ANG`); смена вида бленда (набор поменялся) — тоже.
+        const sideFlip = !pair && pc.has && !pc.pair && pc.latPlusX !== latPlusX && pc.axes.st * (1 - pc.axes.bt) > 0.05;
+        const jump = pc.has && (pair
+          ? !!pc.pair && Math.abs(wrapPi(pair.phi - pc.pair.phi)) > COL_JUMP_ANG
+          : !pc.pair && Math.abs(axes.st - pc.axes.st) + Math.abs(axes.bt - pc.axes.bt) > COL_JUMP);
         if (sideFlip || jump) {
           const f = this.colFade;
           f.axes.sb = pc.axes.sb; f.axes.st = pc.axes.st; f.axes.bt = pc.axes.bt; f.latPlusX = pc.latPlusX; f.w = 1;
+          f.pair = pc.pair ? { ...pc.pair } : null;
         }
         pc.axes.sb = axes.sb; pc.axes.st = axes.st; pc.axes.bt = axes.bt; pc.latPlusX = latPlusX; pc.has = true;
+        pc.pair = pair ? { ...pair } : null;
       }
       const clipOf = (dir: LocoDir, fast: boolean): Clip | null =>
         this.content.locoClip!(locoClipNames(dir, fast), this.weapon);
       const sd: LocoDir = latPlusX ? 'strafe_R' : 'strafe_L';   // ⚠ `strafe_R` = ход в +X = в СВОЮ ЛЕВУЮ (см. выше)
       this.clipYawMeta = false;
-      const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? sd : 'fwd';
+      const domDir: LocoDir = pair ? (pair.b && pair.w > 0.5 ? pair.b : pair.a) : axes.bt > axes.st ? 'back' : axes.st > 0.5 ? sd : 'fwd';
       const lead = clipOf(domDir, axes.sb > 0.5) ?? clipOf(domDir, axes.sb <= 0.5);
       // ЧАСЫ: у планировщика — его фаза; в «только клипы» — фаза по ПРОЙДЕННОМУ ПУТИ. Длина цикла = скорость, на
       // которой клип снят (`bakedLocoSpeed`: из клипа, у старых — по имени), × его период: столько пути проходит тело за
@@ -3399,11 +3463,15 @@ export class PosePlayer {
         // Величина клипа, смешанная ТЕМИ ЖЕ весами, что и поза: ходьба↔бег по `sb`, колонки по `st`/`bt`. Колонки без
         // клипов в смесь не входят (их вес не должен тянуть число к нулю); не нашлось ни одной — `null`.
         // Клипы колонок ищутся ОДИН раз на кадр: поиск идёт по библиотеке, а смесей две (цикл и доля опоры).
-        const cols: readonly (readonly [Clip | null, Clip | null, number])[] = [
-          [clipOf('fwd', false), clipOf('fwd', true), (1 - axes.st) * (1 - axes.bt)],
-          [clipOf(sd, false), clipOf(sd, true), axes.st * (1 - axes.bt)],
-          [clipOf('back', false), clipOf('back', true), axes.bt],
-        ];
+        const cols: readonly (readonly [Clip | null, Clip | null, number])[] = pair
+          ? (pair.b
+            ? [[clipOf(pair.a, false), clipOf(pair.a, true), 1 - pair.w], [clipOf(pair.b, false), clipOf(pair.b, true), pair.w]]
+            : [[clipOf(pair.a, false), clipOf(pair.a, true), 1]])
+          : [
+            [clipOf('fwd', false), clipOf('fwd', true), (1 - axes.st) * (1 - axes.bt)],
+            [clipOf(sd, false), clipOf(sd, true), axes.st * (1 - axes.bt)],
+            [clipOf('back', false), clipOf('back', true), axes.bt],
+          ];
         const mixed = (of: (c: Clip) => number): number | null => {
           let sum = 0, sumW = 0;
           for (const [w, r, k] of cols) {
@@ -3462,11 +3530,11 @@ export class PosePlayer {
         this.clipYawMeta = true;
         return a ? unbakeYawCounter(p, a, c.hipsYawW) : p;
       };
-      locoPose = blendLocoPose(pickPose, axes, latPlusX, blendTwo);
+      locoPose = pair ? blendLocoPair(pickPose, pair, axes.sb, blendTwo) : blendLocoPose(pickPose, axes, latPlusX, blendTwo);
       // ⭐ НЕЙТРАЛЬ МАХА — ТЕМ ЖЕ БЛЕНДОМ И ТЕМИ ЖЕ ВЕСАМИ, что и поза: смешай её иначе — и `Δswing = ref⁻¹·клип`
       // перестанет быть дельтой К СВОЕЙ опоре, то есть на бленде колонок рука поедет. Один вызов на кадр.
-      locoRef = blendLocoPose((dir, fast) => { const c = clipOf(dir, fast); return c && c.keys.length ? swingRefOf(c) : null; },
-        axes, latPlusX, blendTwo);
+      const refPick = (dir: LocoDir, fast: boolean): Pose | null => { const c = clipOf(dir, fast); return c && c.keys.length ? swingRefOf(c) : null; };
+      locoRef = pair ? blendLocoPair(refPick, pair, axes.sb, blendTwo) : blendLocoPose(refPick, axes, latPlusX, blendTwo);
       // ⭐⭐ КАНАЛ ОПОРЫ БЕРЁТСЯ С ВЕДУЩЕГО КЛИПА, А НЕ ИЗ СМЕСИ. `__swing` — БИНАРНЫЙ флаг («нога в воздухе»), и
       // бленд колонок размазывает его в дробь: порог 0.5 тогда срабатывает не там, где у самих клипов. ЗАМЕР на
       // диагонали 60°: скольжение опорной стопы 10.4 % из смеси против 4.8 % у прямого хода. Ровно так же решает
@@ -3481,7 +3549,7 @@ export class PosePlayer {
         // роняет скорость в ноль за кадр, вес бега — тоже, и страйф/назад догорал бы как ХОДЬБА. ЗАМЕР (манекен,
         // «только клипы», 120 u/с вбок → стоп): с `sb` нынешним таз 35.0 → 8.1 → 6.0° (26.9°/кадр) и скачок ноги
         // 32.2° (на ходу 13.8°); со своим — 28.1 → 20.8 → 13.2° (7.6°/кадр) и 11.6°. В «ровно» скачок ноги 27.1 → 15.2°.
-        const old = blendLocoPose(pickPose, f.axes, f.latPlusX, blendTwo);
+        const old = f.pair ? blendLocoPair(pickPose, f.pair, f.axes.sb, blendTwo) : blendLocoPose(pickPose, f.axes, f.latPlusX, blendTwo);
         if (old) locoPose = blendTwo(locoPose, old, f.w * f.w * (3 - 2 * f.w));   // smoothstep: без излома на входе и выходе
         f.w = Math.max(0, f.w - dt / COL_FADE);
       }
@@ -3491,7 +3559,7 @@ export class PosePlayer {
       this.clipHipsYaw = this.clipYawMeta && locoPose ? poseHipsYaw(locoPose) * mix : 0;
       // ⚠ Ветка «клипов в позе нет» (доля ≤ 0.001 — стоим или процедурка): колонки нет, старт в любую сторону
       // вырастает из стойки, и рыск клипа с прошлого кадра тащить некуда.
-    } else { this.colPrev.has = false; this.colFade.w = 0; this.clipHipsYaw = 0; this.clipYawMeta = false; }
+    } else { this.colPrev.has = false; this.colPrev.pair = null; this.colFade.w = 0; this.clipHipsYaw = 0; this.clipYawMeta = false; }
     // ОПОРНЫЕ СТОПЫ В «ТОЛЬКО КЛИПЫ»: из канала `__swing` клипа, а если его нет (клип запечён до канала) — окна
     // опоры по фазе с долей опоры, с которой клипы сняты (`clipDuty` выше): клипы сняты по фазе планировщика, так что
     // для запечённых это та же разметка. Стоим — обе на полу.

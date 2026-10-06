@@ -175,6 +175,34 @@ function tempoOverlay(stand: Store): Overlay {
   });
   return { base: 'stand', keys: {}, patch, add: [] };
 }
+/**
+ * ⭐ ДИАГОНАЛИ (07.10): у воина восемь направлений — бленд парой соседних (`locoPairWeights`), доворот к ближайшей оси
+ * набора. Клипы диагоналей — копии хода вперёд/назад со СВОИМ скручиванием корпуса по стороне: зеркальная ошибка
+ * стороны (L45 ↔ R45) видна сразу.
+ */
+function diagClips(stand: Store): RawClip[] {
+  const out: RawClip[] = [];
+  const mk = (from: string, to: string, spineY: number): void => {
+    const c = clone(stand.pe_clips[clipAt(stand, from)]!);
+    c.name = to;
+    c.keys = c.keys.map((k) => {
+      const s = k.pose['Spine'] ?? [0, 0, 0];
+      return { ...k, pose: { ...k.pose, Spine: [s[0]!, s[1]! + spineY, s[2]!] } };
+    });
+    out.push(c);
+  };
+  for (const sp of ['walk', 'run']) {
+    mk(`${sp}_fwd`, `${sp}_diag_L45`, 0.12); mk(`${sp}_fwd`, `${sp}_diag_R45`, -0.12);
+    mk(`${sp}_back`, `${sp}_diag_L135`, 0.18); mk(`${sp}_back`, `${sp}_diag_R135`, -0.18);
+  }
+  return out;
+}
+/** `two` поверх `warp`: у воина только вперёд и назад (страйфы в архиве) — доворот к ближайшему из двух, остаток — скольжение. */
+function twoOverlay(warp: Store): Overlay {
+  const patch: [number, Record<string, unknown>][] = [];
+  warp.pe_clips.forEach((c, i) => { if (c.character === 'warrior' && /_strafe_[LR]$/.test(c.name)) patch.push([i, { character: 'archive' }]); });
+  return { base: 'warp', keys: {}, patch, add: [] };
+}
 /** `warp` поверх `stand`: доворот таза под ход включён ручкой персонажа, остальное — как у стенда. */
 function warpOverlay(stand: Store): Overlay {
   const gait = clone(stand.pe_gait as Record<string, Record<string, unknown>>);
@@ -347,7 +375,7 @@ interface Seg {
 }
 /** `yaw0` — курс на старте (таз снапнут на прицел); `fb` — донор контента (монстр → воин); `breaks` — редкие вставки включены (игровая кукла). */
 interface Scn {
-  id: string; store: 'stand' | 'rich' | 'stale' | 'warp' | 'atk' | 'calm' | 'idle' | 'atk3' | 'owner' | 'tempo'; char: string; weapon: string;
+  id: string; store: 'stand' | 'rich' | 'stale' | 'warp' | 'atk' | 'calm' | 'idle' | 'atk3' | 'owner' | 'tempo' | 'diag' | 'diagw' | 'two'; char: string; weapon: string;
   rig?: 'knight' | 'slim' | 'scaled'; idlePhase?: number; yaw0?: number;
   fb?: string; breaks?: boolean; segs: Seg[];
   /** Подъём стопы рига (pe_phys.footLift, юниты): высота стоя без `__hipsD` и цель заземления. */
@@ -388,6 +416,18 @@ const SCN: Scn[] = [
   { id: 'ramp120_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [...ramp(100, 120), { n: 20, vx: 0, vz: 120 }] },
   { id: 'flip80_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [{ n: 50, vx: 80, vz: 0 }, { n: 50, vx: -80, vz: 0 }] },
   { id: 'combat80_axe', store: 'stand', char: 'warrior', weapon: 'axe', segs: [{ n: 30, vx: 0, vz: 80 }, { n: 60, vx: 0, vz: 80, combat: true }] },
+  // ⭐ ДИАГОНАЛИ (07.10): бленд парой соседних направлений; на оси диагонали — она одна; мгновенный разворот — кроссфейд пары
+  { id: 'diag_fwd30_axe', store: 'diag', char: 'warrior', weapon: 'axe', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 90, vx: 80 * Math.sin(Math.PI / 6), vz: 80 * Math.cos(Math.PI / 6) }] },
+  { id: 'diag_on45_axe', store: 'diag', char: 'warrior', weapon: 'axe', segs: [{ n: 90, vx: D45, vz: D45 }] },
+  { id: 'diag_side100_axe', store: 'diag', char: 'warrior', weapon: 'axe', segs: [{ n: 90, vx: -80 * Math.sin(100 * DEG), vz: 80 * Math.cos(100 * DEG) }] },
+  { id: 'diag_back150_axe', store: 'diag', char: 'warrior', weapon: 'axe', segs: [{ n: 90, vx: 80 * Math.sin(150 * DEG), vz: 80 * Math.cos(150 * DEG) }] },
+  { id: 'diag_walk60_axe', store: 'diag', char: 'warrior', weapon: 'axe', segs: [{ n: 90, vx: 30 * Math.sin(60 * DEG), vz: 30 * Math.cos(60 * DEG) }] },
+  { id: 'diag_flip_axe', store: 'diag', char: 'warrior', weapon: 'axe', segs: [{ n: 50, vx: D45, vz: D45 }, { n: 50, vx: -D45, vz: -D45 }] },
+  // доворот таза к ближайшей оси набора: восемь осей, затем только две (вперёд/назад) — остаток сверх потолка скользит
+  { id: 'diagw_60_axe', store: 'diagw', char: 'warrior', weapon: 'axe', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 100, vx: 80 * Math.sin(60 * DEG), vz: 80 * Math.cos(60 * DEG) }] },
+  { id: 'diagw_sweep_axe', store: 'diagw', char: 'warrior', weapon: 'axe', segs: [{ n: 50, vx: D45, vz: D45 }, { n: 50, vx: 80, vz: 0 }, { n: 50, vx: D45, vz: -D45 }] },
+  { id: 'two_side80_axe', store: 'two', char: 'warrior', weapon: 'axe', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 100, vx: 80, vz: 0 }] },
+  { id: 'two_back120_axe', store: 'two', char: 'warrior', weapon: 'axe', segs: [{ n: 100, vx: -80 * Math.sin(120 * DEG), vz: 80 * Math.cos(120 * DEG) }] },
   // ⭐ темп по шагу: правленые шаг ходьбы и бега — часы по `tempoSpeed` (смесь колонок на 60, бег целиком на 80)
   { id: 'tempo_fwd60_80_axe', store: 'tempo', char: 'warrior', weapon: 'axe', segs: [{ n: 8, vx: 0, vz: 0 }, { n: 60, vx: 0, vz: 60 }, { n: 60, vx: 0, vz: 80 }] },
   { id: 'fwd80_none', store: 'stand', char: 'warrior', weapon: 'none', idlePhase: 2.5, segs: [{ n: 20, vx: 0, vz: 0 }, { n: 90, vx: 0, vz: 80 }] },
@@ -577,9 +617,16 @@ describe('эталон G2 локомоции, поворотов и действ
     const rich = applyOverlay(stand, ov);
     const ovStale = staleOverlay(rich);
     const ovWarp = warpOverlay(stand);
+    const ovDiag: Overlay = { base: 'stand', keys: {}, patch: [], add: diagClips(stand) };
+    const ovDiagW: Overlay = { base: 'warp', keys: {}, patch: [], add: diagClips(stand) };
     const ovTempo = tempoOverlay(stand);
     expect(ovTempo.patch.length, 'у стенда нет ходьбы/бега вперёд воина — сценарию темпа нечего проверять').toBeGreaterThan(0);
     const stores: Record<string, Store> = { stand, rich, stale: applyOverlay(rich, ovStale), warp: applyOverlay(stand, ovWarp), tempo: applyOverlay(stand, ovTempo) };
+    stores.diag = applyOverlay(stand, ovDiag);
+    stores.diagw = applyOverlay(stores.warp!, ovDiagW);
+    const ovTwo = twoOverlay(stores.warp!);
+    expect(ovTwo.patch.length, 'у стенда нет страйфов воина — сценарию «два клипа» нечего убирать').toBe(4);
+    stores.two = applyOverlay(stores.warp!, ovTwo);
     const ovAtk = atkOverlay(rich);
     stores.atk = applyOverlay(rich, ovAtk);
     const ovCalm = calmOverlay(stores.atk);
@@ -811,7 +858,7 @@ describe('эталон G2 локомоции, поворотов и действ
     const golden = {
       note: 'Эталон G2 паритета Unity ↔ веб: локомоция, повороты и слот действия (удары, состояния, вставки, метки) клипами («только клипы») покадрово, заземление стоп показа (groundFeet), разная частота кадра — настоящий PosePlayer веба через стенд parityHarness на закреплённом контенте. Генерит packages/client/src/render3d/unityAnimFramesGolden.gen.test.ts.',
       dt: DT, bones: BONES,
-      stores: { stand, rich: { keys: ov.keys, patch: ov.patch, add: ov.add }, stale: ovStale, warp: ovWarp, tempo: ovTempo, atk: ovAtk, calm: ovCalm, idle: ovIdle, atk3: ovAtk3, owner: ovOwner },
+      stores: { stand, rich: { keys: ov.keys, patch: ov.patch, add: ov.add }, stale: ovStale, warp: ovWarp, tempo: ovTempo, diag: ovDiag, diagw: ovDiagW, two: ovTwo, atk: ovAtk, calm: ovCalm, idle: ovIdle, atk3: ovAtk3, owner: ovOwner },
       rigs: RIGS, groundBones: GROUND_BONES,
       scenarios,
     };

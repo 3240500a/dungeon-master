@@ -7112,7 +7112,7 @@ function stepGait(dt: number): void {
   }
   if (warpReadout && warpReadout.isConnected) {
     // Сектор доворота: к какому клипу складывается ход. Старая складка — пока страйфы не перезапечены (см. `isLocoClipFresh`).
-    const SEC = ['вперёд', 'бок +X', 'назад', 'бок −X'];
+    const SEC = ['вперёд', 'бок +X', 'назад', 'бок −X', 'диагональ +45°', 'диагональ +135°', 'диагональ −135°', 'диагональ −45°'];
     const turn = (player.hipsTurnRad + player.hipsYawSwingRad + player.clipHipsYawRad) * 180 / Math.PI;
     warpReadout.textContent = `таз ${player.dirWarpDeg.toFixed(0)}°${Math.abs(turn) > 0.5 ? ` + поворот ${turn.toFixed(0)}°` : ''} · ${SEC[player.dirWarpSector]}${player.dirWarpSectors ? '' : ' · старая складка: перезапеки страйфы'}`;
   }

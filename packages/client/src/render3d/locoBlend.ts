@@ -13,8 +13,13 @@
  * ровно на цикл, поэтому `u = (фаза mod 2π) / 2π`.
  */
 
-/** Четыре направления вместо восьми — решение Ф0: диагонали закрывает доворот таза. */
-export type LocoDir = 'fwd' | 'back' | 'strafe_L' | 'strafe_R';
+/**
+ * Направления хода. Четыре основных (решение Ф0: диагонали закрывает доворот таза) и, с 07.10, четыре ДИАГОНАЛИ —
+ * необязательные: есть клип — он смешивается со своими соседями, нет — работает как раньше (`locoPairWeights`).
+ * ⚠ Имена диагоналей — по мокапу и НЕ зеркальны страйфам: `diag_L45` идёт в +X (туда же, куда `strafe_R`). ЗАМЕР
+ * травела мокап-набора: `diag_L45` +46°, `diag_R45` −45°, `diag_L135` +135°, `diag_R135` −134°.
+ */
+export type LocoDir = 'fwd' | 'back' | 'strafe_L' | 'strafe_R' | 'diag_L45' | 'diag_R45' | 'diag_L135' | 'diag_R135';
 
 /**
  * ⭐ СКОРОСТИ ЗАПЕКАНИЯ НАБОРА — одна правда для запекателя (`GAIT_PRESETS`) и для часов режима «только клипы».
@@ -187,6 +192,62 @@ export function blendLocoPose<P>(
   return out ?? col('fwd');
 }
 
+/** Угол в (−π, π] — та же формула, что у `poseRuntime.wrapPi` и `WebMath.WrapPi` Unity (паритет решений на границах). */
+const wrapPiL = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+
+/** Пара соседних направлений и доля второго (`w`) — бленд по набору с диагоналями (`locoPairWeights`). */
+export interface LocoPair { a: LocoDir; b: LocoDir | null; w: number; phi: number }
+/** Шире этого зазора между соседними клипами пара не смешивается: играет ближайший, остаток — скольжение стоп. */
+export const LOCO_PAIR_MAX = 136 * Math.PI / 180;
+
+/**
+ * ⭐⭐ ВЕСА НАПРАВЛЕНИЯ ПО ЛЮБОМУ НАБОРУ (07.10): берутся ДВА СОСЕДНИХ по кругу направления из тех, что есть (`avail`),
+ * и доля второго — та же геометрия, что у `locoDirWeights`, обобщённая на любой зазор: ход раскладывается по двум осям,
+ * `w = sin δ₁ / (sin δ₁ + sin δ₂)` (δ — углы хода до соседей). На зазоре 90° это ровно `|бок| / (|вперёд| + |бок|)`.
+ * Соседи дальше `LOCO_PAIR_MAX` (два клипа «вперёд/назад» на ходу вбок) — играет ближайший, стопы едут: так решил
+ * автор («если не может довернуть — пусть скользят»). Стоим — «вперёд» (или ближайший к нему).
+ */
+export function locoPairWeights(fwd: number, lat: number, avail: readonly LocoDir[]): LocoPair | null {
+  if (!avail.length) return null;
+  const moving = Math.abs(fwd) + Math.abs(lat) >= 1e-6;
+  const phi = moving ? Math.atan2(lat, fwd) : 0;
+  let lo: LocoDir | null = null, hi: LocoDir | null = null, loD = Infinity, hiD = Infinity;
+  for (const d of avail) {
+    const r = wrapPiL(LOCO_DIR_AXIS[d] - phi);   // > 0 — ось дальше к +X, чем ход
+    if (Math.abs(r) < 1e-9) return { a: d, b: null, w: 0, phi };
+    if (r < 0 && -r < loD) { loD = -r; lo = d; }
+    if (r > 0 && r < hiD) { hiD = r; hi = d; }
+  }
+  if (!lo || !hi) return { a: (lo ?? hi)!, b: null, w: 0, phi };
+  if (!moving || loD + hiD > LOCO_PAIR_MAX) return { a: loD <= hiD ? lo : hi, b: null, w: 0, phi };
+  const sl = Math.sin(loD), sh = Math.sin(hiD);
+  return { a: lo, b: hi, w: sl / (sl + sh), phi };
+}
+
+/** Поза пары (`locoPairWeights`): каждая сторона — ходьба↔бег по `sb`, как колонка `blendLocoPose`; нет клипа — играет второй. */
+export function blendLocoPair<P>(
+  pick: (dir: LocoDir, fast: boolean) => P | null,
+  pair: LocoPair, sbIn: number,
+  blend: (a: P, b: P, t: number) => P,
+): P | null {
+  const sb = clamp01(sbIn);
+  const col = (dir: LocoDir): P | null => {
+    const fast = sb >= 0.5;
+    const first = pick(dir, fast);
+    const both = sb > 0.001 && sb < 0.999;
+    const second = both || !first ? pick(dir, !fast) : null;
+    if (!first) return second;
+    if (!second) return first;
+    return blend(fast ? second : first, fast ? first : second, sb);
+  };
+  if (!pair.b || pair.w <= 0.001) return col(pair.a) ?? (pair.b ? col(pair.b) : null);
+  if (pair.w >= 0.999) return col(pair.b) ?? col(pair.a);
+  const A = col(pair.a), B = col(pair.b);
+  if (!A) return B;
+  if (!B) return A;
+  return blend(A, B, pair.w);
+}
+
 /**
  * Имя клипа по конвенции из плана: `walk_fwd` / `run_strafe_L` и так далее.
  *
@@ -205,6 +266,21 @@ export function locoClipName(dir: LocoDir, fast: boolean): string {
  * (`locoSet.test.ts`) и список запекания в редакторе, поэтому «добавил направление» = одна правка.
  */
 export const LOCO_DIRS: readonly LocoDir[] = ['fwd', 'back', 'strafe_L', 'strafe_R'];
+/** Диагонали — необязательные направления набора. */
+export const LOCO_DIAG_DIRS: readonly LocoDir[] = ['diag_L45', 'diag_R45', 'diag_L135', 'diag_R135'];
+/** Все восемь — по кругу от «вперёд» к +X. */
+export const LOCO_ALL_DIRS: readonly LocoDir[] = ['fwd', 'diag_L45', 'strafe_R', 'diag_L135', 'back', 'diag_R135', 'strafe_L', 'diag_R45'];
+/** Ось направления (рад, от таза; плюс — к +X, сторона `strafe_R`). */
+export const LOCO_DIR_AXIS: Readonly<Record<LocoDir, number>> = {
+  fwd: 0, diag_L45: Math.PI / 4, strafe_R: Math.PI / 2, diag_L135: 3 * Math.PI / 4, back: Math.PI,
+  diag_R135: -3 * Math.PI / 4, strafe_L: -Math.PI / 2, diag_R45: -Math.PI / 4,
+};
+/** Сектор доворота таза направления (`poseRuntime.SECTOR_AXIS`): 0–3 — прежние, 4–7 — диагонали. */
+export const LOCO_DIR_SECTOR: Readonly<Record<LocoDir, number>> = {
+  fwd: 0, strafe_R: 1, back: 2, strafe_L: 3, diag_L45: 4, diag_L135: 5, diag_R135: 6, diag_R45: 7,
+};
+/** Имена клипов диагоналей (ходьба и бег) — для темпа по шагу и проверок набора. */
+export const LOCO_DIAG_NAMES: readonly string[] = [false, true].flatMap((fast) => LOCO_DIAG_DIRS.map((d) => locoClipName(d, fast)));
 export const LOCO_NAMES: readonly string[] =
   [false, true].flatMap((fast) => LOCO_DIRS.map((d) => locoClipName(d, fast)));
 

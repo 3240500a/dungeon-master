@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { clipPoseAt, clipDur, clipSections, type Clip, type TempoRef } from './clipModel.js';
-import { bakedLocoSpeed, LOCO_NAMES } from './locoBlend.js';
+import { bakedLocoSpeed, LOCO_NAMES, LOCO_DIAG_NAMES } from './locoBlend.js';
 
 /**
  * ⭐⭐ ТЕМП ЦИКЛА ПО ШАГУ (06.10).
@@ -29,8 +29,8 @@ const MIN_CONTACT = 0.05;            // меньше 5 % цикла на зем�
 const SAME = 0.01;                   // шаг изменился меньше чем на 1 % — считаем нетронутым (шум сериализации)
 const MIN_RATIO = 0.4, MAX_RATIO = 2.5;
 
-/** Клипы, темп которых читают часы: колонки набора (`LOCO_NAMES`) и исторические страйфы без префикса. */
-export const TEMPO_NAMES: ReadonlySet<string> = new Set([...LOCO_NAMES, 'strafe_L', 'strafe_R']);
+/** Клипы, темп которых читают часы: колонки набора (`LOCO_NAMES`), диагонали и исторические страйфы без префикса. */
+export const TEMPO_NAMES: ReadonlySet<string> = new Set([...LOCO_NAMES, ...LOCO_DIAG_NAMES, 'strafe_L', 'strafe_R']);
 
 let doll: Humanoid | null = null;
 let hipsRest: THREE.Vector3 | null = null;
