@@ -3152,6 +3152,31 @@ export const objectsSchema = z.array(z.object({
   light: z.object({ color: z.string().default('#ffa860'), intensity: z.number().default(1500), distance: z.number().default(380), flicker: z.boolean().default(true) }).optional(),
 }));
 
+/**
+ * ⭐ 08.10 (Ф1, план «Unity — дом визуального контента»): МАНИФЕСТ АРТА — что лежит в каталоге Unity по ключам. ОДИН писатель — Unity
+ * (`Assets/DM/Art/Editor/ArtManifestExporter.cs` пишет `data/art.json`), редакторы и сервер только читают: ключи — в выпадашках, коллайдер
+ * декора — серверу (`decorSpecsFor`, после коллайдеров объекта и модели), кости и сабмеши — поз-редактору (Ф7).
+ * Ключ (`id`) = id модели в `models` = address в Addressables. Координаты — Unity, метры, модель в своём корне; коллайдер — в ДОЛЯХ
+ * клетки (1 клетка = 1 м), как `models[].collider`.
+ */
+const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+const quat = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+export const artSchema = z.array(z.object({
+  id: z.string(),
+  kind: z.enum(['character', 'monster', 'weapon', 'prop', 'env']),
+  group: z.string().default(''),                         // группа Addressables
+  source: z.object({ file: z.string(), sha256: z.string(), bytes: z.number().int().nonnegative() }).optional(),   // исходный FBX
+  meshes: z.array(z.object({
+    name: z.string(), skinned: z.boolean().default(false), slots: z.number().int().default(1),
+    verts: z.number().int().default(0), tris: z.number().int().default(0), blend: z.array(z.string()).default([]),
+  })).default([]),
+  bones: z.array(z.object({ name: z.string(), parent: z.number().int(), pos: vec3, rot: quat })).default([]),   // поза узлов, локально
+  sockets: z.array(z.object({ name: z.string(), pos: vec3, rot: quat })).default([]),   // узлы socket_* (в корне модели)
+  lights: z.array(z.object({ name: z.string(), pos: vec3 })).default([]),               // узлы light* (в корне модели)
+  collider: z.object({ shape: z.enum(['circle', 'box']), r: z.number().optional(), w: z.number().optional(), h: z.number().optional() }).optional(),
+  bounds: z.object({ min: vec3, max: vec3 }).optional(),
+}));
+
 /** Реестр всех схем: ключ конфига → схема. */
 export const configSchemas = {
   balance: balanceSchema,
@@ -3205,6 +3230,7 @@ export const configSchemas = {
   models: modelsSchema,
   environment: environmentSchema,
   objects: objectsSchema,
+  art: artSchema,
 } as const;
 
 export type ConfigKey = keyof typeof configSchemas;

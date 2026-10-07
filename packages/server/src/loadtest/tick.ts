@@ -38,7 +38,7 @@ function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInpu
   const runCfg: RunConfig = { templateId: TEMPLATE, biomeId: biome.id, tier: 'normal', seed: 12345, modifiers: [] };
   const plan = generateRunPlan(reg, runCfg);
   const node = plan.nodes[Math.min(NODE_IDX, plan.nodes.length - 1)]!;
-  const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id);
+  const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id, reg.get('art'));
   const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs);
   const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));
   const pool = resolveMonsterPool(biome, node.depth);

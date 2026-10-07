@@ -76,4 +76,18 @@ describe('напольный декор — расстановка на серв
     expect(a.surface).toBe('wall'); expect(a.coversFloor).toBe(false); expect(a.collider).toEqual({ shape: 'circle', r: 0.35 });
     expect(g.surface).toBe('floor'); expect(g.coversFloor).toBe(true);    // floor-россыпь заменяет тайл пола
   });
+
+  it('⭐ 08.10 (Ф1): коллайдер — объекта, иначе модели, иначе меша collider* из каталога Unity (`art`), иначе нет', () => {
+    const o = (id: string, modelId: string, collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number }) =>
+      ({ id, modelId, enabled: true, role: 'prop', biomes: [], blocks: true, blocksSight: false, footprint: { w: 1, h: 1 }, ...(collider ? { collider } : {}) });
+    const objects = [o('own', 'm1', { shape: 'circle', r: 0.1 }), o('model', 'm1'), o('art', 'm2'), o('none', 'm3')];
+    const models = [{ id: 'm1', collider: { shape: 'box' as const, w: 0.5, h: 0.25 } }, { id: 'm2' }, { id: 'm3' }];
+    const art = [{ id: 'm1', collider: { shape: 'circle' as const, r: 0.9 } }, { id: 'm2', collider: { shape: 'box' as const, w: 0.7, h: 0.3 } }];
+    const by = new Map(decorSpecsFor(objects, models, undefined, art).map((s) => [s.id, s.collider]));
+    expect(by.get('own')).toEqual({ shape: 'circle', r: 0.1 });
+    expect(by.get('model')).toEqual({ shape: 'box', w: 0.5, h: 0.25 });   // записанный в модель главнее манифеста
+    expect(by.get('art')).toEqual({ shape: 'box', w: 0.7, h: 0.3 });
+    expect(by.get('none')).toBeUndefined();
+    expect(new Map(decorSpecsFor(objects, models, undefined).map((s) => [s.id, s.collider])).get('art')).toBeUndefined();   // без манифеста — как раньше
+  });
 });

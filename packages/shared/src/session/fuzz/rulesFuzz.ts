@@ -520,7 +520,7 @@ function enterFloorFor(w: FuzzWorld, r: Rng, mode: FuzzWorld['mode']): void {
     const locked = nodes.filter((nd) => nd.floorSpec.locked);
     const node: RunNode = locked.length && r.chance(0.5) ? r.pick(locked) : r.pick(nodes);
     const biome = reg.get('biomes').find((b) => b.id === node.biomeId) ?? reg.get('biomes')[0]!;
-    const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id);
+    const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id, reg.get('art'));
     const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs, undefined,
       { tiers: reg.get('chests'), perFloor: reg.get('balance').loot.chestsPerFloor });
     const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((d) => [d.id, d])));

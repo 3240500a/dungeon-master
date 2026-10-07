@@ -80,6 +80,7 @@ const LABELS: Record<ConfigKey, string> = {
   models: '3D: меши',
   environment: 'Окружение (фейд)',
   objects: 'Объекты',
+  art: '3D: каталог Unity (только чтение)',
 };
 
 /**
@@ -105,7 +106,7 @@ const NAV_GROUPS: NavGroup[] = [
   { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'skill-inserts', 'skill-insert-types', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
-  { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures'] },
+  { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures', 'art'] },
 ];
 /** Все ключи группы (из плоского `keys` или из подсекций `subs`). */
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
@@ -1092,7 +1093,16 @@ function setStatus(msg: string, color: string): void {
   }
 }
 
+/** ⭐ 08.10 (Ф1): таблицы с одним писателем вне редактора — здесь только смотреть. `art` пишет Unity (`ArtManifestExporter`). */
+const FOREIGN_WRITER: Record<string, string> = { art: 'Каталог Unity пишет только Unity: меню DM ▸ Art ▸ Export Manifest (после импорта FBX — само).' };
+function foreignWriter(): boolean {
+  const why = FOREIGN_WRITER[current];
+  if (why) setStatus(why, '#ffb070');
+  return !!why;
+}
+
 function apply(): void {
+  if (foreignWriter()) return;
   lockGate(() => applyKeys([current]));
 }
 
@@ -1145,6 +1155,7 @@ function toolIo(): CraftIo {
  * локального сервера). Сервер заодно держит оверрайд, чтобы живой конфиг не откатился до рестарта.
  */
 function applyToFile(): void {
+  if (foreignWriter()) return;
   const values = validatedKeys([current]);
   if (!values) return;
   const publish = (): void => writeKeysToFile(values);
@@ -1190,6 +1201,11 @@ async function assetExists(url: string): Promise<boolean> {
  * КАСКАДНО — материалы (карта → мёртвая текстура) и объекты (modelId/materialId → мёртвые). Показывает список, по
  * подтверждению удаляет из конфига и сохраняет. Решает «удалил файлы с диска, а в редакторе записи остались».
  */
+/** ⭐ 08.10 (Ф1): ключи каталога Unity (манифест `art`, пишет только Unity): модель с таким id грузится по ключу, не по `url`. */
+function artKeys(): Set<string> {
+  return new Set(((data['art'] as { id?: string }[]) ?? []).map((a) => String(a.id)));
+}
+
 async function pruneDeadAssets(): Promise<void> {
   if (!channel.body({})) return;   // C-09: уборка сохраняет таблицы целиком — только поверх загруженного конфига
   const textures = (data.textures as Record<string, unknown>[]) ?? [];
@@ -1200,7 +1216,9 @@ async function pruneDeadAssets(): Promise<void> {
   const deadTex = new Set<string>();
   for (const t of textures) if (typeof t.url === 'string' && t.url && !(await assetExists(t.url))) deadTex.add(String(t.id));
   const deadModel = new Set<string>();
-  for (const m of models) if (typeof m.url === 'string' && m.url && !(await assetExists(m.url))) deadModel.add(String(m.id));
+  // ⭐ 08.10 (Ф1): модель из каталога Unity (`art` — её ключ) жива и без файла GLB на сервере: Unity грузит её по ключу
+  const inArt = artKeys();
+  for (const m of models) if (!inArt.has(String(m.id)) && typeof m.url === 'string' && m.url && !(await assetExists(m.url))) deadModel.add(String(m.id));
   const MAPS = ['baseMap', 'bumpMap', 'maskMap', 'occlusionMap', 'emissionMap'];
   const deadMat = new Set<string>();
   for (const mm of materials) if (MAPS.some((k) => typeof mm[k] === 'string' && mm[k] && deadTex.has(mm[k] as string))) deadMat.add(String(mm.id));
@@ -1244,7 +1262,8 @@ async function validateConfig(): Promise<ConfigIssue[]> {
 
   // 1) файлы на сервере (textures/models .url) — честный 404 или HTML-заглушка → нет файла [error]
   for (const t of arr('textures')) if (typeof t.url === 'string' && t.url && !(await assetExists(t.url))) issues.push({ section: 'textures', id: String(t.id), msg: `нет файла на сервере: ${t.url}`, severity: 'error' });
-  for (const m of arr('models')) if (typeof m.url === 'string' && m.url && !(await assetExists(m.url))) issues.push({ section: 'models', id: String(m.id), msg: `нет файла на сервере: ${m.url}`, severity: 'error' });
+  const inArt = artKeys();   // ⭐ Ф1: модель из каталога Unity — файл GLB ей не нужен
+  for (const m of arr('models')) if (!inArt.has(String(m.id)) && typeof m.url === 'string' && m.url && !(await assetExists(m.url))) issues.push({ section: 'models', id: String(m.id), msg: `нет файла на сервере: ${m.url}`, severity: 'error' });
 
   // 2) перекрёстные ссылки id→секция (только если поле задано)
   const ref = (section: string, field: string, target: Set<string>, targetName: string, severity: 'error' | 'warn'): void => {

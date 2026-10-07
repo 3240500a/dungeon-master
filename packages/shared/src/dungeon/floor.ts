@@ -97,7 +97,7 @@ export function spawnPacksEl(
   // поток `rng` тот же, и без преграждающего декора (сегодня его нет) заселение не меняется ни на монстра.
   // Раскладка из тестов и инструментов бывает без `decor` (заселение читало только `rooms` + `grid`) — тогда преград нет.
   const decor = (layout.decor as DungeonLayout['decor'] | undefined) ?? [];
-  const decorSpecs = decor.length ? decorSpecsFor(reg.get('objects'), reg.get('models'), undefined) : [];
+  const decorSpecs = decor.length ? decorSpecsFor(reg.get('objects'), reg.get('models'), undefined, reg.get('art')) : [];
   const blockers = decorSpecs.length ? obstaclesFromDecor(decor, new Map(decorSpecs.map((s) => [s.id, s]))) : [];
   const underDecor = (cx: number, cy: number): boolean => {
     if (!blockers.length) return false;

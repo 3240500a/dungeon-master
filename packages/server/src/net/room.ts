@@ -3665,7 +3665,7 @@ export class Room implements Tickable {
     this.session.world.difficultyId = this.difficultyId;
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
-    const decorSpecs = decorSpecsFor(this.cfg.get('objects'), this.cfg.get('models'), biome.id);   // напольный декор биома (role decor/prop)
+    const decorSpecs = decorSpecsFor(this.cfg.get('objects'), this.cfg.get('models'), biome.id, this.cfg.get('art'));   // напольный декор биома (role decor/prop)
     const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'), decorSpecs, undefined,
       { tiers: this.cfg.get('chests'), perFloor: this.cfg.get('balance').loot.chestsPerFloor });
     this.decor = layout.decor;

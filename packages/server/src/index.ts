@@ -437,7 +437,9 @@ if (ROLE !== 'node') {
 // Статистика файлов ассетов (`GET /api/assets/stats`, «Роадмап» редактора) — из кэша, см. `installContentReads` выше.
 
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
-const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+// ⭐ 08.10 (Ф1): FBX — своим типом (`model/fbx`, `application/vnd.autodesk.fbx`): `application/octet-stream` по-прежнему ложится как
+// `.glb` (так шлют старые редакторы), и FBX под ним сохранялся бы с чужим расширением.
+const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'model/fbx': 'fbx', 'application/vnd.autodesk.fbx': 'fbx', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 // R4-11: доступ — ДО ТЕЛА (`devGate`, см. выше у `devGuard`).
 // Обработчик стал асинхронным вместе с `devGuard` (проверка роли ходит в базу) — отсюда `ah`.
 app.post('/api/dev/assets/:id', devGate, express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), ah<{ id: string }>(async (req, res) => {

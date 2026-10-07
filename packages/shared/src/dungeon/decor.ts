@@ -178,13 +178,18 @@ function isPlaceable(o: ObjCfgLite): boolean {
 }
 
 /** Строит спеки расставляемых объектов из config `objects` для биома. Коллайдер: явный на объекте перекрывает; иначе из
- *  меша модели (`models[].collider`, извлечён из `collider*`); иначе дефолт-круг. Пол-россыпь (role floor) `coversFloor`. */
+ *  меша модели (`models[].collider`, извлечён из `collider*` GLB); ⭐ 08.10 (Ф1) иначе из манифеста арта Unity (`art[].collider` —
+ *  меш `collider*` в FBX); иначе дефолт-круг. Пол-россыпь (role floor) `coversFloor`. */
 export function decorSpecsFor(
   objects: ObjCfgLite[],
   models: { id: string; collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number } }[],
   biomeId: string | undefined,
+  art: { id: string; collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number } }[] = [],
 ): DecorSpec[] {
-  const modelCollider = new Map(models.map((m) => [m.id, m.collider]));
+  type Col = { shape: 'circle' | 'box'; r?: number; w?: number; h?: number };
+  const modelCollider = new Map<string, Col>();
+  for (const a of art) if (a.collider) modelCollider.set(a.id, a.collider);     // меш collider* FBX (каталог Unity)
+  for (const m of models) if (m.collider) modelCollider.set(m.id, m.collider);  // записанный в модель — главнее
   return objects
     .filter((o) => o.enabled && isPlaceable(o) && (!biomeId || o.biomes.length === 0 || o.biomes.includes(biomeId)))
     .map((o) => ({

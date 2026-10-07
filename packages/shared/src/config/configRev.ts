@@ -59,6 +59,8 @@ export const VISUAL_ONLY_KEYS: ReadonlySet<string> = new Set(['textures', 'mater
 const GAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
   models: ['id', 'collider'],
   objects: ['id', 'modelId', 'enabled', 'role', 'surface', 'biomes', 'blocks', 'blocksSight', 'footprint', 'spawnChance', 'collider'],
+  // Ф1: из манифеста арта игре нужен только коллайдер декора (кости, сабмеши, свет — картинка)
+  art: ['id', 'collider'],
 };
 
 /** Проекция таблицы с памятью по объекту таблицы (как `tableRevs`): таблицу на месте не правят, правка — новый объект. */
