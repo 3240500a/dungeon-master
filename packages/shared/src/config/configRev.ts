@@ -46,6 +46,53 @@ export function configSetRev(keys: readonly string[], table: (key: string) => un
 }
 
 /**
+ * ⭐ 08.10 (Д1): ТАБЛИЦЫ, КОТОРЫЕ ЧИТАЕТ ТОЛЬКО КАРТИНКА. Серверная игра их не открывает (замер чтений `reg.get`): текстуры, материалы,
+ * окружение биомов (фейд стен, свет). В игровую ревизию (`gameView`) они не входят.
+ */
+export const VISUAL_ONLY_KEYS: ReadonlySet<string> = new Set(['textures', 'materials', 'environment']);
+
+/**
+ * ⭐ 08.10 (Д1): СМЕШАННЫЕ ТАБЛИЦЫ — в игровую ревизию идут только поля, которые читает серверная игра. Декор расставляет и сталкивает
+ * сервер (`decorSpecsFor`: роль, биомы, частота, площадь, блокировка прохода и обзора, коллайдер объекта, а без него — коллайдер его модели),
+ * а вид модели (ссылки, слоты, кости, материалы, свет) — только клиенты.
+ */
+const GAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  models: ['id', 'collider'],
+  objects: ['id', 'modelId', 'enabled', 'role', 'surface', 'biomes', 'blocks', 'blocksSight', 'footprint', 'spawnChance', 'collider'],
+};
+
+/** Проекция таблицы с памятью по объекту таблицы (как `tableRevs`): таблицу на месте не правят, правка — новый объект. */
+const gameViews = new WeakMap<object, unknown>();
+
+/**
+ * ⭐ 08.10 (Д1): ИГРОВОЙ ВИД ТАБЛИЦЫ — то, от чего зависит исход команд и мир сервера. Визуальная таблица — `null`, смешанная — её строки
+ * только с игровыми полями (отсутствующее поле не попадает в строку), прочие — как есть.
+ */
+export function gameView(key: string, table: unknown): unknown {
+  if (VISUAL_ONLY_KEYS.has(key)) return null;
+  const fields = GAME_FIELDS[key];
+  if (!fields || !Array.isArray(table)) return table;
+  let view = gameViews.get(table);
+  if (view === undefined) {
+    view = table.map((row) => {
+      if (row === null || typeof row !== 'object') return row;
+      const r = row as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const f of fields) if (r[f] !== undefined) out[f] = r[f];
+      return out;
+    });
+    gameViews.set(table, view);
+  }
+  return view;
+}
+
+/**
+ * ⭐ 08.10 (Д1): ЗАГОЛОВОК ОТВЕТА `/api/config` — ИГРОВАЯ ревизия сервера (`ConfigRegistry.gameRevision`). Клиент, что кладёт в согласие
+ * её, а не полную (`CONFIG_REV_HEADER`), не получает «Цена изменилась» от правки текстуры, модели или фейда стен.
+ */
+export const CONFIG_GAME_REV_HEADER = 'x-config-game-rev';
+
+/**
  * ⭐ R16 C-07: ЗАГОЛОВОК ОТВЕТА `/api/config` — ревизия конфига СЕРВЕРА (`ConfigRegistry.revision`), с которого собрано тело. Ревизия клиента
  * по разобранному им телу равна ей, только пока схемы у них одни: деплой, сменивший форму любой таблицы (новое поле, другой порядок, поле с
  * умолчанием убрано), а вкладка старая (L2 / R3-25 — переподключается сама, без перезагрузки), — и её разбор «удался», но в другое. Согласие

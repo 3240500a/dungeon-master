@@ -6,7 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
-import { CONFIG_REV_HEADER, ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
+import { CONFIG_GAME_REV_HEADER, CONFIG_REV_HEADER, ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
 import { configWatcher } from './configWatch.js';
 import { startConfigSync } from './configSync.js';
 import { liveConfig } from './configLive.js';
@@ -37,6 +37,11 @@ import { installCraftMeshRoute } from './net/craftMeshRoutes.js';
 import { ah, httpErrors, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
+import { blobStore } from './content/blobStore.js';
+import { releaseCutter, type ReleaseCutter } from './content/releaseCutter.js';
+import { initContentSchema, recordRelease, channelPointer } from './content/releaseDb.js';
+import { CONTENT_ABI } from './content/releaseManifest.js';
+import { installReleaseRoutes } from './net/releaseRoutes.js';
 
 /**
  * Бэкенд игры. Аккаунты по HTTP (`/api/register|login|logout`, `/api/characters` CRUD),
@@ -54,9 +59,14 @@ const config = new ConfigRegistry();
  * «в файл»), и оверрайды редактора поверх (`configLive.ts`). Раньше основой пересборки был импорт старта, и сверка (R16 C-02) откатывала
  * правку файла, как только сдвигалась ревизия оверрайдов.
  */
+/**
+ * ⭐ 08.10 (Д1): нарезчик релизов контента (`content/releaseCutter.ts`) — у гейтвея и одиночного процесса, заводится после схемы (`boot`).
+ * Правка конфига (пересборка живого) и публикация поз-редактора — повод нарезать релиз; до запуска повод некому слушать.
+ */
+let releases: ReleaseCutter | null = null;
 const live = liveConfig({
   config, readOverrides: getConfigOverrides, deleteOverride: deleteConfigOverride,
-  changed: () => rebuildConfigCache(),   // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
+  changed: () => { rebuildConfigCache(); releases?.poke(); },   // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
 });
 /**
  * Полная пересборка живого конфига: файлы данных + персистентные оверрайды (комнаты держат ссылку).
@@ -211,9 +221,11 @@ let configBody = '';
 let configEtag = '';
 /** ⭐ R16 C-07: ревизия сервера для этого тела — вкладка кладёт её в согласие команд кузницы и лавки (`cfgRev`), а не свою по разобранному. */
 let configRevision = '';
+/** ⭐ 08.10 (Д1): игровая ревизия того же снимка — согласие, которое правка картинки не сдвигает (`CONFIG_GAME_REV_HEADER`). */
+let configGameRevision = '';
 function rebuildConfigCache(): void {
   // ETag — по ВСЕМУ телу (см. `configEtag.ts`, там разобрано, чем стоила выборка); тело, ETag и ревизия — с одного снимка реестра.
-  ({ body: configBody, etag: configEtag, rev: configRevision } = configReplyOf(config));
+  ({ body: configBody, etag: configEtag, rev: configRevision, gameRev: configGameRevision } = configReplyOf(config));
 }
 
 
@@ -221,6 +233,7 @@ app.get('/api/config', (req, res) => {
   if (process.env.NODE_ENV !== 'production') res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
   res.setHeader('ETag', configEtag);
   res.setHeader(CONFIG_REV_HEADER, configRevision);
+  res.setHeader(CONFIG_GAME_REV_HEADER, configGameRevision);
   if (req.headers['if-none-match'] === configEtag) return res.status(304).end();
   res.type('application/json').send(configBody);
 });
@@ -396,14 +409,26 @@ app.post('/api/dev/pose', devGate, devJson, ah(async (req, res) => {
   const rev: Record<string, number> = {};
   try {
     for (const k of keys) rev[k] = await setPoseStore(k, body[k]);
-  } finally { content.invalidatePose(); }   // R6-20: и упавшая на середине запись могла лечь частью
+  } finally { content.invalidatePose(); releases?.poke(); }   // R6-20: и упавшая на середине запись могла лечь частью; Д1: релиз
   res.json({ ok: true, saved: keys, rev });
 }));
 app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
   if (!await devGuard(req, res)) return;
-  try { await deletePoseStore(req.params.key); } finally { content.invalidatePose(); }
+  try { await deletePoseStore(req.params.key); } finally { content.invalidatePose(); releases?.poke(); }
   res.json({ ok: true, deleted: req.params.key });
 }));
+
+// ── ⭐ 08.10 (Д1): релизы контента — указатель версии и файлы по хэшу (`net/releaseRoutes.ts`) ──
+// Хранилище — `DM_CONTENT_DIR` (по умолчанию `packages/server/content`, вне git): файлы релизов, имя = sha256. До раздачи статики: её
+// SPA-фолбэк ответил бы страницей игры на любой GET.
+const CONTENT_DIR = process.env.DM_CONTENT_DIR ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'content');
+const contentStore = blobStore(CONTENT_DIR);
+if (ROLE !== 'node') {
+  installReleaseRoutes(app, {
+    store: contentStore, pointer: channelPointer, abi: CONTENT_ABI, cdn: ['/c/'],
+    dev: { guard: devGuard, cutNow: () => releases ? releases.cutNow() : Promise.reject(new Error('нарезчик релизов не запущен')) },
+  });
+}
 
 // ── Dev: ассеты 3D-моделей (GLB) — импорт из поз-редактора (FBX→настройка→экспорт GLB), раздача в игру ──
 // GLB — бинарь, в pose_store НЕ кладём (там мелкие JSON); файлы на диске, мелкий конфиг (карта костей/тип/хват)
@@ -557,6 +582,18 @@ if (ROLE === 'gateway' || ROLE === 'single') {
   await initClusterSchema();
   // R6-20: состояние кластера читается по правилу `/metrics` — с самой машины или ключом чтения метрик.
   installGatewayRoutes(app, { canRead: internalReader({ nodeId: process.env.DM_NODE_ID ?? 'node-0' }) });
+}
+
+// ⭐ 08.10 (Д1): релизы контента режет гейтвей (и одиночный процесс) — тот, кто принимает правки редакторов. Первый релиз — сразу после старта:
+// клиенту есть что взять, даже если правок не было (на проде — ровно то, что выкачено).
+if (ROLE === 'gateway' || ROLE === 'single') {
+  await initContentSchema();
+  releases = releaseCutter({
+    readInput: async () => ({ config: configBody, configRev: configRevision, gameRev: configGameRevision, pose: await getPoseStore() }),
+    store: contentStore, record: (r) => recordRelease(r),
+    log: (m) => console.log(`[dm-server] ${m}`),
+  });
+  releases.poke();
 }
 
 // ⭐ R6-21: ошибки express (кривой JSON, тело больше потолка) — ответом JSON без стека в логе; ставится после всех ручек.

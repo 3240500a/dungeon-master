@@ -18,3 +18,6 @@ tools/deploy/local.claude.json
 mocap_core.json
 mocap_test.json
 packages/client/public/mocap/
+
+# Релизы контента (Д1): файлы по sha256 — пересобираются сервером из конфига и pose_store, в git не нужны.
+packages/server/content/

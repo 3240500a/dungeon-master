@@ -66,9 +66,11 @@ export const CONFIG_CONSENT_CMDS: ReadonlySet<TownCommand['cmd']> = new Set<Town
  * ⭐ V-B3-07: СОГЛАСИЕ НА КОНФИГ. `cfgRev` — ревизия конфига, с которого клиент нарисовал окно (`ConfigRegistry.revision`); у сервера
  * другая — отказ ДО исполнения, и причина начинается с «Цена изменилась»: клиент по ней перечитывает конфиг (`App.syncConfig`), и
  * окно показывает то, что сервер сделает. Нет поля — прежнее поведение (Unity и старые вкладки его не шлют).
+ * ⭐ 08.10 (Д1): годится и ИГРОВАЯ ревизия (`gameRevision`): клиент, приславший её, рисовал окно с того же игрового конфига, а правка
+ * картинки (текстура, материал, вид модели) исход команды не меняет — отказывать ему не за что. Полная ревизия по-прежнему годится.
  */
 export function configChanged(reg: ConfigRegistry, cfgRev: string | undefined): ActionResult | null {
-  if (cfgRev === undefined || cfgRev === reg.revision()) return null;
+  if (cfgRev === undefined || cfgRev === reg.revision() || cfgRev === reg.gameRevision()) return null;
   return { ok: false, reason: `${PRICE_CHANGED}: условия кузницы и лавки обновлены` };
 }
 

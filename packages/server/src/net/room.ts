@@ -1179,7 +1179,7 @@ export class Room implements Tickable {
     this.send(ws, {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
       floor: this.currentFloorInit(), peers: this.peerList(), save: clientSave(save),   // R14-10: без сида забега
-      ...(build ? { build } : {}), cfgRev: this.cfg.revision(), ...(cooldowns ? { cooldowns } : {}),
+      ...(build ? { build } : {}), cfgRev: this.cfg.revision(), gameRev: this.cfg.gameRevision(), ...(cooldowns ? { cooldowns } : {}),
     });
     // Сундук с журналом — сразу: кузница по нему решает, что открыто. ⚠ Переезд старого кошелька сейва в
     // сундук аккаунта делает менеджер ДО входа (R1-06): здесь, уже в живой комнате, его откат после неудачной

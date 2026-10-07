@@ -1,6 +1,6 @@
 import { configSchemas, configCrossIssues, crossIssuesWorse, CONFIG_CROSS_KEYS, type ConfigKey, type ConfigShapes } from './schemas.js';
 import { defaultConfigData } from './defaults.js';
-import { configSetRev } from './configRev.js';
+import { configSetRev, gameView } from './configRev.js';
 import type { EventBus } from '../events/index.js';
 
 /**
@@ -99,6 +99,16 @@ export class ConfigRegistry {
   revision(): string {
     const data = this.data as Record<string, unknown>;
     return configSetRev(CONFIG_KEYS, (k) => data[k]);
+  }
+
+  /**
+   * ⭐ 08.10 (Д1): ИГРОВАЯ ревизия — то же, что `revision`, но по игровому виду таблиц (`gameView`): правка текстуры, материала, фейда стен
+   * или вида модели её не сдвигает, а коллайдер декора и его расстановка — сдвигают. Согласие команд кузницы и лавки принимает и её
+   * (`configChanged`): правка картинки больше не закрывает кузницу и лавку всем игрокам с «Цена изменилась».
+   */
+  gameRevision(): string {
+    const data = this.data as Record<string, unknown>;
+    return configSetRev(CONFIG_KEYS, (k) => gameView(k, data[k]));
   }
 }
 

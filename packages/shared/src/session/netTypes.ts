@@ -285,7 +285,8 @@ export type ServerFrame =
   // ⭐ R21-05: `cooldowns` — откаты умений, с которыми сервер посадил героя (реконнект R4-06, другая комната D4 — из `vitals.cd`, вторая вкладка):
   // ключ — как у события `cooldown`/`swing` (узел скила; `ins:<вставка>` — печать), `leftMs` — остаток, `fullMs` — полный откат (заливка слота).
   // Событие каста о них не придёт — без поля новая страница рисовала слот готовым, а каст сервер молча отбрасывал. Нет откатов — поля нет.
-  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState; build?: string; cfgRev?: string; cooldowns?: HeroCooldowns }
+  // ⭐ 08.10 (Д1): `gameRev` — ИГРОВАЯ ревизия конфига комнаты (`gameRevision`): клиент кладёт её в согласие, и правка картинки ему не отказ.
+  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState; build?: string; cfgRev?: string; gameRev?: string; cooldowns?: HeroCooldowns }
   // Ответ на runStatus: есть ли незавершённый забег (+ код комнаты и этаж для модалки).
   // ⭐ R16 C-09: `dead` — герой в этом забеге погиб и штраф за смерть взят: «Завершить» — без штрафа (V1), «Продолжить» — мёртвым ждать пати
   // (K1). Нет поля — сервер старше его: экран говорит, как раньше.

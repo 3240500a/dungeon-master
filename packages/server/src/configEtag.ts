@@ -23,7 +23,7 @@ export function configEtagOf(body: string): string {
 }
 
 /** Готовый ответ `/api/config`: тело, его ETag и ревизия сервера (`CONFIG_REV_HEADER`). */
-export interface ConfigReply { body: string; etag: string; rev: string }
+export interface ConfigReply { body: string; etag: string; rev: string; /** ⭐ 08.10 (Д1): игровая ревизия (`CONFIG_GAME_REV_HEADER`). */ gameRev: string }
 
 /**
  * ⭐ R16 C-07: ОТВЕТ `/api/config` — С ОДНОГО СНИМКА РЕЕСТРА: тело (JSON снимка), его ETag и РЕВИЗИЯ СЕРВЕРА (`ConfigRegistry.revision`,
@@ -33,5 +33,5 @@ export interface ConfigReply { body: string; etag: string; rev: string }
  */
 export function configReplyOf(reg: ConfigRegistry): ConfigReply {
   const body = JSON.stringify(reg.snapshot());
-  return { body, etag: configEtagOf(body), rev: reg.revision() };
+  return { body, etag: configEtagOf(body), rev: reg.revision(), gameRev: reg.gameRevision() };
 }
