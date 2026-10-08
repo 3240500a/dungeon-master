@@ -7,10 +7,12 @@ import { configSetRev, type ConfigRegistry, type CraftParts } from '@dm/shared';
 import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
 import { serverBuild, stampOfDir } from '../buildStamp.js';
 import { CraftMeshBaker, type BakeJob, type BakeResult } from './baker.js';
-import { GlbCache } from './cache.js';
+import { CRAFT_BIN_FORMAT } from './binFormat.js';
+import { GlbCache, type CacheExt } from './cache.js';
+import type { CraftMeshFormat } from './protocol.js';
 
 /**
- * МОДЕЛЬ ИЗ ДЕТАЛЕЙ ПО ВИДУ: ключ, кэш, печь (`GET /api/craft-mesh.glb`, ручка — `net/craftMeshRoutes.ts`).
+ * МОДЕЛЬ ИЗ ДЕТАЛЕЙ ПО ВИДУ: ключ, кэш, печь (`GET /api/craft-mesh.glb` и `.bin`, ручка — `net/craftMeshRoutes.ts`).
  *
  * КЛЮЧ = штамп кода печи + ревизия таблиц модели + подпись вида.
  * - Ревизия таблиц — `configSetRev` по `CRAFT_MESH_DEPS` (тот же список, по которому веб-клиент пересобирает модель, R1-22): по
@@ -20,6 +22,10 @@ import { GlbCache } from './cache.js';
  * - Штамп кода — исходники построителей (`client/modules/town/craftMesh`), печи (`server/craftMesh`), `shared` (`serverBuild`) и
  *   версия `three` (экспортёр): деплой, сменивший форму модели, не отдаст с диска старую. Штампа нет (урезанная выкладка без
  *   исходников) — дисковый кэш выключается: без штампа он не отличил бы старый код от нового.
+ *
+ * ⭐ 08.10 (Ф4, план «Unity — дом визуального контента»): ФОРМАТ — часть ключа. GLB — прежний вид ключа и ETag `"cm-…"` (штамп кода печи
+ * сменился вместе с энкодером — ETag GLB сменятся один раз; кэш Unity только в памяти); DMCM v1 — ключ с хвостом `|bin1` и ETag `"cmb1-…"`, на диске — `.dmcm` (`FORMATS`). LRU общий, и байты
+ * одного формата на запрос другого не уйдут ни из памяти, ни с диска, ни по `If-None-Match`: у них разные ключи и ETag.
  *
  * Одна печь на ключ: запросы одного вида, пришедшие, пока он печётся, ждут ту же работу. Несобираемые ключи помнятся
  * (`FAILED_KEEP`, как у веба `craftWeapon3d.ts`) — поток одного кривого вида печь не занимает.
@@ -75,8 +81,15 @@ export function craftMeshRev(tables: Record<string, unknown>): string {
   return configSetRev(CRAFT_MESH_DEPS, (k) => tables[k]);
 }
 
+/** Ключ, ETag и диск по формату. Поднял `CRAFT_BIN_FORMAT` — новый хвост ключа и ETag: старые файлы DMCM не спрашиваются. */
+export const FORMATS: Readonly<Record<CraftMeshFormat, { keySuffix: string; etagPrefix: string; ext: CacheExt }>> = {
+  glb: { keySuffix: '', etagPrefix: 'cm', ext: 'glb' },
+  bin: { keySuffix: `|bin${CRAFT_BIN_FORMAT}`, etagPrefix: `cmb${CRAFT_BIN_FORMAT}`, ext: 'dmcm' },
+};
+
 /** Что нужно, чтобы отдать модель вида: ключ и ETag (до всякой работы — для 304), снимок таблиц, вид. */
 export interface MeshRequest {
+  fmt: CraftMeshFormat;
   key: string;
   etag: string;
   rev: string;
@@ -88,7 +101,7 @@ export interface MeshRequest {
 }
 
 export type MeshAnswer =
-  | { ok: true; glb: Uint8Array; source: 'memory' | 'disk' | 'bake' }
+  | { ok: true; bytes: Uint8Array; source: 'memory' | 'disk' | 'bake' }
   | { ok: false; status: 422 | 503; reason: string };
 
 export interface CraftMeshServiceOptions {
@@ -117,19 +130,20 @@ export class CraftMeshService {
     this.baker = o.baker ?? new CraftMeshBaker();
   }
 
-  /** Запрос модели по подписи вида: ключ, ETag и снимок таблиц — без печи. */
-  request(sig: string, weaponClass: string, hands: number, parts: CraftParts): MeshRequest {
+  /** Запрос модели по подписи вида: ключ, ETag и снимок таблиц — без печи. `fmt` — формат файла (по умолчанию GLB). */
+  request(sig: string, weaponClass: string, hands: number, parts: CraftParts, fmt: CraftMeshFormat = 'glb'): MeshRequest {
     const tables = craftMeshTables(this.config);
     const rev = craftMeshRev(tables);
-    const key = `${this.code}|${rev}|${sig}`;
-    const etag = `"cm-${createHash('sha256').update(key).digest('base64url').slice(0, 27)}"`;
-    return { key, etag, rev, tables, sig, weaponClass, hands, parts };
+    const f = FORMATS[fmt];
+    const key = `${this.code}|${rev}|${sig}${f.keySuffix}`;
+    const etag = `"${f.etagPrefix}-${createHash('sha256').update(key).digest('base64url').slice(0, 27)}"`;
+    return { fmt, key, etag, rev, tables, sig, weaponClass, hands, parts };
   }
 
   /** Модель: память → диск → печь (одна на ключ). */
   get(q: MeshRequest): Promise<MeshAnswer> {
     const hit = this.cache.get(q.key);
-    if (hit) return Promise.resolve({ ok: true, glb: hit, source: 'memory' });
+    if (hit) return Promise.resolve({ ok: true, bytes: hit, source: 'memory' });
     const bad = this.failed.get(q.key);
     if (bad !== undefined) return Promise.resolve({ ok: false, status: 422, reason: bad });
     let p = this.inflight.get(q.key);
@@ -153,17 +167,17 @@ export class CraftMeshService {
 
   private async load(q: MeshRequest): Promise<MeshAnswer> {
     if (this.code) {
-      const disk = await this.cache.getDisk(q.key);
-      if (disk) return { ok: true, glb: disk, source: 'disk' };
+      const disk = await this.cache.getDisk(q.key, FORMATS[q.fmt].ext);
+      if (disk) return { ok: true, bytes: disk, source: 'disk' };
     }
     const r = await this.baker.bake({
-      rev: q.rev, tables: () => q.tables, look: q.sig, weaponClass: q.weaponClass, hands: q.hands, parts: q.parts,
+      fmt: q.fmt, rev: q.rev, tables: () => q.tables, look: q.sig, weaponClass: q.weaponClass, hands: q.hands, parts: q.parts,
     });
     if (r.ok) {
       this.errors.delete(q.key);
-      this.cache.set(q.key, r.glb);
-      if (this.code) void this.cache.putDisk(q.key, r.glb);
-      return { ok: true, glb: r.glb, source: 'bake' };
+      this.cache.set(q.key, r.bytes);
+      if (this.code) void this.cache.putDisk(q.key, r.bytes, FORMATS[q.fmt].ext);
+      return { ok: true, bytes: r.bytes, source: 'bake' };
     }
     if (r.kind === 'error') {
       const n = (this.errors.get(q.key) ?? 0) + 1;

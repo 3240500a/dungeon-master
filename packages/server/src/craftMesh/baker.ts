@@ -1,6 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import type { CraftParts } from '@dm/shared';
-import type { FromWorker, ToWorker } from './protocol.js';
+import type { CraftMeshFormat, FromWorker, ToWorker } from './protocol.js';
 
 /**
  * ХОЗЯИН ПОТОКА ПЕЧИ (главный поток). Печь (`worker.ts`: `three` + построители + экспортёр) поднимается ЛЕНИВО — первой
@@ -22,6 +22,8 @@ import type { FromWorker, ToWorker } from './protocol.js';
  */
 
 export interface BakeJob {
+  /** Во что печь (⭐ 08.10 Ф4: `bin` — DMCM v1, `glb` — GLB). */
+  fmt: CraftMeshFormat;
   /** Ревизия таблиц модели (`configSetRev` по `CRAFT_MESH_DEPS`). */
   rev: string;
   /** Таблицы этой ревизии — зовётся, только когда печь их ещё не видела. */
@@ -34,7 +36,7 @@ export interface BakeJob {
 }
 
 export type BakeResult =
-  | { ok: true; glb: Uint8Array }
+  | { ok: true; bytes: Uint8Array }
   /**
    * `unbuildable` — построитель вид не собрал (ответ 422, ключ помнится); `error` — построитель бросил исключение (503: бывает и
    * сбой мгновения — память; повторы одного вида служба считает, `service.ts`); `busy` — очередь полна (503); `failed` — сбой печи (503).
@@ -114,7 +116,7 @@ export class CraftMeshBaker {
           this.stop('работа печи не уложилась в срок');
         }, this.o.jobTimeoutMs);
         this.pending.set(id, { resolve, timer });
-        this.post(w, { t: 'bake', id, rev: job.rev, look: job.look, weaponClass: job.weaponClass, hands: job.hands, parts: job.parts });
+        this.post(w, { t: 'bake', id, fmt: job.fmt, rev: job.rev, look: job.look, weaponClass: job.weaponClass, hands: job.hands, parts: job.parts });
       });
       if (r.ok) this.counters.bakes++;
       else if (r.kind === 'failed') this.counters.failed++;
@@ -171,7 +173,7 @@ export class CraftMeshBaker {
         if (!p) return;   // ответ на работу, отказанную по сроку
         this.pending.delete(m.id);
         clearTimeout(p.timer);
-        p.resolve(m.t === 'done' ? { ok: true, glb: m.glb } : { ok: false, kind: m.kind, reason: m.reason });
+        p.resolve(m.t === 'done' ? { ok: true, bytes: m.bytes } : { ok: false, kind: m.kind, reason: m.reason });
       });
       const gone = (why: string): void => {
         clearTimeout(timer);

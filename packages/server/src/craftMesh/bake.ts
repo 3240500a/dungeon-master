@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { ConfigRegistry, type ConfigKey, type CraftParts } from '@dm/shared';
-import { buildCraftMesh } from '../../../client/src/modules/town/craftMesh/index.js';
+import { buildCraftMesh, type CraftMeshResult } from '../../../client/src/modules/town/craftMesh/index.js';
 import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
 
 /**
@@ -22,6 +22,9 @@ import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/conf
  * - материал — `семья:ступень` (`iron:3`), у светящегося фокуса `focus:2:glow=9ec8ff`, мелочь вне лестниц — `fixed:rrggbb`;
  *   цвет, металличность и шероховатость лежат в PBR материала — показ без своих материалов тоже честный;
  * - `extras` корня: `{ dmCraftMesh: { v, units: 'cm', grip: 'origin', workingEnd: '-Y', look, rev } }`.
+ *
+ * ⭐ 08.10 (Ф4, план «Unity — дом визуального контента»): та же сборка (`buildForBake`) печётся и в двоичный DMCM v1 (`encodeBin.ts`,
+ * `GET /api/craft-mesh.bin`) — Unity уходит от glTFast. GLB остаётся для старых сборок Unity и как оракул паритета (`craftMeshBin.test.ts`).
  */
 
 /**
@@ -72,11 +75,11 @@ export interface BakeMeta {
 }
 
 /**
- * Испечь GLB. `null` — построитель модели не собрал (нет детали или анатомии); исключение построителя уходит наверх — поток
- * печи отвечает сбоем (`error`), а несобираемым вид считает служба, если сбой повторился (`service.ts`). Геометрия и материалы
- * сборки освобождаются в любом исходе.
+ * Сборка вида, готовая к печи в ЛЮБОЙ формат: корень `craftWeapon`, `userData` с контрактом, меши `<гнездо>.<n>`, нормали нормированы
+ * (каждая геометрия — один раз: зеркальные клоны делят её с оригиналом). ⭐ 08.10 (Ф4): одна подготовка на GLB и DMCM (`encodeBin.ts`) —
+ * два формата одной сборки не расходятся ни нормалями, ни обходом. `null` — построитель не собрал; освобождает вызывающий (`dispose`).
  */
-export async function bakeCraftGlb(reg: ConfigRegistry, weaponClass: string, hands: number, parts: CraftParts, meta: BakeMeta): Promise<Uint8Array | null> {
+export function buildForBake(reg: ConfigRegistry, weaponClass: string, hands: number, parts: CraftParts, meta: BakeMeta): CraftMeshResult | null {
   const res = buildCraftMesh(reg, weaponClass, hands, parts);
   if (!res) return null;
   try {
@@ -94,7 +97,23 @@ export async function bakeCraftGlb(reg: ConfigRegistry, weaponClass: string, han
         if (!seen.has(m.geometry)) { seen.add(m.geometry); normalizeNormals(m.geometry); }
       });
     }
-    const out = await new GLTFExporter().parseAsync(root, { binary: true, trs: true, onlyVisible: true });
+    return res;
+  } catch (e) {
+    res.dispose();
+    throw e;
+  }
+}
+
+/**
+ * Испечь GLB. `null` — построитель модели не собрал (нет детали или анатомии); исключение построителя уходит наверх — поток
+ * печи отвечает сбоем (`error`), а несобираемым вид считает служба, если сбой повторился (`service.ts`). Геометрия и материалы
+ * сборки освобождаются в любом исходе.
+ */
+export async function bakeCraftGlb(reg: ConfigRegistry, weaponClass: string, hands: number, parts: CraftParts, meta: BakeMeta): Promise<Uint8Array | null> {
+  const res = buildForBake(reg, weaponClass, hands, parts, meta);
+  if (!res) return null;
+  try {
+    const out = await new GLTFExporter().parseAsync(res.group, { binary: true, trs: true, onlyVisible: true });
     if (!(out instanceof ArrayBuffer)) throw new Error('экспортёр вернул не бинарный GLB');
     return new Uint8Array(out);
   } finally {

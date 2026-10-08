@@ -32,8 +32,8 @@ class FakeWorker extends EventEmitter {
 }
 
 const parts = { strike: { id: 'a', step: 1 }, grip: { id: 'b', step: 1 }, bind: { id: 'c', step: 1 }, head: { id: 'd', step: 1 } } as CraftParts;
-const job = (rev = 'r1'): BakeJob => ({ rev, tables: () => ({ rev }), look: 'x', weaponClass: 'sword', hands: 1, parts });
-const ok = (m: { id: number }): FromWorker => ({ t: 'done', id: m.id, glb: new Uint8Array([1, 2, 3]) });
+const job = (rev = 'r1', fmt: BakeJob['fmt'] = 'glb'): BakeJob => ({ fmt, rev, tables: () => ({ rev }), look: 'x', weaponClass: 'sword', hands: 1, parts });
+const ok = (m: { id: number }): FromWorker => ({ t: 'done', id: m.id, bytes: new Uint8Array([1, 2, 3]) });
 
 function baker(o: BakerOptions & { make?: () => FakeWorker } = {}): { b: CraftMeshBaker; workers: FakeWorker[] } {
   const workers: FakeWorker[] = [];
@@ -48,11 +48,19 @@ describe('хозяин потока печи', () => {
   it('⭐ печь поднимается первой работой, а не заранее; таблицы ревизии — один раз, перед работой', async () => {
     const { b, workers } = baker();
     expect(workers.length, 'до первой работы потока нет').toBe(0);
-    expect(await b.bake(job())).toEqual({ ok: true, glb: new Uint8Array([1, 2, 3]) });
+    expect(await b.bake(job())).toEqual({ ok: true, bytes: new Uint8Array([1, 2, 3]) });
     expect(await b.bake(job())).toMatchObject({ ok: true });
     expect(await b.bake(job('r2'))).toMatchObject({ ok: true });
     expect(workers.length).toBe(1);
     expect(workers[0]!.posted.map((m) => m.t === 'config' ? `config:${m.rev}` : 'bake')).toEqual(['config:r1', 'bake', 'bake', 'config:r2', 'bake']);
+    await b.close();
+  });
+
+  it('⭐ 08.10 (Ф4): формат работы доходит до потока как есть — печь печёт тот файл, что спросили', async () => {
+    const { b, workers } = baker();
+    await b.bake(job('r1', 'bin'));
+    await b.bake(job('r1', 'glb'));
+    expect(workers[0]!.posted.flatMap((m) => (m.t === 'bake' ? [m.fmt] : []))).toEqual(['bin', 'glb']);
     await b.close();
   });
 

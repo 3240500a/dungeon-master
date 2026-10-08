@@ -17,7 +17,7 @@ const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'dm-u6b-')); dirs.push(d); return d; };
 
-function spyBaker(answer: (j: BakeJob) => BakeResult = () => ({ ok: true, glb: new Uint8Array([7, 7, 7]) }), delayMs = 0) {
+function spyBaker(answer: (j: BakeJob) => BakeResult = () => ({ ok: true, bytes: new Uint8Array([7, 7, 7]) }), delayMs = 0) {
   const jobs: BakeJob[] = [];
   return {
     jobs,
@@ -60,6 +60,21 @@ describe('ключ модели', () => {
     expect(k2.key).toBe(k1.key);
     const k3 = new CraftMeshService({ config: r2, baker: spyBaker(), codeStamp: 'c2' }).request(sig, 'sword', 1, parts);
     expect(k3.key, 'другой код печи — другой ключ').not.toBe(k1.key);
+  });
+
+  it('⭐ 08.10 (Ф4): формат — часть ключа: у DMCM свой ключ (`|bin1`) и ETag `"cmb1-…"`, у GLB — прежние', () => {
+    const reg = freshReg();
+    const svc = new CraftMeshService({ config: reg, baker: spyBaker(), codeStamp: 'code1' });
+    const { sig, parts } = look(reg);
+    const g = svc.request(sig, 'sword', 1, parts);
+    const b = svc.request(sig, 'sword', 1, parts, 'bin');
+    expect(g.fmt).toBe('glb');
+    expect(b.fmt).toBe('bin');
+    expect(g.key, 'ключ GLB не сменился — кэши старых сборок живы').toBe(`code1|${g.rev}|${sig}`);
+    expect(b.key).toBe(`${g.key}|bin1`);
+    expect(g.etag).toMatch(/^"cm-[A-Za-z0-9_-]{27}"$/);
+    expect(b.etag).toMatch(/^"cmb1-[A-Za-z0-9_-]{27}"$/);
+    expect(b.etag.slice(6)).not.toBe(g.etag.slice(4));
   });
 
   it('штамп кода считается из исходников (построитель, печь, shared, three)', () => {
@@ -120,7 +135,7 @@ describe('кэш и печь', () => {
     const reg = freshReg();
     const dir = tmp();
     const { sig, parts } = look(reg);
-    const b1 = spyBaker(() => ({ ok: true, glb: new Uint8Array([1, 2, 3, 4]) }));
+    const b1 = spyBaker(() => ({ ok: true, bytes: new Uint8Array([1, 2, 3, 4]) }));
     const s1 = new CraftMeshService({ config: reg, baker: b1, codeStamp: 'code-A', cache: new GlbCache({ dir }) });
     expect(await s1.get(s1.request(sig, 'sword', 1, parts))).toMatchObject({ ok: true, source: 'bake' });
     for (let i = 0; i < 100 && !readdirSync(dir).some((f) => f.endsWith('.glb')); i++) await new Promise((r) => setTimeout(r, 10));
@@ -131,7 +146,7 @@ describe('кэш и печь', () => {
     const s2 = new CraftMeshService({ config: reg, baker: b2, codeStamp: 'code-A', cache: new GlbCache({ dir }) });
     const a2 = await s2.get(s2.request(sig, 'sword', 1, parts));
     expect(a2).toMatchObject({ ok: true, source: 'disk' });
-    expect(a2.ok && [...a2.glb]).toEqual([1, 2, 3, 4]);
+    expect(a2.ok && [...a2.bytes]).toEqual([1, 2, 3, 4]);
     expect(b2.jobs.length, 'с диска — без печи').toBe(0);
 
     const b3 = spyBaker();
@@ -144,6 +159,33 @@ describe('кэш и печь', () => {
     await s4.get(s4.request(sig, 'sword', 1, parts));
     await new Promise((r) => setTimeout(r, 30));
     expect(readdirSync(empty), 'без штампа кода диск не пишется').toEqual([]);
+  });
+
+  it('⭐ 08.10 (Ф4): общий LRU и общий диск не путают форматы — байты GLB на запрос DMCM не уходят ни из памяти, ни с диска', async () => {
+    const reg = freshReg();
+    const dir = tmp();
+    const { sig, parts } = look(reg);
+    const GLB = [103, 108, 84, 70], BIN = [68, 77, 67, 77];
+    const b1 = spyBaker((j) => ({ ok: true, bytes: new Uint8Array(j.fmt === 'bin' ? BIN : GLB) }));
+    const s1 = new CraftMeshService({ config: reg, baker: b1, codeStamp: 'code-A', cache: new GlbCache({ dir }) });
+    const g = await s1.get(s1.request(sig, 'sword', 1, parts));
+    expect(g.ok && [...g.bytes]).toEqual(GLB);
+    const b = await s1.get(s1.request(sig, 'sword', 1, parts, 'bin'));
+    expect(b, 'GLB в памяти — DMCM всё равно печётся').toMatchObject({ ok: true, source: 'bake' });
+    expect(b.ok && [...b.bytes]).toEqual(BIN);
+    expect(b1.jobs.map((j) => j.fmt)).toEqual(['glb', 'bin']);
+    expect(await s1.get(s1.request(sig, 'sword', 1, parts, 'bin'))).toMatchObject({ ok: true, source: 'memory', bytes: new Uint8Array(BIN) });
+    expect(await s1.get(s1.request(sig, 'sword', 1, parts))).toMatchObject({ ok: true, source: 'memory', bytes: new Uint8Array(GLB) });
+    for (let i = 0; i < 100 && readdirSync(dir).filter((f) => /\.(glb|dmcm)$/.test(f)).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(readdirSync(dir).filter((f) => f.endsWith('.glb')).length, 'GLB — .glb').toBe(1);
+    expect(readdirSync(dir).filter((f) => f.endsWith('.dmcm')).length, 'DMCM — своё расширение').toBe(1);
+
+    const b2 = spyBaker();
+    const s2 = new CraftMeshService({ config: reg, baker: b2, codeStamp: 'code-A', cache: new GlbCache({ dir }) });
+    const d2 = await s2.get(s2.request(sig, 'sword', 1, parts, 'bin'));
+    expect(d2).toMatchObject({ ok: true, source: 'disk' });
+    expect(d2.ok && [...d2.bytes], 'с диска — DMCM, а не GLB того же вида').toEqual(BIN);
+    expect(b2.jobs.length).toBe(0);
   });
 
   it('потолок файлов на диске: сверх — сносятся старейшие', async () => {
@@ -199,7 +241,7 @@ describe('кэш и печь', () => {
   it('удачная печь после сбоя обнуляет счёт сбоев вида', async () => {
     const reg = freshReg();
     let n = 0;
-    const baker = spyBaker(() => (++n % 3 === 0 ? { ok: true, glb: new Uint8Array([n]) } : { ok: false, kind: 'error', reason: 'x' }));
+    const baker = spyBaker(() => (++n % 3 === 0 ? { ok: true, bytes: new Uint8Array([n]) } : { ok: false, kind: 'error', reason: 'x' }));
     const svc = new CraftMeshService({ config: reg, baker, codeStamp: '', cache: new GlbCache({ maxEntries: 0 }) });
     const { sig, parts } = look(reg);
     const q = svc.request(sig, 'sword', 1, parts);

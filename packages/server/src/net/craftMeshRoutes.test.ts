@@ -17,7 +17,8 @@ vi.setConfig({ testTimeout: 90_000 });
  *  • годный вид → GLB настоящей печи: грузится, вершины есть, материалы `семья:ступень`; повтор — из памяти; `If-None-Match` — 304;
  *  • правка таблицы модели → новый ETag и новая модель (поток получил новые таблицы: свечение посоха сменило цвет);
  *  • кривой вид → 400; без сессии → 401 (и раньше разбора вида); потолки аккаунта и сети адреса → 429 с `Retry-After`;
- *  • печь занята → 503 с `Retry-After`; вид не строится → 422, и повтор печь не занимает.
+ *  • печь занята → 503 с `Retry-After`; вид не строится → 422, и повтор печь не занимает;
+ *  • ⭐ 08.10 (Ф4): `/api/craft-mesh.bin` — DMCM v1 настоящей печи, свой ETag `"cmb1-…"`, общий кэш форматы не путает; отказы — как у .glb.
  */
 const db = vi.hoisted(() => ({ sessions: new Map<string, string>(), lookups: 0 }));
 vi.mock('../db/db.js', () => ({
@@ -47,7 +48,7 @@ function handOf(r: ConfigRegistry, cls: string, hands: number): WeaponLookHand {
 let realSvc: CraftMeshService;
 let realBase = '';
 let spyBase = '';
-const spy = { jobs: [] as BakeJob[], answer: (_j: BakeJob): BakeResult => ({ ok: true, glb: new Uint8Array([103, 108, 84, 70]) }) };
+const spy = { jobs: [] as BakeJob[], answer: (_j: BakeJob): BakeResult => ({ ok: true, bytes: new Uint8Array([103, 108, 84, 70]) }) };
 const servers: Server[] = [];
 let addr = 0;
 /** Свой адрес на тест (за петлёй — `X-Forwarded-For`): бакеты сети адреса у тестов свои. */
@@ -234,6 +235,65 @@ describe('U6b: отказы до печи', () => {
     expect(limits.craftMeshIp.peek(ip, T), 'живая сессия вернула токен сети').toBe(true);
     expect((await get(url(spyBase, look), { token: tok(778) })).status, 'сессии нет — 401').toBe(401);
     expect(limits.craftMeshIp.peek(ip, T), 'неудача токен не вернула').toBe(false);
+  });
+});
+
+const urlBin = (base: string, look: string | undefined): string =>
+  `${base}/api/craft-mesh.bin${look === undefined ? '' : `?look=${encodeURIComponent(look)}`}`;
+
+describe('⭐ 08.10 (Ф4): /api/craft-mesh.bin — та же модель двоичным мешем DMCM v1', () => {
+  it('годный вид → 200 DMCM настоящей печи; ETag "cmb1-…" ≠ ETag GLB того же вида; общий кэш форматы не путает; свой ETag — 304, чужой — 200', async () => {
+    const { decodeCraftBin } = await import('../craftMesh/binFormat.js');
+    const look = weaponLookSig(handOf(reg, 'dagger', 1));
+    const g = await get(url(realBase, look));
+    expect(g.status).toBe(200);
+    expect(g.headers.get('x-craft-mesh-source')).toBe('bake');
+    const glbTag = g.headers.get('etag')!;
+    expect(new TextDecoder().decode((await g.arrayBuffer()).slice(0, 4))).toBe('glTF');
+
+    // GLB этого вида уже в памяти — запрос .bin всё равно идёт в печь и получает DMCM, а не GLB из общего LRU.
+    const b = await get(urlBin(realBase, look));
+    expect(b.status, await b.clone().text().catch(() => '')).toBe(200);
+    expect(b.headers.get('content-type')).toMatch(/^application\/octet-stream/);
+    expect(b.headers.get('cache-control')).toBe('private, no-cache');
+    expect(b.headers.get('x-craft-mesh-source')).toBe('bake');
+    expect(b.headers.get('x-craft-mesh-rev')).toBe(g.headers.get('x-craft-mesh-rev'));
+    const binTag = b.headers.get('etag')!;
+    expect(binTag).toMatch(/^"cmb1-[A-Za-z0-9_-]{27}"$/);
+    expect(binTag, 'у форматов разные ETag').not.toBe(glbTag);
+    const bytes = new Uint8Array(await b.arrayBuffer());
+    const d = decodeCraftBin(bytes);
+    expect(d.ok && d.file.meta, 'DMCM разбирается, вид — тот, что спросили').toMatchObject({ v: 1, units: 'cm', look });
+    expect(d.ok && d.file.vertexCount).toBeGreaterThan(100);
+
+    const again = await get(urlBin(realBase, look));
+    expect(again.headers.get('x-craft-mesh-source'), 'повтор — из памяти').toBe('memory');
+    expect(new Uint8Array(await again.arrayBuffer())).toEqual(bytes);
+    const g2 = await get(url(realBase, look));
+    expect(new TextDecoder().decode((await g2.arrayBuffer()).slice(0, 4)), 'GLB из памяти — по-прежнему GLB').toBe('glTF');
+
+    expect((await get(urlBin(realBase, look), { inm: binTag })).status, 'свой ETag — 304').toBe(304);
+    expect((await get(urlBin(realBase, look), { inm: glbTag })).status, 'ETag GLB на .bin не совпадает').toBe(200);
+    expect((await get(url(realBase, look), { inm: binTag })).status, 'ETag DMCM на .glb не совпадает').toBe(200);
+  });
+
+  it('отказы .bin — те же, что у .glb: 401 без сессии (до разбора вида), 400 кривой вид, 422 не строится; печь спрошена форматом `bin`', async () => {
+    const h = handOf(spyReg, 'mace', familiesOf(spyReg, 'mace')[0]!);
+    const n = spy.jobs.length;
+    expect((await get(urlBin(spyBase, weaponLookSig(h)), { token: null })).status).toBe(401);
+    expect((await get(urlBin(spyBase, 'мусор'), { token: null })).status).toBe(401);
+    expect((await get(urlBin(spyBase, 'мусор'))).status).toBe(400);
+    expect((await get(urlBin(spyBase, undefined))).status).toBe(400);
+    expect(spy.jobs.length, 'до печи не дошло').toBe(n);
+    spy.answer = () => ({ ok: false, kind: 'unbuildable', reason: 'не строится' });
+    const u = await get(urlBin(spyBase, weaponLookSig(h)));
+    expect(u.status).toBe(422);
+    expect(await u.json()).toEqual({ error: 'не строится' });
+    expect(spy.jobs.slice(n).map((j) => j.fmt)).toEqual(['bin']);
+    spy.answer = () => ({ ok: true, bytes: new Uint8Array([68, 77, 67, 77]) });
+    const ok = await get(urlBin(spyBase, weaponLookSig(handOf(spyReg, 'mace', familiesOf(spyReg, 'mace').at(-1)!))));
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('etag')).toMatch(/^"cmb1-/);
   });
 });
 

@@ -7,6 +7,7 @@ import { clientIp, ipBucket, limits } from './rateLimit.js';
 import { checkLook, parseLook } from '../craftMesh/look.js';
 import { CraftMeshService } from '../craftMesh/service.js';
 import { GlbCache } from '../craftMesh/cache.js';
+import type { CraftMeshFormat } from '../craftMesh/protocol.js';
 
 /**
  * ⭐ U6b · МОДЕЛЬ ОРУЖИЯ ИЗ ДЕТАЛЕЙ — GLB С СЕРВЕРА (решение Р2 плана Unity; docs/CRAFT_WEAPONS.md §21.1).
@@ -27,8 +28,18 @@ import { GlbCache } from '../craftMesh/cache.js';
  *     вид не строится — 422 (ключ помнится, повтор печь не занимает).
  * `Cache-Control: private, no-cache` — клиент держит файл и сверяет его ETag'ом (ответ 304 дешёв); правка таблицы модели в
  * редакторе меняет ETag. Ревизия таблиц — заголовком `X-Craft-Mesh-Rev` (ключ кэша клиента, если он кэширует сам).
+ *
+ * ⭐ 08.10 (Ф4, план «Unity — дом визуального контента»): `GET /api/craft-mesh.bin?look=…` — та же модель двоичным мешем DMCM v1
+ * (`craftMesh/encodeBin.ts`, раскладка — там же и в CRAFT_WEAPONS.md §21.1), `application/octet-stream`. Тот же обработчик, те же
+ * проверки и порядок, ТЕ ЖЕ бакеты (`limits.craftMesh`/`craftMeshIp` — два формата не удваивают потолок); у формата свой ключ кэша и
+ * ETag `"cmb1-…"` (`service.ts`). `.glb` живёт, пока живы старые сборки Unity.
  */
 export const CRAFT_MESH_PATH = '/api/craft-mesh.glb';
+export const CRAFT_MESH_BIN_PATH = '/api/craft-mesh.bin';
+const ROUTES: readonly { path: string; fmt: CraftMeshFormat; type: string }[] = [
+  { path: CRAFT_MESH_PATH, fmt: 'glb', type: 'model/gltf-binary' },
+  { path: CRAFT_MESH_BIN_PATH, fmt: 'bin', type: 'application/octet-stream' },
+];
 export const CRAFT_MESH_REV_HEADER = 'x-craft-mesh-rev';
 /** Откуда ответ: `memory` / `disk` / `bake` — для живой проверки и стенда. */
 export const CRAFT_MESH_SOURCE_HEADER = 'x-craft-mesh-source';
@@ -54,7 +65,7 @@ export function installCraftMeshRoute(app: Express, o: { config: ConfigRegistry;
     config: o.config,
     cache: new GlbCache({ dir: process.env.DM_CRAFT_MESH_CACHE_DIR || undefined }),
   });
-  app.get(CRAFT_MESH_PATH, ah(async (req, res) => {
+  for (const route of ROUTES) app.get(route.path, ah(async (req, res) => {
     const token = bearer(req);
     const net = ipBucket(clientIp(req.headers, req.socket.remoteAddress));
     const paid = !knownSession(token);
@@ -65,7 +76,7 @@ export function installCraftMeshRoute(app: Express, o: { config: ConfigRegistry;
     if (!parsed.ok) return res.status(400).json({ error: parsed.reason });
     const check = checkLook(svc.config, parsed.hand);
     if (!check.ok) return res.status(400).json({ error: check.reason });
-    const q = svc.request(parsed.sig, check.weaponClass, check.hands, parsed.hand.parts);
+    const q = svc.request(parsed.sig, check.weaponClass, check.hands, parsed.hand.parts, route.fmt);
     if (etagMatches(req.headers['if-none-match'], q.etag)) {
       res.setHeader('ETag', q.etag);
       res.setHeader('Cache-Control', 'private, no-cache');
@@ -81,8 +92,8 @@ export function installCraftMeshRoute(app: Express, o: { config: ConfigRegistry;
     res.setHeader('Cache-Control', 'private, no-cache');
     res.setHeader(CRAFT_MESH_REV_HEADER, q.rev);
     res.setHeader(CRAFT_MESH_SOURCE_HEADER, a.source);
-    res.type('model/gltf-binary');
-    res.send(Buffer.from(a.glb.buffer, a.glb.byteOffset, a.glb.byteLength));
+    res.type(route.type);
+    res.send(Buffer.from(a.bytes.buffer, a.bytes.byteOffset, a.bytes.byteLength));
   }));
   return svc;
 }

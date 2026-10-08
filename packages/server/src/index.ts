@@ -513,6 +513,7 @@ app.get('/api/me', ah(async (req, res) => {
 
 // ⭐ U6b: модель оружия из деталей — GLB по подписи вида (`GET /api/craft-mesh.glb`, `net/craftMeshRoutes.ts`): печёт поток печи
 // (`craftMesh/worker.ts`) тем же построителем, что у веба; главный поток `three` не грузит. Нода кластера HTTP API не отдаёт (R10-09).
+// ⭐ 08.10 (Ф4): рядом — `GET /api/craft-mesh.bin` (та же модель двоичным мешем DMCM v1 для Unity без glTFast) — ставит та же функция.
 if (ROLE !== 'node') installCraftMeshRoute(app, { config });
 
 // ── Статика клиента (прод: ОДИН сервер отдаёт игру + /api + /ws на одном домене) ──────────
