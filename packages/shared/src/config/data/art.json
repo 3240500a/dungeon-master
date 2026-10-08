@@ -1,5 +1,1175 @@
 [
   {
+    "id": "crypt_arch_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_arch_01/crypt_arch_01.fbx",
+      "sha256": "5606950a39ddf9e734c1c0fa9d97b20c1911a3f1fa29e2eebe805c4f9d521ec5",
+      "bytes": 63888
+    },
+    "meshes": [
+      {
+        "name": "dungeon_arch_01",
+        "skinned": false,
+        "slots": 2,
+        "verts": 1632,
+        "tris": 1292,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -1.5,
+        0.0,
+        -0.61832
+      ],
+      "max": [
+        1.5,
+        2.99301,
+        0.24187
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 3.0,
+      "h": 0.86019
+    }
+  },
+  {
+    "id": "crypt_arch_02",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_arch_02/crypt_arch_02.fbx",
+      "sha256": "b5a896a2b4e2e4339dc26be47cc5a1f11ee250e3a6e53b516197010dc9171e9f",
+      "bytes": 61456
+    },
+    "meshes": [
+      {
+        "name": "tripo_node_bd28764a",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1244,
+        "tris": 848,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        6.12988,
+        0.0,
+        -7.74244
+      ],
+      "max": [
+        6.37012,
+        0.99805,
+        -6.91236
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 0.24023,
+      "h": 0.83008
+    }
+  },
+  {
+    "id": "crypt_arch_04",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_arch_04/crypt_arch_04.fbx",
+      "sha256": "56b3f11ca218026bfb94d196d38ce9f21522c3b78fafee2c37cedf4e325c978d",
+      "bytes": 138240
+    },
+    "meshes": [
+      {
+        "name": "Object006",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4781,
+        "tris": 3920,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -2.04385,
+        0.0,
+        -0.65885
+      ],
+      "max": [
+        2.01399,
+        5.69146,
+        0.33848
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 4.05784,
+      "h": 0.99733
+    }
+  },
+  {
+    "id": "crypt_books_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_books_01/crypt_books_01.fbx",
+      "sha256": "f173af88ee1fb260129dc11646ad9519478f597cebdb0036a88b3c2cd6774554",
+      "bytes": 66688
+    },
+    "meshes": [
+      {
+        "name": "Box008",
+        "skinned": false,
+        "slots": 1,
+        "verts": 3849,
+        "tris": 2040,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.90323,
+        0.23836,
+        -0.1198
+      ],
+      "max": [
+        0.90204,
+        1.83581,
+        0.16108
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 1.80526,
+      "h": 0.28088
+    }
+  },
+  {
+    "id": "crypt_column_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_column_01/crypt_column_01.fbx",
+      "sha256": "e258512a4fd74591d6769fe507e4016fe8bc415353cd98cf6d372e6ed751f87f",
+      "bytes": 47664
+    },
+    "meshes": [
+      {
+        "name": "crypt_column_01_hi",
+        "skinned": false,
+        "slots": 1,
+        "verts": 648,
+        "tris": 358,
+        "blend": []
+      },
+      {
+        "name": "crypt_column_01_lo",
+        "skinned": false,
+        "slots": 1,
+        "verts": 120,
+        "tris": 70,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.46528,
+        0.0,
+        -0.46528
+      ],
+      "max": [
+        0.09028,
+        3.015,
+        0.09028
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 0.27778
+    }
+  },
+  {
+    "id": "crypt_fire_pit_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_fire_pit_01/crypt_fire_pit_01.fbx",
+      "sha256": "efb19fc9849612ea2735269171598656a67c68c413997a6672d54feb7019d51c",
+      "bytes": 61552
+    },
+    "meshes": [
+      {
+        "name": "dungeon_fire_pit_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 689,
+        "tris": 1026,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [
+      {
+        "name": "light_01",
+        "pos": [
+          0.0,
+          0.55953,
+          0.0
+        ]
+      }
+    ],
+    "bounds": {
+      "min": [
+        -1.0,
+        -1E-05,
+        -1.0
+      ],
+      "max": [
+        1.0,
+        0.30953,
+        1.0
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 1.0
+    }
+  },
+  {
+    "id": "crypt_fire_pit_02",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_fire_pit_02/crypt_fire_pit_02.fbx",
+      "sha256": "75c1086a92a4cf301e93aed807b1c53d4fe6b48c0b8c6ab6ab46c1cadf573ce8",
+      "bytes": 67552
+    },
+    "meshes": [
+      {
+        "name": "dungeon_fire_pit_02",
+        "skinned": false,
+        "slots": 1,
+        "verts": 755,
+        "tris": 1202,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [
+      {
+        "name": "light_01",
+        "pos": [
+          0.0,
+          0.74892,
+          0.0
+        ]
+      }
+    ],
+    "bounds": {
+      "min": [
+        -1.0,
+        -0.00043,
+        -1.0
+      ],
+      "max": [
+        1.0,
+        0.49892,
+        1.0
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 1.0
+    }
+  },
+  {
+    "id": "crypt_floor_base_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_floor_base_01/crypt_floor_01.fbx",
+      "sha256": "bfed7ced8998b1b6c5c8ea6dd500f430cc4e65cd8e068507fdf9469b8fff83ad",
+      "bytes": 42576
+    },
+    "meshes": [
+      {
+        "name": "dungeon_floor_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 77,
+        "tris": 64,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_02",
+        "skinned": false,
+        "slots": 1,
+        "verts": 87,
+        "tris": 64,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_03",
+        "skinned": false,
+        "slots": 1,
+        "verts": 83,
+        "tris": 64,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_04",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4,
+        "tris": 2,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_05",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4,
+        "tris": 2,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_06",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4,
+        "tris": 2,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_07",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4,
+        "tris": 2,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_08",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4,
+        "tris": 2,
+        "blend": []
+      },
+      {
+        "name": "dungeon_floor_09",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4,
+        "tris": 2,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.5,
+        0.0,
+        -0.5
+      ],
+      "max": [
+        0.5,
+        0.03605,
+        0.5
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 0.5
+    }
+  },
+  {
+    "id": "crypt_floor_grille_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_floor_grille_01/crypt_floor_grille_01.fbx",
+      "sha256": "eb83efe434763012814d71916b2f0168898224990e5123c0ef64092f188f927b",
+      "bytes": 54080
+    },
+    "meshes": [
+      {
+        "name": "dungeon_floor_grille_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 757,
+        "tris": 596,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [
+      {
+        "name": "light_01",
+        "pos": [
+          0.005,
+          -1.64557,
+          0.039
+        ]
+      }
+    ],
+    "bounds": {
+      "min": [
+        -1.0,
+        -1.31557,
+        -1.0
+      ],
+      "max": [
+        1.0,
+        0.05698,
+        1.0
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 1.0
+    }
+  },
+  {
+    "id": "crypt_stone_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_stone_01/crypt_stone_01.fbx",
+      "sha256": "fecf5a2bc3d90a37fea9ffe52a022935cd8a04bc6fc9e187a5a0795c7550973b",
+      "bytes": 67520
+    },
+    "meshes": [
+      {
+        "name": "tripo_node_1710c468",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1496,
+        "tris": 907,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.74854,
+        0.0,
+        -0.479
+      ],
+      "max": [
+        0.74854,
+        0.56543,
+        0.46452
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 1.49707,
+      "h": 0.94352
+    }
+  },
+  {
+    "id": "crypt_stone_02",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_stone_02/crypt_stone_02.fbx",
+      "sha256": "6aa25ce1bc1e26f35c023950ccd71917e134ac15c4c9de9c560f6937a3468e40",
+      "bytes": 81840
+    },
+    "meshes": [
+      {
+        "name": "tripo_node_e13ef5ae",
+        "skinned": false,
+        "slots": 1,
+        "verts": 886,
+        "tris": 900,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.82617,
+        0.00367,
+        -0.99805
+      ],
+      "max": [
+        0.82617,
+        0.67578,
+        1.00266
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 1.00035
+    }
+  },
+  {
+    "id": "crypt_wall_base_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wall_base_01/crypt_wall_01.fbx",
+      "sha256": "a198b4cf428bd0a92a6df34996aedf07d1d1db950a8e11942a2eaf8868aa953a",
+      "bytes": 35168
+    },
+    "meshes": [
+      {
+        "name": "crypt_wall_01_hi",
+        "skinned": false,
+        "slots": 1,
+        "verts": 28,
+        "tris": 14,
+        "blend": []
+      },
+      {
+        "name": "crypt_wall_01_lo",
+        "skinned": false,
+        "slots": 1,
+        "verts": 24,
+        "tris": 12,
+        "blend": []
+      },
+      {
+        "name": "crypt_wall_02_hi",
+        "skinned": false,
+        "slots": 1,
+        "verts": 28,
+        "tris": 14,
+        "blend": []
+      },
+      {
+        "name": "crypt_wall_02_lo",
+        "skinned": false,
+        "slots": 1,
+        "verts": 24,
+        "tris": 12,
+        "blend": []
+      },
+      {
+        "name": "crypt_wall_03_hi",
+        "skinned": false,
+        "slots": 1,
+        "verts": 28,
+        "tris": 14,
+        "blend": []
+      },
+      {
+        "name": "crypt_wall_03_lo",
+        "skinned": false,
+        "slots": 1,
+        "verts": 24,
+        "tris": 12,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.5,
+        0.0,
+        -0.375
+      ],
+      "max": [
+        0.5,
+        2.99301,
+        0.0
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 1.0,
+      "h": 0.375
+    }
+  },
+  {
+    "id": "crypt_wall_statue_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wall_statue_01/crypt_wall_statue_01.fbx",
+      "sha256": "b53149f7e6ef7e750af8cae04e2caea44f4ede44cb99a531576bfd952cdd162a",
+      "bytes": 104896
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wall_statue_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 2387,
+        "tris": 1806,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -1.0,
+        0.0,
+        -0.375
+      ],
+      "max": [
+        1.0,
+        2.99301,
+        0.21878
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 2.0,
+      "h": 0.59378
+    }
+  },
+  {
+    "id": "crypt_wall_statue_02",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wall_statue_02/crypt_wall_statue_02.fbx",
+      "sha256": "3080399312168117d6a27eac5fce2b9dddaf0634c88b2cf2147071c77ca3669e",
+      "bytes": 125552
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wall_statue_02",
+        "skinned": false,
+        "slots": 1,
+        "verts": 2835,
+        "tris": 2279,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -1.0,
+        0.0,
+        -0.375
+      ],
+      "max": [
+        1.0,
+        2.99301,
+        0.26095
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 2.0,
+      "h": 0.63595
+    }
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wall_statue_03/crypt_wall_statue_03.fbx",
+      "sha256": "9762919c269d937727618a779b6e654daea32b1e64b7910d4df57e13e9543a86",
+      "bytes": 126192
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wall_statue_03",
+        "skinned": false,
+        "slots": 1,
+        "verts": 2934,
+        "tris": 2271,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -1.0,
+        0.0,
+        -0.375
+      ],
+      "max": [
+        1.0,
+        2.99301,
+        0.21878
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 2.0,
+      "h": 0.59378
+    }
+  },
+  {
+    "id": "crypt_wall_statue_04",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wall_statue_04/crypt_wall_statue_04.fbx",
+      "sha256": "f839700b0c1e5d8ac85969ba444cb3902e1c095689e99da1e53caad0c8d368e6",
+      "bytes": 127648
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wall_statue_04",
+        "skinned": false,
+        "slots": 1,
+        "verts": 2941,
+        "tris": 2283,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -1.0,
+        0.0,
+        -0.375
+      ],
+      "max": [
+        1.0,
+        2.99301,
+        0.24697
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 2.0,
+      "h": 0.62197
+    }
+  },
+  {
+    "id": "crypt_wall_torch_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wall_torch_01/crypt_wall_torch_01.fbx",
+      "sha256": "1478f25cd11f3781e0ddc8e7e51bc4d6c5e1dc5e1221a15e1573da4ae772b785",
+      "bytes": 53872
+    },
+    "meshes": [
+      {
+        "name": "wall_torch_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 382,
+        "tris": 278,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [
+      {
+        "name": "light_01",
+        "pos": [
+          5E-05,
+          1.91486,
+          0.2149
+        ]
+      }
+    ],
+    "bounds": {
+      "min": [
+        -0.10583,
+        0.997,
+        0.04833
+      ],
+      "max": [
+        0.10592,
+        1.86486,
+        0.38148
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 0.21175,
+      "h": 0.33315
+    }
+  },
+  {
+    "id": "crypt_wooden_chair_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_chair_01/crypt_wooden_chair_01.fbx",
+      "sha256": "9b60692c0cf9945e3b6e0ba2941bd1dc510c157bcdbc1a229cf233e715fee6ab",
+      "bytes": 33888
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_chair_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1344,
+        "tris": 616,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.19871,
+        0.0,
+        -0.20175
+      ],
+      "max": [
+        0.19871,
+        1.04323,
+        0.20175
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 0.20175
+    }
+  },
+  {
+    "id": "crypt_wooden_chest_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_chest_01/crypt_wooden_chest_01.fbx",
+      "sha256": "c89fb38e5e7becdf83922af141d1b95d1517b1836c0cc2426d3fee2cc30cea75",
+      "bytes": 85072
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_chest_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 2496,
+        "tris": 1144,
+        "blend": []
+      },
+      {
+        "name": "dungeon_wooden_chest_metal_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 500,
+        "tris": 298,
+        "blend": []
+      },
+      {
+        "name": "dungeon_wooden_chest_cup_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1032,
+        "tris": 480,
+        "blend": []
+      },
+      {
+        "name": "dungeon_wooden_chest_cup_metal_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 220,
+        "tris": 126,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.503,
+        0.0,
+        -0.27471
+      ],
+      "max": [
+        0.503,
+        0.69345,
+        0.27558
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 1.006,
+      "h": 0.55029
+    }
+  },
+  {
+    "id": "crypt_wooden_crate_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_crate_01/crypt_wooden_crate_01.fbx",
+      "sha256": "266d3a98d6acf4a599aaaf5edcee07a28b53c55edf5389522d9d8ad2966dde55",
+      "bytes": 76720
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_crate_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4608,
+        "tris": 2112,
+        "blend": []
+      },
+      {
+        "name": "dungeon_wooden_crate_metal_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 564,
+        "tris": 332,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.36432,
+        -0.025,
+        -0.36168
+      ],
+      "max": [
+        0.35938,
+        0.728,
+        0.3619
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 0.36185
+    }
+  },
+  {
+    "id": "crypt_wooden_crate_02",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_crate_02/crypt_wooden_crate_02.fbx",
+      "sha256": "6f8dfa0e23d8ee1b6089cc2e4bdfed7e003d3795af43dc4b7bdef4073b78a159",
+      "bytes": 63424
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_crate_02",
+        "skinned": false,
+        "slots": 1,
+        "verts": 4608,
+        "tris": 2112,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.36,
+        -0.025,
+        -0.36
+      ],
+      "max": [
+        0.36,
+        0.725,
+        0.36
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 0.36
+    }
+  },
+  {
+    "id": "crypt_wooden_shelf_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_shelf_01/crypt_wooden_shelf_01.fbx",
+      "sha256": "1e152c36274017e6b94b179ec522bc5a3513fccafb38e213537405e97d295d0f",
+      "bytes": 47008
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_shelf_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 2880,
+        "tris": 1320,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -1.0,
+        0.0,
+        -0.20032
+      ],
+      "max": [
+        1.0,
+        2.025,
+        0.20032
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 2.0,
+      "h": 0.40064
+    }
+  },
+  {
+    "id": "crypt_wooden_stool_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_stool_01/crypt_wooden_stool_01.fbx",
+      "sha256": "7f7bca55e6285a963541b3d000256f81505931c9936bca75a2ce5b6f355649b9",
+      "bytes": 44064
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_stool_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1344,
+        "tris": 616,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.19891,
+        0.0,
+        -0.2
+      ],
+      "max": [
+        0.19891,
+        0.475,
+        0.2
+      ]
+    },
+    "collider": {
+      "shape": "circle",
+      "r": 0.2
+    }
+  },
+  {
+    "id": "crypt_wooden_table_2x_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_table_2x_01/crypt_wooden_table_2x_01.fbx",
+      "sha256": "5331701ad3fb65771a9f4d1849d00260bdacd00106b97682f80d188815b6ed21",
+      "bytes": 36224
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_table_2x_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1632,
+        "tris": 748,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.5,
+        0.0,
+        -1.0
+      ],
+      "max": [
+        0.5,
+        0.825,
+        1.0
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 1.0,
+      "h": 2.0
+    }
+  },
+  {
+    "id": "crypt_wooden_table_3x_01",
+    "kind": "env",
+    "group": "biome_crypt",
+    "source": {
+      "file": "Env/crypt/crypt_wooden_table_3x_01/crypt_wooden_table_3x_01.fbx",
+      "sha256": "7e860ae5e470952739c5e1ad2edf47b8ece4dfc7f8b49396d157a8793d2065d1",
+      "bytes": 36656
+    },
+    "meshes": [
+      {
+        "name": "dungeon_wooden_table_3x_01",
+        "skinned": false,
+        "slots": 1,
+        "verts": 1824,
+        "tris": 836,
+        "blend": []
+      }
+    ],
+    "bones": [],
+    "sockets": [],
+    "lights": [],
+    "bounds": {
+      "min": [
+        -0.7,
+        0.0,
+        -1.5
+      ],
+      "max": [
+        0.7,
+        0.825,
+        1.5
+      ]
+    },
+    "collider": {
+      "shape": "box",
+      "w": 1.4,
+      "h": 3.0
+    }
+  },
+  {
     "id": "knight_06_modular_rig",
     "kind": "character",
     "group": "char",
