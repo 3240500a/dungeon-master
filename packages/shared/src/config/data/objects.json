@@ -107,8 +107,162 @@
     "spawnChance": 0.06,
     "light": {
       "color": "#ffa860",
-      "intensity": 1500,
-      "distance": 380,
+      "intensity": 2000,
+      "distance": 640,
+      "flicker": true
+    }
+  },
+  {
+    "id": "crypt_wall_statue_01",
+    "name": "Статуя в нише 1",
+    "enabled": true,
+    "role": "prop",
+    "surface": "wall",
+    "modelId": "crypt_wall_statue_01",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": true,
+    "blocksSight": false,
+    "collider": {
+      "shape": "box",
+      "w": 2,
+      "h": 0.45
+    },
+    "footprint": {
+      "w": 2,
+      "h": 1
+    },
+    "spawnChance": 0
+  },
+  {
+    "id": "crypt_wall_statue_02",
+    "name": "Статуя в нише 2",
+    "enabled": true,
+    "role": "prop",
+    "surface": "wall",
+    "modelId": "crypt_wall_statue_02",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": true,
+    "blocksSight": false,
+    "collider": {
+      "shape": "box",
+      "w": 2,
+      "h": 0.45
+    },
+    "footprint": {
+      "w": 2,
+      "h": 1
+    },
+    "spawnChance": 0
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "name": "Статуя в нише 3",
+    "enabled": true,
+    "role": "prop",
+    "surface": "wall",
+    "modelId": "crypt_wall_statue_03",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": true,
+    "blocksSight": false,
+    "collider": {
+      "shape": "box",
+      "w": 2,
+      "h": 0.45
+    },
+    "footprint": {
+      "w": 2,
+      "h": 1
+    },
+    "spawnChance": 0
+  },
+  {
+    "id": "crypt_wall_statue_04",
+    "name": "Статуя в нише 4",
+    "enabled": true,
+    "role": "prop",
+    "surface": "wall",
+    "modelId": "crypt_wall_statue_04",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": true,
+    "blocksSight": false,
+    "collider": {
+      "shape": "box",
+      "w": 2,
+      "h": 0.45
+    },
+    "footprint": {
+      "w": 2,
+      "h": 1
+    },
+    "spawnChance": 0
+  },
+  {
+    "id": "crypt_fire_pit_01",
+    "name": "Костёр 1",
+    "enabled": true,
+    "role": "prop",
+    "surface": "floor",
+    "modelId": "crypt_fire_pit_01",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": true,
+    "blocksSight": false,
+    "collider": {
+      "shape": "circle",
+      "r": 0.9
+    },
+    "footprint": {
+      "w": 2,
+      "h": 2
+    },
+    "spawnChance": 0,
+    "light": {
+      "color": "#ff9739",
+      "intensity": 6000,
+      "distance": 640,
+      "flicker": true
+    }
+  },
+  {
+    "id": "crypt_fire_pit_02",
+    "name": "Костёр 2",
+    "enabled": true,
+    "role": "prop",
+    "surface": "floor",
+    "modelId": "crypt_fire_pit_02",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": true,
+    "blocksSight": false,
+    "collider": {
+      "shape": "circle",
+      "r": 0.9
+    },
+    "footprint": {
+      "w": 2,
+      "h": 2
+    },
+    "spawnChance": 0,
+    "light": {
+      "color": "#ff9739",
+      "intensity": 6000,
+      "distance": 640,
       "flicker": true
     }
   }

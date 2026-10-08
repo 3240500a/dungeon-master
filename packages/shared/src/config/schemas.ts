@@ -2335,6 +2335,40 @@ export const floorsSchema = z.array(
   }),
 );
 
+/**
+ * ⭐ 08.10: ОФОРМЛЕНИЕ БИОМА (редактор: «Оформление») — правила, а не шанс: решение владельца по эталонной комнате крипты.
+ * Числа живут в `data/biomes.json`; умолчания схемы — только страховка миграции. Объекты оформления (`objectId`/`objectIds`)
+ * выпадают из случайной россыпи (`placeFloorDecor`/`placeWallProps`) целиком, но коллайдеры и свет берут из `objects` как все.
+ * Клетка = 1 м. «Грань» — открытая в проходимую клетку сторона клетки-стены; «пробег» — прямой участок граней одной зоны.
+ */
+export const biomeDressingSchema = z.object({
+  /** Настенные факелы: один на каждые `spacing` граней пробега, от углов и проёмов — `cornerGap` граней. */
+  torch: z.object({
+    objectId: z.string().default(''),                         // id объекта факела (objects, surface wall); '' — правило выключено
+    spacing: z.number().int().min(1).default(3),              // шаг в комнате (граней = метров); соседи от spacing до 2·spacing−1
+    cornerGap: z.number().int().min(0).default(1),            // отступ от конца пробега (угол, проём, косяк двери)
+    corridorSpacing: z.number().int().min(0).default(6),      // шаг в коридоре; 0 — в коридорах факелов нет
+  }).optional(),
+  /** Статуи в нишах: ТОЛЬКО на дальних от камеры стенах (`balance.camera.azimuthDeg`), с факелом по обе стороны. Модель статуи
+   *  содержит свой кусок стены и заменяет `width` сегментов (`DecorObject.wallFaces`). */
+  statues: z.object({
+    objectIds: z.array(z.string()).default([]),               // варианты (objects, surface wall); пусто — правило выключено
+    min: z.number().int().min(0).default(1),                  // статуй на комнату — от…
+    max: z.number().int().min(0).default(2),                  // …до (если хватает дальних пробегов)
+    corridorChance: z.number().min(0).max(1).default(0.15),   // шанс статуи на подходящем дальнем пробеге коридора
+    width: z.number().int().min(1).max(8).default(2),         // ширина ниши в гранях (клетках)
+  }).superRefine((s, ctx) => {
+    if (s.max < s.min) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['max'], message: 'max статуй меньше min' });
+  }).optional(),
+  /** Костры в центре больших комнат (свет — из маркера `light_*` модели, числа — `objects[].light`). */
+  firePits: z.object({
+    objectIds: z.array(z.string()).default([]),               // варианты (objects, surface floor); пусто — правило выключено
+    minRoom: z.number().int().min(1).default(7),              // меньшая сторона комнаты (клеток) не меньше
+    chance: z.number().min(0).max(1).default(0.6),            // шанс костра в подходящей комнате
+  }).optional(),
+});
+export type BiomeDressing = z.infer<typeof biomeDressingSchema>;
+
 /** Биом = ТЕМА локации (тайлсет/монстры/фракция/лор), выбирается на ВЕСЬ забег. Геометрия — в `floors`. */
 export const biomesSchema = z.array(
   z.object({
@@ -2374,6 +2408,9 @@ export const biomesSchema = z.array(
     /** ⭐ 08.10: процедурные стоячие факелы по углам комнат (столб + лампа). Выкл — не ставятся: свет биома дают его пропсы
      *  с точками `light_*` (настенные факелы, очаги) — `objects[].light`. */
     torches: z.boolean().default(true),
+    /** ⭐ 08.10: «Оформление» — факелы, статуи в нишах и костры биома ПО ПРАВИЛУ (не случайной россыпью). Нет поля — биома не
+     *  касается (этаж байт-в-байт прежний). Расставляет сервер (`dungeon/dressing.ts`), клиенту едет в `FloorInit.decor`. */
+    dressing: biomeDressingSchema.optional(),
   }),
 );
 

@@ -2,7 +2,7 @@ import { randomUUID, randomInt, randomFillSync, randomBytes, createHash, createH
 import type { GameConn } from './conn.js';
 import {
   GameSession, spawnPacksEl, floorChallengeLevel, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
-  generateRunPlan, pickRunModifiers, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
+  generateRunPlan, pickRunModifiers, generateFloor, decorSpecsFor, dressingOf, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   itemFromBaseId, createRng, rngFrom, rollShopGear,
   buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, forgeExchange, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
   craftAction, enchantAction, sketchAction, fullJournal, legacyGateOpen, serverMaterialsConsent, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
@@ -882,6 +882,8 @@ export class Room implements Tickable {
   private arenaSpawnByPid = new Map<string, { x: number; y: number }>();
   private arenaRespawns = new Map<string, number>();
   private decor: DecorObject[] = [];
+  /** ⭐ 08.10: прямоугольники комнат этажа подземелья (`FloorInit.rooms`, клиенту — пробы отражений по комнате). Город и арена — пусто. */
+  private rooms: { x: number; y: number; w: number; h: number }[] = [];
   private clients = new Map<string, Client>();
   /** Прилавок, как его видит клиент: зелья лавки этой комнаты + снаряжение из стока героя. */
   private shop: Item[] = [];
@@ -3666,9 +3668,11 @@ export class Room implements Tickable {
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
     const decorSpecs = decorSpecsFor(this.cfg.get('objects'), this.cfg.get('models'), biome.id, this.cfg.get('art'));   // напольный декор биома (role decor/prop)
+    // ⭐ 08.10: оформление биома (факелы с шагом, ниши дальних стен, костры) — опцией генерации, не через FloorSpec (`runPlan` прежний)
     const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'), decorSpecs, undefined,
-      { tiers: this.cfg.get('chests'), perFloor: this.cfg.get('balance').loot.chestsPerFloor });
+      { tiers: this.cfg.get('chests'), perFloor: this.cfg.get('balance').loot.chestsPerFloor }, dressingOf(biome, this.cfg.get('balance')));
     this.decor = layout.decor;
+    this.rooms = layout.rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));   // ⭐ 08.10: прямоугольники комнат — клиенту (пробы отражений)
     const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));   // суб-тайл-коллизия
     const pool = resolveMonsterPool(biome, node.depth);
     // Продолжение заселяет той же мощью, что первый вход: от неё зависят броски генератора, и номера убитых иначе
@@ -3902,7 +3906,7 @@ export class Room implements Tickable {
     this.reviveAway();   // ⭐ C-03: и оживил — «Завершить» его забега платит, как любой припаркованный
     this.wipeAt = 0; // отменяем ожидающий вайп-таймер
     this.strandAt = 0;   // R12-07: и возврат застрявших — уже в городе
-    this.area = 'town'; this.depth = 0; this.decor = [];
+    this.area = 'town'; this.depth = 0; this.decor = []; this.rooms = [];
     this.spawnIdx.clear();   // монстры узла ушли вместе с этажом; запись узла (`nodeState`) ждёт продолжения
     const t = townLayout();
     this.session.enterFloor(0, { grid: t.grid, spawn: t.spawn, monsters: [] });
@@ -3936,7 +3940,7 @@ export class Room implements Tickable {
     this.settleLingers();   // R13-03
     this.floorChanged('arena');   // R4-06; R11-04: ушедшие вернутся такими, какими ушли, — не свежими
     this.wipeAt = 0; this.strandAt = 0;
-    this.area = 'arena'; this.depth = 0; this.decor = [];
+    this.area = 'arena'; this.depth = 0; this.decor = []; this.rooms = [];
     this.spawnIdx.clear();
     this.arenaRespawns.clear(); this.arenaSpawnByPid.clear();
     // ⭐ R11-04: тело каждого — до полного тела арены (`respawnPlayer` ниже): в город вернётся это (`leaveArena`). Раньше круг
@@ -5259,7 +5263,7 @@ export class Room implements Tickable {
   }
   private currentFloorInit(): FloorInit {
     // Арена рендерится клиентом как обычный этаж (грид+спавн), поэтому area → 'dungeon'.
-    const f = floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor);
+    const f = floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor, this.area === 'dungeon' ? this.rooms : undefined);
     // ⭐ R8-10: строке «вызов ур.» — уровень, по которому узел заселён (мощь узла, а не мера клиента по своему надетому).
     const st = this.area === 'dungeon' ? this.nodeState : null;
     if (st) { f.difficultyId = this.difficultyId; f.challengeLevel = floorChallengeLevel(this.cfg, st.el, this.difficultyId, this.depth); }

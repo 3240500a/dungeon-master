@@ -1,5 +1,5 @@
 import {
-  ConfigRegistry, GameSession, generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor,
+  ConfigRegistry, GameSession, generateRunPlan, generateFloor, decorSpecsFor, dressingOf, obstaclesFromDecor,
   resolveMonsterPool, spawnPacksEl, createRng, effectiveLevel, serializeWorld, newCharacterSave,
   townLayout, type PlayerInput, type RunConfig,
 } from '@dm/shared';
@@ -39,7 +39,7 @@ function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInpu
   const plan = generateRunPlan(reg, runCfg);
   const node = plan.nodes[Math.min(NODE_IDX, plan.nodes.length - 1)]!;
   const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id, reg.get('art'));
-  const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs);
+  const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs, undefined, undefined, dressingOf(biome, reg.get('balance')));   // ⭐ 08.10: оформление биома
   const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));
   const pool = resolveMonsterPool(biome, node.depth);
 

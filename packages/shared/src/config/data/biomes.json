@@ -45,7 +45,35 @@
       }
     ],
     "pillars": false,
-    "torches": false
+    "torches": false,
+    "dressing": {
+      "torch": {
+        "objectId": "crypt_wall_torch_01",
+        "spacing": 3,
+        "cornerGap": 1,
+        "corridorSpacing": 6
+      },
+      "statues": {
+        "objectIds": [
+          "crypt_wall_statue_01",
+          "crypt_wall_statue_02",
+          "crypt_wall_statue_03",
+          "crypt_wall_statue_04"
+        ],
+        "min": 1,
+        "max": 2,
+        "corridorChance": 0.15,
+        "width": 2
+      },
+      "firePits": {
+        "objectIds": [
+          "crypt_fire_pit_01",
+          "crypt_fire_pit_02"
+        ],
+        "minRoom": 7,
+        "chance": 0.6
+      }
+    }
   },
   {
     "id": "caves",

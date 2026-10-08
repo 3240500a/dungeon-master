@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
-import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, renderEnum } from './form.js';
+import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, renderEnum } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
 import { mountFloorPreview } from './floorPreview.js';
@@ -217,7 +217,10 @@ const modelIdOptions = (parent: Record<string, unknown> | undefined): string[] =
   }
   if (pkind === 'shield') return ['', ...ms.filter((m) => m.kind === 'weapon' && m.weaponType === 'shield').map((m) => m.id)];
   if (pkind === 'armor') return ['', ...atlasVariantsForSlot(String(parent?.['slot'] ?? ''))];   // helm/chest/gloves/boots/belt (belt пока без 3D)
-  return ['', ...ms.map((m) => m.id)];                              // фолбэк (не должно вызываться: modelId только у weapon/armor/shield)
+  // фолбэк: объекты мира (objects) и прочие — модели + ⭐ 08.10 ключи окружения каталога Unity (`art`, kind env): объект на модели Unity
+  // без GLB (настенный факел, статуи, костры) иначе показывал пустую выпадашку, хотя ссылка жива
+  const env = ((data['art'] as { id?: string; kind?: string }[]) ?? []).filter((a) => a.kind === 'env' && a.id).map((a) => String(a.id));
+  return ['', ...new Set([...ms.map((m) => m.id), ...env])];
 };
 fieldCustomRenderers.modelId = (value, onChange, parent) => renderEnum(modelIdOptions(parent), value == null ? '' : String(value), onChange);
 // Базовый 3D-вид класса (пустые слоты): 5 выпадашек по частям тела → submesh-варианты соответствующего слота атласа.
@@ -304,6 +307,16 @@ fieldCustomRenderers.url = (value, onChange, parent) => renderUploadField(value,
 const materialIds = (): string[] => ['', ...((data['materials'] as { id: string }[]) ?? []).map((m) => m.id)];
 fieldEnumSources.materialId = materialIds;
 fieldArrayEnumSources.biomes = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
+// ⭐ 08.10: «Оформление» биома (biomes[].dressing) — факелы/статуи/костры по правилу. Объекты — выпадашками из «Объектов» (опечатка в id —
+// молча пустое правило); у факела '' = правило выключено. Подписи — только уникальные ключи (общие min/max/width/chance — как есть).
+const objectIds = (): string[] => ((data['objects'] as { id: string }[]) ?? []).map((o) => o.id);
+fieldEnumSources.objectId = () => ['', ...objectIds()];
+fieldArrayEnumSources.objectIds = objectIds;
+Object.assign(fieldLabels, {
+  dressing: 'Оформление', torch: 'Настенные факелы', statues: 'Статуи в нишах (дальние стены)', firePits: 'Костры в больших комнатах',
+  objectId: 'объект', objectIds: 'объекты', spacing: 'шаг в комнате, клеток', cornerGap: 'отступ от угла/проёма',
+  corridorSpacing: 'шаг в коридоре (0 — нет)', corridorChance: 'шанс в коридоре', minRoom: 'меньшая сторона комнаты от',
+});
 // armorClass / requireArmorClass — выпадашки из конфига классов брони.
 const armorClassIds = (): string[] => ((data['armor-classes'] as { id: string }[]) ?? []).map((c) => c.id);
 fieldEnumSources.armorClass = armorClassIds;
@@ -1294,7 +1307,7 @@ async function validateConfig(): Promise<ConfigIssue[]> {
   const ref = (section: string, field: string, target: Set<string>, targetName: string, severity: 'error' | 'warn'): void => {
     for (const e of arr(section)) { const v = e[field]; if (typeof v === 'string' && v && !target.has(v)) issues.push({ section, id: String(e.id), msg: `${field}="${v}" — нет такого id в ${targetName}`, severity }); }
   };
-  ref('objects', 'modelId', models, 'models', 'error');
+  ref('objects', 'modelId', new Set([...models, ...artKeys()]), 'models', 'error');   // ⭐ 08.10: модель каталога Unity (`art`) — живая ссылка
   ref('objects', 'materialId', materials, 'materials', 'error');
   for (const f of ['baseMap', 'bumpMap', 'maskMap', 'occlusionMap', 'emissionMap']) ref('materials', f, textures, 'textures', 'error');
   ref('items.base', 'modelId', models, 'models', 'warn');       // шмотка ссылается на незалитую 3D-модель — фолбэк на процедурку

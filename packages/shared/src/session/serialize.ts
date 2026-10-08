@@ -103,8 +103,9 @@ export function peerInfoOf(p: PlayerEntity, cfg?: ConfigRegistry): PeerInfo {
   };
 }
 
-/** Геометрия текущей области для входящего игрока (грид/спавн/лестница/декор/монстры). */
-export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorObject[]): FloorInit {
+/** Геометрия текущей области для входящего игрока (грид/спавн/лестница/декор/монстры). `rooms` — прямоугольники комнат этажа
+ *  подземелья (⭐ 08.10): пусто или нет — поля в кадре нет (город, арена, старые вызовы — кадр прежний). */
+export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorObject[], rooms?: readonly { x: number; y: number; w: number; h: number }[]): FloorInit {
   return {
     area,
     depth: w.depth,
@@ -124,5 +125,6 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
       .map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),
     levers: w.levers.filter((l) => !l.used).map((l) => ({ id: l.id, x: l.pos.x, y: l.pos.y, doorId: l.doorId })),
     chests: w.chests.filter((c) => !c.opened).map((c) => ({ id: c.id, x: c.pos.x, y: c.pos.y, tier: c.tier })),
+    ...(rooms && rooms.length ? { rooms: rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h })) } : {}),
   };
 }

@@ -31,6 +31,12 @@ export const fieldArrayEnumSources: Record<string, () => string[]> = {};
  */
 export const fieldCustomRenderers: Record<string, (value: unknown, onChange: (v: unknown) => void, parent: Record<string, unknown> | undefined) => HTMLElement> = {};
 
+/**
+ * ⭐ 08.10: русская подпись поля по ИМЕНИ ключа (`dressing` → «Оформление»): над контролом — «подпись · ключ». Только для ключей,
+ * уникальных в схемах (общие `min`/`max` сюда не кладём — подпись легла бы на чужие конфиги). Заполняется снаружи (main.ts).
+ */
+export const fieldLabels: Record<string, string> = {};
+
 /** Контрол поля: кастомный рендер по имени → спец-источник (тиры и т.п.) → по схеме. */
 function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void, parent?: Record<string, unknown>): HTMLElement {
   const custom = fieldCustomRenderers[key];
@@ -146,7 +152,7 @@ const FIELD_GRID = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(2
 function gridCell(grid: HTMLElement, key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void, parent?: Record<string, unknown>): void {
   const cell = document.createElement('div');
   if (isBlockSchema(sub) || fieldCustomRenderers[key]) cell.style.gridColumn = '1 / -1';
-  cell.appendChild(label(key));
+  cell.appendChild(label(fieldLabels[key] ? `${fieldLabels[key]} · ${key}` : key));
   cell.appendChild(fieldControl(key, sub, value, onChange, parent));
   grid.appendChild(cell);
 }

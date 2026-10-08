@@ -6,6 +6,7 @@ import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
 import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
 import { obstaclesFromDecor, placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
+import { dressingObjectIds, placeDressing, type DressingOpts, type DressingResult } from './dressing.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { placeChests } from './floorCommon.js';
 import type { FloorSpec } from './run/types.js';
@@ -34,6 +35,10 @@ export interface GenFloorOpts {
   torches?: boolean;
   /** Сундуки этажа (Ч6): тиры из конфига `chests` + сколько ставить. Нет — этаж без сундуков. */
   chests?: { tiers: readonly { id: string; enabled?: boolean; weight?: number }[]; perFloor: { min: number; max: number } };
+  /** ⭐ 08.10: оформление биома ПО ПРАВИЛУ (`biomes[].dressing` + азимут камеры, `dressingOf`) — факелы с шагом, статуи в нишах
+   *  дальних стен, костры. Едет опцией генерации, а НЕ `FloorSpec`: спецификация ходит по проводу в `runPlan` и у биомов без
+   *  оформления обязана остаться байт-в-байт. Нет — этаж как прежде. */
+  dressing?: DressingOpts;
 }
 
 /**
@@ -157,10 +162,19 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   }
   if (opts.torches === false) result.decor = result.decor.filter((d) => d.kind !== 'torch');
   applyFeatures(result, opts.features, createRng(((seed ^ 0xfea7) >>> 0) || 1));
+  // ⭐ 08.10: оформление биома — РАНЬШЕ россыпи (ниши и костры занимают место первыми), свой поток rng. Его объекты выпадают из
+  // россыпи правилом, без броска; коллайдеры и свет у них — из тех же спек (`decorSpecs`), что у прочих.
+  let taken: DressingResult | undefined;
+  let specs = opts.decorSpecs;
+  if (opts.dressing) {
+    taken = placeDressing(result, opts.dressing, createRng(((seed ^ 0xd7e5) >>> 0) || 1), specs ? new Map(specs.map((s) => [s.id, s])) : undefined);
+    const own = dressingObjectIds(opts.dressing.rules);
+    if (specs && own.size) specs = specs.filter((s) => !own.has(s.id));
+  }
   // Расставляемые объекты (пол-россыпь + props на пол/стену) — детерминированно от сида (независимые потоки rng).
-  if (opts.decorSpecs && opts.decorSpecs.length) {
-    placeFloorDecor(result, opts.decorSpecs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace);
-    placeWallProps(result, opts.decorSpecs, createRng(((seed ^ 0x3a11) >>> 0) || 1));
+  if (specs && specs.length) {
+    placeFloorDecor(result, specs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace, taken?.floorCells);
+    placeWallProps(result, specs, createRng(((seed ^ 0x3a11) >>> 0) || 1), taken?.faces);
   }
   // Сундуки — СВОЙ поток rng, как у декора: добавление сундуков не должно сдвигать всё остальное.
   if (opts.chests && !opts.town) {
@@ -173,8 +187,9 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   return result;
 }
 
-/** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи + библиотека префабов + декор). */
-export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpecs?: DecorSpec[], decorPlace?: PlaceDecorOpts, chests?: GenFloorOpts['chests']): DungeonLayout {
+/** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи + библиотека префабов + декор).
+ *  `dressing` — оформление биома (`dressingOf(biome, balance)`); у биома без него `undefined`. */
+export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpecs?: DecorSpec[], decorPlace?: PlaceDecorOpts, chests?: GenFloorOpts['chests'], dressing?: DressingOpts): DungeonLayout {
   return generateFloorParams(spec.algoParams, spec.seed, {
     lock: spec.locked,
     exitCount: spec.exitCount,
@@ -187,5 +202,6 @@ export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpec
     decorSpecs,
     decorPlace,
     chests,
+    dressing,
   });
 }

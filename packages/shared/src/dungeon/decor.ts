@@ -66,8 +66,9 @@ const QUADS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
  * Расставляет напольный декор по НЕ-входным комнатам (детерминированно от `rng`). Клетки грида НЕ
  * меняются (проходимость сохраняется) — footprint лишь резервирует клетки от наложения; коллизия —
  * суб-тайловая (см. `obstaclesFromDecor`). Пишет обогащённые `DecorObject{kind:'obj'}` в `L.decor`.
+ * `taken` — клетки «cx,cy», уже занятые оформлением биома (`dressing.ts`); нет — как прежде.
  */
-export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}): void {
+export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}, taken?: ReadonlySet<string>): void {
   const specs = allSpecs.filter((s) => s.surface === 'floor');   // на пол — по комнатам; на стену — placeWallProps
   if (!specs.length) return;
   const chance = opts.chancePerRoom ?? 1;    // глобальный гейт слота (частоту рулит per-object spawnChance)
@@ -82,6 +83,8 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
   for (const d of L.decor) reserveWorld(d);
   for (const d of L.doors) for (const c of d.cells) reserved.add(key(c.cx, c.cy));
   for (const lv of L.levers) reserveWorld(lv);
+  // ⭐ 08.10: клетки, занятые оформлением биома (`placeDressing`: костёр целиком, клетки перед нишами и факелами) — «cx,cy».
+  if (taken) for (const k of taken) reserved.add(k);
 
   for (const room of L.rooms) {
     if (room.type === 'entrance') continue;
@@ -119,15 +122,16 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
 /**
  * Ставит props ПОВЕРХ стен (surface:'wall'): по открытым в комнату граням стен-клеток, детерминированно от `rng` с
  * частотой `spawnChance`. Позиция — центр клетки + смещение к грани на ½TILE; поворот — лицом в комнату. Клетки грида
- * НЕ меняются. Пишет `DecorObject{kind:'obj'}` в `L.decor` (клиент рисует через проп-систему).
+ * НЕ меняются. Пишет `DecorObject{kind:'obj'}` в `L.decor` (клиент рисует через проп-систему). `taken` — грани «x,y,dx,dz»,
+ * уже занятые оформлением биома: на них ни пропа, ни броска; нет `taken` — как прежде.
  */
-export function placeWallProps(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng): void {
+export function placeWallProps(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, taken?: ReadonlySet<string>): void {
   const specs = allSpecs.filter((s) => s.surface === 'wall');
   if (!specs.length) return;
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
   const walk = (x: number, y: number): boolean => { const c = L.grid[y]?.[x]; return c !== undefined && c !== Cell.Wall; };
   const N4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  const used = new Set<string>();   // «x,y,dx,dz» — одна грань = один проп
+  const used = new Set<string>(taken ?? []);   // «x,y,dx,dz» — одна грань = один проп; ⭐ 08.10: грани оформления биома (ниши, факелы) заняты сразу
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
     if (L.grid[y]![x] !== Cell.Wall) continue;
     for (const [dx, dz] of N4) {

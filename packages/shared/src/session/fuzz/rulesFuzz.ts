@@ -19,6 +19,7 @@ import { generateRunPlan } from '../../dungeon/run/generateRunPlan.js';
 import type { RunPlan, RunNode } from '../../dungeon/run/types.js';
 import { generateFloor } from '../../dungeon/generateFloor.js';
 import { decorSpecsFor, obstaclesFromDecor } from '../../dungeon/decor.js';
+import { dressingOf } from '../../dungeon/dressing.js';
 import { resolveMonsterPool } from '../../dungeon/floorSpec.js';
 import { spawnPacksEl } from '../../dungeon/floor.js';
 import type { DungeonLayout } from '../../dungeon/floorCommon.js';
@@ -522,7 +523,7 @@ function enterFloorFor(w: FuzzWorld, r: Rng, mode: FuzzWorld['mode']): void {
     const biome = reg.get('biomes').find((b) => b.id === node.biomeId) ?? reg.get('biomes')[0]!;
     const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id, reg.get('art'));
     const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs, undefined,
-      { tiers: reg.get('chests'), perFloor: reg.get('balance').loot.chestsPerFloor });
+      { tiers: reg.get('chests'), perFloor: reg.get('balance').loot.chestsPerFloor }, dressingOf(biome, reg.get('balance')));   // как Room.enterNode (⭐ 08.10)
     const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((d) => [d.id, d])));
     const monsters = spawnPacksEl(reg, layout, node.depth, w.s.world.difficultyId, createRng((node.floorSpec.seed >>> 0) || 1), partyLevel(w),
       resolveMonsterPool(biome, node.depth), node.floorSpec.packDensity, node.floorSpec.floorId);
