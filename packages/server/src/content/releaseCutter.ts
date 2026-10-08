@@ -33,6 +33,11 @@ export interface ReleaseCutter {
   idle(): Promise<void>;
   /** Последняя удачная нарезка. */
   last(): CutResult | null;
+  /**
+   * ⭐ 08.10 (Д3): выполнить `fn` в очереди нарезок — ни одна нарезка этого процесса не идёт рядом. Уборка хранилища решает «на файл не
+   * ссылается никто» и удаляет его: нарезка посреди могла бы сослаться на старый файл (содержимое вернули назад) — и потерять его.
+   */
+  exclusive<T>(fn: () => Promise<T>): Promise<T>;
 }
 
 export function releaseCutter(deps: CutterDeps): ReleaseCutter {
@@ -104,5 +109,10 @@ export function releaseCutter(deps: CutterDeps): ReleaseCutter {
       await chain;
     },
     last: () => lastCut,
+    exclusive<T>(fn: () => Promise<T>): Promise<T> {
+      const run = chain.then(fn, fn);
+      chain = run.catch(() => undefined);
+      return run;
+    },
   };
 }

@@ -39,8 +39,12 @@ import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 import { blobStore } from './content/blobStore.js';
 import { releaseCutter, type ReleaseCutter } from './content/releaseCutter.js';
-import { initContentSchema, recordRelease, channelPointer } from './content/releaseDb.js';
+import {
+  initContentSchema, recordRelease, channelPointer, listReleases, promoteRelease, rollbackChannel, setChannelClients, gcRoots, withCutLock,
+} from './content/releaseDb.js';
 import { CONTENT_ABI, parseArtRelease, type ArtRelease } from './content/releaseManifest.js';
+import { loadContentSigner } from './content/contentSign.js';
+import { artFilesIn, collectGarbage } from './content/contentGc.js';
 import { installReleaseRoutes } from './net/releaseRoutes.js';
 
 /**
@@ -258,21 +262,29 @@ const DEV_CONFIG_APPLY = process.env.NODE_ENV !== 'production';
  * Отзыв доступа: `logout-all` гасит все сессии человека, смена `DM_ADMIN_KEY` — ключ процессов.
  */
 const ADMIN_KEY = process.env.DM_ADMIN_KEY ?? '';
-async function devGuard(req: Request, res: Response): Promise<boolean> {
-  if (!DEV_CONFIG_APPLY) { res.status(403).json({ error: 'Отключено в продакшене' }); return false; }
+/**
+ * ⭐ 08.10 (Д3): ПРОВЕРКА РОЛИ — отдельно от запрета продакшена: ею же охраняются ручки выпуска релизов контента (`/api/admin/content/*`),
+ * открытые и на проде (отдельная дверь плана «Обновление контента без пересборки клиента»: продвижение готового релиза под ролью
+ * админа, никакой правки в обход релиза). Кто — `key` (ключ процессов) или id администратора; отказ — ответ уже отправлен, `null`.
+ */
+async function adminActor(req: Request, res: Response, what: string): Promise<string | null> {
   const token = bearer(req);
-  if (!token) { res.status(401).json({ error: 'Требуется вход' }); return false; }
-  if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return true;
+  if (!token) { res.status(401).json({ error: 'Требуется вход' }); return null; }
+  if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return 'key';
   // Не ключ процессов и не токен сессии по виду — в базу незачем (R4-02). ⭐ R9-12: сессии нет — неудача платит бакет сети
   // адреса до базы (`sessionUser`). ⭐ R11-06: и потолок аккаунта — свой, широкий (публикация поз-редактора — пачка запросов).
   const userId = await sessionUser(req, res, token, limits.accountDev);
-  if (!userId) return false;
+  if (!userId) return null;
   if (await getUserRole(userId) !== 'admin') {
-    console.warn(`[dm-server] отказ dev-роута ${req.path}: у ${userId} нет прав администратора`);
+    console.warn(`[dm-server] отказ ${what} ${req.path}: у ${userId} нет прав администратора`);
     res.status(403).json({ error: 'Нужны права администратора' });
-    return false;
+    return null;
   }
-  return true;
+  return userId;
+}
+async function devGuard(req: Request, res: Response): Promise<boolean> {
+  if (!DEV_CONFIG_APPLY) { res.status(403).json({ error: 'Отключено в продакшене' }); return false; }
+  return await adminActor(req, res, 'dev-роута') !== null;
 }
 /**
  * ⭐ R4-11: доступ — ДО ТЕЛА. `express.raw` на 64 МБ стоял перед `devGuard`: анонимный запрос заставлял ноду собрать 64 МБ
@@ -423,10 +435,34 @@ app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
 // SPA-фолбэк ответил бы страницей игры на любой GET.
 const CONTENT_DIR = process.env.DM_CONTENT_DIR ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'content');
 const contentStore = blobStore(CONTENT_DIR);
-if (ROLE !== 'node') {
+/**
+ * ⭐ 08.10 (Д3): канал без указателя (`beta`/`live` ещё не выпущены) получает указатель `dev` только вне продакшена — или явно,
+ * `DM_CONTENT_DEV_FALLBACK=1` (`0` — выключить и в разработке). На проде иначе 404 «канал не выпущен»: dev молча не подсовывается.
+ */
+const CONTENT_DEV_FALLBACK = process.env.DM_CONTENT_DEV_FALLBACK === undefined ? DEV_CONFIG_APPLY : process.env.DM_CONTENT_DEV_FALLBACK === '1';
+// Указатель раздают гейтвей и одиночный процесс (супервизор портов не слушает) — ключ подписи нужен только им. ⭐ Д3: ключ —
+// `DM_CONTENT_SIGN_KEY_FILE` (PKCS#8 PEM; задан, но не читается — сервер не стартует), без переменной — ДЕВ-ключ `<папка контента>/dev-sign.key`.
+if (ROLE === 'gateway' || ROLE === 'single') {
+  const signer = loadContentSigner({
+    // дев-ключ — НЕ в папке контента: её по плану Д4 зеркалят на CDN целиком (закрытый ключ уехал бы наружу); папка вне git
+    keyFile: process.env.DM_CONTENT_SIGN_KEY_FILE || undefined,
+    devKeyPath: process.env.DM_CONTENT_DEV_KEY_FILE ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'dev-secrets', 'content-sign.key'),
+    production: !DEV_CONFIG_APPLY,
+    log: (m) => console.log(`[dm-server] ${m}`), warn: (m) => console.error(`[dm-server] ${m}`),
+  });
+  // Уборка — в очереди нарезок (нарезка посреди уборки не сошлётся на удаляемый файл); корни — из базы, арт-описания — с диска.
+  const gc = async (o: { dryRun: boolean; keepReleases: number; minAgeMs: number }) =>
+    collectGarbage({ store: contentStore, keepManifests: await gcRoots(o.keepReleases), protect: artFilesIn(CONTENT_DIR), minAgeMs: o.minAgeMs, dryRun: o.dryRun });
   installReleaseRoutes(app, {
-    store: contentStore, pointer: channelPointer, abi: CONTENT_ABI, cdn: ['/c/'],
+    store: contentStore, pointer: channelPointer, abi: CONTENT_ABI, cdn: ['/c/'], signer, devFallback: CONTENT_DEV_FALLBACK,
     dev: { guard: devGuard, cutNow: () => releases ? releases.cutNow() : Promise.reject(new Error('нарезчик релизов не запущен')) },
+    admin: {
+      guard: (req, res) => adminActor(req, res, 'админ-роута'),
+      list: listReleases, promote: promoteRelease, rollback: rollbackChannel, clients: setChannelClients,
+      // под очередью нарезок этого процесса И блокировкой каналов в базе (выпуск/откат другого процесса посреди уборки — ждёт)
+      gc: (o) => (releases ? releases.exclusive(() => withCutLock(() => gc(o))) : withCutLock(() => gc(o))),
+      log: (m) => console.log(`[dm-server] [content] ${m}`),
+    },
   });
 }
 

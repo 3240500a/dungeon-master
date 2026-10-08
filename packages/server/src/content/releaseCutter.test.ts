@@ -100,6 +100,25 @@ describe('⭐ Д1: нарезчик релизов', () => {
     expect(order).toEqual(['начало 1', 'начало 2', 'конец 2']);
   });
 
+  it('⭐ Д3: исключительное действие (уборка) — в очереди нарезок: не рядом с идущей, следующая нарезка — после него', async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const cutter = releaseCutter({
+      readInput: async () => { order.push('нарезка'); await gate; return { config: '{}', configRev: 'a', gameRev: 'b', pose: {} }; },
+      store, record: async () => ({ seq: 1, fresh: true }),
+    });
+    const cut1 = cutter.cutNow();
+    const gc = cutter.exclusive(async () => { order.push('уборка'); return 42; });
+    const cut2 = cutter.cutNow();
+    await new Promise((r) => setImmediate(r));
+    expect(order).toEqual(['нарезка']);
+    release();
+    await Promise.all([cut1, cut2]);
+    expect(await gc).toBe(42);
+    expect(order).toEqual(['нарезка', 'уборка', 'нарезка']);
+  });
+
   it('⭐ Д2: арт, чьих файлов нет в хранилище, в релиз не идёт; файлы на месте — идёт', async () => {
     const bundle = store.put(Buffer.from('бандл'.repeat(10)));
     const catalog = store.put(Buffer.from('каталог'));

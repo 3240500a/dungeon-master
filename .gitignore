@@ -21,5 +21,6 @@ packages/client/public/mocap/
 
 # Релизы контента (Д1): файлы по sha256 — пересобираются сервером из конфига и pose_store, в git не нужны.
 packages/server/content/
+packages/server/dev-secrets/
 # Копии FBX из каталога Unity для поз-редактора (Ф1): пишет ArtManifestExporter, источник истины — проект Unity (LFS).
 packages/server/assets/src/
