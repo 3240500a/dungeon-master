@@ -28,12 +28,36 @@ export interface ReleaseInput {
   gameRev: string;
   /** Весь `pose_store`: ключ → значение. */
   pose: Record<string, unknown>;
+  /** ⭐ Д2: арт-релиз Unity (`art-abi<N>.json`: каталог Addressables и бандлы) — файлы уже в хранилище; нет — релиз без арта. */
+  art?: ArtRelease;
+}
+
+export interface ArtFile { name: string; sha: string; size: number }
+/** ⭐ Д2: описание арт-релиза, которое пишет публикатор Unity (`ArtContentPublisher.cs`). */
+export interface ArtRelease { catalog: ArtFile; bundles: ArtFile[] }
+
+/** Описание арт-релиза из JSON или `null` — не по форме (имя без путей, sha256, размер — неотрицательное целое). */
+export function parseArtRelease(v: unknown): ArtRelease | null {
+  const file = (x: unknown): ArtFile | null => {
+    const o = x as Partial<ArtFile> | null;
+    if (!o || typeof o.name !== 'string' || !/^[A-Za-z0-9_.-]{1,200}$/.test(o.name)) return null;
+    if (typeof o.sha !== 'string' || !/^[0-9a-f]{64}$/.test(o.sha)) return null;
+    if (typeof o.size !== 'number' || !Number.isInteger(o.size) || o.size < 0) return null;
+    return { name: o.name, sha: o.sha, size: o.size };
+  };
+  const o = v as { catalog?: unknown; bundles?: unknown } | null;
+  const catalog = file(o?.catalog);
+  if (!catalog || !Array.isArray(o?.bundles)) return null;
+  const bundles: ArtFile[] = [];
+  for (const b of o.bundles) { const f = file(b); if (!f) return null; bundles.push(f); }
+  bundles.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { catalog, bundles };
 }
 
 export interface Manifest {
   format: number;
   abi: number;
-  data: { config: string; pose: Record<string, string>; clips: string[] };
+  data: { config: string; pose: Record<string, string>; clips: string[]; art?: ArtRelease };
   rev: { config: string; game: string };
   /** Все файлы релиза с размерами (без самого манифеста): по ним клиент считает «надо скачать N байт». */
   files: Record<string, { size: number }>;
@@ -43,7 +67,7 @@ export interface BuiltRelease {
   manifest: Manifest;
   manifestBytes: Buffer;
   manifestSha: string;
-  /** Файлы релиза (без манифеста), каждый — один раз. */
+  /** Файлы данных релиза (без манифеста и арта — арт уже в хранилище), каждый — один раз. */
   blobs: Map<string, Buffer>;
 }
 
@@ -64,13 +88,15 @@ export function buildRelease(input: ReleaseInput): BuiltRelease {
     if (key === 'pe_clips' || POSE_EXCLUDED.has(key)) continue;
     pose[key] = add(json(input.pose[key]));
   }
+  const sizes = new Map<string, number>([...blobs].map(([sha, b]) => [sha, b.length]));
+  if (input.art) for (const f of [input.art.catalog, ...input.art.bundles]) sizes.set(f.sha, f.size);   // файлы арта уже в хранилище
   const files: Record<string, { size: number }> = {};
-  for (const sha of [...blobs.keys()].sort()) files[sha] = { size: blobs.get(sha)!.length };
+  for (const sha of [...sizes.keys()].sort()) files[sha] = { size: sizes.get(sha)! };
 
   const manifest: Manifest = {
     format: MANIFEST_FORMAT,
     abi: CONTENT_ABI,
-    data: { config, pose, clips },
+    data: { config, pose, clips, ...(input.art ? { art: input.art } : {}) },
     rev: { config: input.configRev, game: input.gameRev },
     files,
   };

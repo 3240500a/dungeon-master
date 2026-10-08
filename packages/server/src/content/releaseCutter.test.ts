@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { blobStore, type BlobStore } from './blobStore.js';
@@ -98,5 +98,24 @@ describe('⭐ Д1: нарезчик релизов', () => {
     await expect(first).rejects.toThrow('база легла');
     await second;
     expect(order).toEqual(['начало 1', 'начало 2', 'конец 2']);
+  });
+
+  it('⭐ Д2: арт, чьих файлов нет в хранилище, в релиз не идёт; файлы на месте — идёт', async () => {
+    const bundle = store.put(Buffer.from('бандл'.repeat(10)));
+    const catalog = store.put(Buffer.from('каталог'));
+    let art: ReleaseInput['art'] = { catalog: { name: 'catalog_abi1.bin', sha: catalog.sha, size: catalog.size }, bundles: [{ name: 'x.bundle', sha: 'f'.repeat(64), size: 3 }] };
+    const logs: string[] = [];
+    const cutter = releaseCutter({
+      readInput: async () => ({ config: '{}', configRev: 'a', gameRev: 'b', pose: {}, art: art ? structuredClone(art) : undefined }),
+      store, record: async (r) => ({ seq: 1, fresh: true }), log: (m) => logs.push(m),
+    });
+    const a = await cutter.cutNow();
+    expect(logs.some((l) => l.includes('релиз без арта'))).toBe(true);
+    const noArt = JSON.parse(readFileSync(store.pathOf(a.manifest), 'utf8')) as { data: { art?: unknown } };
+    expect(noArt.data.art).toBeUndefined();
+    art = { catalog: { name: 'catalog_abi1.bin', sha: catalog.sha, size: catalog.size }, bundles: [{ name: 'x.bundle', sha: bundle.sha, size: bundle.size }] };
+    const b = await cutter.cutNow();
+    const withArt = JSON.parse(readFileSync(store.pathOf(b.manifest), 'utf8')) as { data: { art?: { bundles: unknown[] } } };
+    expect(withArt.data.art?.bundles).toHaveLength(1);
   });
 });

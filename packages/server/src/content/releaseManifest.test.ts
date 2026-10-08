@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRelease, CONTENT_ABI, type ReleaseInput } from './releaseManifest.js';
+import { buildRelease, CONTENT_ABI, parseArtRelease, type ReleaseInput } from './releaseManifest.js';
 import { sha256 } from './blobStore.js';
 
 /**
@@ -77,5 +77,26 @@ describe('⭐ Д1: манифест релиза контента', () => {
     const b = buildRelease(input({ config: JSON.stringify({ balance: { a: 1 }, models: [{ id: 'k' }] }) }));
     expect(b.manifest.data.config).not.toBe(a.manifest.data.config);
     expect(b.manifest.data.clips).toEqual(a.manifest.data.clips);
+  });
+
+  it('⭐ Д2: арт-релиз — в данных манифеста и в списке файлов с размерами; без арта — как прежде', () => {
+    const sha = (c: string) => c.repeat(64).slice(0, 64);
+    const art = { catalog: { name: 'catalog_abi1.bin', sha: sha('c'), size: 900 }, bundles: [{ name: 'char_knight_x.bundle', sha: sha('d'), size: 5_000_000 }] };
+    const r = buildRelease(input({ art }));
+    expect(r.manifest.data.art).toEqual(art);
+    expect(r.manifest.files[sha('c')]).toEqual({ size: 900 });
+    expect(r.manifest.files[sha('d')]).toEqual({ size: 5_000_000 });
+    expect(r.blobs.has(sha('d'))).toBe(false);   // файлы арта уже в хранилище — не байты релиза
+    expect(buildRelease(input()).manifest.data.art).toBeUndefined();
+    expect(r.manifestSha).not.toBe(buildRelease(input()).manifestSha);
+  });
+
+  it('⭐ Д2: описание арт-релиза — только по форме: имя без путей, sha256, целый размер; бандлы по имени', () => {
+    const ok = { catalog: { name: 'catalog_abi1.bin', sha: 'a'.repeat(64), size: 1 }, bundles: [{ name: 'b.bundle', sha: 'b'.repeat(64), size: 2 }, { name: 'a.bundle', sha: 'c'.repeat(64), size: 3 }] };
+    expect(parseArtRelease(ok)!.bundles.map((b) => b.name)).toEqual(['a.bundle', 'b.bundle']);
+    expect(parseArtRelease({ ...ok, catalog: { ...ok.catalog, name: '../x' } })).toBeNull();
+    expect(parseArtRelease({ ...ok, catalog: { ...ok.catalog, sha: 'XYZ' } })).toBeNull();
+    expect(parseArtRelease({ ...ok, bundles: [{ name: 'b', sha: 'b'.repeat(64), size: -1 }] })).toBeNull();
+    expect(parseArtRelease(null)).toBeNull();
   });
 });

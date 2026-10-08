@@ -40,7 +40,7 @@ import { extractColliderFromGlb } from './glbMeshBbox.js';
 import { blobStore } from './content/blobStore.js';
 import { releaseCutter, type ReleaseCutter } from './content/releaseCutter.js';
 import { initContentSchema, recordRelease, channelPointer } from './content/releaseDb.js';
-import { CONTENT_ABI } from './content/releaseManifest.js';
+import { CONTENT_ABI, parseArtRelease, type ArtRelease } from './content/releaseManifest.js';
 import { installReleaseRoutes } from './net/releaseRoutes.js';
 
 /**
@@ -590,12 +590,26 @@ if (ROLE === 'gateway' || ROLE === 'single') {
 // клиенту есть что взять, даже если правок не было (на проде — ровно то, что выкачено).
 if (ROLE === 'gateway' || ROLE === 'single') {
   await initContentSchema();
+  // Д2: описание арт-релиза Unity (`ArtContentPublisher.cs` пишет его в папку контента ПОСЛЕ файлов) — в манифест; поменялось — новый релиз
+  const artFile = join(CONTENT_DIR, `art-abi${CONTENT_ABI}.json`);
+  const readArt = (): ArtRelease | undefined => {
+    if (!existsSync(artFile)) return undefined;
+    try {
+      const art = parseArtRelease(JSON.parse(readFileSync(artFile, 'utf8')));
+      if (!art) console.warn(`[dm-server] ${artFile}: не по форме — релиз без арта`);
+      return art ?? undefined;
+    } catch (e) { console.warn(`[dm-server] ${artFile}: ${(e as Error).message} — релиз без арта`); return undefined; }
+  };
   releases = releaseCutter({
-    readInput: async () => ({ config: configBody, configRev: configRevision, gameRev: configGameRevision, pose: await getPoseStore() }),
+    readInput: async () => ({ config: configBody, configRev: configRevision, gameRev: configGameRevision, pose: await getPoseStore(), art: readArt() }),
     store: contentStore, record: (r) => recordRelease(r),
     log: (m) => console.log(`[dm-server] ${m}`),
   });
   releases.poke();
+  try {
+    mkdirSync(CONTENT_DIR, { recursive: true });
+    watch(CONTENT_DIR, (_ev, name) => { if (name && String(name) === `art-abi${CONTENT_ABI}.json`) releases?.poke(); });
+  } catch (e) { console.warn(`[dm-server] наблюдение за ${CONTENT_DIR}: ${(e as Error).message} — арт-релиз подхватится на следующей правке`); }
 }
 
 // ⭐ R6-21: ошибки express (кривой JSON, тело больше потолка) — ответом JSON без стека в логе; ставится после всех ручек.

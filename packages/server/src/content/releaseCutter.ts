@@ -47,6 +47,14 @@ export function releaseCutter(deps: CutterDeps): ReleaseCutter {
 
   async function cut(): Promise<CutResult> {
     const input = await deps.readInput();
+    // Д2: арт — только если ВСЕ его файлы уже в хранилище (публикатор кладёт их ДО описания); нет — релиз без арта и строка в лог
+    if (input.art) {
+      const missing = [input.art.catalog, ...input.art.bundles].filter((f) => !deps.store.has(f.sha));
+      if (missing.length) {
+        deps.log?.(`арт-релиз без файлов в хранилище (${missing.length}: ${missing.slice(0, 3).map((f) => f.name).join(', ')}) — релиз без арта`);
+        delete input.art;
+      }
+    }
     const built = buildRelease(input);
     let newFiles = 0, bytes = 0, newBytes = 0;
     for (const bytesOf of built.blobs.values()) {
