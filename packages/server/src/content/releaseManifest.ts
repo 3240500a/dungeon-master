@@ -34,7 +34,9 @@ export interface ReleaseInput {
 
 export interface ArtFile { name: string; sha: string; size: number }
 /** ⭐ Д2: описание арт-релиза, которое пишет публикатор Unity (`ArtContentPublisher.cs`). */
-export interface ArtRelease { catalog: ArtFile; bundles: ArtFile[] }
+/** `built` — когда Unity опубликовала этот арт (мс UTC, ⭐ 08.10): игрок не подменяет каталогом релиза каталог своей сборки, если
+ *  сборка новее (правило «новее побеждает» — иначе устаревший арт релиза прятал бы контент сборки). */
+export interface ArtRelease { catalog: ArtFile; bundles: ArtFile[]; built?: number }
 
 /** Описание арт-релиза из JSON или `null` — не по форме (имя без путей, sha256, размер — неотрицательное целое). */
 export function parseArtRelease(v: unknown): ArtRelease | null {
@@ -45,13 +47,14 @@ export function parseArtRelease(v: unknown): ArtRelease | null {
     if (typeof o.size !== 'number' || !Number.isInteger(o.size) || o.size < 0) return null;
     return { name: o.name, sha: o.sha, size: o.size };
   };
-  const o = v as { catalog?: unknown; bundles?: unknown } | null;
+  const o = v as { catalog?: unknown; bundles?: unknown; built?: unknown } | null;
   const catalog = file(o?.catalog);
   if (!catalog || !Array.isArray(o?.bundles)) return null;
   const bundles: ArtFile[] = [];
   for (const b of o.bundles) { const f = file(b); if (!f) return null; bundles.push(f); }
   bundles.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { catalog, bundles };
+  const built = typeof o.built === 'number' && Number.isSafeInteger(o.built) && o.built > 0 ? o.built : undefined;
+  return built !== undefined ? { catalog, bundles, built } : { catalog, bundles };
 }
 
 export interface Manifest {

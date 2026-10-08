@@ -98,5 +98,9 @@ describe('⭐ Д1: манифест релиза контента', () => {
     expect(parseArtRelease({ ...ok, catalog: { ...ok.catalog, sha: 'XYZ' } })).toBeNull();
     expect(parseArtRelease({ ...ok, bundles: [{ name: 'b', sha: 'b'.repeat(64), size: -1 }] })).toBeNull();
     expect(parseArtRelease(null)).toBeNull();
+    // ⭐ 08.10: метка публикации (мс) — проходит; кривая — отбрасывается (описание без метки — по-прежнему годно)
+    expect(parseArtRelease({ ...ok, built: 1_791_000_000_000 })!.built).toBe(1_791_000_000_000);
+    expect(parseArtRelease({ ...ok, built: 'вчера' })!.built).toBeUndefined();
+    expect(parseArtRelease({ ...ok, built: -5 })!.built).toBeUndefined();
   });
 });
