@@ -411,8 +411,8 @@
     "group": "biome_crypt",
     "source": {
       "file": "Env/crypt/crypt_floor_grille_01/crypt_floor_grille_01.fbx",
-      "sha256": "eb83efe434763012814d71916b2f0168898224990e5123c0ef64092f188f927b",
-      "bytes": 54080
+      "sha256": "8b2cfd99503c0f94046f73a37c5f5c9d622044af0831bafca537fb48c9b91745",
+      "bytes": 41104
     },
     "meshes": [
       {
@@ -430,9 +430,9 @@
       {
         "name": "light_01",
         "pos": [
-          0.005,
-          -1.64557,
-          0.039
+          0.0,
+          -1.42499,
+          0.0
         ]
       }
     ],
@@ -778,8 +778,8 @@
     "group": "biome_crypt",
     "source": {
       "file": "Env/crypt/crypt_wall_torch_01/crypt_wall_torch_01.fbx",
-      "sha256": "1478f25cd11f3781e0ddc8e7e51bc4d6c5e1dc5e1221a15e1573da4ae772b785",
-      "bytes": 53872
+      "sha256": "8711157017e29eff1f9705bc8684e7d8f574cff9c83ae30de8a72adebd89de2a",
+      "bytes": 35344
     },
     "meshes": [
       {
@@ -797,28 +797,28 @@
       {
         "name": "light_01",
         "pos": [
-          5E-05,
-          1.91486,
-          0.2149
+          8E-05,
+          1.77883,
+          0.11271
         ]
       }
     ],
     "bounds": {
       "min": [
-        -0.10583,
-        0.997,
-        0.04833
+        -0.08068,
+        1.15963,
+        -0.06138
       ],
       "max": [
-        0.10592,
-        1.86486,
-        0.38148
+        0.08071,
+        1.82107,
+        0.19253
       ]
     },
     "collider": {
       "shape": "box",
-      "w": 0.21175,
-      "h": 0.33315
+      "w": 0.16138,
+      "h": 0.25391
     }
   },
   {
