@@ -299,7 +299,7 @@
       "torchIntensity": 4000,
       "torchDist": 640,
       "playerLightIntensity": 14000,
-      "playerLightDist": 960,
+      "playerLightDist": 576,
       "playerLightHeight": 160,
       "playerLightToCam": 30
     }
