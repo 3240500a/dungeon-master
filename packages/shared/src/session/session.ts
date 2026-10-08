@@ -55,7 +55,7 @@ import {
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
 import { behaviorFor, type MonsterBehavior } from './behavior.js';
-import { findPath } from '../world/pathfind.js';
+import { findPath, navMaskFor } from '../world/pathfind.js';
 import { applyConsumable } from '../economy/townActions.js';
 
 /**
@@ -2379,7 +2379,8 @@ export class GameSession {
       m.pathCd -= dt;
       const reached = !!m.waypoint && vecLen(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
       if (!m.waypoint || reached || m.pathCd <= 0) {
-        const path = findPath(grid, m.pos, targetPos);
+        // ⭐ 08.10: путь — в обход преград декора (костры крипты: путь сквозь костёр держал монстра у огня 20 с+, ревью 08.10)
+        const path = findPath(grid, m.pos, targetPos, undefined, navMaskFor(grid, this.world.obstacles));
         m.waypoint = path.length ? path[0]! : null;
         m.pathCd = 0.3;
       }

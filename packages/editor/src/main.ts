@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
+import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, dressingWarnings, OBJECT_FX_KINDS, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, renderEnum } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
@@ -316,7 +316,45 @@ Object.assign(fieldLabels, {
   dressing: 'Оформление', torch: 'Настенные факелы', statues: 'Статуи в нишах (дальние стены)', firePits: 'Костры в больших комнатах',
   objectId: 'объект', objectIds: 'объекты', spacing: 'шаг в комнате, клеток', cornerGap: 'отступ от угла/проёма',
   corridorSpacing: 'шаг в коридоре (0 — нет)', corridorChance: 'шанс в коридоре', minRoom: 'меньшая сторона комнаты от',
+  clearance: 'отступ от другого напольного декора, клеток',   // ⭐ 08.10: objects[].clearance
+  fx: 'Огонь (Unity)',                                        // ⭐ 08.10: objects[].fx
 });
+// ⭐ 08.10: огонь объекта (objects[].fx) — вид выпадашкой, «— нет огня —» снимает поле целиком (общий рендер необязательного объекта
+// оставил бы `{ scale }` без `kind`, и конфиг не прошёл бы схему); размер и сдвиг — только при выбранном виде. Читает только Unity.
+fieldCustomRenderers.fx = (value, onChange) => {
+  const NONE = '— нет огня —';
+  let cur: Record<string, unknown> | null = (value && typeof value === 'object') ? { ...(value as Record<string, unknown>) } : null;
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  const row = (label: string, el: HTMLElement): void => {
+    const r = document.createElement('label'); r.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
+    const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'min-width:150px;color:#aab';
+    r.append(l, el); wrap.append(r);
+  };
+  const num = (v: unknown, set: (n: number) => void): HTMLInputElement => {
+    const i = document.createElement('input'); i.type = 'number'; i.step = '0.05'; i.value = String(typeof v === 'number' ? v : 0);
+    i.style.cssText = 'width:80px;padding:3px 6px;background:#0f0f16;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px';
+    i.addEventListener('change', () => { const n = Number(i.value); if (Number.isFinite(n)) set(n); });
+    return i;
+  };
+  const rebuild = (): void => {
+    wrap.innerHTML = '';
+    row('вид', renderEnum([NONE, ...OBJECT_FX_KINDS], typeof cur?.kind === 'string' ? cur.kind : NONE, (nv) => {
+      const k = String(nv ?? '');
+      cur = k === NONE || !k ? null : { scale: 1, offset: [0, 0, 0], ...(cur ?? {}), kind: k };
+      onChange(cur ? { ...cur } : undefined);
+      rebuild();
+    }));
+    const c = cur;
+    if (!c) return;
+    row('размер, ×', num(c.scale ?? 1, (n) => { c.scale = n; onChange({ ...c }); }));
+    const off = Array.isArray(c.offset) && c.offset.length === 3 ? [...(c.offset as number[])] : [0, 0, 0];
+    const box = document.createElement('span'); box.style.cssText = 'display:flex;gap:4px';
+    for (let i = 0; i < 3; i++) box.append(num(off[i], (n) => { off[i] = n; c.offset = [...off]; onChange({ ...c }); }));
+    row('сдвиг от маркера, м (x y z)', box);
+  };
+  rebuild();
+  return wrap;
+};
 // armorClass / requireArmorClass — выпадашки из конфига классов брони.
 const armorClassIds = (): string[] => ((data['armor-classes'] as { id: string }[]) ?? []).map((c) => c.id);
 fieldEnumSources.armorClass = armorClassIds;
@@ -1290,7 +1328,8 @@ interface ConfigIssue { section: string; id: string; msg: string; severity: 'err
  * Ловит класс багов «ссылка на то, чего нет». Схема (zod) проверяет форму полей, а это — целостность графа ссылок.
  *  - error (жёстко, ломает рендер, блокирует публикацию): url→файл, objects→models/materials, materials→textures,
  *    submeshMaterials→materials; тир сложности, который не откроется никогда (R8-13, `difficultyLockIssues`).
- *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир).
+ *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир); ⭐ 08.10: ширина ниши
+ *    статуй оформления биома ≠ ширине модели статуи (`dressingWarnings`).
  */
 async function validateConfig(): Promise<ConfigIssue[]> {
   const issues: ConfigIssue[] = [];
@@ -1318,6 +1357,12 @@ async function validateConfig(): Promise<ConfigIssue[]> {
 
   // 4) тир сложности, который не откроется никогда (R8-13) [error]
   issues.push(...difficultyLockIssues());
+
+  // 5) ⭐ 08.10: оформление биома — ширина ниши `statues.width` против ширины модели статуи (габарит манифеста арта Unity) [warn]
+  type Biome = Parameters<typeof dressingWarnings>[0][number];
+  for (const w of dressingWarnings(arr('biomes') as unknown as Biome[], arr('objects') as unknown as { id: string; modelId?: string }[], arr('art') as unknown as { id: string; kind?: string; bounds?: { min: number[]; max: number[] } }[])) {
+    issues.push({ section: 'biomes', id: w.biomeId, msg: w.msg, severity: 'warn' });
+  }
 
   // ошибки — вперёд, потом предупреждения
   return issues.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));

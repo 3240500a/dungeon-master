@@ -3171,6 +3171,9 @@ export const environmentSchema = z.array(z.object({
   }).default({}),
 }));
 
+/** ⭐ 08.10: виды огня объекта (`objects[].fx.kind`) — префабы Unity `Assets/DM/Fx/Fire` (пакет Vefects «Free Fire VFX URP»). */
+export const OBJECT_FX_KINDS = ['fire_small', 'fire_medium', 'fire_big', 'fire_floor_01', 'fire_floor_02'] as const;
+
 /** ОБЪЕКТЫ мира — библиотека размещаемых сущностей (пол/стена/колонна/декор). Каждый = роль + GLB-модель (из `models`,
  *  может содержать варианты-меши) + опц. материал-override (из `materials`) + к каким биомам относится (мультиселект).
  *  Клиент строит этаж: floor-объекты биома → тайлы пола (варианты мёржатся), wall-объекты → стены. pillar/decor — задел
@@ -3195,8 +3198,20 @@ export const objectsSchema = z.array(z.object({
   collider: z.object({ shape: z.enum(['circle', 'box']).default('circle'), r: z.number().optional(), w: z.number().optional(), h: z.number().optional() }).optional(),
   footprint: z.object({ w: z.number().int().min(1).max(8).default(1), h: z.number().int().min(1).max(8).default(1) }).default({}),   // занимаемые клетки (мульти-тайл), дефолт 1×1
   spawnChance: z.number().min(0).max(1).default(0.35),   // частота спавна: шанс поставить объект в клетку-кандидат (0=никогда, 1=часто)
+  // ⭐ 08.10: ОТСТУП напольного декора, клеток: кольцо вокруг следа, где не стоит другой напольный декор (в обе стороны — у двух объектов
+  //   с отступом 1 между следами всегда клетка пола). 0 — как прежде (следы лишь не пересекаются). Расстановка — `dungeon/decor.ts` FloorClaims.
+  clearance: z.number().int().min(0).max(4).default(0),
   // Источник(и) света из меша(ей) light* модели (Ф4): параметры PointLight, ставится в позицию маркера.
   light: z.object({ color: z.string().default('#ffa860'), intensity: z.number().default(1500), distance: z.number().default(380), flicker: z.boolean().default(true) }).optional(),
+  // ⭐ 08.10: ОГОНЬ объекта — только картинка Unity (`Assets/DM/Fx/FireFx.cs`; веб и сервер не читают, в игровую ревизию не входит):
+  //   частицы пакета Vefects в КАЖДОМ маркере `light*` модели (нет маркера — в точке объекта), звук — петля по размеру огня у ближних.
+  //   kind — вид (факел = fire_small, костёр = fire_floor_*; medium/big — в запас), scale — множитель к размеру вида, offset — сдвиг от
+  //   маркера, м, в осях модели (у костров маркер на 0.25 м над краем чаши — огонь опущен к углям). Свет огня — `light` (пул ламп), не здесь.
+  fx: z.object({
+    kind: z.enum(OBJECT_FX_KINDS),
+    scale: z.number().min(0.05).max(10).default(1),
+    offset: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+  }).optional(),
 }));
 
 /**

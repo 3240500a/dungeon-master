@@ -214,3 +214,81 @@ describe('патфайндинг (блок B: обход стены)', () => {
     expect(detours, 'обход не включался ни разу').toBe(0);
   });
 });
+
+/**
+ * ⭐ 08.10 (ревью): ПОГОНЯ В ОБХОД ПРЕГРАД ДЕКОРА. Путь BFS (`navChase`) шёл по сетке, где костёр крипты (первая преграждающая напольная
+ * преграда живого конфига: круг 0.9 клетки на 2×2) — пол: монстр без видимости вёл путевую точку в клетку под огнём и стоял у костра 20 с+
+ * (5 раскладок из 6 в повторе ревьюера; 161 из 569 погонь через костёр на настоящих этажах). Теперь путь — по маске декора (`navMaskFor`).
+ */
+describe('⭐ 08.10: погоня в обход костра (маска навигации декора)', () => {
+  const idle: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
+  /** Дошёл ли монстр до стоящего героя за `sec` с (вплотную на длину удара). */
+  function chase(L: Pick<FloorLayout, 'grid' | 'obstacles' | 'doors' | 'levers'>, heroAt: { x: number; y: number }, monAt: { x: number; y: number }, sec: number, unique = false): boolean {
+    const s = new GameSession(r, 11, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId: 'zombie', depth: 1 }, createRng(1));
+    def.hp = 1e7; def.armor = 0; def.evade = 0; def.faction = 'undead';
+    if (unique) def.rarity = 'unique';
+    s.enterFloor(1, { ...L, spawn: heroAt, monsters: [{ def, x: monAt.x, y: monAt.y }] } as FloorLayout);
+    const m = s.world.monsters[0]!;
+    m.aiState = 'chase'; m.leash = 1e9; m.alertTimer = 1e9; m.noticeTimer = 0;
+    for (let i = 0; i < 30 * sec; i++) {
+      p.pos = { ...heroAt }; p.hp = p.maxHp;
+      s.tick(1 / 30, { p1: { ...idle } });
+      if (Math.hypot(m.pos.x - heroAt.x, m.pos.y - heroAt.y) < m.radius + 15 + 20) return true;
+    }
+    return false;
+  }
+
+  it('повтор ревьюера: герой за стеной через проём под костром — монстр без видимости обходит огонь (6 раскладок)', () => {
+    for (const [monCol, gapCol] of [[11, 11], [10, 10], [11, 10], [10, 11], [12, 11], [9, 9]] as const) {
+      const g: Grid = makeGrid(22, 26, Cell.Wall);
+      for (let y = 1; y < 16; y++) for (let x = 1; x < 21; x++) g[y]![x] = Cell.Floor;
+      g[16]![gapCol] = Cell.Floor;
+      for (let y = 17; y < 25; y++) for (let x = 1; x < 21; x++) g[y]![x] = Cell.Floor;
+      const obstacles = [{ x: 11 * 32, y: 8 * 32, shape: 'circle' as const, r: 0.9 * 32, blocksSight: false }];
+      expect(chase({ grid: g, obstacles }, cellToWorld(gapCol + 6, 20), cellToWorld(monCol, 2), 20), `монстр ${monCol}, проём ${gapCol}`).toBe(true);
+    }
+  });
+
+  it('видимость через костёр есть (огонь низкий) и нет (blocksSight): дошёл со всех сторон, и уник тоже', () => {
+    const g: Grid = makeGrid(21, 21, Cell.Wall);
+    for (let y = 1; y < 20; y++) for (let x = 1; x < 20; x++) g[y]![x] = Cell.Floor;
+    for (const blocksSight of [false, true]) for (const deg of [0, 3, 30, 45, 90, 135]) for (const unique of [false, true]) {
+      const a = (deg * Math.PI) / 180, c = { x: 11 * 32, y: 11 * 32 };
+      const heroAt = { x: c.x + Math.cos(a) * 128, y: c.y + Math.sin(a) * 128 }, monAt = { x: c.x - Math.cos(a) * 128, y: c.y - Math.sin(a) * 128 };
+      expect(chase({ grid: g, obstacles: [{ ...c, shape: 'circle', r: 0.9 * 32, blocksSight }] }, heroAt, monAt, 12, unique), `${deg}° LoS-блок ${blocksSight} уник ${unique}`).toBe(true);
+    }
+  });
+
+  it('настоящие этажи крипты: герой по одну сторону каждого костра, монстр — по другую (8 углов) — не застревает никто', async () => {
+    const { decorSpecsFor, obstaclesFromDecor } = await import('../dungeon/decor.js');
+    const { dressingOf } = await import('../dungeon/dressing.js');
+    const { generateFloor } = await import('../dungeon/generateFloor.js');
+    const { resolveFloorSpec } = await import('../dungeon/floorSpec.js');
+    const { pushOutObstacle } = await import('../world/movement.js');
+    const { isBlockedCell, worldToCell } = await import('../world/grid.js');
+    const crypt = r.get('biomes').find((b) => b.id === 'crypt')!;
+    const specs = decorSpecsFor(r.get('objects'), r.get('models'), 'crypt', r.get('art'));
+    const pitIds = new Set(crypt.dressing!.firePits!.objectIds);
+    let runs = 0;
+    for (const f of r.get('floors').filter((x) => x.biomeId === 'crypt' && x.role !== 'rest')) {
+      for (let seed = 1; seed <= 2; seed++) {
+        const spec = resolveFloorSpec(crypt, f, f.minDepth, seed * 7919 + 13, [], { exitCount: 1 + (seed % 3) });
+        const L = generateFloor(spec, r.get('room-prefabs'), specs, undefined, undefined, dressingOf(crypt, r.get('balance')));
+        const obstacles = obstaclesFromDecor(L.decor, new Map(specs.map((s) => [s.id, s])));
+        const free = (x: number, y: number): boolean => { const c = worldToCell(x, y); return !isBlockedCell(L.grid, c.cx, c.cy) && obstacles.every((o) => !pushOutObstacle(x, y, 15, o)); };
+        for (const pit of L.decor.filter((d) => pitIds.has(d.objectId ?? ''))) {
+          for (let k = 0; k < 8; k++) {
+            const a = (k * Math.PI) / 4 + 0.13;
+            const heroAt = { x: pit.x + Math.cos(a) * 70, y: pit.y + Math.sin(a) * 70 }, monAt = { x: pit.x - Math.cos(a) * 102, y: pit.y - Math.sin(a) * 102 };
+            if (!free(heroAt.x, heroAt.y) || !free(monAt.x, monAt.y)) continue;
+            runs++;
+            expect(chase({ grid: L.grid, obstacles, doors: L.doors, levers: L.levers }, heroAt, monAt, 10), `${f.id} сид ${seed}, костёр (${pit.x / 32}, ${pit.y / 32}), угол ${k}`).toBe(true);
+          }
+        }
+      }
+    }
+    expect(runs).toBeGreaterThan(40);
+  });
+});

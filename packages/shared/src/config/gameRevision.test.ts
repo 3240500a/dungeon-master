@@ -26,6 +26,9 @@ describe('⭐ Д1: игровая ревизия конфига', () => {
       (r) => { const t = structuredClone(r.get('models')); t[0]!.url = '/assets/other.glb'; t[0]!.submeshMaterials = { a: 'b' }; t[0]!.boneMap = { Hips: 'X' }; r.reload({ models: t }); },
       // вид объекта: материал, имя
       (r) => { const t = structuredClone(r.get('objects')); t[0]!.materialId = 'mat_x'; t[0]!.name = 'другое имя'; r.reload({ objects: t }); },
+      // ⭐ 08.10: огонь объекта (частицы и звук Unity) — картинка: новый, другой вид, размер, сдвиг
+      (r) => { const t = structuredClone(r.get('objects')); t[0]!.fx = { kind: 'fire_big', scale: 2, offset: [0, 0.1, 0] }; r.reload({ objects: t }); },
+      (r) => { const t = structuredClone(r.get('objects')); const o = t.find((x) => x.fx)!; o.fx = { ...o.fx!, kind: 'fire_medium', scale: 0.5 }; r.reload({ objects: t }); },
       // 08.10: новый .mat библиотеки Unity в манифесте арта (строка вида material) и материал брони по ступени — картинка
       (r) => { const t = structuredClone(r.get('art')); t.push({ id: 'mat_new', kind: 'material', group: 'mat_x', meshes: [], bones: [], sockets: [], lights: [] }); r.reload({ art: t }); },
     ];
@@ -44,6 +47,7 @@ describe('⭐ Д1: игровая ревизия конфига', () => {
       (r) => { const t = structuredClone(r.get('objects')); t[0]!.blocks = !t[0]!.blocks; r.reload({ objects: t }); },
       (r) => { const t = structuredClone(r.get('objects')); t[0]!.spawnChance = 0.77; r.reload({ objects: t }); },
       (r) => { const t = structuredClone(r.get('objects')); t[0]!.footprint = { w: 2, h: 2 }; r.reload({ objects: t }); },
+      (r) => { const t = structuredClone(r.get('objects')); t[0]!.clearance = 3; r.reload({ objects: t }); },   // ⭐ 08.10: отступ декора — расстановка сервера
       (r) => { const t = structuredClone(r.get('objects')); t[0]!.modelId = 'другая_модель'; r.reload({ objects: t }); },   // коллайдер — модели
       (r) => { const b = structuredClone(r.get('balance')); b.craft.cost.enchantGold += 7; r.reload({ balance: b }); },
     ];

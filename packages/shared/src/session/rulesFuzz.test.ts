@@ -541,10 +541,15 @@ describe('⭐ D4: фаззер правил — правило времени б
  */
 describe('⭐ Z: фаззер правил — бьющий погиб посреди своего взмаха (PvP)', () => {
   it('перепрогон Z: прок цели убил бьющего — остаток того же взмаха не «удар мёртвого»', () => {
-    const out = runOps(45010073, [{ k: 'tick', h: 2, s: 1420080491 }] as Op[], { resetUids: hooks.resetUids, world: PROFILES.pvp!.world });
-    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
-    // Цепочка всё ещё ведёт по этому пути: бьющий погиб внутри своей доставки, и она ударила после его смерти.
-    expect(out.cover['hit-after-own-death'] ?? 0, 'удар доставки, в которой бьющий погиб').toBeGreaterThan(0);
+    // ⭐ 08.10: монстры обходят преграды декора по маске навигации (`navMaskFor`) — мир сида тот же, а прежний шаг (h 2, s 1420080491) после
+    // своих тиков к этому пути больше не ведёт (монстры арены идут иначе). Он остаётся сторожем «без нарушений», путь держит новый шаг того же
+    // сида — найден перебором `s` (тот же мир, одна доставка, бьющий погиб внутри неё).
+    for (const [ops, path] of [[[{ k: 'tick', h: 2, s: 1420080491 }], false], [[{ k: 'tick', h: 0, s: 1422820465 }], true]] as [Op[], boolean][]) {
+      const out = runOps(45010073, ops, { resetUids: hooks.resetUids, world: PROFILES.pvp!.world });
+      expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+      // Цепочка всё ещё ведёт по этому пути: бьющий погиб внутри своей доставки, и она ударила после его смерти.
+      if (path) expect(out.cover['hit-after-own-death'] ?? 0, 'удар доставки, в которой бьющий погиб').toBeGreaterThan(0);
+    }
   });
 });
 

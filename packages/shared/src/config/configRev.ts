@@ -53,12 +53,12 @@ export const VISUAL_ONLY_KEYS: ReadonlySet<string> = new Set(['textures', 'mater
 
 /**
  * ⭐ 08.10 (Д1): СМЕШАННЫЕ ТАБЛИЦЫ — в игровую ревизию идут только поля, которые читает серверная игра. Декор расставляет и сталкивает
- * сервер (`decorSpecsFor`: роль, биомы, частота, площадь, блокировка прохода и обзора, коллайдер объекта, а без него — коллайдер его модели),
+ * сервер (`decorSpecsFor`: роль, биомы, частота, площадь, отступ, блокировка прохода и обзора, коллайдер объекта, а без него — коллайдер его модели),
  * а вид модели (ссылки, слоты, кости, материалы, свет) — только клиенты.
  */
 const GAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
   models: ['id', 'collider'],
-  objects: ['id', 'modelId', 'enabled', 'role', 'surface', 'biomes', 'blocks', 'blocksSight', 'footprint', 'spawnChance', 'collider'],
+  objects: ['id', 'modelId', 'enabled', 'role', 'surface', 'biomes', 'blocks', 'blocksSight', 'footprint', 'spawnChance', 'collider', 'clearance'],   // ⭐ 08.10: + отступ
   // Ф1: из манифеста арта игре нужен только коллайдер декора (кости, сабмеши, свет — картинка)
   art: ['id', 'collider'],
 };

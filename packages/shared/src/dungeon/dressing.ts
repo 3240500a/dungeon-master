@@ -2,7 +2,7 @@ import type { Rng } from '../formulas/rng.js';
 import { Cell, TILE, worldToCell } from '../world/grid.js';
 import type { BiomeDressing } from '../config/schemas.js';
 import type { DungeonLayout } from './floorCommon.js';
-import type { DecorSpec } from './decor.js';
+import { claimsOf, type DecorSpec } from './decor.js';
 
 /**
  * ⭐ 08.10: ОФОРМЛЕНИЕ БИОМА ПО ПРАВИЛУ (`biomes[].dressing`) — настенные факелы с шагом, статуи в нишах дальних стен, костры в
@@ -55,6 +55,41 @@ export function dressingOf(
 ): DressingOpts | undefined {
   if (!biome?.dressing) return undefined;
   return { rules: biome.dressing, camAzimuthDeg: balance?.camera?.azimuthDeg ?? -45 };
+}
+
+/** Допуск сверки ширины ниши с моделью статуи, м (клетка = 1 м). */
+export const STATUE_WIDTH_TOL = 0.05;
+
+/**
+ * ⭐ 08.10: ПРЕДУПРЕЖДЕНИЯ ОФОРМЛЕНИЯ (редактор, «Проверить конфиг»; сторож — `dressing.test.ts`). Ширина ниши `statues.width` (граней =
+ * метров) обязана равняться ширине МОДЕЛИ статуи — её габариту по X в манифесте арта Unity (`art[].bounds`, модель в своём корне стоит
+ * лицом по +Z, вдоль стены — X): модель статуи несёт свой кусок стены и заменяет ровно `width` сегментов. Шире — влезает в соседние
+ * сегменты и фланговые факелы, уже — дыра в стене. У статуй крипты — 2 м. Модели нет в манифесте или у неё нет габарита — не судим.
+ */
+export function dressingWarnings(
+  biomes: readonly { id: string; dressing?: BiomeDressing }[],
+  objects: readonly { id: string; modelId?: string }[],
+  art: readonly { id: string; kind?: string; bounds?: { min: number[]; max: number[] } }[],
+): { biomeId: string; msg: string }[] {
+  const model = new Map(objects.map((o) => [o.id, o.modelId ?? '']));
+  // у ключа бывает две строки манифеста — модель и .mat библиотеки с тем же именем (`kind: 'material'`, без габарита): берём модель
+  const bounds = new Map<string, { min: number[]; max: number[] }>();
+  for (const a of art) if (a.bounds && a.kind !== 'material') bounds.set(a.id, a.bounds);
+  const out: { biomeId: string; msg: string }[] = [];
+  for (const b of biomes) {
+    const st = b.dressing?.statues;
+    if (!st) continue;
+    const width = st.width ?? 2;
+    for (const id of Array.isArray(st.objectIds) ? st.objectIds : []) {
+      const bb = bounds.get(model.get(id) || id);
+      const x0 = bb?.min?.[0], x1 = bb?.max?.[0];
+      const w = typeof x0 === 'number' && typeof x1 === 'number' ? x1 - x0 : NaN;
+      if (Number.isFinite(w) && Math.abs(w - width) > STATUE_WIDTH_TOL) {
+        out.push({ biomeId: b.id, msg: `оформление: ширина ниши statues.width = ${width}, а модель статуи «${id}» шириной ${w.toFixed(2)} м — статуя ${w > width ? 'влезет в соседние сегменты стены и факелы' : 'оставит дыру в стене'}` });
+      }
+    }
+  }
+  return out;
 }
 
 /** Id объектов, которые ставит оформление: из случайной россыпи они выпадают ПРАВИЛОМ (ни броска на них). */
@@ -219,8 +254,10 @@ export function placeDressing(L: DungeonLayout, opts: DressingOpts, rng: Rng, sp
   }
 
   // ── 3. Костры: центр большой комнаты (не входа), footprint + кольцо пола в клетку вокруг (обойти можно со всех сторон) ──
+  // ⭐ 08.10: и отступ (`objects[].clearance`, `FloorClaims`): след + отступ костра не задевает стоящий напольный декор, и наоборот
   if (rules.firePits && pitIds.length) {
     const fp = rules.firePits;
+    const claims = claimsOf(L.decor, specs);
     for (const room of L.rooms) {
       if (room.type === 'entrance' || Math.min(room.w, room.h) < fp.minRoom) continue;
       if (!rng.chance(fp.chance)) continue;
@@ -236,6 +273,9 @@ export function placeDressing(L: DungeonLayout, opts: DressingOpts, rng: Rng, sp
       }
       const rot = QUADS[rng.int(0, 3)]!;
       if (!fits) continue;
+      const rect = { x0, y0, x1, y1 }, clear = specs?.get(id)?.clearance ?? 0;
+      if (!claims.free(rect, clear)) continue;
+      claims.claim(rect, clear);
       L.decor.push({ x: cx * TILE, y: cy * TILE, kind: 'obj', objectId: id, rot, footprint: { w: foot.w, h: foot.h } });
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) res.floorCells.add(ck(x, y));
     }

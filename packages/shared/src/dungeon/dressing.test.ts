@@ -5,8 +5,8 @@ import { createRng } from '../formulas/rng.js';
 import { Cell, TILE, makeGrid, worldToCell, type Grid } from '../world/grid.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { validate, type DecorObject, type DungeonLayout, type Room } from './floorCommon.js';
-import { decorSpecsFor, obstaclesFromDecor, type DecorSpec } from './decor.js';
-import { dressingObjectIds, dressingOf, isFarFace, placeDressing, toCameraXY, wallRuns, type DressingOpts } from './dressing.js';
+import { decorSpecsFor, footprintRect, obstaclesFromDecor, type DecorSpec } from './decor.js';
+import { dressingObjectIds, dressingOf, dressingWarnings, isFarFace, placeDressing, toCameraXY, wallRuns, type DressingOpts } from './dressing.js';
 import { generateFloor, generateFloorParams } from './generateFloor.js';
 import { resolveFloorSpec } from './floorSpec.js';
 import { spawnPacksEl } from './floor.js';
@@ -235,9 +235,9 @@ describe('⭐ 08.10: статуи в нишах и костры (синтети�
   });
 });
 
-/** Этажи крипты, как их собирает `Room.enterNode`: каждый этаж каждого типа × сиды. */
-function cryptFloors(seeds: number): { L: DungeonLayout; bare: DungeonLayout; specs: DecorSpec[] }[] {
-  const specs = decorSpecsFor(reg.get('objects'), reg.get('models'), 'crypt', reg.get('art'));
+/** Этажи крипты, как их собирает `Room.enterNode`: каждый этаж каждого типа × сиды. `objects` — подменить таблицу объектов (сторож отступа). */
+function cryptFloors(seeds: number, objects = reg.get('objects')): { L: DungeonLayout; bare: DungeonLayout; specs: DecorSpec[] }[] {
+  const specs = decorSpecsFor(objects, reg.get('models'), 'crypt', reg.get('art'));
   const chests = { tiers: reg.get('chests'), perFloor: balance.loot.chestsPerFloor };
   const out: { L: DungeonLayout; bare: DungeonLayout; specs: DecorSpec[] }[] = [];
   for (const f of reg.get('floors').filter((x) => x.biomeId === 'crypt' && x.role !== 'rest')) {
@@ -342,6 +342,66 @@ describe('⭐ 08.10: этажи крипты целиком', () => {
       }
     }
     expect(pitsSeen).toBeGreaterThan(0); expect(boxes).toBeGreaterThan(0);
+  });
+});
+
+describe('⭐ 08.10: отступ напольного декора (`objects[].clearance`) на этажах крипты', () => {
+  const types = reg.get('floors').filter((x) => x.biomeId === 'crypt' && x.role !== 'rest').length;
+  const seeds = Math.ceil(200 / Math.max(1, types));
+  const GRILLE = 'crypt_floor_grille_01';
+  const pitIds = new Set(crypt.dressing!.firePits!.objectIds);
+  /** Нарушения кольца в клетку: костёр/решётка и любой другой напольный декор (объект пола или точечный — портал, лавка). */
+  function violations(L: DungeonLayout, specs: DecorSpec[]): string[] {
+    const by = new Map(specs.map((s) => [s.id, s]));
+    const floorDecor = L.decor.filter((d) => d.kind !== 'obj' || by.get(d.objectId ?? '')?.surface === 'floor');
+    const out: string[] = [];
+    for (const a of floorDecor.filter((d) => d.objectId === GRILLE || pitIds.has(d.objectId ?? ''))) {
+      const p = footprintRect(a);
+      for (const b of floorDecor) {
+        if (b === a) continue;
+        const q = footprintRect(b);
+        if (p.x0 - 1 <= q.x1 && q.x0 <= p.x1 + 1 && p.y0 - 1 <= q.y1 && q.y0 <= p.y1 + 1) out.push(`${a.objectId} ${JSON.stringify(p)} ↔ ${b.objectId ?? b.kind} ${JSON.stringify(q)}`);
+      }
+    }
+    return out;
+  }
+
+  it('костёр и решётка не касаются ни друг друга, ни прочего напольного декора (≥ 200 этажей); validate()', () => {
+    const floors = cryptFloors(seeds);
+    expect(floors.length).toBeGreaterThanOrEqual(200);
+    let pits = 0, grilles = 0, both = 0;
+    for (const { L, specs } of floors) {
+      expect(validate(L)).toBe(true);
+      expect(violations(L, specs)).toEqual([]);
+      const np = L.decor.filter((d) => pitIds.has(d.objectId ?? '')).length, ng = L.decor.filter((d) => d.objectId === GRILLE).length;
+      pits += np; grilles += ng; if (np && ng) both++;
+    }
+    expect(pits).toBeGreaterThan(50); expect(grilles).toBeGreaterThan(50); expect(both).toBeGreaterThan(20);
+  });
+
+  it('сторож сторожа: без отступа (clearance 0) решётка вставала вплотную к костру — то, что владелец видел на скриншоте', () => {
+    const bare = reg.get('objects').map((o) => ({ ...o, clearance: 0 }));
+    const bad = cryptFloors(seeds, bare).reduce((n, { L, specs }) => n + violations(L, specs).length, 0);
+    expect(bad).toBeGreaterThan(0);
+  });
+
+  it('отступ — из конфига: костёр и решётка крипты — 1 клетка', () => {
+    const o = new Map(reg.get('objects').map((x) => [x.id, x]));
+    for (const id of [GRILLE, ...pitIds]) expect(o.get(id)?.clearance, id).toBe(1);
+  });
+});
+
+describe('⭐ 08.10: предупреждение редактора — ширина ниши против модели статуи', () => {
+  it('живой конфиг чист; ширина ниши ≠ габарит модели (манифест арта) — предупреждение; без габарита — не судим', () => {
+    expect(dressingWarnings(reg.get('biomes'), reg.get('objects'), reg.get('art'))).toEqual([]);
+    const wide = reg.get('biomes').map((b) => (b.dressing?.statues ? { ...b, dressing: { ...b.dressing, statues: { ...b.dressing.statues, width: 3 } } } : b));
+    const w = dressingWarnings(wide, reg.get('objects'), reg.get('art'));
+    const measured = reg.get('art').filter((a) => a.bounds && a.kind !== 'material' && crypt.dressing!.statues!.objectIds.includes(a.id)).length;
+    expect(measured, 'в манифесте есть габарит хоть одной статуи').toBeGreaterThan(0);
+    expect(w.length).toBe(measured);
+    expect(w[0]!.biomeId).toBe('crypt');
+    expect(w[0]!.msg).toContain('statues.width = 3');
+    expect(dressingWarnings(wide, reg.get('objects'), [])).toEqual([]);
   });
 });
 

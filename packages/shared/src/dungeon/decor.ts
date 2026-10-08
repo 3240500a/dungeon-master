@@ -23,6 +23,8 @@ export interface DecorSpec {
   blocks: boolean;                   // даёт суб-тайл-препятствие
   blocksSight: boolean;              // препятствие перекрывает и обзор (LoS)
   collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number }; // в ДОЛЯХ тайла
+  /** ⭐ 08.10: отступ напольного декора, клеток (`objects[].clearance`): кольцо вокруг следа без другого напольного декора; нет/0 — как прежде. */
+  clearance?: number;
 }
 
 /** Параметры плотности расстановки (тюнятся позже; «пачки» декора). */
@@ -38,6 +40,62 @@ function footprintCells(cx: number, cy: number, w: number, h: number): string[] 
   const out: string[] = [];
   for (let y = cy; y < cy + h; y++) for (let x = cx; x < cx + w; x++) out.push(key(x, y));
   return out;
+}
+
+/** Прямоугольник клеток (включительно). */
+export interface CellRect { x0: number; y0: number; x1: number; y1: number }
+
+/**
+ * ⭐ 08.10: СЛЕД декора в клетках — прямоугольник `footprint` с центром в точке декора (так их ставят `placeFloorDecor` и костры
+ * `placeDressing`; центр посреди клетки — след на клетку шире: костёр в комнате нечётной ширины лежит на трёх клетках). Без `footprint`
+ * (портал, лавка, процедурный факел) — клетка под точкой.
+ */
+export function footprintRect(d: { x: number; y: number; footprint?: { w: number; h: number } }): CellRect {
+  if (!d.footprint) { const c = worldToCell(d.x, d.y); return { x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }; }
+  const fw = Math.max(1, d.footprint.w), fh = Math.max(1, d.footprint.h);
+  const cx = d.x / TILE, cy = d.y / TILE, eps = 1e-9;   // eps — от шума деления на краю клетки
+  return { x0: Math.floor(cx - fw / 2 + eps), y0: Math.floor(cy - fh / 2 + eps), x1: Math.ceil(cx + fw / 2 - eps) - 1, y1: Math.ceil(cy + fh / 2 - eps) - 1 };
+}
+
+/**
+ * ⭐ 08.10: ОТСТУП НАПОЛЬНОГО ДЕКОРА (`objects[].clearance`, клеток; решение владельца — костёр и решётка рядом «не очень красиво»): кольцо
+ * в `clearance` клеток вокруг следа, где не стоит ДРУГОЙ напольный декор. Правило в обе стороны: объект не ставится, если его след попал в
+ * след + отступ уже стоящего, ИЛИ его след + СВОЙ отступ задел след уже стоящего, — у двух объектов с отступом 1 между следами всегда
+ * клетка пола (не касаются ни гранью, ни углом). Отступ 0 у всех — ничего не меняется: следы и так не пересекаются (`fits`), раскладка
+ * байт-в-байт прежняя. Настенный декор (факелы, ниши статуй) — не напольный: его клетки перед гранью и так заняты (`taken`).
+ */
+export class FloorClaims {
+  private readonly feet = new Set<string>();   // клетки следов напольного декора
+  private readonly halo = new Set<string>();   // клетки «след + отступ» объектов с отступом
+  /** Занять след с отступом `clearance`. */
+  claim(r: CellRect, clearance = 0): void {
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) this.feet.add(key(x, y));
+    const c = Math.max(0, Math.floor(clearance));
+    if (c > 0) for (let y = r.y0 - c; y <= r.y1 + c; y++) for (let x = r.x0 - c; x <= r.x1 + c; x++) this.halo.add(key(x, y));
+  }
+  /** След `r` с отступом `clearance` не попал в чужой отступ и не задел чужой след. */
+  free(r: CellRect, clearance = 0): boolean {
+    if (this.halo.size) for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) if (this.halo.has(key(x, y))) return false;
+    const c = Math.max(0, Math.floor(clearance));
+    for (let y = r.y0 - c; y <= r.y1 + c; y++) for (let x = r.x0 - c; x <= r.x1 + c; x++) if (this.feet.has(key(x, y))) return false;
+    return true;
+  }
+}
+
+/**
+ * ⭐ 08.10: занятость пола декором, уже стоящим на этаже: напольный объект (`known` — спеки биома, и выпавшие из россыпи объекты
+ * оформления тоже) — своим следом и отступом; прочий декор (портал, лавка, процедурный факел, объект без спеки) — клеткой под точкой;
+ * настенный (`surface: 'wall'`) — мимо.
+ */
+export function claimsOf(decor: readonly DecorObject[], known?: ReadonlyMap<string, DecorSpec>): FloorClaims {
+  const claims = new FloorClaims();
+  for (const d of decor) {
+    const spec = d.kind === 'obj' && d.objectId ? known?.get(d.objectId) : undefined;
+    if (spec?.surface === 'wall') continue;
+    if (spec) claims.claim(footprintRect(d), spec.clearance ?? 0);
+    else { const c = worldToCell(d.x, d.y); claims.claim({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }); }
+  }
+  return claims;
 }
 
 /** Все клетки footprint'а свободны (пол, не заняты, не зарезервированы)? */
@@ -67,8 +125,10 @@ const QUADS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
  * меняются (проходимость сохраняется) — footprint лишь резервирует клетки от наложения; коллизия —
  * суб-тайловая (см. `obstaclesFromDecor`). Пишет обогащённые `DecorObject{kind:'obj'}` в `L.decor`.
  * `taken` — клетки «cx,cy», уже занятые оформлением биома (`dressing.ts`); нет — как прежде.
+ * ⭐ 08.10: ОТСТУП (`DecorSpec.clearance`, `FloorClaims`) — и у ставящегося объекта, и у уже стоящего декора (`known` — все спеки биома,
+ * вместе с выпавшими из россыпи объектами оформления: у костра свой отступ); стоящий декор занимает весь след, а не клетку под точкой.
  */
-export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}, taken?: ReadonlySet<string>): void {
+export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}, taken?: ReadonlySet<string>, known?: ReadonlyMap<string, DecorSpec>): void {
   const specs = allSpecs.filter((s) => s.surface === 'floor');   // на пол — по комнатам; на стену — placeWallProps
   if (!specs.length) return;
   const chance = opts.chancePerRoom ?? 1;    // глобальный гейт слота (частоту рулит per-object spawnChance)
@@ -85,6 +145,8 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
   for (const lv of L.levers) reserveWorld(lv);
   // ⭐ 08.10: клетки, занятые оформлением биома (`placeDressing`: костёр целиком, клетки перед нишами и факелами) — «cx,cy».
   if (taken) for (const k of taken) reserved.add(k);
+  // ⭐ 08.10: следы и отступы стоящего декора (костёр — весь след 2×2 и кольцо отступа); отступ 0 у всех — проверка ниже всегда проходит
+  const claims = claimsOf(L.decor, known ?? new Map(allSpecs.map((s) => [s.id, s])));
 
   for (const room of L.rooms) {
     if (room.type === 'entrance') continue;
@@ -109,6 +171,9 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
         const cx = rng.int(x0, x1);
         const cy = rng.int(y0, y1);
         if (!fits(L, reserved, cx, cy, fw, fh)) continue;
+        const rect = { x0: cx, y0: cy, x1: cx + fw - 1, y1: cy + fh - 1 };
+        if (!claims.free(rect, spec.clearance)) continue;   // ⭐ 08.10: отступ — свой и соседей
+        claims.claim(rect, spec.clearance);
         for (const k of footprintCells(cx, cy, fw, fh)) reserved.add(k);
         const wx = cx * TILE + (fw * TILE) / 2;   // центр footprint'а (мир)
         const wy = cy * TILE + (fh * TILE) / 2;
@@ -171,7 +236,7 @@ export function obstaclesFromDecor(decor: DecorObject[], byId: Map<string, Decor
 
 interface ObjCfgLite {
   id: string; modelId: string; enabled: boolean; role: string; surface?: 'floor' | 'wall'; biomes: string[];
-  blocks: boolean; blocksSight: boolean; footprint: { w: number; h: number }; spawnChance?: number;
+  blocks: boolean; blocksSight: boolean; footprint: { w: number; h: number }; spawnChance?: number; clearance?: number;
   collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number };
 }
 
@@ -183,7 +248,7 @@ function isPlaceable(o: ObjCfgLite): boolean {
 
 /** Строит спеки расставляемых объектов из config `objects` для биома. Коллайдер: явный на объекте перекрывает; иначе из
  *  меша модели (`models[].collider`, извлечён из `collider*` GLB); ⭐ 08.10 (Ф1) иначе из манифеста арта Unity (`art[].collider` —
- *  меш `collider*` в FBX); иначе дефолт-круг. Пол-россыпь (role floor) `coversFloor`. */
+ *  меш `collider*` в FBX); иначе дефолт-круг. Пол-россыпь (role floor) `coversFloor`. ⭐ 08.10: `clearance` — отступ (`FloorClaims`). */
 export function decorSpecsFor(
   objects: ObjCfgLite[],
   models: { id: string; collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number } }[],
@@ -201,5 +266,6 @@ export function decorSpecsFor(
       surface: o.role === 'prop' ? (o.surface ?? 'floor') : 'floor',   // props — по конфигу; floor-россыпь — всегда пол
       coversFloor: o.role === 'floor',                                  // floor-россыпь заменяет базовый тайл пола
       blocks: o.blocks, blocksSight: o.blocksSight, collider: o.collider ?? modelCollider.get(o.modelId),
+      clearance: Math.max(0, Math.floor(o.clearance ?? 0)),   // ⭐ 08.10: отступ напольного декора, клеток
     }));
 }

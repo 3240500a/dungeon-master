@@ -173,7 +173,8 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   }
   // Расставляемые объекты (пол-россыпь + props на пол/стену) — детерминированно от сида (независимые потоки rng).
   if (specs && specs.length) {
-    placeFloorDecor(result, specs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace, taken?.floorCells);
+    // ⭐ 08.10: отступы стоящего декора — по всем спекам биома (у костров оформления свой `clearance`, а из россыпи они выпали)
+    placeFloorDecor(result, specs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace, taken?.floorCells, new Map((opts.decorSpecs ?? specs).map((s) => [s.id, s])));
     placeWallProps(result, specs, createRng(((seed ^ 0x3a11) >>> 0) || 1), taken?.faces);
   }
   // Сундуки — СВОЙ поток rng, как у декора: добавление сундуков не должно сдвигать всё остальное.

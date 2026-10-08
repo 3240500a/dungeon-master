@@ -3,7 +3,7 @@ import type { SaveState } from '../types/save.js';
 import type { AttackType } from '../types/items.js';
 import type { MonsterEntity, PlayerEntity, DropEntity, WorldState } from '../world/state.js';
 import type { Vec2 } from '../world/movement.js';
-import { findPath } from '../world/pathfind.js';
+import { findPath, navMaskFor } from '../world/pathfind.js';
 import { hasLineOfSight } from '../world/lineOfSight.js';
 import { playerSnapshot } from './derive.js';
 import { isAoeAbility, ABILITY_AOE_RADIUS, type PlayerInput } from './session.js';
@@ -74,7 +74,7 @@ export class BotController {
   private navigate(world: WorldState, p: PlayerEntity, goal: Vec2, goalKey: string): Vec2 {
     const stale = world.tick - this.lastRepathTick >= REPATH_TICKS;
     if (goalKey !== this.goalKey || stale || this.path.length === 0) {
-      this.path = findPath(world.grid, p.pos, goal);
+      this.path = findPath(world.grid, p.pos, goal, undefined, navMaskFor(world.grid, world.obstacles));   // ⭐ 08.10: в обход преград декора, как монстры
       this.goalKey = goalKey;
       this.lastRepathTick = world.tick;
     }

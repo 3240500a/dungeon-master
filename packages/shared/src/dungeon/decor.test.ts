@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateFloorParams } from './generateFloor.js';
-import { obstaclesFromDecor, decorSpecsFor, type DecorSpec } from './decor.js';
+import { obstaclesFromDecor, decorSpecsFor, footprintRect, FloorClaims, type DecorSpec } from './decor.js';
 import type { FloorAlgoParams } from '../config/schemas.js';
 import { moveWithCollision } from '../world/movement.js';
 import { TILE } from '../world/grid.js';
@@ -75,6 +75,47 @@ describe('напольный декор — расстановка на серв
     const a = specs.find((s) => s.id === 'a')!, g = specs.find((s) => s.id === 'grille')!;
     expect(a.surface).toBe('wall'); expect(a.coversFloor).toBe(false); expect(a.collider).toEqual({ shape: 'circle', r: 0.35 });
     expect(g.surface).toBe('floor'); expect(g.coversFloor).toBe(true);    // floor-россыпь заменяет тайл пола
+    expect(g.clearance).toBe(0);                                          // ⭐ 08.10: нет поля — отступа нет
+    expect(decorSpecsFor([{ ...objects[1]!, clearance: 2 }], models, 'crypt')[0]!.clearance).toBe(2);
+  });
+
+  it('⭐ 08.10: отступ (`FloorClaims`) — в обе стороны: чужой след в моём кольце и мой след в чужом кольце; отступ 0 — только следы', () => {
+    const at = (x: number, y: number, w = 2, h = 2) => ({ x0: x, y0: y, x1: x + w - 1, y1: y + h - 1 });
+    const one = (c: number) => { const f = new FloorClaims(); f.claim(at(10, 10), c); return f; };
+    expect(one(0).free(at(12, 10), 0), 'вплотную, отступов нет').toBe(true);
+    expect(one(0).free(at(11, 10), 0), 'след на след').toBe(false);
+    expect(one(1).free(at(12, 10), 0), 'в кольце стоящего').toBe(false);
+    expect(one(0).free(at(12, 10), 1), 'своё кольцо задело стоящий').toBe(false);
+    expect(one(1).free(at(12, 12), 0), 'угол к углу — тоже касание').toBe(false);
+    expect(one(1).free(at(13, 10), 1), 'клетка пола между — можно').toBe(true);
+    expect(one(2).free(at(13, 10), 0), 'отступ 2 — нужно две клетки').toBe(false);
+    // след по точке декора: как у placeFloorDecor (центр следа) и у костра в комнате нечётной ширины (центр посреди клетки — шире на клетку)
+    expect(footprintRect({ x: 6 * TILE, y: 6 * TILE, footprint: { w: 2, h: 2 } })).toEqual({ x0: 5, y0: 5, x1: 6, y1: 6 });
+    expect(footprintRect({ x: 6.5 * TILE, y: 6 * TILE, footprint: { w: 2, h: 2 } })).toEqual({ x0: 5, y0: 5, x1: 7, y1: 6 });
+    expect(footprintRect({ x: 3.5 * TILE, y: 4.5 * TILE, footprint: { w: 1, h: 1 } })).toEqual({ x0: 3, y0: 4, x1: 3, y1: 4 });
+    expect(footprintRect({ x: 3.2 * TILE, y: 4.9 * TILE })).toEqual({ x0: 3, y0: 4, x1: 3, y1: 4 });   // без следа — клетка под точкой
+  });
+
+  it('⭐ 08.10: россыпь с отступом 1 — следы не касаются; отступ 0 явно — байт-в-байт как без поля', () => {
+    const base: DecorSpec[] = [
+      { id: 'rug', footprint: { w: 2, h: 2 }, weight: 1, spawnChance: 1, surface: 'floor', coversFloor: true, blocks: false, blocksSight: false },
+      { id: 'col', footprint: { w: 1, h: 1 }, weight: 1, spawnChance: 1, surface: 'floor', coversFloor: false, blocks: true, blocksSight: true, collider: { shape: 'circle', r: 0.3 } },
+    ];
+    let pairs = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const a = generateFloorParams(PARAMS, seed, { decorSpecs: base, decorPlace: { maxPerRoom: 8 } });
+      const z = generateFloorParams(PARAMS, seed, { decorSpecs: base.map((s) => ({ ...s, clearance: 0 })), decorPlace: { maxPerRoom: 8 } });
+      expect(JSON.stringify(z)).toBe(JSON.stringify(a));
+      const L = generateFloorParams(PARAMS, seed, { decorSpecs: base.map((s) => ({ ...s, clearance: 1 })), decorPlace: { maxPerRoom: 8 } });
+      const rects = L.decor.filter((d) => d.kind === 'obj').map(footprintRect);
+      for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+        const p = rects[i]!, q = rects[j]!;
+        const touch = p.x0 - 1 <= q.x1 && q.x0 <= p.x1 + 1 && p.y0 - 1 <= q.y1 && q.y0 <= p.y1 + 1;
+        expect(touch, `сид ${seed}: ${JSON.stringify(p)} касается ${JSON.stringify(q)}`).toBe(false);
+        pairs++;
+      }
+    }
+    expect(pairs).toBeGreaterThan(40);
   });
 
   it('⭐ 08.10 (Ф1): коллайдер — объекта, иначе модели, иначе меша collider* из каталога Unity (`art`), иначе нет', () => {
