@@ -6,7 +6,7 @@ import { hasLineOfSight } from '../world/lineOfSight.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { GameSession, type PlayerInput, type SessionEvent } from '../session/session.js';
 import { newBotSave } from '../sim/playerBot.js';
-import { obstaclesFromDecor, type DecorSpec } from './decor.js';
+import { footprintRect, obstaclesFromDecor, type DecorSpec } from './decor.js';
 
 /**
  * ⭐ Сундук — второй источник добычи, с ритмом, противоположным монстрам: вещь ГАРАНТИРОВАННО,
@@ -159,7 +159,17 @@ describe('⚠ R9-16: высокий декор не запирает сунду�
     for (let seed = 1; seed <= 30; seed++) {
       const plain = generateFloorParams(params, seed, { chests: chestOpts });
       const low = generateFloorParams(params, seed, { chests: chestOpts, decorSpecs: [{ ...tall, blocks: false, blocksSight: false }] });
-      expect(low.chests, `сид ${seed}: низкий декор сундуки не двигает`).toEqual(plain.chests);
+      // ⭐ 08.10 (владелец: «на костре не ставить»): низкий декор сундук двигает ТОЛЬКО со своего следа (сундук на решётке) — прочие на месте
+      const onFoot = (ch: { x: number; y: number }): boolean => low.decor.some((d) => {
+        if (d.kind !== 'obj') return false;
+        const r = footprintRect(d), c = worldToCell(ch.x, ch.y);
+        return c.cx >= r.x0 && c.cx <= r.x1 && c.cy >= r.y0 && c.cy <= r.y1;
+      });
+      expect(low.chests.length, `сид ${seed}: сундуков столько же`).toBe(plain.chests.length);
+      for (let i = 0; i < plain.chests.length; i++) {
+        expect(onFoot(low.chests[i]!), `сид ${seed}: сундук не на следе декора`).toBe(false);
+        if (!onFoot(plain.chests[i]!)) expect(low.chests[i], `сид ${seed}: не на следе — на месте`).toEqual(plain.chests[i]);
+      }
       for (const ch of plain.chests) {
         const c = worldToCell(ch.x, ch.y);
         const room = plain.rooms.find((r) => c.cx >= r.x && c.cx < r.x + r.w && c.cy >= r.y && c.cy < r.y + r.h)!;

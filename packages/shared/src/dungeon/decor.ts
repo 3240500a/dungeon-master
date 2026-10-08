@@ -83,6 +83,19 @@ export class FloorClaims {
 }
 
 /**
+ * ⭐ 08.10 (ревью, решение владельца «на костре не ставить»): точки этажа, которые декор с отступом не задевает и кольцом — вход, лестница,
+ * выходы, рычаги, клетки дверей. Занимают след в клетку БЕЗ отступа: у объектов без отступа проверка та же, что у `fits`/`reserved`
+ * (раскладка прежняя), а кольцо решётки или костра больше не ложится на выход или рычаг.
+ */
+export function claimLayoutAnchors(claims: FloorClaims, L: DungeonLayout): void {
+  const cell = (p: { x: number; y: number }): void => { const c = worldToCell(p.x, p.y); claims.claim({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }); };
+  cell(L.spawn); cell(L.stairsDown);
+  for (const e of L.exits) cell(e);
+  for (const lv of L.levers) cell(lv);
+  for (const d of L.doors) for (const c of d.cells) claims.claim({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy });
+}
+
+/**
  * ⭐ 08.10: занятость пола декором, уже стоящим на этаже: напольный объект (`known` — спеки биома, и выпавшие из россыпи объекты
  * оформления тоже) — своим следом и отступом; прочий декор (портал, лавка, процедурный факел, объект без спеки) — клеткой под точкой;
  * настенный (`surface: 'wall'`) — мимо.
@@ -147,6 +160,7 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
   if (taken) for (const k of taken) reserved.add(k);
   // ⭐ 08.10: следы и отступы стоящего декора (костёр — весь след 2×2 и кольцо отступа); отступ 0 у всех — проверка ниже всегда проходит
   const claims = claimsOf(L.decor, known ?? new Map(allSpecs.map((s) => [s.id, s])));
+  claimLayoutAnchors(claims, L);   // ⭐ 08.10: кольцо решётки — не на выход и не на рычаг
 
   for (const room of L.rooms) {
     if (room.type === 'entrance') continue;

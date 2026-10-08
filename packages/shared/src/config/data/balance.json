@@ -297,10 +297,10 @@
       "bias": -0.001,
       "torchCasters": 4,
       "torchIntensity": 4000,
-      "torchDist": 400,
+      "torchDist": 640,
       "playerLightIntensity": 3500,
-      "playerLightDist": 350,
-      "playerLightHeight": 90,
+      "playerLightDist": 960,
+      "playerLightHeight": 160,
       "playerLightToCam": 30
     }
   },

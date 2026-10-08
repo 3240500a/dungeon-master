@@ -84,7 +84,7 @@
     "light": {
       "color": "#90FFF3",
       "intensity": 500,
-      "distance": 400,
+      "distance": 640,
       "flicker": false
     }
   },

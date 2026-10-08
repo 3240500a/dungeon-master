@@ -2,7 +2,7 @@ import type { Rng } from '../formulas/rng.js';
 import { Cell, TILE, worldToCell } from '../world/grid.js';
 import type { BiomeDressing } from '../config/schemas.js';
 import type { DungeonLayout } from './floorCommon.js';
-import { claimsOf, type DecorSpec } from './decor.js';
+import { claimLayoutAnchors, claimsOf, type DecorSpec } from './decor.js';
 
 /**
  * ⭐ 08.10: ОФОРМЛЕНИЕ БИОМА ПО ПРАВИЛУ (`biomes[].dressing`) — настенные факелы с шагом, статуи в нишах дальних стен, костры в
@@ -258,6 +258,7 @@ export function placeDressing(L: DungeonLayout, opts: DressingOpts, rng: Rng, sp
   if (rules.firePits && pitIds.length) {
     const fp = rules.firePits;
     const claims = claimsOf(L.decor, specs);
+    claimLayoutAnchors(claims, L);   // ⭐ 08.10: кольцо костра — не на выход и не на рычаг
     for (const room of L.rooms) {
       if (room.type === 'entrance' || Math.min(room.w, room.h) < fp.minRoom) continue;
       if (!rng.chance(fp.chance)) continue;

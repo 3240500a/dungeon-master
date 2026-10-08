@@ -436,3 +436,26 @@ describe('⭐ 08.10: биомы без оформления — байт-в-ба
     }
   });
 });
+
+describe('⭐ 08.10 (ревью, владелец «на костре не ставить»): кольцо отступа — и для сундуков, выходов и рычагов', () => {
+  it('на этажах крипты сундук не стоит на следе и в кольце напольного декора с отступом; выход, вход и рычаг — вне кольца', () => {
+    let rings = 0, chests = 0;
+    for (const { L, specs } of cryptFloors(24)) {
+      const byId = new Map(specs.map((s) => [s.id, s]));
+      for (const d of L.decor) {
+        const s = d.kind === 'obj' && d.objectId ? byId.get(d.objectId) : undefined;
+        if (!s || s.surface === 'wall') continue;
+        const r = footprintRect(d), c = s.clearance ?? 0;
+        if (c > 0) rings++;
+        const inFoot = (p: { x: number; y: number }, m: number): boolean => {
+          const q = worldToCell(p.x, p.y);
+          return q.cx >= r.x0 - m && q.cx <= r.x1 + m && q.cy >= r.y0 - m && q.cy <= r.y1 + m;
+        };
+        for (const ch of L.chests) { chests++; expect(inFoot(ch, c), `сундук ${ch.id} на ${d.objectId} или в его кольце`).toBe(false); }
+        if (c > 0) for (const p of [L.spawn, L.stairsDown, ...L.exits, ...L.levers]) expect(inFoot(p, c), `точка этажа в кольце ${d.objectId}`).toBe(false);
+      }
+    }
+    expect(rings).toBeGreaterThan(50);
+    expect(chests).toBeGreaterThan(50);
+  });
+});

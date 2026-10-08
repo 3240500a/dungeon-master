@@ -5,7 +5,7 @@ import { type DungeonLayout, type Room, validate, roomCenter } from './floorComm
 import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
 import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
-import { obstaclesFromDecor, placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
+import { claimsOf, obstaclesFromDecor, placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
 import { dressingObjectIds, placeDressing, type DressingOpts, type DressingResult } from './dressing.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { placeChests } from './floorCommon.js';
@@ -181,8 +181,16 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   if (opts.chests && !opts.town) {
     // ⚠ R9-16: не под преградой декора — те же коллайдеры, что получит сессия (`obstaclesFromDecor`), с запасом в четверть
     // клетки, чтобы сундук не врастал в колонну. Декора с преградой нет — сундук там же, где и был.
-    const blockers = obstaclesFromDecor(result.decor, new Map((opts.decorSpecs ?? []).map((s) => [s.id, s])));
-    const blocked = (x: number, y: number): boolean => blockers.some((o) => pushOutObstacle(x, y, TILE / 4, o) !== null);
+    const known = new Map((opts.decorSpecs ?? []).map((s) => [s.id, s]));
+    const blockers = obstaclesFromDecor(result.decor, known);
+    // ⭐ 08.10 (ревью, владелец: «на костре не надо ставить»): и не на след напольного объекта (решётка, костёр) и не в его кольцо отступа
+    // (`objects[].clearance`) — коллайдер решётки сундук не держал вовсе, а у костра пускал на край следа. Только объекты конфига (`obj`):
+    // у биомов без них сундук там же, где был.
+    const floorClaims = claimsOf(result.decor.filter((d) => d.kind === 'obj'), known);
+    const blocked = (x: number, y: number): boolean => {
+      const c = worldToCell(x, y);
+      return !floorClaims.free({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }) || blockers.some((o) => pushOutObstacle(x, y, TILE / 4, o) !== null);
+    };
     placeChests(result, createRng(((seed ^ 0xc4e5) >>> 0) || 1), opts.chests.tiers, opts.chests.perFloor, blocked);
   }
   return result;
