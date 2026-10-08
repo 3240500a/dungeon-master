@@ -298,7 +298,7 @@
      "torchCasters": 4,
      "torchIntensity": 4000,
      "torchDist": 640,
-     "playerLightIntensity": 3500,
+     "playerLightIntensity": 14000,
      "playerLightDist": 960,
      "playerLightHeight": 160,
      "playerLightToCam": 30
