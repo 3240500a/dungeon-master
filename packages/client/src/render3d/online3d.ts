@@ -137,15 +137,16 @@ function weaponModelsFromSave(save: SaveState, itemsBase: { id: string; modelId?
   return { main: of(eq?.weapon), off: of(eq?.offhand) };
 }
 /** C6c: внешность брони по слотам из сейва — slot→{modelId, materialId} надетых предметов (голову/волосы даёт база слота). */
-function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string; modelByClass?: Record<string, string>; materialByClass?: Record<string, string> }[]): Record<string, { modelId?: string; materialId?: string } | undefined> {
-  const eq = save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined> | undefined;
+function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string; modelByClass?: Record<string, string>; materialByClass?: Record<string, string>; materialByTier?: Record<string, string> }[]): Record<string, { modelId?: string; materialId?: string } | undefined> {
+  const eq = save.equipment as Record<string, { modelId?: string; baseId?: string; tier?: string } | undefined> | undefined;
   const cls = save.classId;
   const out: Record<string, { modelId?: string; materialId?: string } | undefined> = {};
   // Приоритет: per-class модель базы (modelByClass[класс]) → modelId инстанса (gearFields стампит с базы) → modelId базы.
-  // Материал: per-class материал базы (materialByClass[класс]) — override материала сабмеша атласа при экипе.
+  // Материал: per-class материал базы (materialByClass[класс]), иначе по ступени вещи (materialByTier[tier], 08.10) — override материала
+  // сабмеша атласа при экипе.
   for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) {
     const it = eq?.[slot];
-    if (it) { const b = itemsBase.find((x) => x.id === it.baseId); out[slot] = { modelId: b?.modelByClass?.[cls] ?? it.modelId ?? b?.modelId, materialId: b?.materialByClass?.[cls] }; }
+    if (it) { const b = itemsBase.find((x) => x.id === it.baseId); out[slot] = { modelId: b?.modelByClass?.[cls] ?? it.modelId ?? b?.modelId, materialId: b?.materialByClass?.[cls] ?? (it.tier ? b?.materialByTier?.[it.tier] : undefined) }; }
   }
   return out;
 }

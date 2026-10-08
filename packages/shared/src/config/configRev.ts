@@ -63,6 +63,11 @@ const GAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
   art: ['id', 'collider'],
 };
 
+/** ⭐ 08.10: строки смешанных таблиц, которые игра не читает вовсе: материалы библиотеки Unity в манифесте арта — ключи для картинки. */
+const VISUAL_ROWS: Readonly<Record<string, (row: Record<string, unknown>) => boolean>> = {
+  art: (r) => r.kind === 'material',
+};
+
 /** Проекция таблицы с памятью по объекту таблицы (как `tableRevs`): таблицу на месте не правят, правка — новый объект. */
 const gameViews = new WeakMap<object, unknown>();
 
@@ -76,7 +81,9 @@ export function gameView(key: string, table: unknown): unknown {
   if (!fields || !Array.isArray(table)) return table;
   let view = gameViews.get(table);
   if (view === undefined) {
-    view = table.map((row) => {
+    const visualRow = VISUAL_ROWS[key];
+    const rows = visualRow ? table.filter((row) => !(row && typeof row === 'object' && visualRow(row as Record<string, unknown>))) : table;
+    view = rows.map((row) => {
       if (row === null || typeof row !== 'object') return row;
       const r = row as Record<string, unknown>;
       const out: Record<string, unknown> = {};

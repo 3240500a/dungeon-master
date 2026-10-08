@@ -255,16 +255,37 @@ fieldCustomRenderers.modelByClass = (value, onChange, parent) => {
 };
 // Материал брони ПО КЛАССУ (materialByClass): выпадашка материала на КАЖДЫЙ класс. '' = материал сабмеша атласа/дефолт.
 //  Материалы глобальны (не скоупятся по атласу) — список из вкладки «Материалы». Накладывается на меш предмета при экипе.
+// ⭐ 08.10: ключи материалов — материалы конфига + .mat библиотеки Unity (манифест `art`, вид material; без повторов).
+const armorMaterialIds = (): string[] => {
+  const ids = ((data['materials'] as { id: string }[]) ?? []).map((m) => m.id);
+  for (const a of (data['art'] as { id: string; kind?: string }[]) ?? []) if (a.kind === 'material' && !ids.includes(a.id)) ids.push(a.id);
+  return ['', ...ids];
+};
 fieldCustomRenderers.materialByClass = (value, onChange) => {
   const v: Record<string, string> = (value && typeof value === 'object') ? { ...(value as Record<string, string>) } : {};
   const classes = (data['classes'] as { id: string; name?: string }[]) ?? [];
-  const opts = ['', ...((data['materials'] as { id: string }[]) ?? []).map((m) => m.id)];
+  const opts = armorMaterialIds();
   const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
   if (!classes.length) { wrap.textContent = 'нет классов в конфиге'; return wrap; }
   for (const c of classes) {
     const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
     const lbl = document.createElement('span'); lbl.textContent = c.name ?? c.id; lbl.style.cssText = 'min-width:110px;color:#aab';
     const sel = renderEnum(opts, v[c.id] ?? '', (nv) => { const s = String(nv ?? ''); if (s) v[c.id] = s; else delete v[c.id]; onChange({ ...v }); });
+    row.append(lbl, sel); wrap.append(row);
+  }
+  return wrap;
+};
+// ⭐ 08.10: материал брони ПО СТУПЕНИ (materialByTier): выпадашка на каждую ступень item-tiers. '' = нет (материал по классу / сабмеша).
+fieldCustomRenderers.materialByTier = (value, onChange) => {
+  const v: Record<string, string> = (value && typeof value === 'object') ? { ...(value as Record<string, string>) } : {};
+  const tiers = (data['item-tiers'] as { id: string; name?: string }[]) ?? [];
+  const opts = armorMaterialIds();
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  if (!tiers.length) { wrap.textContent = 'нет ступеней в конфиге (item-tiers)'; return wrap; }
+  for (const t of tiers) {
+    const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
+    const lbl = document.createElement('span'); lbl.textContent = `${t.id} ${t.name ?? ''}`; lbl.style.cssText = 'min-width:110px;color:#aab';
+    const sel = renderEnum(opts, v[t.id] ?? '', (nv) => { const s = String(nv ?? ''); if (s) v[t.id] = s; else delete v[t.id]; onChange({ ...v }); });
     row.append(lbl, sel); wrap.append(row);
   }
   return wrap;

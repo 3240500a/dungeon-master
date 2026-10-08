@@ -2341,8 +2341,14 @@
     "modelByClass": {
       "warrior": "plate_armor_01"
     },
-    "materialByClass": {
-      "warrior": "plate_armor_01_w"
+    "materialByTier": {
+      "t0": "plate_armor_01",
+      "t1": "plate_armor_01",
+      "t2": "plate_armor_01",
+      "t3": "plate_armor_01_v2",
+      "t4": "plate_armor_01_v2",
+      "t5": "plate_armor_01_v3",
+      "t6": "plate_armor_01_v3"
     }
   },
   {

@@ -1,5 +1,50 @@
 [
   {
+    "id": "barbute_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "barbute_02",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "bascinet_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "bascinet_01_v2",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "bascinet_01_v3",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "bascinet_02",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "body_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "body_02",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "chainmail_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
     "id": "crypt_arch_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -38,6 +83,11 @@
       "w": 3.0,
       "h": 0.86019
     }
+  },
+  {
+    "id": "crypt_arch_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_arch_02",
@@ -120,6 +170,16 @@
     }
   },
   {
+    "id": "crypt_arch_04",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_books_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_books_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -158,6 +218,11 @@
       "w": 1.80526,
       "h": 0.28088
     }
+  },
+  {
+    "id": "crypt_column_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_column_01",
@@ -205,6 +270,11 @@
       "shape": "circle",
       "r": 0.27778
     }
+  },
+  {
+    "id": "crypt_fire_pit_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_fire_pit_01",
@@ -301,6 +371,16 @@
       "shape": "circle",
       "r": 1.0
     }
+  },
+  {
+    "id": "crypt_fire_pit_02",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_floor_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_floor_base_01",
@@ -454,6 +534,16 @@
     }
   },
   {
+    "id": "crypt_floor_grille_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_metal_props_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_stone_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -531,6 +621,11 @@
       "shape": "circle",
       "r": 1.00035
     }
+  },
+  {
+    "id": "crypt_wall_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_base_01",
@@ -653,6 +748,11 @@
     }
   },
   {
+    "id": "crypt_wall_statue_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_wall_statue_02",
     "kind": "env",
     "group": "biome_crypt",
@@ -691,6 +791,16 @@
       "w": 2.0,
       "h": 0.63595
     }
+  },
+  {
+    "id": "crypt_wall_statue_02",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_statue_03",
@@ -773,6 +883,11 @@
     }
   },
   {
+    "id": "crypt_wall_statue_04",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_wall_torch_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -820,6 +935,11 @@
       "w": 0.16138,
       "h": 0.25391
     }
+  },
+  {
+    "id": "crypt_wall_torch_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wooden_chair_01",
@@ -1011,6 +1131,11 @@
     }
   },
   {
+    "id": "crypt_wooden_props_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_wooden_shelf_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -1168,6 +1293,36 @@
       "w": 1.4,
       "h": 3.0
     }
+  },
+  {
+    "id": "cuman_helmet_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "dm_matte",
+    "kind": "material",
+    "group": "shared"
+  },
+  {
+    "id": "fitted_brigantine_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "fitted_brigantine_01_v2",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "fitted_brigantine_01_v3",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "head_01",
+    "kind": "material",
+    "group": "mat_knight"
   },
   {
     "id": "knight_06_modular_rig",
@@ -3076,5 +3231,60 @@
         0.21228
       ]
     }
+  },
+  {
+    "id": "laminae_armor_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "legs_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "legs_02",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "norman_helmet_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "plate_armor_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "plate_armor_01_v2",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "plate_armor_01_v3",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "plate_gloves_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "salade_01",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "salade_02",
+    "kind": "material",
+    "group": "mat_knight"
+  },
+  {
+    "id": "sugarloaf_01",
+    "kind": "material",
+    "group": "mat_knight"
   }
 ]

@@ -26,6 +26,8 @@ describe('⭐ Д1: игровая ревизия конфига', () => {
       (r) => { const t = structuredClone(r.get('models')); t[0]!.url = '/assets/other.glb'; t[0]!.submeshMaterials = { a: 'b' }; t[0]!.boneMap = { Hips: 'X' }; r.reload({ models: t }); },
       // вид объекта: материал, имя
       (r) => { const t = structuredClone(r.get('objects')); t[0]!.materialId = 'mat_x'; t[0]!.name = 'другое имя'; r.reload({ objects: t }); },
+      // 08.10: новый .mat библиотеки Unity в манифесте арта (строка вида material) и материал брони по ступени — картинка
+      (r) => { const t = structuredClone(r.get('art')); t.push({ id: 'mat_new', kind: 'material', group: 'mat_x', meshes: [], bones: [], sockets: [], lights: [] }); r.reload({ art: t }); },
     ];
     for (const [i, edit] of edits.entries()) {
       const reg = fresh();

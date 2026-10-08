@@ -1160,6 +1160,10 @@ const armorBaseSchema = z.object({
   /** Материал брони ПО КЛАССУ (id класса → materialId из конфига materials). Накладывается на меш этого предмета у
    *  данного класса при экипировке (перекрывает материал сабмеша атласа). Класса нет в карте → материал сабмеша/дефолт. */
   materialByClass: z.record(z.string(), z.string()).optional(),
+  /** ⭐ 08.10: материал брони ПО СТУПЕНИ вещи (id ступени item-tiers → материал). Варианты одной развёртки (plate_armor_01 / _v2 / _v3):
+   *  улучшил вещь у кузнеца — она и выглядит богаче. Материал по классу (если задан для класса героя) главнее. Ключ — .mat библиотеки
+   *  Unity (манифест `art`, вид material) или материал конфига. */
+  materialByTier: z.record(z.string(), z.string()).optional(),
 });
 
 /** Эффект применения расходника (зелья/колбы). */
@@ -3163,7 +3167,7 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const quat = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 export const artSchema = z.array(z.object({
   id: z.string(),
-  kind: z.enum(['character', 'monster', 'weapon', 'prop', 'env']),
+  kind: z.enum(['character', 'monster', 'weapon', 'prop', 'env', 'material']),   // material — .mat библиотеки (ключ для materialBy*), без меша
   group: z.string().default(''),                         // группа Addressables
   source: z.object({ file: z.string(), sha256: z.string(), bytes: z.number().int().nonnegative() }).optional(),   // исходный FBX
   meshes: z.array(z.object({
