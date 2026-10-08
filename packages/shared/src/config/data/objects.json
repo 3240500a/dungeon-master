@@ -86,5 +86,30 @@
       "distance": 400,
       "flicker": false
     }
+  },
+  {
+    "id": "crypt_wall_torch_01",
+    "name": "Настенный факел",
+    "enabled": true,
+    "role": "prop",
+    "surface": "wall",
+    "modelId": "crypt_wall_torch_01",
+    "materialId": "",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": false,
+    "blocksSight": false,
+    "footprint": {
+      "w": 1,
+      "h": 1
+    },
+    "spawnChance": 0.06,
+    "light": {
+      "color": "#ffa860",
+      "intensity": 1500,
+      "distance": 380,
+      "flicker": true
+    }
   }
 ]

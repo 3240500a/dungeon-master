@@ -87,6 +87,9 @@ export function resolveFloorSpec(
     exitCount: opts.exitCount ?? 1,
     locked: opts.locked ?? features.bossRoom, // замок — если это босс-комната
     kind: opts.kind ?? (role === 'rest' ? 'town' : 'normal'),
+    // поля — только когда выключено: у прочих биомов спецификация (и runPlan на проводе) байт-в-байт прежняя
+    ...(biome.pillars === false ? { pillars: false as const } : {}),
+    ...(biome.torches === false ? { torches: false as const } : {}),
   };
 }
 

@@ -28,6 +28,10 @@ export interface GenFloorOpts {
   decorSpecs?: DecorSpec[];
   /** Плотность расстановки декора (тюн «пачек»). */
   decorPlace?: PlaceDecorOpts;
+  /** ⭐ 08.10: `false` — без процедурных колонн: клетки-колонны → пол, декор `pillar` прочь (биом, `biomes[].pillars`). */
+  pillars?: boolean;
+  /** ⭐ 08.10: `false` — без процедурных стоячих факелов: декор `torch` прочь (биом, `biomes[].torches`). */
+  torches?: boolean;
   /** Сундуки этажа (Ч6): тиры из конфига `chests` + сколько ставить. Нет — этаж без сундуков. */
   chests?: { tiers: readonly { id: string; enabled?: boolean; weight?: number }[]; perFloor: { min: number; max: number } };
 }
@@ -145,6 +149,13 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
     result.doors = [];
     result.levers = [];
   }
+  // ⭐ 08.10: биом без процедурных колонн/факелов — снимаются ПОСЛЕ сборки и проверки этажа: поток rng генерации не сдвигается,
+  // проходимость только растёт (колонна → пол), остальной этаж байт-в-байт тот же; пропсы ниже уже видят освободившийся пол
+  if (opts.pillars === false) {
+    for (const row of result.grid) for (let x = 0; x < row.length; x++) if (row[x] === Cell.Pillar) row[x] = Cell.Floor;
+    result.decor = result.decor.filter((d) => d.kind !== 'pillar');
+  }
+  if (opts.torches === false) result.decor = result.decor.filter((d) => d.kind !== 'torch');
   applyFeatures(result, opts.features, createRng(((seed ^ 0xfea7) >>> 0) || 1));
   // Расставляемые объекты (пол-россыпь + props на пол/стену) — детерминированно от сида (независимые потоки rng).
   if (opts.decorSpecs && opts.decorSpecs.length) {
@@ -171,6 +182,8 @@ export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpec
     features: spec.features,
     prefabs,
     biomeId: spec.biomeId,
+    pillars: spec.pillars,
+    torches: spec.torches,
     decorSpecs,
     decorPlace,
     chests,

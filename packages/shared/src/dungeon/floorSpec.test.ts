@@ -4,6 +4,7 @@ import { floorsSchema } from '../config/schemas.js';
 import { pickFloorForRole, availableRoles, resolveFloorSpec } from './floorSpec.js';
 import { generateFloor } from './generateFloor.js';
 import { validate } from './floorCommon.js';
+import { Cell } from '../world/grid.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -70,5 +71,42 @@ describe('подбор этажа по РОЛИ + биому + глубине + 
     expect(L.decor.some((d) => d.kind === 'portal')).toBe(true);
     // ⭐ R7-11: сундук аккаунта — только в городе (`server/net/guard.ts`): на привале его кнопка получала бы отказ.
     expect(L.decor.some((d) => d.kind === 'stash')).toBe(false);
+  });
+});
+
+describe('⭐ 08.10: биом без процедурных колонн и стоячих факелов (biomes[].pillars / torches)', () => {
+  it('крипта: в спецификации pillars/torches = false; у прочих биомов полей нет (runPlan на проводе — прежний)', () => {
+    const r = reg();
+    const crypt = r.get('biomes').find((b) => b.id === 'crypt')!;
+    const other = r.get('biomes').find((b) => b.id !== 'crypt')!;
+    const f = r.get('floors');
+    const s = resolveFloorSpec(crypt, pickFloorForRole('combat', 'crypt', f, 3, 'dungeon-standard', 1), 3, 77);
+    expect(s.pillars).toBe(false);
+    expect(s.torches).toBe(false);
+    const o = resolveFloorSpec(other, undefined, 3, 77);
+    expect('pillars' in o || 'torches' in o).toBe(false);
+  });
+
+  it('этаж без колонн: ни клетки-колонны, ни декора pillar/torch; остальное — байт-в-байт как с ними, проходимость цела', () => {
+    const r = reg();
+    const crypt = r.get('biomes').find((b) => b.id === 'crypt')!;
+    let pillarsSeen = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const floor = { id: 'h', name: 'h', biomeId: 'crypt', role: 'combat', algoParams: { algorithm: 'rooms', cols: 50, rows: 40, roomCount: 10, shapes: { hall: 3, rect: 1 } } };
+      const spec = resolveFloorSpec({ ...crypt, pillars: true, torches: true }, floors(floor)[0], 3, seed);
+      const off = { ...spec, pillars: false as const, torches: false as const };
+      const a = generateFloor(spec);
+      const b = generateFloor(off);
+      pillarsSeen += a.grid.flat().filter((c) => c === Cell.Pillar).length + a.decor.filter((d) => d.kind === 'pillar').length;
+      expect(b.grid.flat().includes(Cell.Pillar)).toBe(false);
+      expect(b.decor.some((d) => d.kind === 'pillar' || d.kind === 'torch')).toBe(false);
+      expect(validate(b)).toBe(true);
+      // всё, кроме колонн и факелов, совпадает: сетка — с колоннами, ставшими полом; прочий декор, спавн, выходы
+      const grid = a.grid.map((row) => row.map((c) => (c === Cell.Pillar ? Cell.Floor : c)));
+      expect(b.grid).toEqual(grid);
+      expect(b.decor).toEqual(a.decor.filter((d) => d.kind !== 'pillar' && d.kind !== 'torch'));
+      expect({ spawn: b.spawn, exits: b.exits, doors: b.doors }).toEqual({ spawn: a.spawn, exits: a.exits, doors: a.doors });
+    }
+    expect(pillarsSeen).toBeGreaterThan(0);   // проверка не пустая: с колоннами они были
   });
 });

@@ -43,7 +43,9 @@
         "fromDepth": 8,
         "tileset": "tiles-crypt-deep"
       }
-    ]
+    ],
+    "pillars": false,
+    "torches": false
   },
   {
     "id": "caves",

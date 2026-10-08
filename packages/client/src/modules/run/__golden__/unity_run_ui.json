@@ -1977,7 +1977,9 @@
         "fromDepth": 8,
         "tileset": "tiles-crypt-deep"
        }
-      ]
+      ],
+      "pillars": false,
+      "torches": false
      },
      {
       "id": "caves",
@@ -2001,7 +2003,9 @@
       ],
       "dropBias": 1.1,
       "modifiers": [],
-      "variants": []
+      "variants": [],
+      "pillars": true,
+      "torches": true
      },
      {
       "id": "dungeon",
@@ -2025,7 +2029,9 @@
       ],
       "dropBias": 1,
       "modifiers": [],
-      "variants": []
+      "variants": [],
+      "pillars": true,
+      "torches": true
      },
      {
       "id": "labyrinth",
@@ -2049,7 +2055,9 @@
       ],
       "dropBias": 1,
       "modifiers": [],
-      "variants": []
+      "variants": [],
+      "pillars": true,
+      "torches": true
      }
     ],
     "run-templates": [
