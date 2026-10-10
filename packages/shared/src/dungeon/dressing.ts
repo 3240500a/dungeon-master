@@ -264,9 +264,12 @@ export function placeDressing(L: DungeonLayout, opts: DressingOpts, rng: Rng, sp
       if (!rng.chance(fp.chance)) continue;
       const id = rng.pick(pitIds);
       const foot = specs?.get(id)?.footprint ?? { w: 2, h: 2 };
-      const cx = room.x + room.w / 2, cy = room.y + room.h / 2;   // центр комнаты (клетки; у нечётной стороны — середина клетки)
-      const x0 = Math.floor(cx - foot.w / 2), x1 = Math.ceil(cx + foot.w / 2) - 1;
-      const y0 = Math.floor(cy - foot.h / 2), y1 = Math.ceil(cy + foot.h / 2) - 1;
+      // ⭐ 11.10 (владелец: «костёр 2×2 м стоит не по клеткам»): центр — у центра комнаты, но ПО СЕТКЕ следа: чётная сторона следа — на
+      // линии между клетками, нечётная — в центре клетки. Раньше у нечётной стороны комнаты костёр 2×2 вставал посреди клетки (модель
+      // залезала на соседние по полклетки), а след резервировал три клетки.
+      const cx = snapCenter(room.x + room.w / 2, foot.w), cy = snapCenter(room.y + room.h / 2, foot.h);
+      const x0 = cx - foot.w / 2, x1 = x0 + foot.w - 1;
+      const y0 = cy - foot.h / 2, y1 = y0 + foot.h - 1;
       let fits = true;
       for (let y = y0 - 1; y <= y1 + 1 && fits; y++) for (let x = x0 - 1; x <= x1 + 1 && fits; x++) {
         const inside = x >= x0 && x <= x1 && y >= y0 && y <= y1;
@@ -282,4 +285,9 @@ export function placeDressing(L: DungeonLayout, opts: DressingOpts, rng: Rng, sp
     }
   }
   return res;
+}
+
+/** Центр следа шириной `n` клеток у точки `c` (клетки): чётная сторона — на линии сетки, нечётная — в центре клетки. */
+export function snapCenter(c: number, n: number): number {
+  return n % 2 === 0 ? Math.floor(c) : Math.floor(c) + 0.5;
 }

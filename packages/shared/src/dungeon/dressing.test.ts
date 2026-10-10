@@ -6,7 +6,7 @@ import { Cell, TILE, makeGrid, worldToCell, type Grid } from '../world/grid.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { validate, type DecorObject, type DungeonLayout, type Room } from './floorCommon.js';
 import { decorSpecsFor, footprintRect, obstaclesFromDecor, type DecorSpec } from './decor.js';
-import { dressingObjectIds, dressingOf, dressingWarnings, isFarFace, placeDressing, toCameraXY, wallRuns, type DressingOpts } from './dressing.js';
+import { dressingObjectIds, dressingOf, dressingWarnings, isFarFace, placeDressing, toCameraXY, wallRuns, type DressingOpts, snapCenter } from './dressing.js';
 import { generateFloor, generateFloorParams } from './generateFloor.js';
 import { resolveFloorSpec } from './floorSpec.js';
 import { spawnPacksEl } from './floor.js';
@@ -216,14 +216,20 @@ describe('⭐ 08.10: статуи в нишах и костры (синтети�
     const L = layout(30, 21, rooms);
     const res = placeDressing(L, opts({ firePits: pits }), createRng(5));
     const pit = L.decor.filter((d) => d.objectId === 'pit');
-    expect(pit.map((d) => [d.x / TILE, d.y / TILE])).toEqual([[14.5, 6], [7, 15.5]]);   // центры комнат 9×8 и 10×7
+    // ⭐ 11.10: центр следа 2×2 — на линии сетки (комнаты 9×8 и 10×7: нечётная сторона — линия левее/выше середины), след — ровно 2×2
+    expect(pit.map((d) => [d.x / TILE, d.y / TILE])).toEqual([[14, 6], [7, 15]]);
     for (const d of pit) expect(d.footprint).toEqual({ w: 2, h: 2 });
-    expect(res.floorCells.has('14,5') && res.floorCells.has('15,6') && res.floorCells.has('13,6')).toBe(true);   // нечётная сторона — 3 клетки
+    for (const c of ['13,5', '14,5', '13,6', '14,6']) expect(res.floorCells.has(c), c).toBe(true);
+    expect(res.floorCells.has('15,6') || res.floorCells.has('12,6')).toBe(false);   // не три клетки
     // Выход в центре — костра нет.
     const L2 = layout(30, 21, rooms);
     L2.exits = [{ x: 14 * TILE + 16, y: 5 * TILE + 16 }];
     placeDressing(L2, opts({ firePits: pits }), createRng(5));
     expect(L2.decor.filter((d) => d.objectId === 'pit').map((d) => d.x / TILE)).toEqual([7]);
+  });
+
+  it('⭐ 11.10 центр следа по сетке: чётная сторона — линия, нечётная — центр клетки', () => {
+    expect([snapCenter(14.5, 2), snapCenter(7, 2), snapCenter(7, 1), snapCenter(14.5, 1), snapCenter(6.5, 3)]).toEqual([14, 7, 7.5, 14.5, 6.5]);
   });
 
   it('пустые правила и объекты вне спек — ничего; спеки фильтруют выключенные/чужие объекты', () => {
@@ -318,8 +324,11 @@ describe('⭐ 08.10: этажи крипты целиком', () => {
       const obst = obstaclesFromDecor(L.decor, new Map(specs.map((s) => [s.id, s])));
       for (const d of L.decor.filter((x) => pitIds.has(x.objectId ?? ''))) {
         pitsSeen++;
-        const room = L.rooms.find((r) => d.x === (r.x + r.w / 2) * TILE && d.y === (r.y + r.h / 2) * TILE);
+        // ⭐ 11.10: центр комнаты, снятый на сетку следа (чётная сторона — линия между клетками)
+        const fw = d.footprint?.w ?? 2, fh = d.footprint?.h ?? 2;
+        const room = L.rooms.find((r) => d.x === snapCenter(r.x + r.w / 2, fw) * TILE && d.y === snapCenter(r.y + r.h / 2, fh) * TILE);
         expect(room, 'костёр в центре комнаты').toBeDefined();
+        expect(d.x / TILE - fw / 2, 'след начинается с целой клетки').toBe(Math.round(d.x / TILE - fw / 2));
         expect(Math.min(room!.w, room!.h)).toBeGreaterThanOrEqual(7);
         expect(room!.type).not.toBe('entrance');
         for (const p of [L.spawn, ...L.exits, ...L.levers]) expect(Math.hypot(p.x - d.x, p.y - d.y)).toBeGreaterThan(TILE);

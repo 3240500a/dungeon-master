@@ -277,7 +277,10 @@ describe('⭐ 08.10: погоня в обход костра (маска нав�
         const spec = resolveFloorSpec(crypt, f, f.minDepth, seed * 7919 + 13, [], { exitCount: 1 + (seed % 3) });
         const L = generateFloor(spec, r.get('room-prefabs'), specs, undefined, undefined, dressingOf(crypt, r.get('balance')));
         const obstacles = obstaclesFromDecor(L.decor, new Map(specs.map((s) => [s.id, s])));
-        const free = (x: number, y: number): boolean => { const c = worldToCell(x, y); return !isBlockedCell(L.grid, c.cx, c.cy) && obstacles.every((o) => !pushOutObstacle(x, y, 15, o)); };
+        // ⭐ 11.10: «свободно» — с радиусом тела (15), а не только клетка центра: точка в 2 ед. от стены ставила монстра наполовину в стену
+        const free = (x: number, y: number): boolean => [[0, 0], [15, 0], [-15, 0], [0, 15], [0, -15]].every(([dx, dy]) => {
+          const c = worldToCell(x + dx!, y + dy!); return !isBlockedCell(L.grid, c.cx, c.cy);
+        }) && obstacles.every((o) => !pushOutObstacle(x, y, 15, o));
         for (const pit of L.decor.filter((d) => pitIds.has(d.objectId ?? ''))) {
           for (let k = 0; k < 8; k++) {
             const a = (k * Math.PI) / 4 + 0.13;
