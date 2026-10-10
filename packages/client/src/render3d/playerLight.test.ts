@@ -51,7 +51,9 @@ describe('настройки света героя', () => {
 
   it('высота и сдвиг к камере — настройки, а не числа в коде', () => {
     const s = sh();
-    expect(s.playerLightHeight, 'высота осталась прежней — её только вытащили в конфиг').toBe(90);
+    // 09.10 владелец: свет героя на 3.5 м (112) — низ стены стыкуется с полом; было 90 → 160 → 112. Сторож — вилка, а не число.
+    expect(s.playerLightHeight, 'высота света героя — в конфиге, в вилке 2–6 м').toBeGreaterThanOrEqual(64);
+    expect(s.playerLightHeight).toBeLessThanOrEqual(192);
     expect(s.playerLightToCam, 'сдвиг к камере задан и ненулевой — иначе ничего не изменилось бы').toBeGreaterThan(0);
   });
 
@@ -65,7 +67,7 @@ describe('настройки света героя', () => {
     // Держим в разумной вилке ключевого света, иначе тени лягут через весь экран.
     const s = sh();
     const deg = Math.atan2(s.playerLightToCam, s.playerLightHeight) * 180 / Math.PI;
-    expect(deg, `угол от вертикали ${deg.toFixed(1)}°`).toBeGreaterThan(15);
+    expect(deg, `угол от вертикали ${deg.toFixed(1)}°`).toBeGreaterThan(14);   // 3.5 м и сдвиг к камере — 15.0°
     expect(deg).toBeLessThan(55);
   });
 });

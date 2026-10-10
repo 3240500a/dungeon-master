@@ -161,6 +161,12 @@ export const balanceSchema = z.object({
     farClip: z.number().min(200).default(2600),
     /** Множитель зума за щелчок колеса (приближение — обратная величина, поэтому туда-обратно возвращает на место). */
     zoomStep: z.number().min(1.01).max(2).default(1.1),
+    /**
+     * ⭐ 10.10 Высота точки взгляда над полом (ед. мира) на БЛИЖНЕМ и ДАЛЬНЕМ зуме — линейно по зуму, как наклон. Вблизи кадр всего
+     * ~2 м: точка на середине фигуры, иначе голова за краем кадра; вдали — ниже, как было (20). Читает Unity (`CameraRig.TargetYAt`).
+     */
+    targetNearY: z.number().min(0).max(200).default(30),
+    targetFarY: z.number().min(0).max(200).default(20),
   }).default({}),
   /** Прирост опыта монстра за уровень: xp = base.xp × (1 + level × growth). */
   monsterXpGrowth: z.number().min(0).default(0.2),
