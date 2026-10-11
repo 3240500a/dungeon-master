@@ -112,7 +112,7 @@
   "camera": {
     "minDist": 224,
     "maxDist": 800,
-    "startDist": 224,
+    "startDist": 800,
     "elNearDeg": 20,
     "elFarDeg": 45,
     "azimuthDeg": -45,
