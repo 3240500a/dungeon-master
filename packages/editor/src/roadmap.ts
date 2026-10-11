@@ -438,13 +438,24 @@ function inlineText(value: string, css: string, onChange: (v: string) => void, p
   return i;
 }
 
+/**
+ * Название пункта + его заметка под ним. Заметку пишут правки наполнения (`SEED_PATCHES`): что сделано, где
+ * коммит, что осталось. Только чтение — правится название, а заметка остаётся справкой.
+ */
+function titleWithNote(it: Item, titleCss: string): HTMLElement {
+  const col = el('div', 'flex:1;min-width:120px;display:flex;flex-direction:column;gap:2px');
+  col.appendChild(inlineText(it.title, `width:100%;box-sizing:border-box;${titleCss}`, (v) => { it.title = v; touch(); }));
+  if (it.note) col.appendChild(el('div', `font-size:11px;color:${C.faint};white-space:pre-wrap;line-height:1.4;padding:0 7px`, it.note));
+  return col;
+}
+
 function renderItem(it: Item, m: Milestone, ctx: Ctx): HTMLElement {
   const prog = itemProgress(it, ctx);
   const row = el('div', `display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;background:${prog >= 1 ? '#191f19' : '#14141c'}`);
 
   if (isCounter(it)) {
     row.appendChild(el('div', `width:18px;text-align:center;color:${C.dim};flex:none`, '▤'));
-    row.appendChild(inlineText(it.title, 'flex:1;min-width:120px;font-size:13px', (v) => { it.title = v; touch(); }));
+    row.appendChild(titleWithNote(it, 'font-size:13px'));
 
     const cur = currentOf(it, ctx);
     const rem = remainingOf(it, ctx);
@@ -461,7 +472,7 @@ function renderItem(it: Item, m: Milestone, ctx: Ctx): HTMLElement {
     cb.style.cssText = 'width:16px;height:16px;cursor:pointer;flex:none;accent-color:' + C.done;
     cb.addEventListener('change', () => { it.done = cb.checked; touch(); });
     row.appendChild(cb);
-    row.appendChild(inlineText(it.title, `flex:1;min-width:120px;font-size:13px;${it.done ? 'color:' + C.dim + ';text-decoration:line-through' : ''}`, (v) => { it.title = v; touch(); }));
+    row.appendChild(titleWithNote(it, `font-size:13px;${it.done ? 'color:' + C.dim + ';text-decoration:line-through' : ''}`));
     row.appendChild(inlineText(it.est ?? '', `width:78px;font-size:11px;color:${C.faint};text-align:right`, (v) => { it.est = v || undefined; touch(); }, 'оценка'));
   }
 
