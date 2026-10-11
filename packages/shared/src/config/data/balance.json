@@ -110,17 +110,17 @@
     "back": 0.75
   },
   "camera": {
-    "minDist": 177,
-    "maxDist": 885,
-    "startDist": 885,
+    "minDist": 224,
+    "maxDist": 800,
+    "startDist": 224,
     "elNearDeg": 20,
     "elFarDeg": 45,
     "azimuthDeg": -45,
     "fovDeg": 20,
     "farClip": 2600,
     "zoomStep": 1.1,
-    "targetNearY": 30,
-    "targetFarY": 20
+    "targetNearY": 31.68,
+    "targetFarY": 27.52
   },
   "monsterXpGrowth": 0.2,
   "uniqueXpMult": 3,
