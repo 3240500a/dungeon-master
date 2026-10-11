@@ -21794,8 +21794,8 @@
      "biomeId": "crypt",
      "enabled": true,
      "fade": {
-      "start": 190,
-      "end": 460,
+      "start": 95,
+      "end": 230,
       "kneeLow": 20,
       "kneeHigh": 46,
       "faceYaw": 0
@@ -21807,8 +21807,8 @@
      "biomeId": "caves",
      "enabled": true,
      "fade": {
-      "start": 190,
-      "end": 460,
+      "start": 95,
+      "end": 230,
       "kneeLow": 20,
       "kneeHigh": 46,
       "faceYaw": 0
@@ -21820,8 +21820,8 @@
      "biomeId": "dungeon",
      "enabled": true,
      "fade": {
-      "start": 190,
-      "end": 460,
+      "start": 95,
+      "end": 230,
       "kneeLow": 20,
       "kneeHigh": 46,
       "faceYaw": 0
@@ -21833,8 +21833,8 @@
      "biomeId": "labyrinth",
      "enabled": true,
      "fade": {
-      "start": 190,
-      "end": 460,
+      "start": 95,
+      "end": 230,
       "kneeLow": 20,
       "kneeHigh": 46,
       "faceYaw": 0
@@ -21895,8 +21895,8 @@
      "kneeHigh": 46
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -21911,8 +21911,8 @@
      "kneeHigh": 44
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -21927,8 +21927,8 @@
      "kneeHigh": 46
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -21943,8 +21943,8 @@
      "kneeHigh": 44
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -21959,8 +21959,8 @@
      "kneeHigh": 46
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -21975,8 +21975,8 @@
      "kneeHigh": 44
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -21991,8 +21991,8 @@
      "kneeHigh": 46
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
@@ -22007,8 +22007,8 @@
      "kneeHigh": 44
     },
     "fade": {
-     "start": 190,
-     "end": 460,
+     "start": 95,
+     "end": 230,
      "kneeLow": 20,
      "kneeHigh": 46
     }
