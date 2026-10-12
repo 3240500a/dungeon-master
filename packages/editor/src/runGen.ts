@@ -1,5 +1,5 @@
 import {
-  ConfigRegistry, generateRunPlan, generateFloor, resolveMonsterPool, spawnPacksEl, createRng, runModifierLive,
+  ConfigRegistry, generateRunPlan, generateFloorFor, footprintRect, resolveMonsterPool, spawnPacksEl, createRng, runModifierLive,
   Cell, TILE, type RunConfig, type RunPlan, type RunNode, type RunModifier, type RunTemplate, type Biome,
   type DungeonLayout, type MonsterSpawn,
 } from '@dm/shared';
@@ -280,7 +280,8 @@ function renderGraph(host: HTMLElement, p: RunPlan, mods: RunModifier[], onSelec
 // ── Поклеточный просмотр этажа (canvas) ──────────────────────────────────────
 export function cellSize(cols: number): number { return Math.max(4, Math.min(10, Math.floor(640 / cols))); }
 
-export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters: MonsterSpawn[], factionColor: string): void {
+/** ⭐ 12.10: `wallIds` — id настенных объектов (`DecorSpec.surface === 'wall'`): их декор — точкой на линии стены, а не следом. */
+export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters: MonsterSpawn[], factionColor: string, wallIds?: ReadonlySet<string>): void {
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
   const cell = cellSize(cols);
   canvas.width = cols * cell; canvas.height = rows * cell;
@@ -294,6 +295,15 @@ export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters:
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc((wx / TILE) * cell, (wy / TILE) * cell, r, 0, Math.PI * 2); ctx.fill();
   };
+  // ⭐ 12.10 (G12): объекты конфига (`obj`: россыпь, оформление, неявные объекты паспортов) — под монстрами и ориентирами: напольные — след в
+  // клетках с поворотом (`footprintRect`), настенные (`wallIds`: факелы, статуи — точка на линии лица стены) — точкой
+  for (const d of L.decor) {
+    if (d.kind !== 'obj') continue;
+    if (!d.footprint || (d.objectId && wallIds?.has(d.objectId))) { dotWorld(d.x, d.y, '#9aa4b8', cell * 0.35); continue; }
+    const r = footprintRect(d);
+    ctx.fillStyle = 'rgba(176,132,84,0.55)';
+    ctx.fillRect(r.x0 * cell + 1, r.y0 * cell + 1, (r.x1 - r.x0 + 1) * cell - 2, (r.y1 - r.y0 + 1) * cell - 2);
+  }
   // монстры
   for (const m of monsters) {
     const uniq = m.def.rarity === 'unique';
@@ -448,9 +458,16 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     if (!node) return;
     const biome = biomes.find((b) => b.id === node.biomeId)!;
     let L: DungeonLayout;
+    let wallIds = new Set<string>();
     // Как на сервере: передаём библиотеку префабов — чтобы в превью забега были и prefab-комнаты,
     // и врезанные камеры (rooms/bsp по prefabChance; пещеры/лабиринт по prefabRooms).
-    try { L = generateFloor(node.floorSpec, reg.get('room-prefabs')); }
+    // ⭐ 12.10 (G12, «редактор ≡ игра»): и всё прочее, что даёт этажу сервер (`generateFloorFor`): декор биома с неявными объектами паспортов
+    // декора, плотность россыпи, оформление (статуи, факелы, костры), сундуки — раньше превью было без декора, и заселение не обходило преград
+    try {
+      const g = generateFloorFor(reg, node.floorSpec, biome);
+      L = g.layout;
+      wallIds = new Set(g.inputs.decorSpecs.filter((s) => s.surface === 'wall').map((s) => s.id));
+    }
     catch (e) { preview.innerHTML = `<div style="color:#ff8080">Ошибка генерации: ${(e as Error).message}</div>`; return; }
 
     // Монстры этажа по эфф. уровню (мощь) — детерминированно от сида этажа. Town (город) — без монстров.
@@ -531,7 +548,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     const canvas = document.createElement('canvas');
     canvas.style.cssText = 'display:block;position:absolute;left:0;top:0;image-rendering:pixelated;transform-origin:0 0';
     vp.appendChild(canvas);
-    drawFloor(canvas, L, monsters, FACTION_COLOR[biome.faction] ?? '#7fa0d0');
+    drawFloor(canvas, L, monsters, FACTION_COLOR[biome.faction] ?? '#7fa0d0', wallIds);
     preview.appendChild(legend());
 
     const applyFT = () => { canvas.style.transform = `translate(${fpan.x}px,${fpan.y}px) scale(${fzoom})`; };

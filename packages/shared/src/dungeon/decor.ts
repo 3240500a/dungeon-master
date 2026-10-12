@@ -25,12 +25,50 @@ export interface DecorSpec {
   collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number }; // в ДОЛЯХ тайла
   /** ⭐ 08.10: отступ напольного декора, клеток (`objects[].clearance`): кольцо вокруг следа без другого напольного декора; нет/0 — как прежде. */
   clearance?: number;
+  /** ⭐ 12.10 (Ф1 «Паспорт»): контексты паспорта декора (`art[].decor.contexts`). Нет поля (объект без паспорта) — как прежде: пол или стена
+   *  по `surface`. С паспортом проход Ф1 ставит объект, только если его контекст есть в паспорте: россыпь пола — `floor`, грани стен — `wall`
+   *  (на гранях — только строка `objects`, не неявный объект: `placeWallProps`); прочие контексты (у стены, угол, проём, сокет, сор) — слоты
+   *  Ф2–Ф5, сейчас не ставятся. */
+  contexts?: readonly string[];
+  /** ⭐ 12.10: множители веса паспорта по типу комнаты (`Room.type`) и коридору; нет — 1 везде. */
+  rooms?: Readonly<Partial<Record<string, number>>>;
+  /** ⭐ 12.10: неявный объект — ключ манифеста с паспортом без строки `objects` (`placeableObjects`). */
+  implicit?: boolean;
+  /** ⭐ 12.10: паспорт модели целиком (поля для Ф2: якорь, лицо, теги, полосы, проём, штабель) — расстановкой Ф1 не читается. */
+  passport?: Readonly<DecorPassportLite>;
 }
 
-/** Параметры плотности расстановки (тюнятся позже; «пачки» декора). */
+/** ⭐ 12.10: паспорт декора, как его читает расстановка (`art[].decor`, схема `artDecorSchema`; разброс `variance` — картинка, не здесь). */
+export interface DecorPassportLite {
+  contexts: readonly string[];
+  footprint: { w: number; h: number };
+  anchor?: string; backOffset?: number; facing?: string;
+  clearance?: number; keepPath?: boolean;
+  blocks: boolean; blocksSight: boolean; tall?: boolean;
+  tags?: readonly string[];
+  rooms?: Readonly<Partial<Record<string, number>>>;
+  weight?: number;
+  biomes?: readonly string[];
+  doorway?: { width: number }; stack?: { max: number }; hosts?: readonly string[];
+}
+
+/** Параметры плотности расстановки (⭐ 12.10: из конфига биома `biomes[].decorDensity` — `decorPlaceOf`). */
 export interface PlaceDecorOpts {
   chancePerRoom?: number;            // вероятность попытки на одну попытку-слот (0..1)
   maxPerRoom?: number;               // верхняя граница слотов на комнату (масштабируется площадью)
+  /** ⭐ 12.10: клеток интерьера на слот сверх первого (было зашито 60). */
+  areaPerSlot?: number;
+}
+
+/** ⭐ 12.10: плотность россыпи биома (`biomes[].decorDensity`); нет поля — `undefined` (умолчания `placeFloorDecor`: 1 / 2 / 60). */
+export function decorPlaceOf(biome: { decorDensity?: { chancePerRoom: number; maxPerRoom: number; areaPerSlot: number } } | undefined): PlaceDecorOpts | undefined {
+  const d = biome?.decorDensity;
+  return d ? { chancePerRoom: d.chancePerRoom, maxPerRoom: d.maxPerRoom, areaPerSlot: d.areaPerSlot } : undefined;
+}
+
+/** ⭐ 12.10: ставит ли проход Ф1 объект в контексте `ctx` (`floor` — россыпь пола, `wall` — грани стен): без паспорта — да (как прежде). */
+function inContext(s: DecorSpec, ctx: 'floor' | 'wall'): boolean {
+  return !s.contexts || s.contexts.includes(ctx);
 }
 
 const key = (cx: number, cy: number): string => `${cx},${cy}`;
@@ -46,13 +84,24 @@ function footprintCells(cx: number, cy: number, w: number, h: number): string[] 
 export interface CellRect { x0: number; y0: number; x1: number; y1: number }
 
 /**
+ * ⭐ 12.10 (G3): СЛЕД В ОСЯХ СЕТКИ — `footprint` записан в осях модели (w — по её X, h — по Z; при `rot` 0 модель X идёт по столбцам, Z — по
+ * строкам, как бокс коллайдера `obstaclesFromDecor`), поворот на четверть (90°/270°, точнее — `|sin rot| > √½`) меняет стороны местами.
+ * Раньше след брался без поворота: стол 1×2, повёрнутый на 90°, резервировал не те клетки, а бокс коллизии при этом поворачивался. У
+ * квадратного следа поворот ничего не меняет. Тот же расчёт — у Unity (`EnvRules.CoveredCells`) и веб-стенда (`env3d.ts`).
+ */
+export function rotatedFootprint(fp: { w: number; h: number }, rot: number | undefined): { w: number; h: number } {
+  const w = Math.max(1, fp.w), h = Math.max(1, fp.h);
+  return w !== h && Math.abs(Math.sin(rot ?? 0)) > Math.SQRT1_2 ? { w: h, h: w } : { w, h };
+}
+
+/**
  * ⭐ 08.10: СЛЕД декора в клетках — прямоугольник `footprint` с центром в точке декора (так их ставят `placeFloorDecor` и костры
  * `placeDressing`; центр посреди клетки — след на клетку шире: костёр в комнате нечётной ширины лежит на трёх клетках). Без `footprint`
- * (портал, лавка, процедурный факел) — клетка под точкой.
+ * (портал, лавка, процедурный факел) — клетка под точкой. ⭐ 12.10 (G3): стороны — с поворотом `rot` (`rotatedFootprint`).
  */
-export function footprintRect(d: { x: number; y: number; footprint?: { w: number; h: number } }): CellRect {
+export function footprintRect(d: { x: number; y: number; footprint?: { w: number; h: number }; rot?: number }): CellRect {
   if (!d.footprint) { const c = worldToCell(d.x, d.y); return { x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }; }
-  const fw = Math.max(1, d.footprint.w), fh = Math.max(1, d.footprint.h);
+  const { w: fw, h: fh } = rotatedFootprint(d.footprint, d.rot);
   const cx = d.x / TILE, cy = d.y / TILE, eps = 1e-9;   // eps — от шума деления на краю клетки
   return { x0: Math.floor(cx - fw / 2 + eps), y0: Math.floor(cy - fh / 2 + eps), x1: Math.ceil(cx + fw / 2 - eps) - 1, y1: Math.ceil(cy + fh / 2 - eps) - 1 };
 }
@@ -121,14 +170,22 @@ function fits(L: DungeonLayout, reserved: Set<string>, cx: number, cy: number, w
   return true;
 }
 
-/** Взвешенный выбор спеки. */
-function pickSpec(specs: DecorSpec[], rng: Rng): DecorSpec | null {
+/** ⭐ 12.10: вес спеки на месте — её вес × множитель паспорта по типу комнаты (`rooms`; нет — 1). */
+function weightAt(s: DecorSpec, place: string | undefined): number {
+  const m = place !== undefined ? s.rooms?.[place] : undefined;
+  return Math.max(0, s.weight) * (m === undefined ? 1 : Math.max(0, m));
+}
+
+/** Взвешенный выбор спеки. ⭐ 12.10: `place` — тип комнаты (множитель паспорта `rooms`); у всех вес 0 — никого (раньше — случайная:
+ *  до весов из конфига вес был 1 у всех, и эта ветка не исполнялась ни разу — поток rng прежний). */
+function pickSpec(specs: DecorSpec[], rng: Rng, place?: string): DecorSpec | null {
   let total = 0;
-  for (const s of specs) total += Math.max(0, s.weight);
-  if (total <= 0) return specs[rng.int(0, specs.length - 1)] ?? null;
+  for (const s of specs) total += weightAt(s, place);
+  if (total <= 0) return null;
   let r = rng.float(0, total);
-  for (const s of specs) { r -= Math.max(0, s.weight); if (r <= 0) return s; }
-  return specs[specs.length - 1] ?? null;
+  for (const s of specs) { const w = weightAt(s, place); r -= w; if (w > 0 && r <= 0) return s; }
+  for (let i = specs.length - 1; i >= 0; i--) if (weightAt(specs[i]!, place) > 0) return specs[i]!;   // шум сложения на краю — последний с весом
+  return null;
 }
 
 const QUADS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
@@ -142,10 +199,13 @@ const QUADS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
  * вместе с выпавшими из россыпи объектами оформления: у костра свой отступ); стоящий декор занимает весь след, а не клетку под точкой.
  */
 export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}, taken?: ReadonlySet<string>, known?: ReadonlyMap<string, DecorSpec>): void {
-  const specs = allSpecs.filter((s) => s.surface === 'floor');   // на пол — по комнатам; на стену — placeWallProps
+  // на пол — по комнатам; на стену — placeWallProps. ⭐ 12.10: объект с паспортом — только с контекстом `floor` (прочие ждут слотов Ф2)
+  const specs = allSpecs.filter((s) => s.surface === 'floor' && inContext(s, 'floor'));
   if (!specs.length) return;
   const chance = opts.chancePerRoom ?? 1;    // глобальный гейт слота (частоту рулит per-object spawnChance)
   const maxPer = opts.maxPerRoom ?? 2;
+  const perSlot = Math.max(1, opts.areaPerSlot ?? 60);   // ⭐ 12.10: из конфига биома (было зашито 60)
+  const byId = known ?? new Map(allSpecs.map((s) => [s.id, s]));
 
   // Резерв: клетки спавна/выходов/лестницы + уже существующего декора + дверей/рычагов.
   const reserved = new Set<string>();
@@ -159,21 +219,45 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
   // ⭐ 08.10: клетки, занятые оформлением биома (`placeDressing`: костёр целиком, клетки перед нишами и факелами) — «cx,cy».
   if (taken) for (const k of taken) reserved.add(k);
   // ⭐ 08.10: следы и отступы стоящего декора (костёр — весь след 2×2 и кольцо отступа); отступ 0 у всех — проверка ниже всегда проходит
-  const claims = claimsOf(L.decor, known ?? new Map(allSpecs.map((s) => [s.id, s])));
+  const claims = claimsOf(L.decor, byId);
   claimLayoutAnchors(claims, L);   // ⭐ 08.10: кольцо решётки — не на выход и не на рычаг
+  // ⭐ 12.10 (G11, правило проходимости): клетки следов ПРЕГРАЖДАЮЩЕГО напольного декора (уже стоящего — костры оформления — и новых)
+  const blockedFeet = new Set<string>();
+  const markBlocked = (r: CellRect): void => { for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) blockedFeet.add(key(x, y)); };
+  for (const d of L.decor) {
+    const s = d.kind === 'obj' && d.objectId ? byId.get(d.objectId) : undefined;
+    if (s?.blocks && s.surface === 'floor') markBlocked(footprintRect(d));
+  }
+  /**
+   * ⭐ 12.10 (G11): ПРАВИЛО ПРОХОДИМОСТИ преграждающей россыпи — вокруг следа кольцо в клетку проходимого пола, и в кольце нет следа другой
+   * преграды. Тогда любой путь, шедший сквозь след, обходит его по кольцу (кольцо — замкнутая цепочка клеток пола), и преграды не смыкаются в
+   * стену: декор не отрезает ни одной клетки этажа (коллайдер — внутри своего следа). Раньше хватало «на клетку от стен комнаты», пока
+   * преграждающей россыпи в данных не было; стол 2×3 в рукаве комнаты-«Г» перегородил бы его целиком. Не преграда (решётка пола) — как прежде.
+   */
+  const ringFree = (r: CellRect): boolean => {
+    for (let y = r.y0 - 1; y <= r.y1 + 1; y++) for (let x = r.x0 - 1; x <= r.x1 + 1; x++) {
+      if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) continue;
+      if (L.grid[y]?.[x] !== Cell.Floor || blockedFeet.has(key(x, y))) return false;
+    }
+    return true;
+  };
 
   for (const room of L.rooms) {
     if (room.type === 'entrance') continue;
     // Число слотов ~ площади интерьера (с запасом-границей у стен), но не больше maxPer.
     const interior = Math.max(0, (room.w - 2) * (room.h - 2));
-    const slots = Math.min(maxPer, Math.max(0, Math.floor(interior / 60)) + 1);
+    const slots = Math.min(maxPer, Math.max(0, Math.floor(interior / perSlot)) + 1);
     for (let s = 0; s < slots; s++) {
       if (rng.float(0, 1) > chance) continue;
-      const spec = pickSpec(specs, rng);
+      const spec = pickSpec(specs, rng, room.type);   // ⭐ 12.10: вес — с множителем паспорта по типу комнаты
       if (!spec) continue;
       if (rng.float(0, 1) > (spec.spawnChance ?? 1)) continue;   // ЧАСТОТА СПАВНА объекта (config objects[].spawnChance)
-      const fw = Math.max(1, spec.footprint.w);
-      const fh = Math.max(1, spec.footprint.h);
+      const fw0 = Math.max(1, spec.footprint.w);
+      const fh0 = Math.max(1, spec.footprint.h);
+      // ⭐ 12.10 (G3): неквадратный след — поворот ДО места (след в клетках — повёрнутый, `rotatedFootprint`), квадратный — после, как прежде
+      // (поток rng квадратных тот же: этаж без неквадратной россыпи — байт-в-байт прежний)
+      const turn = fw0 !== fh0 ? QUADS[rng.int(0, 3)]! : undefined;
+      const { w: fw, h: fh } = rotatedFootprint({ w: fw0, h: fh0 }, turn);
       // Кандидат-угол footprint'а внутри комнаты с 1-клеточной границей у стен.
       const x0 = room.x + 1;
       const y0 = room.y + 1;
@@ -187,11 +271,14 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
         if (!fits(L, reserved, cx, cy, fw, fh)) continue;
         const rect = { x0: cx, y0: cy, x1: cx + fw - 1, y1: cy + fh - 1 };
         if (!claims.free(rect, spec.clearance)) continue;   // ⭐ 08.10: отступ — свой и соседей
+        if (spec.blocks && !ringFree(rect)) continue;        // ⭐ 12.10 (G11): кольцо пола вокруг преграды
         claims.claim(rect, spec.clearance);
         for (const k of footprintCells(cx, cy, fw, fh)) reserved.add(k);
+        if (spec.blocks) markBlocked(rect);
         const wx = cx * TILE + (fw * TILE) / 2;   // центр footprint'а (мир)
         const wy = cy * TILE + (fh * TILE) / 2;
-        L.decor.push({ x: wx, y: wy, kind: 'obj', objectId: spec.id, rot: QUADS[rng.int(0, 3)]!, footprint: { w: fw, h: fh } });
+        // след в записи — в осях модели (как у статуй): клетки — `footprintRect` с поворотом
+        L.decor.push({ x: wx, y: wy, kind: 'obj', objectId: spec.id, rot: turn ?? QUADS[rng.int(0, 3)]!, footprint: { w: fw0, h: fh0 } });
         placed = true;
       }
     }
@@ -203,21 +290,35 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
  * частотой `spawnChance`. Позиция — центр клетки + смещение к грани на ½TILE; поворот — лицом в комнату. Клетки грида
  * НЕ меняются. Пишет `DecorObject{kind:'obj'}` в `L.decor` (клиент рисует через проп-систему). `taken` — грани «x,y,dx,dz»,
  * уже занятые оформлением биома: на них ни пропа, ни броска; нет `taken` — как прежде.
+ * ⭐ 12.10 (ревью Ф1): у прохода граней НЕТ бюджета — бросок на каждую открытую грань, и плотность держит только `spawnChance` строки
+ * `objects` (умолчание 0.35). НЕЯВНЫЙ объект (паспорт без строки) идёт с частотой 1 — с контекстом `wall` он занял бы почти каждую грань этажа
+ * (замер ревью: 82 % граней, коридоры тоже), поэтому сюда он не допускается: неявный настенный проп ждёт слотов стены Ф2 (с бюджетом).
+ * Строка `objects` с поверхностью wall и паспортом модели ставится, как прежде, своей частотой, а вес — с множителем паспорта `rooms` по МЕСТУ
+ * грани: тип комнаты, в прямоугольнике которой лежит клетка перед гранью (первой, как зоны пробегов `dressing.ts wallRuns`), иначе `corridor`
+ * (`rooms.corridor: 0` — не в коридорах). Без паспортов место не считается — поток rng и раскладка прежние.
  */
 export function placeWallProps(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, taken?: ReadonlySet<string>): void {
-  const specs = allSpecs.filter((s) => s.surface === 'wall');
+  // ⭐ 12.10: с паспортом — только контекст `wall`; неявный объект — не здесь (см. выше)
+  const specs = allSpecs.filter((s) => s.surface === 'wall' && !s.implicit && inContext(s, 'wall'));
   if (!specs.length) return;
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
   const walk = (x: number, y: number): boolean => { const c = L.grid[y]?.[x]; return c !== undefined && c !== Cell.Wall; };
   const N4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   const used = new Set<string>(taken ?? []);   // «x,y,dx,dz» — одна грань = один проп; ⭐ 08.10: грани оформления биома (ниши, факелы) заняты сразу
+  // ⭐ 12.10: место грани для весов паспорта `rooms` — только если они есть хоть у одной спеки (без паспортов — `undefined`, как прежде)
+  const zoned = specs.some((s) => s.rooms);
+  const placeOf = (cx: number, cy: number): string | undefined => {
+    if (!zoned) return undefined;
+    const room = L.rooms.find((r) => cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h);
+    return room ? room.type : 'corridor';
+  };
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
     if (L.grid[y]![x] !== Cell.Wall) continue;
     for (const [dx, dz] of N4) {
       if (!walk(x + dx, y + dz)) continue;   // грань открыта в проходимую клетку
       const k = `${x},${y},${dx},${dz}`;
       if (used.has(k)) continue;
-      const spec = pickSpec(specs, rng);
+      const spec = pickSpec(specs, rng, placeOf(x + dx, y + dz));   // ⭐ 12.10: вес — с множителем паспорта по месту грани
       if (!spec) continue;
       if (rng.float(0, 1) > spec.spawnChance) continue;
       used.add(k);
@@ -248,11 +349,22 @@ export function obstaclesFromDecor(decor: DecorObject[], byId: Map<string, Decor
   return out;
 }
 
-interface ObjCfgLite {
+type Col = { shape: 'circle' | 'box'; r?: number; w?: number; h?: number };
+
+/** Объект конфига `objects`, как его читает расстановка (поля строки после схемы). */
+export interface ObjCfgLite {
   id: string; modelId: string; enabled: boolean; role: string; surface?: 'floor' | 'wall'; biomes: string[];
   blocks: boolean; blocksSight: boolean; footprint: { w: number; h: number }; spawnChance?: number; clearance?: number;
-  collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number };
+  collider?: Col;
+  /** ⭐ 12.10 (G2): вес россыпи (`objects[].weight`); нет — из паспорта, нет паспорта — 1. */
+  weight?: number;
 }
+
+/** ⭐ 12.10: строка манифеста арта, как её читает расстановка: ключ, вид, группа каталога, коллайдер, паспорт декора. */
+export interface ArtRowLite { id: string; kind?: string; group?: string; collider?: Col; decor?: DecorPassportLite }
+
+/** ⭐ 12.10: объект расстановки — строка `objects` либо неявный объект паспорта; `passport` — паспорт его модели (если есть). */
+export type PlaceableObject = ObjCfgLite & { passport?: DecorPassportLite; implicit?: boolean };
 
 /** Расставляемый ли объект СЕРВЕРОМ: floor-россыпь (footprint>1) / prop. (floor 1×1 = базовый тайл-cellHash на клиенте; decor отложен.) */
 function isPlaceable(o: ObjCfgLite): boolean {
@@ -260,26 +372,104 @@ function isPlaceable(o: ObjCfgLite): boolean {
   return o.role === 'prop';
 }
 
+/** ⭐ 12.10: строка манифеста — модель пропа или окружения (не персонаж, не .mat библиотеки). */
+const isPropArt = (a: ArtRowLite): boolean => a.kind === 'env' || a.kind === 'prop';
+
+/** ⭐ 12.10: биомы неявного объекта — из паспорта, а пустой список паспорта — биом папки каталога (группа `biome_<id>`); иначе нет. */
+export function passportBiomes(a: ArtRowLite): string[] {
+  const own = (a.decor?.biomes ?? []).filter((b) => !!b);
+  if (own.length) return own;
+  const g = a.group ?? '';
+  return g.startsWith('biome_') && g.length > 'biome_'.length ? [g.slice('biome_'.length)] : [];
+}
+
+/** ⭐ 12.10: поверхность неявного объекта по контекстам паспорта — только на стене (`wall`/`wallInsert`) → стена, иначе пол. Настенный
+ *  неявный объект в Ф1 не ставится (у граней нет бюджета, `placeWallProps`), но в списке объектов есть — кит Unity его знает заранее. */
+export function passportSurface(p: DecorPassportLite): 'floor' | 'wall' {
+  return p.contexts.length > 0 && p.contexts.every((c) => c === 'wall' || c === 'wallInsert') ? 'wall' : 'floor';
+}
+
+/**
+ * ⭐ 12.10 (Ф1 «Паспорт», план декора): ОБЪЕКТЫ РАССТАНОВКИ — строки `objects` (как были) и НЕЯВНЫЕ объекты: ключ манифеста арта Unity
+ * (`art[]`, вид env/prop) с паспортом декора (`art[].decor`, компонент `DmDecor` на префабе) и без строки `objects` — ни с `id`, ни с
+ * `modelId` этого ключа (строка есть — она и решает: выключенная строка выключает и ключ). Неявный объект: `id` = `modelId` = ключ, роль
+ * `prop`, поверхность — по контекстам (`passportSurface`), биомы — `passportBiomes` (нет биома — не ставится, предупреждение редактора),
+ * след/отступ/преграда/обзор/вес — паспорта, частота — 1 (сколько пропов в комнате, решают слоты биома `decorDensity` и веса паспортов; у граней
+ * стен слотов нет — неявный объект в Ф1 ставит только россыпь пола, `placeWallProps` его не берёт).
+ * Порядок: строки `objects` по конфигу, затем неявные ПО КЛЮЧУ (не по порядку строк манифеста — экспорт его переставляет). Строке `objects` с моделью-паспортом паспорт приходит как `passport`
+ * (её поля главнее). Та же функция — у Unity (`EnvRules.PropSpecs`, сторож — раздел `decor` эталона `EnvCheck`).
+ */
+export function placeableObjects(objects: readonly ObjCfgLite[], art: readonly ArtRowLite[] = []): PlaceableObject[] {
+  const passport = new Map<string, ArtRowLite>();
+  for (const a of art) if (a.decor && isPropArt(a) && !passport.has(a.id)) passport.set(a.id, a);
+  const claimed = new Set<string>();
+  for (const o of objects) { claimed.add(o.id); claimed.add(o.modelId); }
+  const out: PlaceableObject[] = objects.map((o) => {
+    const p = passport.get(o.modelId)?.decor;
+    return p ? { ...o, passport: p } : o;
+  });
+  // ⭐ 12.10: неявные — по ключу (порядок кодовых единиц, как `string.CompareOrdinal` Unity), а не по порядку строк манифеста: экспорт Unity
+  // строки переставляет, а порядок спек — это выбор по весу из rng, то есть иначе каждая выгрузка манифеста меняла бы этажи тех же сидов
+  const implicitRows = [...passport.values()].filter((a) => !claimed.has(a.id)).sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  for (const a of implicitRows) {
+    const p = a.decor!;
+    out.push({
+      id: a.id, modelId: a.id, enabled: true, role: 'prop', surface: passportSurface(p), biomes: passportBiomes(a),
+      blocks: p.blocks, blocksSight: p.blocksSight, footprint: { w: p.footprint.w, h: p.footprint.h },
+      spawnChance: 1, clearance: p.clearance ?? 0, weight: p.weight, passport: p, implicit: true,
+    });
+  }
+  return out;
+}
+
 /** Строит спеки расставляемых объектов из config `objects` для биома. Коллайдер: явный на объекте перекрывает; иначе из
  *  меша модели (`models[].collider`, извлечён из `collider*` GLB); ⭐ 08.10 (Ф1) иначе из манифеста арта Unity (`art[].collider` —
- *  меш `collider*` в FBX); иначе дефолт-круг. Пол-россыпь (role floor) `coversFloor`. ⭐ 08.10: `clearance` — отступ (`FloorClaims`). */
+ *  меш `collider*` в FBX); иначе дефолт-круг. Пол-россыпь (role floor) `coversFloor`. ⭐ 08.10: `clearance` — отступ (`FloorClaims`).
+ *  ⭐ 12.10 (Ф1 «Паспорт»): + неявные объекты паспортов декора (`placeableObjects`); вес — строки, иначе паспорта, иначе 1 (G2: был зашит
+ *  1); контексты и веса по комнатам — паспорта. Неявный объект без биома не ставится нигде (и при `biomeId` undefined — тоже). */
 export function decorSpecsFor(
   objects: ObjCfgLite[],
-  models: { id: string; collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number } }[],
+  models: { id: string; collider?: Col }[],
   biomeId: string | undefined,
-  art: { id: string; collider?: { shape: 'circle' | 'box'; r?: number; w?: number; h?: number } }[] = [],
+  art: ArtRowLite[] = [],
 ): DecorSpec[] {
-  type Col = { shape: 'circle' | 'box'; r?: number; w?: number; h?: number };
   const modelCollider = new Map<string, Col>();
   for (const a of art) if (a.collider) modelCollider.set(a.id, a.collider);     // меш collider* FBX (каталог Unity)
   for (const m of models) if (m.collider) modelCollider.set(m.id, m.collider);  // записанный в модель — главнее
-  return objects
-    .filter((o) => o.enabled && isPlaceable(o) && (!biomeId || o.biomes.length === 0 || o.biomes.includes(biomeId)))
-    .map((o) => ({
-      id: o.id, footprint: o.footprint, weight: 1, spawnChance: o.spawnChance ?? 0.35,
-      surface: o.role === 'prop' ? (o.surface ?? 'floor') : 'floor',   // props — по конфигу; floor-россыпь — всегда пол
-      coversFloor: o.role === 'floor',                                  // floor-россыпь заменяет базовый тайл пола
-      blocks: o.blocks, blocksSight: o.blocksSight, collider: o.collider ?? modelCollider.get(o.modelId),
-      clearance: Math.max(0, Math.floor(o.clearance ?? 0)),   // ⭐ 08.10: отступ напольного декора, клеток
-    }));
+  return placeableObjects(objects, art)
+    .filter((o) => o.enabled && isPlaceable(o) && (o.implicit
+      ? o.biomes.length > 0 && (!biomeId || o.biomes.includes(biomeId))
+      : !biomeId || o.biomes.length === 0 || o.biomes.includes(biomeId)))
+    .map((o) => {
+      const s: DecorSpec = {
+        id: o.id, footprint: o.footprint, weight: o.weight ?? o.passport?.weight ?? 1, spawnChance: o.spawnChance ?? 0.35,
+        surface: o.role === 'prop' ? (o.surface ?? 'floor') : 'floor',   // props — по конфигу; floor-россыпь — всегда пол
+        coversFloor: o.role === 'floor',                                  // floor-россыпь заменяет базовый тайл пола
+        blocks: o.blocks, blocksSight: o.blocksSight, collider: o.collider ?? modelCollider.get(o.modelId),
+        clearance: Math.max(0, Math.floor(o.clearance ?? 0)),   // ⭐ 08.10: отступ напольного декора, клеток
+      };
+      // ⭐ 12.10: паспорт — только у объектов с ним (без паспорта спека та же, что прежде)
+      if (o.passport) { s.contexts = o.passport.contexts; if (o.passport.rooms) s.rooms = o.passport.rooms; s.passport = o.passport; }
+      if (o.implicit) s.implicit = true;
+      return s;
+    });
+}
+
+/**
+ * ⭐ 12.10 (G15 и паспорт): ПРЕДУПРЕЖДЕНИЯ РАССТАНОВКИ (редактор, «Проверить конфиг»; сторож — `decorPassport.test.ts`):
+ *  • объект роли `decor` — сервер его не ставит вовсе («отложено»): раньше такой объект молча пропадал, для пропа — роль `prop`;
+ *  • паспорт без биома (ни `biomes` паспорта, ни группы `biome_<id>` каталога) — неявный объект не встанет ни в одном биоме;
+ *  • паспорт без контекстов — не встанет нигде.
+ */
+export function decorWarnings(objects: readonly ObjCfgLite[], art: readonly ArtRowLite[] = []): { section: 'objects' | 'art'; id: string; msg: string }[] {
+  const out: { section: 'objects' | 'art'; id: string; msg: string }[] = [];
+  for (const o of objects) {
+    if (o.enabled && o.role === 'decor') out.push({ section: 'objects', id: o.id, msg: 'роль decor сервер не расставляет («отложено») — объекта не будет на этажах; для пропа — роль prop' });
+  }
+  for (const o of placeableObjects(objects, art)) {
+    if (!o.implicit) continue;
+    if (!o.biomes.length) out.push({ section: 'art', id: o.id, msg: 'паспорт декора без биома (ни biomes паспорта, ни папки Env/<биом>/) — неявный объект не встанет ни в одном биоме' });
+    if (!o.passport?.contexts.length) out.push({ section: 'art', id: o.id, msg: 'паспорт декора без контекстов — неявный объект не встанет нигде' });
+  }
+  return out;
 }

@@ -82,6 +82,44 @@
       "shape": "box",
       "w": 3.0,
       "h": 0.86019
+    },
+    "decor": {
+      "contexts": [
+        "doorway"
+      ],
+      "footprint": {
+        "w": 3,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "room",
+      "clearance": 0,
+      "keepPath": false,
+      "blocks": false,
+      "blocksSight": false,
+      "tall": true,
+      "tags": [
+        "arch",
+        "frame"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.0,
+        "boss": 1.0,
+        "corridor": 1.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": [],
+      "doorway": {
+        "width": 3
+      }
     }
   },
   {
@@ -167,15 +205,48 @@
       "shape": "box",
       "w": 4.05784,
       "h": 0.99733
+    },
+    "decor": {
+      "contexts": [
+        "doorway"
+      ],
+      "footprint": {
+        "w": 4,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "room",
+      "clearance": 0,
+      "keepPath": false,
+      "blocks": false,
+      "blocksSight": false,
+      "tall": true,
+      "tags": [
+        "arch",
+        "frame"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.0,
+        "boss": 1.0,
+        "corridor": 1.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": [],
+      "doorway": {
+        "width": 4
+      }
     }
   },
   {
     "id": "crypt_arch_04",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_books_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -217,10 +288,48 @@
       "shape": "box",
       "w": 1.80526,
       "h": 0.28088
+    },
+    "decor": {
+      "contexts": [
+        "socket"
+      ],
+      "footprint": {
+        "w": 2,
+        "h": 1
+      },
+      "anchor": "back",
+      "backOffset": 0.25,
+      "facing": "room",
+      "clearance": 0,
+      "keepPath": false,
+      "blocks": false,
+      "blocksSight": false,
+      "tall": true,
+      "tags": [
+        "clutter",
+        "books"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.0,
+        "boss": 1.0,
+        "corridor": 0.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": [],
+      "hosts": [
+        "crypt_wooden_shelf_01"
+      ]
     }
   },
   {
-    "id": "crypt_column_01",
+    "id": "crypt_books_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -272,7 +381,7 @@
     }
   },
   {
-    "id": "crypt_fire_pit_01",
+    "id": "crypt_column_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -325,6 +434,16 @@
     }
   },
   {
+    "id": "crypt_fire_pit_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_fire_pit_02",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_fire_pit_02",
     "kind": "env",
     "group": "biome_crypt",
@@ -371,11 +490,6 @@
       "shape": "circle",
       "r": 1.0
     }
-  },
-  {
-    "id": "crypt_fire_pit_02",
-    "kind": "material",
-    "group": "mat_crypt"
   },
   {
     "id": "crypt_floor_01",
@@ -487,6 +601,11 @@
   },
   {
     "id": "crypt_floor_grille_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_floor_grille_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -534,11 +653,6 @@
     }
   },
   {
-    "id": "crypt_floor_grille_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
     "id": "crypt_metal_props_01",
     "kind": "material",
     "group": "mat_crypt"
@@ -581,6 +695,42 @@
       "shape": "box",
       "w": 1.49707,
       "h": 0.94352
+    },
+    "decor": {
+      "contexts": [
+        "corner",
+        "againstWall",
+        "floor"
+      ],
+      "footprint": {
+        "w": 2,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "quad",
+      "clearance": 0,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "rubble"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 1.0,
+        "corridor": 0.0
+      },
+      "weight": 0.6,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {
@@ -620,6 +770,42 @@
     "collider": {
       "shape": "circle",
       "r": 1.00035
+    },
+    "decor": {
+      "contexts": [
+        "corner",
+        "againstWall",
+        "floor"
+      ],
+      "footprint": {
+        "w": 2,
+        "h": 2
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "quad",
+      "clearance": 0,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "rubble"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 1.0,
+        "corridor": 0.0
+      },
+      "weight": 0.6,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {
@@ -709,6 +895,11 @@
   },
   {
     "id": "crypt_wall_statue_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_statue_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -748,7 +939,7 @@
     }
   },
   {
-    "id": "crypt_wall_statue_01",
+    "id": "crypt_wall_statue_02",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -793,16 +984,6 @@
     }
   },
   {
-    "id": "crypt_wall_statue_02",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_03",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
     "id": "crypt_wall_statue_03",
     "kind": "env",
     "group": "biome_crypt",
@@ -841,6 +1022,11 @@
       "w": 2.0,
       "h": 0.59378
     }
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_statue_04",
@@ -884,6 +1070,11 @@
   },
   {
     "id": "crypt_wall_statue_04",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_torch_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -937,11 +1128,6 @@
     }
   },
   {
-    "id": "crypt_wall_torch_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
     "id": "crypt_wooden_chair_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -978,6 +1164,41 @@
     "collider": {
       "shape": "circle",
       "r": 0.20175
+    },
+    "decor": {
+      "contexts": [
+        "floor"
+      ],
+      "footprint": {
+        "w": 1,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "quad",
+      "clearance": 0,
+      "keepPath": false,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "furniture",
+        "seat"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.0,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 0.3,
+      "variance": {
+        "yawJitterDeg": 30.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {
@@ -1089,6 +1310,45 @@
     "collider": {
       "shape": "circle",
       "r": 0.36185
+    },
+    "decor": {
+      "contexts": [
+        "corner",
+        "againstWall"
+      ],
+      "footprint": {
+        "w": 1,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "quad",
+      "clearance": 0,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "storage",
+        "crate"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 10.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": [],
+      "stack": {
+        "max": 3
+      }
     }
   },
   {
@@ -1128,6 +1388,45 @@
     "collider": {
       "shape": "circle",
       "r": 0.36
+    },
+    "decor": {
+      "contexts": [
+        "corner",
+        "againstWall"
+      ],
+      "footprint": {
+        "w": 1,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "quad",
+      "clearance": 0,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "storage",
+        "crate"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 10.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": [],
+      "stack": {
+        "max": 3
+      }
     }
   },
   {
@@ -1173,6 +1472,41 @@
       "shape": "box",
       "w": 2.0,
       "h": 0.40064
+    },
+    "decor": {
+      "contexts": [
+        "againstWall"
+      ],
+      "footprint": {
+        "w": 2,
+        "h": 1
+      },
+      "anchor": "back",
+      "backOffset": 0.25,
+      "facing": "room",
+      "clearance": 0,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": true,
+      "tall": true,
+      "tags": [
+        "furniture",
+        "storage"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.0,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {
@@ -1212,6 +1546,41 @@
     "collider": {
       "shape": "circle",
       "r": 0.2
+    },
+    "decor": {
+      "contexts": [
+        "floor"
+      ],
+      "footprint": {
+        "w": 1,
+        "h": 1
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "free",
+      "clearance": 0,
+      "keepPath": false,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "furniture",
+        "seat"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.0,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 0.3,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {
@@ -1252,6 +1621,42 @@
       "shape": "box",
       "w": 1.0,
       "h": 2.0
+    },
+    "decor": {
+      "contexts": [
+        "againstWall",
+        "floor"
+      ],
+      "footprint": {
+        "w": 1,
+        "h": 2
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "along",
+      "clearance": 1,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "furniture",
+        "table"
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {
@@ -1292,6 +1697,42 @@
       "shape": "box",
       "w": 1.4,
       "h": 3.0
+    },
+    "decor": {
+      "contexts": [
+        "floor",
+        "againstWall"
+      ],
+      "footprint": {
+        "w": 2,
+        "h": 3
+      },
+      "anchor": "center",
+      "backOffset": 0.0,
+      "facing": "quad",
+      "clearance": 1,
+      "keepPath": true,
+      "blocks": true,
+      "blocksSight": false,
+      "tall": false,
+      "tags": [
+        "furniture",
+        "table"
+      ],
+      "rooms": {
+        "small": 0.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "weight": 1.0,
+      "variance": {
+        "yawJitterDeg": 0.0,
+        "scaleMin": 1.0,
+        "scaleMax": 1.0
+      },
+      "biomes": []
     }
   },
   {

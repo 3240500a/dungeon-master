@@ -5,7 +5,7 @@ import { effectiveLevel } from '../formulas/power.js';
 import { newDebuffState } from '../world/debuffs.js';
 import { Cell } from '../world/grid.js';
 import type { PlayerEntity } from '../world/state.js';
-import { generateFloor } from '../dungeon/generateFloor.js';
+import { generateFloorFor } from '../dungeon/floorInputs.js';
 import { resolveMonsterPool } from '../dungeon/floorSpec.js';
 import { spawnPacksEl } from '../dungeon/floor.js';
 import { townLayout } from '../dungeon/town.js';
@@ -187,7 +187,6 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const powerCfg = reg.get('balance').power;
   const tiers = reg.get('item-tiers');   // R12-09: мощь — и по ступени вещей, как у сервера
   const deathPenalty = reg.get('balance').deathPenalty;
-  const prefabs = reg.get('room-prefabs');
   const biomes = reg.get('biomes');
 
   const save = settings.save ? structuredClone(settings.save) : newBotSave(reg, settings.classId);
@@ -406,16 +405,18 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     // Боевой узел: генерим этаж по floorSpec узла и заселяем пулом/глубиной/плотностью узла (как Room.enterNode).
     // ⚠ Сундуки передаём ЯВНО: без этого бот проходил этажи без них и отчёт показывал бы
     // ноль целых вещей — то есть врал бы ровно там, где его и смотрят.
-    const layout = generateFloor(node.floorSpec, prefabs, undefined, undefined,
-      { tiers: reg.get('chests'), perFloor: reg.get('balance').loot.chestsPerFloor });
-    openDoors(layout);
+    // ⭐ 12.10 (Ф1 «Паспорт», G12): входы этажа — те же, что у сервера (`generateFloorFor`): декор биома (и неявные объекты паспортов),
+    // плотность россыпи, оформление (статуи, костры), сундуки; преграды декора — в сессию, как у `Room.enterNode`. Раньше сим строил этаж без
+    // декора и без преград — бот ходил сквозь костры и столы, которых в игре не обойти.
     const biome = biomes.find((b) => b.id === node!.biomeId) ?? biomes[0]!;
+    const { layout, obstacles } = generateFloorFor(reg, node.floorSpec, biome);
+    openDoors(layout);
     const pool = resolveMonsterPool(biome, node.depth);
     const el = effectiveLevel(save, powerCfg, undefined, tiers).total;
     const frng = createRng((node.floorSpec.seed >>> 0) || 1);
     const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     session.enterFloor(node.depth, {
-      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, chests: layout.chests,
+      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles, chests: layout.chests,
       runNodeId: node.id, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: node.biomeId,
     });
     bot.syncHotbar(save);

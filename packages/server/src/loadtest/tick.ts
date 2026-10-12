@@ -1,5 +1,5 @@
 import {
-  ConfigRegistry, GameSession, generateRunPlan, generateFloor, decorSpecsFor, dressingOf, obstaclesFromDecor,
+  ConfigRegistry, GameSession, generateRunPlan, generateFloorFor,
   resolveMonsterPool, spawnPacksEl, createRng, effectiveLevel, serializeWorld, newCharacterSave,
   townLayout, type PlayerInput, type RunConfig,
 } from '@dm/shared';
@@ -38,9 +38,8 @@ function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInpu
   const runCfg: RunConfig = { templateId: TEMPLATE, biomeId: biome.id, tier: 'normal', seed: 12345, modifiers: [] };
   const plan = generateRunPlan(reg, runCfg);
   const node = plan.nodes[Math.min(NODE_IDX, plan.nodes.length - 1)]!;
-  const decorSpecs = decorSpecsFor(reg.get('objects'), reg.get('models'), biome.id, reg.get('art'));
-  const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs, undefined, undefined, dressingOf(biome, reg.get('balance')));   // ⭐ 08.10: оформление биома
-  const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));
+  // ⭐ 12.10 (G12): входы этажа — те же, что у `Room.enterNode` (`generateFloorFor`: декор и паспорта, плотность, сундуки, ⭐ 08.10 оформление)
+  const { layout, obstacles } = generateFloorFor(reg, node.floorSpec, biome);
   const pool = resolveMonsterPool(biome, node.depth);
 
   const session = new GameSession(reg, 999, 'normal', { rewards: true });

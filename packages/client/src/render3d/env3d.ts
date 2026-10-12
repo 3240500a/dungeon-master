@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { TILE, Cell, type DungeonLayout } from '@dm/shared';
+import { TILE, Cell, rotatedFootprint, type DungeonLayout } from '@dm/shared';
 
 export const WALL_H = 96;
 
@@ -351,7 +351,8 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
   const coveredFloor = new Set<string>();
   if (kit?.props?.size) for (const d of layout.decor) {
     if (d.kind !== 'obj' || !d.objectId || !kit.props.get(d.objectId)?.coversFloor) continue;
-    const fw = Math.max(1, d.footprint?.w ?? 1), fh = Math.max(1, d.footprint?.h ?? 1);
+    // ⭐ 12.10 (G3): стороны следа — с поворотом сервера (shared `rotatedFootprint`; Unity — `EnvRules.CoveredCells`)
+    const { w: fw, h: fh } = rotatedFootprint({ w: d.footprint?.w ?? 1, h: d.footprint?.h ?? 1 }, d.rot);
     const cx0 = Math.round((d.x - (fw * TILE) / 2) / TILE), cy0 = Math.round((d.y - (fh * TILE) / 2) / TILE);
     for (let yy = cy0; yy < cy0 + fh; yy++) for (let xx = cx0; xx < cx0 + fw; xx++) coveredFloor.add(`${xx},${yy}`);
   }

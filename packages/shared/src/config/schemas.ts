@@ -2417,6 +2417,15 @@ export const biomesSchema = z.array(
     /** ⭐ 08.10: «Оформление» — факелы, статуи в нишах и костры биома ПО ПРАВИЛУ (не случайной россыпью). Нет поля — биома не
      *  касается (этаж байт-в-байт прежний). Расставляет сервер (`dungeon/dressing.ts`), клиенту едет в `FloorInit.decor`. */
     dressing: biomeDressingSchema.optional(),
+    /** ⭐ 12.10 (Ф1 «Паспорт», G2): ПЛОТНОСТЬ СЛУЧАЙНОЙ РОССЫПИ пола (`dungeon/decor.ts` `placeFloorDecor`) — слотов на комнату
+     *  `min(maxPerRoom, ⌊интерьер / areaPerSlot⌋ + 1)` (интерьер — комната без кольца у стен), каждый слот — с шансом `chancePerRoom`, дальше
+     *  выбор объекта по весу и его `spawnChance`. Числа — в `data/biomes.json` (у всех биомов — прежние 1 / 2 / 60, этаж байт-в-байт тот же);
+     *  нет поля — те же 1 / 2 / 60. Ф2 (слоты и полосы) заменит россыпь бюджетом на площадь. */
+    decorDensity: z.object({
+      chancePerRoom: z.number().min(0).max(1).default(1),     // шанс слота (0 — россыпи нет)
+      maxPerRoom: z.number().int().min(0).max(32).default(2),  // потолок слотов на комнату
+      areaPerSlot: z.number().int().min(1).default(60),        // клеток интерьера на слот сверх первого
+    }).optional(),
   }),
 );
 
@@ -3207,6 +3216,9 @@ export const objectsSchema = z.array(z.object({
   // ⭐ 08.10: ОТСТУП напольного декора, клеток: кольцо вокруг следа, где не стоит другой напольный декор (в обе стороны — у двух объектов
   //   с отступом 1 между следами всегда клетка пола). 0 — как прежде (следы лишь не пересекаются). Расстановка — `dungeon/decor.ts` FloorClaims.
   clearance: z.number().int().min(0).max(4).default(0),
+  // ⭐ 12.10 (Ф1 «Паспорт», G2): ВЕС выбора в случайной россыпи (раньше — 1 у всех, зашито в код). Нет поля — вес из паспорта декора модели
+  //   (`art[].decor.weight`, пишет Unity), нет паспорта — 1. Поле объекта главнее паспорта, как и все поля строки.
+  weight: z.number().min(0).max(100).optional(),
   // Источник(и) света из меша(ей) light* модели (Ф4): параметры PointLight, ставится в позицию маркера.
   light: z.object({ color: z.string().default('#ffa860'), intensity: z.number().default(1500), distance: z.number().default(380), flicker: z.boolean().default(true) }).optional(),
   // ⭐ 08.10: ОГОНЬ объекта — только картинка Unity (`Assets/DM/Fx/FireFx.cs`; веб и сервер не читают, в игровую ревизию не входит):
@@ -3229,6 +3241,53 @@ export const objectsSchema = z.array(z.object({
  */
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const quat = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+/** ⭐ 12.10: где проп может стоять (контекст размещения паспорта). Ф1 ставит только `floor` (россыпь в глубине комнаты) и `wall` (грань
+ *  стены); прочие — слоты Ф2 (у стены, угол, косяки, проём), сокет — наборы Ф4, сор без коллизии — Ф5. Имена — те же, что у enum
+ *  `DM.Art.DecorContext` Unity (сторож `EnvCheck`, раздел `decor` эталона). */
+export const DECOR_CONTEXTS = ['floor', 'againstWall', 'wall', 'wallInsert', 'corner', 'doorFlank', 'doorway', 'socket', 'scatter'] as const;
+/** ⭐ 12.10: где пивот модели относительно следа: в центре, на линии лица стены (`back`, с `backOffset`), в углу. */
+export const DECOR_ANCHORS = ['center', 'back', 'corner'] as const;
+/** ⭐ 12.10: как проп повёрнут: лицом (+Z) в комнату, вдоль стены, кратно 90°, как угодно. */
+export const DECOR_FACINGS = ['room', 'along', 'quad', 'free'] as const;
+/** ⭐ 12.10: веса паспорта по месту: типы комнат `Room.type` (кроме входа — там россыпи нет) и коридор (зона вне комнат). */
+export const DECOR_ROOM_KINDS = ['small', 'large', 'treasure', 'boss', 'corridor'] as const;
+const decorRoomWeight = z.number().min(0).max(100).default(1);
+/**
+ * ⭐ 12.10 (Ф1 «Паспорт», план декора): ПАСПОРТ ДЕКОРА — свойства САМОГО пропа для расстановки сервером (слой «факты ассета»; «где и
+ * сколько» — правила биома в конфиге). Пишет только Unity: компонент `DM.Art.DmDecor` на префабе пропа → `ArtManifestExporter` → строка
+ * манифеста `art[].decor`. Ключ с паспортом и без строки `objects` — НЕЯВНЫЙ объект (`dungeon/decor.ts` `placeableObjects`): положил FBX,
+ * повесил паспорт — проп в генерации; строка `objects` нужна только для перекрытий (её поля главнее паспорта). Умолчания схемы — страховка
+ * миграции и те же, что у пустого `DecorPassport` Unity (сторож `EnvCheck`); Unity пишет все поля. Клетка = 1 м.
+ */
+export const artDecorSchema = z.object({
+  contexts: z.array(z.enum(DECOR_CONTEXTS)).default(['floor']),   // где может стоять; пусто — нигде (предупреждение редактора)
+  footprint: z.object({ w: z.number().int().min(1).max(8).default(1), h: z.number().int().min(1).max(8).default(1) }).default({}),   // след в клетках, по осям модели (X × Z)
+  anchor: z.enum(DECOR_ANCHORS).default('center'),
+  backOffset: z.number().min(0).max(2).default(0),            // anchor back: от линии лица стены до пивота по +Z модели, м (полка — 0.25)
+  facing: z.enum(DECOR_FACINGS).default('quad'),
+  clearance: z.number().int().min(0).max(4).default(0),       // кольцо без другого напольного декора, клеток (как `objects[].clearance`)
+  keepPath: z.boolean().default(false),                       // не запирать проход и косяк двери (полосы Ф2)
+  blocks: z.boolean().default(false),                         // преграда (коллайдер — `art[].collider`)
+  blocksSight: z.boolean().default(false),                    // преграда закрывает и обзор
+  tall: z.boolean().default(false),                           // высокий: только дальние стены или таять (Ф2)
+  tags: z.array(z.string()).default([]),                      // furniture, storage, rubble… — для правил темы и наборов
+  rooms: z.object({
+    small: decorRoomWeight, large: decorRoomWeight, treasure: decorRoomWeight, boss: decorRoomWeight, corridor: decorRoomWeight,
+  }).default({}),                                             // множитель веса по месту (0 — не ставить там)
+  weight: z.number().min(0).max(100).default(1),              // вес выбора среди пропов
+  variance: z.object({                                        // ТОЛЬКО картинка (в игровую ревизию не входит): разброс клиента хэшем, Ф5
+    yawJitterDeg: z.number().min(0).max(180).default(0),
+    scaleMin: z.number().min(0.1).max(10).default(1),
+    scaleMax: z.number().min(0.1).max(10).default(1),
+  }).default({}),
+  biomes: z.array(z.string()).default([]),                    // пусто — биом папки каталога (группа `biome_<id>`)
+  doorway: z.object({ width: z.number().int().min(1).max(8) }).optional(),   // арка: ширина проёма, клеток
+  stack: z.object({ max: z.number().int().min(2).max(8) }).optional(),       // штабель: сколько штук друг на друге (подсказка Ф5)
+  hosts: z.array(z.string()).optional(),                      // socket: ключи пропов-хозяев (книги → полка; Ф4)
+});
+export type ArtDecor = z.infer<typeof artDecorSchema>;
+
 export const artSchema = z.array(z.object({
   id: z.string(),
   kind: z.enum(['character', 'monster', 'weapon', 'prop', 'env', 'material']),   // material — .mat библиотеки (ключ для materialBy*), без меша
@@ -3243,6 +3302,7 @@ export const artSchema = z.array(z.object({
   lights: z.array(z.object({ name: z.string(), pos: vec3 })).default([]),               // узлы light* (в корне модели)
   collider: z.object({ shape: z.enum(['circle', 'box']), r: z.number().optional(), w: z.number().optional(), h: z.number().optional() }).optional(),
   bounds: z.object({ min: vec3, max: vec3 }).optional(),
+  decor: artDecorSchema.optional(),                      // ⭐ 12.10 (Ф1): паспорт декора (компонент DmDecor на префабе пропа)
 }));
 
 /** Реестр всех схем: ключ конфига → схема. */

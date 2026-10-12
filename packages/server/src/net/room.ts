@@ -2,7 +2,7 @@ import { randomUUID, randomInt, randomFillSync, randomBytes, createHash, createH
 import type { GameConn } from './conn.js';
 import {
   GameSession, spawnPacksEl, floorChallengeLevel, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
-  generateRunPlan, pickRunModifiers, generateFloor, decorSpecsFor, dressingOf, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
+  generateRunPlan, pickRunModifiers, generateFloorFor, resolveMonsterPool, effectiveLevel,
   itemFromBaseId, createRng, rngFrom, rollShopGear,
   buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, forgeExchange, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
   craftAction, enchantAction, sketchAction, fullJournal, legacyGateOpen, serverMaterialsConsent, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
@@ -3667,13 +3667,12 @@ export class Room implements Tickable {
     this.session.world.difficultyId = this.difficultyId;
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
-    const decorSpecs = decorSpecsFor(this.cfg.get('objects'), this.cfg.get('models'), biome.id, this.cfg.get('art'));   // напольный декор биома (role decor/prop)
-    // ⭐ 08.10: оформление биома (факелы с шагом, ниши дальних стен, костры) — опцией генерации, не через FloorSpec (`runPlan` прежний)
-    const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'), decorSpecs, undefined,
-      { tiers: this.cfg.get('chests'), perFloor: this.cfg.get('balance').loot.chestsPerFloor }, dressingOf(biome, this.cfg.get('balance')));
+    // ⭐ 12.10 (Ф1 «Паспорт», G12): входы этажа — общие с симом, фаззером и превью редактора (`generateFloorFor`): декор биома (строки
+    // `objects` + неявные объекты паспортов декора Unity), плотность россыпи биома (`decorDensity`; раньше `undefined`), сундуки, оформление
+    // (⭐ 08.10: факелы с шагом, ниши дальних стен, костры — опцией генерации, не через FloorSpec: `runPlan` прежний) + преграды декора
+    const { layout, obstacles } = generateFloorFor(this.cfg, node.floorSpec, biome);
     this.decor = layout.decor;
     this.rooms = layout.rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));   // ⭐ 08.10: прямоугольники комнат — клиенту (пробы отражений)
-    const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));   // суб-тайл-коллизия
     const pool = resolveMonsterPool(biome, node.depth);
     // Продолжение заселяет той же мощью, что первый вход: от неё зависят броски генератора, и номера убитых иначе
     // указывали бы на других монстров (вырос в городе — и босс «ожил» под чужим номером).

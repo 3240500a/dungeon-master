@@ -1,5 +1,5 @@
 import {
-  ConfigRegistry, generateRunPlan, generateFloor, resolveMonsterPool, spawnPacksEl, createRng,
+  ConfigRegistry, generateRunPlan, generateFloorFor, resolveMonsterPool, spawnPacksEl, createRng,
   newBotSave, effectiveLevel, rollTierLevel, pickTierClamped, depthRarityBoost, salvageFromMonster,
   forgeGold, nextTierOf, type Item, type Rng,
 } from '@dm/shared';
@@ -70,9 +70,10 @@ function measureFloor(reg: ConfigRegistry, k: Knobs): FloorPay {
     // ⚠ Узла типа 'town' в графе нет вовсе — этажи отличаются НАЛИЧИЕМ floorSpec.
     const node = plan.nodes.find((n) => n.floorSpec);
     if (!node?.floorSpec) continue;
-    const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), undefined, undefined,
-      { tiers: reg.get('chests'), perFloor: loot.chestsPerFloor });
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
+    // ⭐ 12.10 (G12): этаж — как у сервера (`generateFloorFor`: декор биома и паспорта, оформление, сундуки) — сундук без свободной клетки
+    // (всё под преградами декора) на сервере пропадает, и монстры заселяются в обход преград: счёт обязан видеть то же
+    const layout = generateFloorFor(reg, node.floorSpec, biome).layout;
     const list = spawnPacksEl(reg, layout, k.depth, k.diffId, createRng((node.floorSpec.seed >>> 0) || 1),
       k.power, resolveMonsterPool(biome, Math.max(1, Math.min(k.depth, 20))), node.floorSpec.packDensity, node.floorSpec.floorId);
     floors++;

@@ -2007,6 +2007,11 @@
         "minRoom": 7,
         "chance": 0.6
        }
+      },
+      "decorDensity": {
+       "chancePerRoom": 1,
+       "maxPerRoom": 2,
+       "areaPerSlot": 60
       }
      },
      {
@@ -2033,7 +2038,12 @@
       "modifiers": [],
       "variants": [],
       "pillars": true,
-      "torches": true
+      "torches": true,
+      "decorDensity": {
+       "chancePerRoom": 1,
+       "maxPerRoom": 2,
+       "areaPerSlot": 60
+      }
      },
      {
       "id": "dungeon",
@@ -2059,7 +2069,12 @@
       "modifiers": [],
       "variants": [],
       "pillars": true,
-      "torches": true
+      "torches": true,
+      "decorDensity": {
+       "chancePerRoom": 1,
+       "maxPerRoom": 2,
+       "areaPerSlot": 60
+      }
      },
      {
       "id": "labyrinth",
@@ -2085,7 +2100,12 @@
       "modifiers": [],
       "variants": [],
       "pillars": true,
-      "torches": true
+      "torches": true,
+      "decorDensity": {
+       "chancePerRoom": 1,
+       "maxPerRoom": 2,
+       "areaPerSlot": 60
+      }
      }
     ],
     "run-templates": [

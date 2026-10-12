@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, dressingWarnings, OBJECT_FX_KINDS, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
+import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, dressingWarnings, decorWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, renderEnum } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
@@ -222,7 +222,27 @@ const modelIdOptions = (parent: Record<string, unknown> | undefined): string[] =
   const env = ((data['art'] as { id?: string; kind?: string }[]) ?? []).filter((a) => a.kind === 'env' && a.id).map((a) => String(a.id));
   return ['', ...new Set([...ms.map((m) => m.id), ...env])];
 };
-fieldCustomRenderers.modelId = (value, onChange, parent) => renderEnum(modelIdOptions(parent), value == null ? '' : String(value), onChange);
+// ⭐ 12.10 (Ф1 «Паспорт»): у объекта мира (`objects`) под выпадашкой модели — паспорт декора этой модели из каталога Unity (`art[].decor`, только
+// смотреть: пишет Unity, компонент DmDecor на префабе). Поля строки объекта главнее паспорта; из паспорта объекту приходят контексты, веса по
+// комнатам и вес (если у строки нет своего `weight`). Ключ с паспортом без строки объекта сервер ставит сам — неявный объект.
+const passportHint = (modelId: string): string => {
+  const a = ((data['art'] as { id?: string; kind?: string; decor?: Record<string, unknown> }[]) ?? []).find((x) => x.id === modelId && x.kind !== 'material');
+  const p = a?.decor;
+  if (!p) return '';
+  const fp = p.footprint as { w?: number; h?: number } | undefined;
+  return `из паспорта Unity: контексты ${(p.contexts as string[] | undefined)?.join(', ') || '—'} · след ${fp?.w ?? 1}×${fp?.h ?? 1} · вес ${p.weight ?? 1}` +
+    `${p.tall ? ' · высокий' : ''}${(p.tags as string[] | undefined)?.length ? ' · ' + (p.tags as string[]).join(', ') : ''} (поля строки главнее)`;
+};
+fieldCustomRenderers.modelId = (value, onChange, parent) => {
+  const sel = renderEnum(modelIdOptions(parent), value == null ? '' : String(value), onChange);
+  if (!parent || !('role' in parent)) return sel;   // только объекты мира
+  const hint = passportHint(value == null ? '' : String(value));
+  if (!hint) return sel;
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+  const note = document.createElement('div'); note.textContent = hint; note.style.cssText = 'font-size:11px;color:#9fb0c0';
+  wrap.append(sel, note);
+  return wrap;
+};
 // Базовый 3D-вид класса (пустые слоты): 5 выпадашек по частям тела → submesh-варианты соответствующего слота атласа.
 //  Ключ поля 'baseAppearance' уникален (не коллизится с monster-gear helm/… через fieldEnumSources). '' = все submesh слота.
 const APPR: [key: string, slot: string, label: string][] = [
@@ -318,6 +338,11 @@ Object.assign(fieldLabels, {
   corridorSpacing: 'шаг в коридоре (0 — нет)', corridorChance: 'шанс в коридоре', minRoom: 'меньшая сторона комнаты от',
   clearance: 'отступ от другого напольного декора, клеток',   // ⭐ 08.10: objects[].clearance
   fx: 'Огонь (Unity)',                                        // ⭐ 08.10: objects[].fx
+  // ⭐ 12.10 (Ф1 «Паспорт»): плотность россыпи биома и паспорт декора в манифесте арта (только смотреть — пишет Unity)
+  decorDensity: 'Плотность случайной россыпи', chancePerRoom: 'шанс слота', maxPerRoom: 'слотов на комнату до', areaPerSlot: 'клеток интерьера на слот',
+  decor: 'Паспорт декора (Unity, DmDecor)', contexts: 'где ставить', anchor: 'пивот', backOffset: 'от стены до пивота, м', facing: 'поворот',
+  keepPath: 'не запирать проход', tall: 'высокий', variance: 'разброс (только картинка)', yawJitterDeg: 'поворот ±°', doorway: 'арка: проём',
+  stack: 'штабель', hosts: 'хозяева (сокет)',
 });
 // ⭐ 08.10: огонь объекта (objects[].fx) — вид выпадашкой, «— нет огня —» снимает поле целиком (общий рендер необязательного объекта
 // оставил бы `{ scale }` без `kind`, и конфиг не прошёл бы схему); размер и сдвиг — только при выбранном виде. Читает только Unity.
@@ -1111,8 +1136,17 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   let preview: { el: HTMLElement; redraw: () => void } | undefined;
   if (current === 'floors' && arr[selectedIndex] !== undefined) {
     preview = mountFloorPreview(() => {
-      const f = (arr[selectedIndex] ?? {}) as { algoParams?: FloorAlgoParams; features?: FloorFeatures };
-      return { algo: f.algoParams as FloorAlgoParams, features: f.features, lock: !!f.features?.bossRoom, prefabs: (data['room-prefabs'] as RoomPrefab[]) ?? [] };
+      const f = (arr[selectedIndex] ?? {}) as { algoParams?: FloorAlgoParams; features?: FloorFeatures; biomeId?: string; minDepth?: number };
+      // ⭐ 12.10 (G12, «редактор ≡ игра»): этаж — так, как его строит сервер: спецификация этажа биома (`resolveFloorSpec`: колонны и факелы
+      // биома, замок, роль) и входы биома (`generateFloorFor`: декор с неявными объектами паспортов, плотность, оформление, сундуки) на рабочей
+      // копии конфига. Биома у этажа нет — прежний путь по одной геометрии.
+      const biome = ((data['biomes'] as Biome[]) ?? []).find((b) => b.id === f.biomeId);
+      const cfg = { get: (k: string) => data[k] } as unknown as FloorConfig;
+      const build = biome ? (seed: number, exitCount: number) => {
+        const g = generateFloorFor(cfg, resolveFloorSpec(biome, f as unknown as Floor, f.minDepth ?? 1, seed, [], { exitCount }), biome);
+        return { layout: g.layout, wallIds: new Set(g.inputs.decorSpecs.filter((s) => s.surface === 'wall').map((s) => s.id)) };
+      } : undefined;
+      return { algo: f.algoParams as FloorAlgoParams, features: f.features, lock: !!f.features?.bossRoom, prefabs: (data['room-prefabs'] as RoomPrefab[]) ?? [], build };
     });
   }
   if (arr[selectedIndex] === undefined) {
@@ -1329,7 +1363,8 @@ interface ConfigIssue { section: string; id: string; msg: string; severity: 'err
  *  - error (жёстко, ломает рендер, блокирует публикацию): url→файл, objects→models/materials, materials→textures,
  *    submeshMaterials→materials; тир сложности, который не откроется никогда (R8-13, `difficultyLockIssues`).
  *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир); ⭐ 08.10: ширина ниши
- *    статуй оформления биома ≠ ширине модели статуи (`dressingWarnings`).
+ *    статуй оформления биома ≠ ширине модели статуи (`dressingWarnings`); ⭐ 12.10: объект роли decor (сервер его не ставит), паспорт декора
+ *    Unity без биома или без контекстов (`decorWarnings`).
  */
 async function validateConfig(): Promise<ConfigIssue[]> {
   const issues: ConfigIssue[] = [];
@@ -1362,6 +1397,13 @@ async function validateConfig(): Promise<ConfigIssue[]> {
   type Biome = Parameters<typeof dressingWarnings>[0][number];
   for (const w of dressingWarnings(arr('biomes') as unknown as Biome[], arr('objects') as unknown as { id: string; modelId?: string }[], arr('art') as unknown as { id: string; kind?: string; bounds?: { min: number[]; max: number[] } }[])) {
     issues.push({ section: 'biomes', id: w.biomeId, msg: w.msg, severity: 'warn' });
+  }
+
+  // 6) ⭐ 12.10 (Ф1 «Паспорт», G15): расстановка — объект роли decor (сервер его не ставит), паспорт декора без биома или без контекстов [warn]
+  type ObjLite = Parameters<typeof decorWarnings>[0][number];
+  type ArtLite = NonNullable<Parameters<typeof decorWarnings>[1]>[number];
+  for (const w of decorWarnings(arr('objects') as unknown as ObjLite[], arr('art') as unknown as ArtLite[])) {
+    issues.push({ section: w.section, id: w.id, msg: w.msg, severity: 'warn' });
   }
 
   // ошибки — вперёд, потом предупреждения

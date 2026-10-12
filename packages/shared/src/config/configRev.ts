@@ -58,9 +58,25 @@ export const VISUAL_ONLY_KEYS: ReadonlySet<string> = new Set(['textures', 'mater
  */
 const GAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
   models: ['id', 'collider'],
-  objects: ['id', 'modelId', 'enabled', 'role', 'surface', 'biomes', 'blocks', 'blocksSight', 'footprint', 'spawnChance', 'collider', 'clearance'],   // ⭐ 08.10: + отступ
-  // Ф1: из манифеста арта игре нужен только коллайдер декора (кости, сабмеши, свет — картинка)
+  // ⭐ 08.10: + отступ; ⭐ 12.10 (Ф1 «Паспорт», G2): + вес россыпи
+  objects: ['id', 'modelId', 'enabled', 'role', 'surface', 'biomes', 'blocks', 'blocksSight', 'footprint', 'spawnChance', 'collider', 'clearance', 'weight'],
+  // Ф1: из манифеста арта игре нужен только коллайдер декора (кости, сабмеши, свет — картинка); ⭐ 12.10: + паспорт декора — `GAME_ROW_EXTRA`
   art: ['id', 'collider'],
+};
+
+/**
+ * ⭐ 12.10 (Ф1 «Паспорт»): ДОБАВКИ К ИГРОВОЙ СТРОКЕ смешанной таблицы, зависящие от самой строки. Строка манифеста арта с паспортом декора
+ * (`art[].decor`): игре нужен паспорт — расстановку неявных объектов и их поля читает сервер (`decorSpecsFor`), — кроме визуального разброса
+ * (`variance`: только картинка Unity, Ф5), и группа каталога (биом неявного объекта — `biome_<id>`). Строка без паспорта — та же, что прежде:
+ * игровая ревизия конфига без паспортов не сдвигается.
+ */
+const GAME_ROW_EXTRA: Readonly<Record<string, (row: Record<string, unknown>, out: Record<string, unknown>) => void>> = {
+  art: (r, out) => {
+    if (!r.decor || typeof r.decor !== 'object') return;
+    const { variance: _visual, ...game } = r.decor as Record<string, unknown>;
+    out.decor = game;
+    if (r.group !== undefined) out.group = r.group;
+  },
 };
 
 /** ⭐ 08.10: строки смешанных таблиц, которые игра не читает вовсе: материалы библиотеки Unity в манифесте арта — ключи для картинки. */
@@ -82,12 +98,14 @@ export function gameView(key: string, table: unknown): unknown {
   let view = gameViews.get(table);
   if (view === undefined) {
     const visualRow = VISUAL_ROWS[key];
+    const extra = GAME_ROW_EXTRA[key];
     const rows = visualRow ? table.filter((row) => !(row && typeof row === 'object' && visualRow(row as Record<string, unknown>))) : table;
     view = rows.map((row) => {
       if (row === null || typeof row !== 'object') return row;
       const r = row as Record<string, unknown>;
       const out: Record<string, unknown> = {};
       for (const f of fields) if (r[f] !== undefined) out[f] = r[f];
+      extra?.(r, out);   // ⭐ 12.10: паспорт декора строки манифеста
       return out;
     });
     gameViews.set(table, view);

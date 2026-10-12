@@ -73,6 +73,11 @@
         "minRoom": 7,
         "chance": 0.6
       }
+    },
+    "decorDensity": {
+      "chancePerRoom": 1,
+      "maxPerRoom": 2,
+      "areaPerSlot": 60
     }
   },
   {
@@ -97,7 +102,12 @@
     ],
     "dropBias": 1.1,
     "modifiers": [],
-    "variants": []
+    "variants": [],
+    "decorDensity": {
+      "chancePerRoom": 1,
+      "maxPerRoom": 2,
+      "areaPerSlot": 60
+    }
   },
   {
     "id": "dungeon",
@@ -121,7 +131,12 @@
     ],
     "dropBias": 1,
     "modifiers": [],
-    "variants": []
+    "variants": [],
+    "decorDensity": {
+      "chancePerRoom": 1,
+      "maxPerRoom": 2,
+      "areaPerSlot": 60
+    }
   },
   {
     "id": "labyrinth",
@@ -145,6 +160,11 @@
     ],
     "dropBias": 1,
     "modifiers": [],
-    "variants": []
+    "variants": [],
+    "decorDensity": {
+      "chancePerRoom": 1,
+      "maxPerRoom": 2,
+      "areaPerSlot": 60
+    }
   }
 ]

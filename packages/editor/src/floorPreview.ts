@@ -1,7 +1,12 @@
 import { generateFloorParams, Cell, type FloorAlgoParams, type FloorFeatures, type DungeonLayout, type RoomPrefab } from '@dm/shared';
 import { drawFloor } from './runGen.js';
 
-export interface FloorPreviewSpec { algo: FloorAlgoParams; features?: FloorFeatures; lock: boolean; prefabs?: RoomPrefab[] }
+export interface FloorPreviewSpec {
+  algo: FloorAlgoParams; features?: FloorFeatures; lock: boolean; prefabs?: RoomPrefab[];
+  /** ⭐ 12.10 (G12, «редактор ≡ игра»): этаж так, как его строит сервер (биом этажа: колонны/факелы, декор и паспорта, оформление, сундуки —
+   *  `generateFloorFor`); нет — прежний путь по одной геометрии (`generateFloorParams`). `wallIds` — настенные объекты (точкой). */
+  build?: (seed: number, exitCount: number) => { layout: DungeonLayout; wallIds?: ReadonlySet<string> };
+}
 
 /**
  * Живой canvas-превью одного этажа по его `algoParams` (тюнинг прямо в редакторе): pan/zoom + реролл
@@ -58,13 +63,18 @@ export function mountFloorPreview(getSpec: () => FloorPreviewSpec): { el: HTMLEl
     exBtns.forEach((x, i) => { x.style.background = [1, 2, 3][i] === exitCount ? '#3a3a4c' : '#1c1c26'; });
     const spec = getSpec();
     let L: DungeonLayout;
-    try { L = generateFloorParams(spec.algo, seed, { exitCount, lock: spec.lock, features: spec.features, prefabs: spec.prefabs }); }
+    let wallIds: ReadonlySet<string> | undefined;
+    try {
+      if (spec.build) ({ layout: L, wallIds } = spec.build(seed, exitCount));
+      else L = generateFloorParams(spec.algo, seed, { exitCount, lock: spec.lock, features: spec.features, prefabs: spec.prefabs });
+    }
     catch (e) { cap.textContent = '⚠ ' + (e instanceof Error ? e.message : String(e)); return; }
-    drawFloor(canvas, L, [], '#7fa0d0');
+    drawFloor(canvas, L, [], '#7fa0d0', wallIds);
     const sh: Record<string, number> = {};
     for (const r of L.rooms) { const s = r.shape ?? 'rect'; sh[s] = (sh[s] ?? 0) + 1; }
     const shStr = ['ell', 'blob', 'round', 'hall'].map((s) => (sh[s] ? `${s}:${sh[s]}` : '')).filter(Boolean).join(' ');
-    cap.textContent = `комнат ${L.rooms.length} · пол ${floorPct(L)}% · выходов ${L.exits.length}${shStr ? ' · ' + shStr : ''}`;
+    const objs = L.decor.filter((d) => d.kind === 'obj').length;   // ⭐ 12.10: объекты конфига (россыпь, оформление, паспорта)
+    cap.textContent = `комнат ${L.rooms.length} · пол ${floorPct(L)}% · выходов ${L.exits.length}${shStr ? ' · ' + shStr : ''}${objs ? ` · декор ${objs}` : ''}`;
     if (!fitted) { fitted = true; requestAnimationFrame(fit); }
   };
 
