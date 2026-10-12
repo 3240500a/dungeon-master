@@ -252,6 +252,11 @@
   },
   {
     "id": "crypt_books_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_books_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -327,11 +332,6 @@
         "crypt_wooden_shelf_01"
       ]
     }
-  },
-  {
-    "id": "crypt_books_01",
-    "kind": "material",
-    "group": "mat_crypt"
   },
   {
     "id": "crypt_column_01",
@@ -601,11 +601,6 @@
   },
   {
     "id": "crypt_floor_grille_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_floor_grille_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -651,6 +646,11 @@
       "shape": "circle",
       "r": 1.0
     }
+  },
+  {
+    "id": "crypt_floor_grille_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_metal_props_01",
@@ -732,6 +732,11 @@
       },
       "biomes": []
     }
+  },
+  {
+    "id": "crypt_stone_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_stone_02",
@@ -895,11 +900,6 @@
   },
   {
     "id": "crypt_wall_statue_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -939,7 +939,7 @@
     }
   },
   {
-    "id": "crypt_wall_statue_02",
+    "id": "crypt_wall_statue_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -984,6 +984,16 @@
     }
   },
   {
+    "id": "crypt_wall_statue_02",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_wall_statue_03",
     "kind": "env",
     "group": "biome_crypt",
@@ -1022,11 +1032,6 @@
       "w": 2.0,
       "h": 0.59378
     }
-  },
-  {
-    "id": "crypt_wall_statue_03",
-    "kind": "material",
-    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_statue_04",
