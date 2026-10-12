@@ -46,6 +46,11 @@
   },
   {
     "id": "crypt_arch_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_arch_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -120,51 +125,6 @@
       "doorway": {
         "width": 3
       }
-    }
-  },
-  {
-    "id": "crypt_arch_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_arch_02",
-    "kind": "env",
-    "group": "biome_crypt",
-    "source": {
-      "file": "Env/crypt/crypt_arch_02/crypt_arch_02.fbx",
-      "sha256": "b5a896a2b4e2e4339dc26be47cc5a1f11ee250e3a6e53b516197010dc9171e9f",
-      "bytes": 61456
-    },
-    "meshes": [
-      {
-        "name": "tripo_node_bd28764a",
-        "skinned": false,
-        "slots": 1,
-        "verts": 1244,
-        "tris": 848,
-        "blend": []
-      }
-    ],
-    "bones": [],
-    "sockets": [],
-    "lights": [],
-    "bounds": {
-      "min": [
-        6.12988,
-        0.0,
-        -7.74244
-      ],
-      "max": [
-        6.37012,
-        0.99805,
-        -6.91236
-      ]
-    },
-    "collider": {
-      "shape": "box",
-      "w": 0.24023,
-      "h": 0.83008
     }
   },
   {
@@ -440,11 +400,6 @@
   },
   {
     "id": "crypt_fire_pit_02",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_fire_pit_02",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -490,6 +445,11 @@
       "shape": "circle",
       "r": 1.0
     }
+  },
+  {
+    "id": "crypt_fire_pit_02",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_floor_01",
@@ -739,81 +699,6 @@
     "group": "mat_crypt"
   },
   {
-    "id": "crypt_stone_02",
-    "kind": "env",
-    "group": "biome_crypt",
-    "source": {
-      "file": "Env/crypt/crypt_stone_02/crypt_stone_02.fbx",
-      "sha256": "6aa25ce1bc1e26f35c023950ccd71917e134ac15c4c9de9c560f6937a3468e40",
-      "bytes": 81840
-    },
-    "meshes": [
-      {
-        "name": "tripo_node_e13ef5ae",
-        "skinned": false,
-        "slots": 1,
-        "verts": 886,
-        "tris": 900,
-        "blend": []
-      }
-    ],
-    "bones": [],
-    "sockets": [],
-    "lights": [],
-    "bounds": {
-      "min": [
-        -0.82617,
-        0.00367,
-        -0.99805
-      ],
-      "max": [
-        0.82617,
-        0.67578,
-        1.00266
-      ]
-    },
-    "collider": {
-      "shape": "circle",
-      "r": 1.00035
-    },
-    "decor": {
-      "contexts": [
-        "corner",
-        "againstWall",
-        "floor"
-      ],
-      "footprint": {
-        "w": 2,
-        "h": 2
-      },
-      "anchor": "center",
-      "backOffset": 0.0,
-      "facing": "quad",
-      "clearance": 0,
-      "keepPath": true,
-      "blocks": true,
-      "blocksSight": false,
-      "tall": false,
-      "tags": [
-        "rubble"
-      ],
-      "rooms": {
-        "small": 1.0,
-        "large": 1.0,
-        "treasure": 0.5,
-        "boss": 1.0,
-        "corridor": 0.0
-      },
-      "weight": 0.6,
-      "variance": {
-        "yawJitterDeg": 0.0,
-        "scaleMin": 1.0,
-        "scaleMax": 1.0
-      },
-      "biomes": []
-    }
-  },
-  {
     "id": "crypt_wall_01",
     "kind": "material",
     "group": "mat_crypt"
@@ -900,6 +785,11 @@
   },
   {
     "id": "crypt_wall_statue_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_statue_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -939,7 +829,7 @@
     }
   },
   {
-    "id": "crypt_wall_statue_01",
+    "id": "crypt_wall_statue_02",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -984,16 +874,6 @@
     }
   },
   {
-    "id": "crypt_wall_statue_02",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_03",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
     "id": "crypt_wall_statue_03",
     "kind": "env",
     "group": "biome_crypt",
@@ -1034,6 +914,16 @@
     }
   },
   {
+    "id": "crypt_wall_statue_03",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_statue_04",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_wall_statue_04",
     "kind": "env",
     "group": "biome_crypt",
@@ -1072,11 +962,6 @@
       "w": 2.0,
       "h": 0.62197
     }
-  },
-  {
-    "id": "crypt_wall_statue_04",
-    "kind": "material",
-    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_torch_01",

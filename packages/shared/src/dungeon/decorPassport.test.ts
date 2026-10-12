@@ -354,7 +354,6 @@ const SEED: Record<string, Partial<ArtDecor>> = {
   crypt_wooden_crate_01: { contexts: ['corner', 'againstWall'], keepPath: true, blocks: true, stack: { max: 3 }, tags: ['storage', 'crate'], rooms: { small: 1, large: 1, treasure: 1.5, boss: 0, corridor: 0 } },
   crypt_wooden_crate_02: { contexts: ['corner', 'againstWall'], keepPath: true, blocks: true, stack: { max: 3 }, tags: ['storage', 'crate'], rooms: { small: 1, large: 1, treasure: 1.5, boss: 0, corridor: 0 } },
   crypt_stone_01: { contexts: ['corner', 'againstWall', 'floor'], keepPath: true, blocks: true, weight: 0.6, tags: ['rubble'], rooms: { small: 1, large: 1, treasure: 0.5, boss: 1, corridor: 0 } },
-  crypt_stone_02: { contexts: ['corner', 'againstWall', 'floor'], keepPath: true, blocks: true, weight: 0.6, tags: ['rubble'], rooms: { small: 1, large: 1, treasure: 0.5, boss: 1, corridor: 0 } },
   crypt_arch_01: { contexts: ['doorway'], facing: 'room', doorway: { width: 3 }, tall: true, tags: ['arch', 'frame'] },
   crypt_arch_04: { contexts: ['doorway'], facing: 'room', doorway: { width: 4 }, tall: true, tags: ['arch', 'frame'] },
   crypt_books_01: { contexts: ['socket'], anchor: 'back', backOffset: 0.25, facing: 'room', hosts: ['crypt_wooden_shelf_01'], tall: true, tags: ['clutter', 'books'] },
@@ -387,12 +386,12 @@ describe('⭐ 12.10 (Ф1): живые этажи крипты с паспорт�
     runs.push({ L: g.layout, specs: g.inputs.decorSpecs, obstacles: g.obstacles });
   }
 
-  it('паспорта проходят загрузчик; неявные объекты — 12 ключей семени (без сундука и arch_02); следы — по габариту', () => {
+  it('паспорта проходят загрузчик; неявные объекты — 11 ключей семени (без сундука; arch_02 и stone_02 убраны из проекта 12.10); следы — по габариту', () => {
     const imp = decorSpecsFor(r.get('objects'), r.get('models'), 'crypt', r.get('art')).filter((s) => s.implicit);
     expect(imp.map((s) => s.id).sort()).toEqual(Object.keys(SEED).sort());
     const fp = new Map(imp.map((s) => [s.id, `${s.footprint.w}×${s.footprint.h}`]));
     expect(Object.fromEntries(fp)).toMatchObject({
-      crypt_wooden_table_3x_01: '2×3', crypt_wooden_table_2x_01: '1×2', crypt_wooden_shelf_01: '2×1', crypt_stone_01: '2×1', crypt_stone_02: '2×2',
+      crypt_wooden_table_3x_01: '2×3', crypt_wooden_table_2x_01: '1×2', crypt_wooden_shelf_01: '2×1', crypt_stone_01: '2×1',
       crypt_wooden_chair_01: '1×1', crypt_wooden_crate_01: '1×1', crypt_arch_01: '3×1', crypt_arch_04: '4×1', crypt_books_01: '2×1',
     });
     expect(decorWarnings(r.get('objects'), r.get('art'))).toEqual([]);
@@ -434,12 +433,12 @@ describe('⭐ 12.10 (Ф1): живые этажи крипты с паспорт�
     }
     expect(placed.get('crypt_wooden_table_3x_01') ?? 0).toBeGreaterThan(0);
     expect(placed.get('crypt_wooden_table_2x_01') ?? 0).toBeGreaterThan(0);
-    expect(placed.get('crypt_stone_02') ?? 0).toBeGreaterThan(0);
+    expect(placed.get('crypt_stone_01') ?? 0).toBeGreaterThan(0);
   });
 
   it('ревью 12.10: настенный паспорт без строки objects — ни одной грани (было 82 % граней, коридоры тоже); со строкой — её частота, коридор 0 соблюдён', () => {
-    // проба ревью: ключ окружения крипты без строки и без паспорта семени (`crypt_arch_02`) получает паспорт «на стене, преграда»
-    const wallKey = 'crypt_arch_02';
+    // проба ревью: ключ окружения крипты без строки и без паспорта семени (сундук `crypt_wooden_chest_01`; был `crypt_arch_02` — убран из проекта 12.10) получает паспорт «на стене, преграда»
+    const wallKey = 'crypt_wooden_chest_01';
     expect(r.get('objects').some((o) => o.id === wallKey || o.modelId === wallKey), 'ключ пробы без строки objects').toBe(false);
     const passport: Partial<ArtDecor> = { contexts: ['wall'], blocks: true, rooms: { small: 1, large: 1, treasure: 1, boss: 1, corridor: 0 } };
     const floorsOf = (cfg: ConfigRegistry): DungeonLayout[] => {
