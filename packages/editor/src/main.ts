@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, dressingWarnings, decorWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
-import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, renderEnum } from './form.js';
+import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, fieldPathLabels, renderEnum } from './form.js';
+import { DECOR_FIELD_LABELS, DECOR_PATH_LABELS } from './decorLabels.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
 import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
 import { renderSimPage } from './sim.js';
-import { renderRunGenPage } from './runGen.js';
+import { renderRunGenPage, decorDrawIds } from './runGen.js';
 import { renderLootPage } from './loot.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
@@ -344,6 +345,9 @@ Object.assign(fieldLabels, {
   keepPath: 'не запирать проход', tall: 'высокий', variance: 'разброс (только картинка)', yawJitterDeg: 'поворот ±°', doorway: 'арка: проём',
   stack: 'штабель', hosts: 'хозяева (сокет)',
 });
+// ⭐ 12.10 (Ф2 «Слоты и полосы»): правила пропов биома (`dressing.props`) — подписи по имени и по пути «родитель.ключ» (`decorLabels.ts`)
+Object.assign(fieldLabels, DECOR_FIELD_LABELS);
+Object.assign(fieldPathLabels, DECOR_PATH_LABELS);
 // ⭐ 08.10: огонь объекта (objects[].fx) — вид выпадашкой, «— нет огня —» снимает поле целиком (общий рендер необязательного объекта
 // оставил бы `{ scale }` без `kind`, и конфиг не прошёл бы схему); размер и сдвиг — только при выбранном виде. Читает только Unity.
 fieldCustomRenderers.fx = (value, onChange) => {
@@ -1144,7 +1148,7 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
       const cfg = { get: (k: string) => data[k] } as unknown as FloorConfig;
       const build = biome ? (seed: number, exitCount: number) => {
         const g = generateFloorFor(cfg, resolveFloorSpec(biome, f as unknown as Floor, f.minDepth ?? 1, seed, [], { exitCount }), biome);
-        return { layout: g.layout, wallIds: new Set(g.inputs.decorSpecs.filter((s) => s.surface === 'wall').map((s) => s.id)) };
+        return { layout: g.layout, ...decorDrawIds(g.inputs.decorSpecs) };   // ⭐ 12.10 (Ф2): настенные — точкой, арки проёмов — линией
       } : undefined;
       return { algo: f.algoParams as FloorAlgoParams, features: f.features, lock: !!f.features?.bossRoom, prefabs: (data['room-prefabs'] as RoomPrefab[]) ?? [], build };
     });
@@ -1364,7 +1368,8 @@ interface ConfigIssue { section: string; id: string; msg: string; severity: 'err
  *    submeshMaterials→materials; тир сложности, который не откроется никогда (R8-13, `difficultyLockIssues`).
  *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир); ⭐ 08.10: ширина ниши
  *    статуй оформления биома ≠ ширине модели статуи (`dressingWarnings`); ⭐ 12.10: объект роли decor (сервер его не ставит), паспорт декора
- *    Unity без биома или без контекстов (`decorWarnings`).
+ *    Unity без биома или без контекстов (`decorWarnings`); ⭐ 12.10 (Ф2): высокий проп у ближней стены, правила биома без пропов (ссылки
+ *    оформления, пустой слот), проп, который слоты молча пропускают.
  */
 async function validateConfig(): Promise<ConfigIssue[]> {
   const issues: ConfigIssue[] = [];
@@ -1399,10 +1404,12 @@ async function validateConfig(): Promise<ConfigIssue[]> {
     issues.push({ section: 'biomes', id: w.biomeId, msg: w.msg, severity: 'warn' });
   }
 
-  // 6) ⭐ 12.10 (Ф1 «Паспорт», G15): расстановка — объект роли decor (сервер его не ставит), паспорт декора без биома или без контекстов [warn]
+  // 6) ⭐ 12.10 (Ф1 «Паспорт», G15): расстановка — объект роли decor (сервер его не ставит), паспорт декора без биома или без контекстов [warn];
+  //    ⭐ 12.10 (Ф2): высокий проп у ближней стены, правила биома без пропов, проп, который слоты пропускают (`biomes` — третьим)
   type ObjLite = Parameters<typeof decorWarnings>[0][number];
   type ArtLite = NonNullable<Parameters<typeof decorWarnings>[1]>[number];
-  for (const w of decorWarnings(arr('objects') as unknown as ObjLite[], arr('art') as unknown as ArtLite[])) {
+  type BiomeLite = NonNullable<Parameters<typeof decorWarnings>[2]>[number];
+  for (const w of decorWarnings(arr('objects') as unknown as ObjLite[], arr('art') as unknown as ArtLite[], arr('biomes') as unknown as BiomeLite[])) {
     issues.push({ section: w.section, id: w.id, msg: w.msg, severity: 'warn' });
   }
 

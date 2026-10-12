@@ -2,6 +2,8 @@ export * from './floorCommon.js';
 export * from './prefab.js';
 export * from './decor.js';
 export * from './dressing.js';
+export * from './slots.js';
+export * from './decorStats.js';
 export * from './generate.js';
 export * from './generateFloor.js';
 export * from './floorInputs.js';

@@ -7,6 +7,7 @@ import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
 import { claimsOf, obstaclesFromDecor, placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
 import { dressingObjectIds, placeDressing, type DressingOpts, type DressingResult } from './dressing.js';
+import { placeSlots } from './slots.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { placeChests } from './floorCommon.js';
 import type { FloorSpec } from './run/types.js';
@@ -171,10 +172,24 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
     const own = dressingObjectIds(opts.dressing.rules);
     if (specs && own.size) specs = specs.filter((s) => !own.has(s.id));
   }
+  // ⭐ 12.10 (Ф2 «Слоты и полосы»): у биома с правилами пропов (`dressing.props`) пропы с паспортом встают ПО СЛОТАМ (`slots.ts`: центр, полосы,
+  // арки, у стены, углы, грани; проверка проходимости радиусом героя) — после оформления, до россыпи; россыпь Ф1 остаётся только строкам
+  // `objects` без паспорта (решётка пола — её слоты снова её). Свои потоки rng (под-сид на комнату и проход). Нет правил — как прежде.
+  const propRules = opts.dressing?.rules.props;
+  let laneKeys: Set<string> | undefined;
+  if (propRules && specs) {
+    placeSlots(result, propRules, specs.filter((s) => !!s.contexts), seed, {
+      camAzimuthDeg: opts.dressing!.camAzimuthDeg, known: new Map((opts.decorSpecs ?? specs).map((s) => [s.id, s])),
+    });
+    specs = specs.filter((s) => !s.contexts);
+    // ⭐ 12.10 (ревью Ф2): полосы держат и преграды россыпи строк без паспорта (решётка крипты — не преграда: её раскладка прежняя)
+    const cols = result.grid[0]?.length ?? 0;
+    laneKeys = new Set((result.lanes ?? []).flatMap((l) => l.cells.map((i) => `${i % cols},${(i / cols) | 0}`)));
+  }
   // Расставляемые объекты (пол-россыпь + props на пол/стену) — детерминированно от сида (независимые потоки rng).
   if (specs && specs.length) {
     // ⭐ 08.10: отступы стоящего декора — по всем спекам биома (у костров оформления свой `clearance`, а из россыпи они выпали)
-    placeFloorDecor(result, specs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace, taken?.floorCells, new Map((opts.decorSpecs ?? specs).map((s) => [s.id, s])));
+    placeFloorDecor(result, specs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace, taken?.floorCells, new Map((opts.decorSpecs ?? specs).map((s) => [s.id, s])), laneKeys);
     placeWallProps(result, specs, createRng(((seed ^ 0x3a11) >>> 0) || 1), taken?.faces);
   }
   // Сундуки — СВОЙ поток rng, как у декора: добавление сундуков не должно сдвигать всё остальное.

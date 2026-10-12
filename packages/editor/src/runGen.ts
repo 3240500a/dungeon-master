@@ -1,7 +1,7 @@
 import {
   ConfigRegistry, generateRunPlan, generateFloorFor, footprintRect, resolveMonsterPool, spawnPacksEl, createRng, runModifierLive,
   Cell, TILE, type RunConfig, type RunPlan, type RunNode, type RunModifier, type RunTemplate, type Biome,
-  type DungeonLayout, type MonsterSpawn,
+  type DungeonLayout, type MonsterSpawn, type DecorSpec,
 } from '@dm/shared';
 
 /**
@@ -280,8 +280,23 @@ function renderGraph(host: HTMLElement, p: RunPlan, mods: RunModifier[], onSelec
 // ── Поклеточный просмотр этажа (canvas) ──────────────────────────────────────
 export function cellSize(cols: number): number { return Math.max(4, Math.min(10, Math.floor(640 / cols))); }
 
-/** ⭐ 12.10: `wallIds` — id настенных объектов (`DecorSpec.surface === 'wall'`): их декор — точкой на линии стены, а не следом. */
-export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters: MonsterSpawn[], factionColor: string, wallIds?: ReadonlySet<string>): void {
+/** ⭐ 12.10 (Ф2): id объектов декора для отрисовки по спекам биома: настенные (`surface: wall` — точкой на линии стены) и арки проёмов
+ *  (паспорт с контекстом doorway и шириной проёма — линией поперёк проёма, а не следом). */
+export function decorDrawIds(specs: readonly DecorSpec[]): { wallIds: Set<string>; archIds: Set<string> } {
+  return {
+    wallIds: new Set(specs.filter((s) => s.surface === 'wall').map((s) => s.id)),
+    archIds: new Set(specs.filter((s) => s.surface !== 'wall' && !!s.passport?.doorway && !!s.contexts?.includes('doorway')).map((s) => s.id)),
+  };
+}
+
+/** ⭐ 12.10 (Ф2): цвета наложения слотов (превью «Этажи» и «Забеги v2»; легенда — `legend`). */
+export const SLOT_OVERLAY = { lane: 'rgba(56,189,248,0.20)', doorway: '#fb923c', arch: '#e2b04a' } as const;
+
+/** ⭐ 12.10: `wallIds` — id настенных объектов (`DecorSpec.surface === 'wall'`): их декор — точкой на линии стены, а не следом.
+ *  ⭐ 12.10 (Ф2 «Слоты и полосы»): `opts.slots` (по умолчанию да) — наложение раскладки слотов, если она есть (биом с правилами пропов):
+ *  полосы прохода (`L.lanes`) — подсветкой клеток, проёмы комнат (`L.doorways`) — рамкой клеток проёма; `opts.archIds` — арки линией. */
+export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters: MonsterSpawn[], factionColor: string, wallIds?: ReadonlySet<string>,
+  opts: { slots?: boolean; archIds?: ReadonlySet<string> } = {}): void {
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
   const cell = cellSize(cols);
   canvas.width = cols * cell; canvas.height = rows * cell;
@@ -295,10 +310,30 @@ export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters:
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc((wx / TILE) * cell, (wy / TILE) * cell, r, 0, Math.PI * 2); ctx.fill();
   };
+  // ⭐ 12.10 (Ф2): полосы прохода и проёмы — под декором (видно, что пропы их обходят)
+  const slots = opts.slots !== false;
+  if (slots) {
+    ctx.fillStyle = SLOT_OVERLAY.lane;
+    for (const l of L.lanes ?? []) for (const i of l.cells) ctx.fillRect((i % cols) * cell, Math.floor(i / cols) * cell, cell, cell);
+    ctx.strokeStyle = SLOT_OVERLAY.doorway; ctx.lineWidth = Math.max(1, cell * 0.15);
+    for (const d of L.doorways ?? []) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const c of d.cells) { x0 = Math.min(x0, c.cx); y0 = Math.min(y0, c.cy); x1 = Math.max(x1, c.cx); y1 = Math.max(y1, c.cy); }
+      ctx.strokeRect(x0 * cell + 0.5, y0 * cell + 0.5, (x1 - x0 + 1) * cell - 1, (y1 - y0 + 1) * cell - 1);
+    }
+  }
   // ⭐ 12.10 (G12): объекты конфига (`obj`: россыпь, оформление, неявные объекты паспортов) — под монстрами и ориентирами: напольные — след в
-  // клетках с поворотом (`footprintRect`), настенные (`wallIds`: факелы, статуи — точка на линии лица стены) — точкой
+  // клетках с поворотом (`footprintRect`), настенные (`wallIds`: факелы, статуи — точка на линии лица стены) — точкой; ⭐ 12.10 (Ф2) арки
+  // (`opts.archIds`) — линией поперёк проёма по линии стены (не преграда: проход сквозь арку)
   for (const d of L.decor) {
     if (d.kind !== 'obj') continue;
+    if (d.objectId && opts.archIds?.has(d.objectId) && d.footprint) {
+      const rot = d.rot ?? 0, half = (d.footprint.w * cell) / 2, tx = Math.cos(rot), ty = -Math.sin(rot);
+      const px = (d.x / TILE) * cell, py = (d.y / TILE) * cell;
+      ctx.strokeStyle = SLOT_OVERLAY.arch; ctx.lineWidth = Math.max(2, cell * 0.4);
+      ctx.beginPath(); ctx.moveTo(px - tx * half, py - ty * half); ctx.lineTo(px + tx * half, py + ty * half); ctx.stroke();
+      continue;
+    }
     if (!d.footprint || (d.objectId && wallIds?.has(d.objectId))) { dotWorld(d.x, d.y, '#9aa4b8', cell * 0.35); continue; }
     const r = footprintRect(d);
     ctx.fillStyle = 'rgba(176,132,84,0.55)';
@@ -322,6 +357,16 @@ export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters:
   for (const ex of L.exits) dotWorld(ex.x, ex.y, '#f87171', cell * 0.9); // все выходы
 }
 
+/** ⭐ 12.10 (Ф2): одна строка журнала слотов этажа (`L.slotLog`) — пропы комнат против цели, пустые комнаты, проходы и откаты (Р6), проёмы. */
+export function slotSummary(L: DungeonLayout): string {
+  const log = L.slotLog;
+  if (!log) return '';
+  const rooms = log.rooms.filter((r) => r.type !== 'entrance');
+  const placed = rooms.reduce((s, r) => s + r.placed, 0), target = rooms.reduce((s, r) => s + r.target, 0);
+  const passes = Object.entries(log.passes).filter(([, v]) => v.placed || v.rejected).map(([k, v]) => `${k} ${v.placed}${v.rejected ? ` (откат ${v.rejected})` : ''}`);
+  return `в комнатах ${placed} из цели ${target} · пустых ${rooms.filter((r) => r.empty).length} из ${rooms.length} · ${passes.join(' · ') || 'ничего'} · проёмов ${L.doorways?.length ?? 0}`;
+}
+
 /** Описание того, что сгенерировано в клетке под курсором (для hover-подсказки). */
 function annotationAt(cx: number, cy: number, L: DungeonLayout, monByCell: Map<string, MonsterSpawn[]>, exitByCell: Map<string, string>): string {
   const near = (wx: number, wy: number) => Math.floor(wx / TILE) === cx && Math.floor(wy / TILE) === cy;
@@ -335,6 +380,17 @@ function annotationAt(cx: number, cy: number, L: DungeonLayout, monByCell: Map<s
   if (near(L.spawn.x, L.spawn.y)) return 'Точка входа игрока (спавн)';
   for (const lv of L.levers) if (near(lv.x, lv.y)) return `Рычаг → открывает дверь #${lv.doorId}`;
   for (const d of L.doors) if (d.cells.some((c) => c.cx === cx && c.cy === cy)) return `Запертая дверь #${d.id} (нужен рычаг)`;
+  // ⭐ 12.10 (Ф2): декор под курсором (след напольного, точка настенного), проём комнаты и полоса прохода
+  const decorHere = L.decor.filter((d) => d.kind === 'obj' && d.objectId && (d.footprint
+    ? (() => { const r = footprintRect(d); return cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1; })()
+    : near(d.x, d.y))).map((d) => d.objectId!);
+  const door = L.doorways?.find((d) => d.cells.some((c) => c.cx === cx && c.cy === cy));
+  const lane = !!L.lanes?.some((l) => l.cells.includes(cy * (L.grid[0]?.length ?? 0) + cx));
+  const slotNote = [
+    door ? `проём комнаты шириной ${door.width}${door.door ? ' (дверь рычага)' : door.framed ? '' : ' (без рамы стен)'}` : '',
+    lane ? 'полоса прохода' : '',
+    decorHere.length ? `декор: ${decorHere.join(', ')}` : '',
+  ].filter(Boolean).join('\n');
   const ms = monByCell.get(`${cx},${cy}`);
   if (ms && ms.length) {
     const m = ms[0]!.def;
@@ -348,9 +404,9 @@ function annotationAt(cx: number, cy: number, L: DungeonLayout, monByCell: Map<s
   const cellName = cellVal === Cell.Wall ? 'Стена' : cellVal === Cell.Door ? 'Дверь' : cellVal === Cell.Pillar ? 'Колонна' : 'Пол';
   if (room) {
     const content = room.content === 'unique' ? ' · комната уников' : room.content === 'boss' ? ' · босс-комната' : room.content === 'treasure' ? ' · сокровищница' : '';
-    return `${cellName} · комната: ${room.type} (${room.w}×${room.h})${content}`;
+    return `${cellName} · комната: ${room.type} (${room.w}×${room.h})${content}${slotNote ? '\n' + slotNote : ''}`;
   }
-  return cellName;
+  return slotNote ? `${cellName}\n${slotNote}` : cellName;
 }
 
 function legend(): HTMLElement {
@@ -360,6 +416,8 @@ function legend(): HTMLElement {
     ['#2a2a34', 'пол'], ['#0d0d13', 'стена'], ['#7a5a2a', 'дверь'], ['#facc15', 'рычаг'],
     ['#4ade80', 'спавн'], ['#f87171', 'выход'], ['#8a5cff', 'портал'], ['#c99a48', 'сундук'],
     ['#3fb0a0', 'лавка'], ['#e6c34a', 'добыча'], ['#7fa0d0', 'монстр'], ['#ffcf4a', 'чемпион'],
+    // ⭐ 12.10 (Ф2): наложение слотов (биом с правилами пропов)
+    ['rgba(176,132,84,0.85)', 'декор (след)'], [SLOT_OVERLAY.lane.replace('0.20', '0.6'), 'полоса прохода'], [SLOT_OVERLAY.doorway, 'проём'], [SLOT_OVERLAY.arch, 'арка'],
   ];
   for (const [c, l] of items) {
     const s = document.createElement('span'); s.style.cssText = 'display:flex;align-items:center;gap:4px';
@@ -458,7 +516,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     if (!node) return;
     const biome = biomes.find((b) => b.id === node.biomeId)!;
     let L: DungeonLayout;
-    let wallIds = new Set<string>();
+    let wallIds = new Set<string>(), archIds = new Set<string>();
     // Как на сервере: передаём библиотеку префабов — чтобы в превью забега были и prefab-комнаты,
     // и врезанные камеры (rooms/bsp по prefabChance; пещеры/лабиринт по prefabRooms).
     // ⭐ 12.10 (G12, «редактор ≡ игра»): и всё прочее, что даёт этажу сервер (`generateFloorFor`): декор биома с неявными объектами паспортов
@@ -466,7 +524,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     try {
       const g = generateFloorFor(reg, node.floorSpec, biome);
       L = g.layout;
-      wallIds = new Set(g.inputs.decorSpecs.filter((s) => s.surface === 'wall').map((s) => s.id));
+      ({ wallIds, archIds } = decorDrawIds(g.inputs.decorSpecs));
     }
     catch (e) { preview.innerHTML = `<div style="color:#ff8080">Ошибка генерации: ${(e as Error).message}</div>`; return; }
 
@@ -525,7 +583,8 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     ].filter(Boolean);
     const meta = document.createElement('div');
     meta.style.cssText = 'font-size:12px;color:#8a8a9a;margin-bottom:8px';
-    meta.innerHTML = `Фичи: ${featList.length ? featList.join(' · ') : '—'} · плотность ×${node.floorSpec.packDensity}<br>Мощь игрока: ${t.power} · Модификаторы: ${modNames.length ? modNames.join(', ') : '—'} · Сид этажа: ${node.floorSpec.seed}`;
+    meta.innerHTML = `Фичи: ${featList.length ? featList.join(' · ') : '—'} · плотность ×${node.floorSpec.packDensity}<br>Мощь игрока: ${t.power} · Модификаторы: ${modNames.length ? modNames.join(', ') : '—'} · Сид этажа: ${node.floorSpec.seed}` +
+      (L.slotLog ? `<br>Слоты пропов: ${slotSummary(L)}` : '');   // ⭐ 12.10 (Ф2)
     preview.appendChild(meta);
 
     const bar = document.createElement('div');
@@ -548,7 +607,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     const canvas = document.createElement('canvas');
     canvas.style.cssText = 'display:block;position:absolute;left:0;top:0;image-rendering:pixelated;transform-origin:0 0';
     vp.appendChild(canvas);
-    drawFloor(canvas, L, monsters, FACTION_COLOR[biome.faction] ?? '#7fa0d0', wallIds);
+    drawFloor(canvas, L, monsters, FACTION_COLOR[biome.faction] ?? '#7fa0d0', wallIds, { archIds });
     preview.appendChild(legend());
 
     const applyFT = () => { canvas.style.transform = `translate(${fpan.x}px,${fpan.y}px) scale(${fzoom})`; };

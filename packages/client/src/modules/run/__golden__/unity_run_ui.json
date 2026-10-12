@@ -2006,6 +2006,44 @@
         ],
         "minRoom": 7,
         "chance": 0.6
+       },
+       "props": {
+        "density": {
+         "min": 3,
+         "max": 6,
+         "perArea": 100
+        },
+        "emptyRoomShare": 0.25,
+        "sameNotNear": 4,
+        "lanes": {
+         "width": 2
+        },
+        "center": {
+         "on": true,
+         "chance": 0.35,
+         "minRoom": 9,
+         "minFoot": 2
+        },
+        "againstWall": {
+         "on": true,
+         "step": 3
+        },
+        "corner": {
+         "on": true,
+         "chance": 0.5,
+         "pair": 0.5
+        },
+        "doorway": {
+         "on": true,
+         "chance": 1,
+         "clearBeyond": 6
+        },
+        "wall": {
+         "on": false,
+         "step": 4,
+         "chance": 0.5,
+         "corridors": true
+        }
        }
       },
       "decorDensity": {

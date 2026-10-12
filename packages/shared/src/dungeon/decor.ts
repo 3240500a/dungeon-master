@@ -95,14 +95,25 @@ export function rotatedFootprint(fp: { w: number; h: number }, rot: number | und
 }
 
 /**
+ * ⭐ 13.10 (ревью Ф2): ДОПУСК ПРИЖАТИЯ СЛЕДА, клеток. Край следа от точки декора, не дальше этого от линии сетки, — на ней (`footprintRect`).
+ * Пропы слотов у стены стоят пивотом по глубине МОДЕЛИ (`slots.ts wallPivot`: спинка на линии стены) — до 0.45 клетки от центра своего следа
+ * к стене; с прежним eps 1e-9 след их записи захватывал ряд стены за ними (полка — с 12.10), а отступ соседей через этот ряд смотрел сквозь стену:
+ * россыпь решёток и сундуки менялись (замер правки: 2 этажа крипты из 400). Точки на узлах и полуузлах (центр посреди клетки — след на клетку
+ * шире: костёр в комнате нечётной ширины) дают те же клетки, что прежде: дробная часть 0 и ½ допуском меньше ½ не задевается. Весь прочий декор
+ * (россыпь, оформление, арки, центр комнаты) стоит на узлах и полуузлах.
+ */
+export const FOOTPRINT_SNAP = 0.45;
+
+/**
  * ⭐ 08.10: СЛЕД декора в клетках — прямоугольник `footprint` с центром в точке декора (так их ставят `placeFloorDecor` и костры
  * `placeDressing`; центр посреди клетки — след на клетку шире: костёр в комнате нечётной ширины лежит на трёх клетках). Без `footprint`
- * (портал, лавка, процедурный факел) — клетка под точкой. ⭐ 12.10 (G3): стороны — с поворотом `rot` (`rotatedFootprint`).
+ * (портал, лавка, процедурный факел) — клетка под точкой. ⭐ 12.10 (G3): стороны — с поворотом `rot` (`rotatedFootprint`). ⭐ 13.10: край —
+ * с допуском `FOOTPRINT_SNAP` (проп, прижатый к стене, — клетки своего слота, без ряда стены).
  */
 export function footprintRect(d: { x: number; y: number; footprint?: { w: number; h: number }; rot?: number }): CellRect {
   if (!d.footprint) { const c = worldToCell(d.x, d.y); return { x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }; }
   const { w: fw, h: fh } = rotatedFootprint(d.footprint, d.rot);
-  const cx = d.x / TILE, cy = d.y / TILE, eps = 1e-9;   // eps — от шума деления на краю клетки
+  const cx = d.x / TILE, cy = d.y / TILE, eps = FOOTPRINT_SNAP;   // было 1e-9 (шум деления на краю клетки) — теперь и допуск прижатия
   return { x0: Math.floor(cx - fw / 2 + eps), y0: Math.floor(cy - fh / 2 + eps), x1: Math.ceil(cx + fw / 2 - eps) - 1, y1: Math.ceil(cy + fh / 2 - eps) - 1 };
 }
 
@@ -197,8 +208,12 @@ const QUADS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
  * `taken` — клетки «cx,cy», уже занятые оформлением биома (`dressing.ts`); нет — как прежде.
  * ⭐ 08.10: ОТСТУП (`DecorSpec.clearance`, `FloorClaims`) — и у ставящегося объекта, и у уже стоящего декора (`known` — все спеки биома,
  * вместе с выпавшими из россыпи объектами оформления: у костра свой отступ); стоящий декор занимает весь след, а не клетку под точкой.
+ * ⭐ 12.10 (ревью Ф2): `lanes` — клетки «cx,cy» полос прохода слотов (`slots.ts`, у биома с правилами пропов): ПРЕГРАДА россыпи (и «не запирать
+ * проход») на них не встаёт — иначе строка `objects` с преградой легла бы в полосы (замер ревью: решётка, сделанная преградой, — 58 % на
+ * полосах). Не преграда (решётка крипты) — как прежде; нет `lanes` (биом без правил) — как прежде. Отрезать проход россыпь и так не может:
+ * кольцо пола вокруг преграды (G11).
  */
-export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}, taken?: ReadonlySet<string>, known?: ReadonlyMap<string, DecorSpec>): void {
+export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng, opts: PlaceDecorOpts = {}, taken?: ReadonlySet<string>, known?: ReadonlyMap<string, DecorSpec>, lanes?: ReadonlySet<string>): void {
   // на пол — по комнатам; на стену — placeWallProps. ⭐ 12.10: объект с паспортом — только с контекстом `floor` (прочие ждут слотов Ф2)
   const specs = allSpecs.filter((s) => s.surface === 'floor' && inContext(s, 'floor'));
   if (!specs.length) return;
@@ -272,6 +287,7 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
         const rect = { x0: cx, y0: cy, x1: cx + fw - 1, y1: cy + fh - 1 };
         if (!claims.free(rect, spec.clearance)) continue;   // ⭐ 08.10: отступ — свой и соседей
         if (spec.blocks && !ringFree(rect)) continue;        // ⭐ 12.10 (G11): кольцо пола вокруг преграды
+        if (lanes && (spec.blocks || spec.passport?.keepPath) && footprintCells(cx, cy, fw, fh).some((k) => lanes.has(k))) continue;   // ⭐ 12.10 (ревью Ф2): не на полосу
         claims.claim(rect, spec.clearance);
         for (const k of footprintCells(cx, cy, fw, fh)) reserved.add(k);
         if (spec.blocks) markBlocked(rect);
@@ -360,8 +376,9 @@ export interface ObjCfgLite {
   weight?: number;
 }
 
-/** ⭐ 12.10: строка манифеста арта, как её читает расстановка: ключ, вид, группа каталога, коллайдер, паспорт декора. */
-export interface ArtRowLite { id: string; kind?: string; group?: string; collider?: Col; decor?: DecorPassportLite }
+/** ⭐ 12.10: строка манифеста арта, как её читает расстановка: ключ, вид, группа каталога, коллайдер, паспорт декора; ⭐ 12.10 (Ф2) габарит
+ *  модели (`bounds`, м, в осях модели; Y — вверх) — только для предупреждений (`decorWarnings`: высокая модель без отметки tall). */
+export interface ArtRowLite { id: string; kind?: string; group?: string; collider?: Col; decor?: DecorPassportLite; bounds?: { min: number[]; max: number[] } }
 
 /** ⭐ 12.10: объект расстановки — строка `objects` либо неявный объект паспорта; `passport` — паспорт его модели (если есть). */
 export type PlaceableObject = ObjCfgLite & { passport?: DecorPassportLite; implicit?: boolean };
@@ -455,14 +472,68 @@ export function decorSpecsFor(
     });
 }
 
+/** ⭐ 12.10 (Ф2): порог «высокой» модели, м — как у Unity (`DM.Art.DmDecor.TallHeight`: без правки паспорта tall = верх модели выше 1.5 м). */
+export const DECOR_TALL_HEIGHT = 1.5;
+
+/** ⭐ 12.10 (Ф2): биом, как его читают предупреждения расстановки — оформление (ссылки на объекты) и слоты правил пропов (`dressing.props`;
+ *  сырые данные редактора: нет поля слота — включён, нет `minFoot` — 2, как умолчания схемы). */
+export interface BiomeDecorLite {
+  id: string;
+  dressing?: {
+    torch?: { objectId?: string };
+    statues?: { objectIds?: readonly string[] };
+    firePits?: { objectIds?: readonly string[] };
+    props?: {
+      center?: { on?: boolean; minFoot?: number };
+      againstWall?: { on?: boolean };
+      corner?: { on?: boolean };
+      doorway?: { on?: boolean };
+      wall?: { on?: boolean };
+    };
+  };
+}
+type PropSlotsLite = NonNullable<NonNullable<BiomeDecorLite['dressing']>['props']>;
+
+const slotOn = (x?: { on?: boolean }): boolean => x?.on !== false;
+
+/** ⭐ 12.10 (Ф2): в каких контекстах слоты биома (`dressing.props`, `slots.ts`) на самом деле ставят проп `s`: floor — центр (не высокий, след от
+ *  `minFoot`), againstWall — у стены, corner — угол (следы до 2 × 2), doorway — арка с `doorway.width`, wall — грань; socket / scatter /
+ *  doorFlank / wallInsert — наборы и мелочь Ф4–Ф5 (сейчас никогда). */
+function slotContexts(s: DecorSpec, props: PropSlotsLite): string[] {
+  const fw = s.footprint.w, fh = s.footprint.h, tall = !!s.passport?.tall;
+  const ok: Record<string, boolean> = {
+    floor: slotOn(props.center) && !tall && Math.min(fw, fh) >= (props.center?.minFoot ?? 2),
+    againstWall: slotOn(props.againstWall),
+    corner: slotOn(props.corner) && Math.max(fw, fh) <= 2,
+    doorway: slotOn(props.doorway) && !!s.passport?.doorway?.width,
+    wall: slotOn(props.wall) && s.surface === 'wall',   // ⭐ 12.10 (ревью Ф2): грани берут только настенные (паспорт лишь wall/wallInsert)
+  };
+  return (s.contexts ?? []).filter((c) => ok[c]);
+}
+
+/** Слоты правил пропов → контекст паспорта, который каждый ставит, и подпись для предупреждения. */
+const SLOT_CONTEXT: readonly [keyof PropSlotsLite, string, string][] = [
+  ['center', 'floor', 'центр комнаты'], ['againstWall', 'againstWall', 'у стены'], ['corner', 'corner', 'угол'], ['doorway', 'doorway', 'арка в проём'], ['wall', 'wall', 'грань стены'],
+];
+
 /**
  * ⭐ 12.10 (G15 и паспорт): ПРЕДУПРЕЖДЕНИЯ РАССТАНОВКИ (редактор, «Проверить конфиг»; сторож — `decorPassport.test.ts`):
  *  • объект роли `decor` — сервер его не ставит вовсе («отложено»): раньше такой объект молча пропадал, для пропа — роль `prop`;
  *  • паспорт без биома (ни `biomes` паспорта, ни группы `biome_<id>` каталога) — неявный объект не встанет ни в одном биоме;
  *  • паспорт без контекстов — не встанет нигде.
+ * ⭐ 12.10 (Ф2 «Слоты и полосы», план декора — «Как проверяем»; сторож — `decorWarnings.test.ts`):
+ *  • ВЫСОКИЙ У БЛИЖНЕЙ СТЕНЫ: модель выше `DECOR_TALL_HEIGHT` без отметки tall (слоты пустят её и к ближним стенам — закроет героя); с `biomes` —
+ *    высокий проп биома БЕЗ правил пропов: россыпь Ф1 (контекст floor) и грани строкой `objects` (контекст wall) дальних стен не различают;
+ *  • ПРАВИЛА БЕЗ ПРОПОВ (с `biomes`): ссылка оформления (факел, статуи, костры) на объект, которого нет в «Объектах», выключенный или чужой биому
+ *    (правило молча пустое); правила пропов без единого пропа с паспортом в биоме; включённый слот без пропа, которого он ставит;
+ *  • ПРОП, КОТОРЫЙ СЛОТЫ МОЛЧА ПРОПУСКАЮТ (с `biomes`, у биома с правилами): ни один его контекст не ставится (floor со следом меньше `minFoot`
+ *    или высокий, угол шире 2 клеток, doorway без ширины, выключенный слот); только сокет с хозяевами — не предупреждение (наборы Ф4, решение
+ *    владельца 12.10: стулья и табуреты ждут столов).
  */
-export function decorWarnings(objects: readonly ObjCfgLite[], art: readonly ArtRowLite[] = []): { section: 'objects' | 'art'; id: string; msg: string }[] {
-  const out: { section: 'objects' | 'art'; id: string; msg: string }[] = [];
+export function decorWarnings(
+  objects: readonly ObjCfgLite[], art: readonly ArtRowLite[] = [], biomes: readonly BiomeDecorLite[] = [],
+): { section: 'objects' | 'art' | 'biomes'; id: string; msg: string }[] {
+  const out: { section: 'objects' | 'art' | 'biomes'; id: string; msg: string }[] = [];
   for (const o of objects) {
     if (o.enabled && o.role === 'decor') out.push({ section: 'objects', id: o.id, msg: 'роль decor сервер не расставляет («отложено») — объекта не будет на этажах; для пропа — роль prop' });
   }
@@ -470,6 +541,62 @@ export function decorWarnings(objects: readonly ObjCfgLite[], art: readonly ArtR
     if (!o.implicit) continue;
     if (!o.biomes.length) out.push({ section: 'art', id: o.id, msg: 'паспорт декора без биома (ни biomes паспорта, ни папки Env/<биом>/) — неявный объект не встанет ни в одном биоме' });
     if (!o.passport?.contexts.length) out.push({ section: 'art', id: o.id, msg: 'паспорт декора без контекстов — неявный объект не встанет нигде' });
+  }
+  // ⭐ 12.10 (ревью Ф2): настенный контекст вперемешку с напольными — поверхность пол (`passportSurface`): слоты граней его не берут (Unity нарисовал
+  // бы его на полу и не гасил со стеной), настенным он не встанет нигде
+  for (const a of art) {
+    const cs = a.decor?.contexts ?? [];
+    if (!a.decor || !isPropArt(a) || !cs.some((c) => c === 'wall' || c === 'wallInsert') || passportSurface(a.decor) === 'wall') continue;
+    out.push({ section: 'art', id: a.id, msg: `паспорт смешивает настенные (wall / wallInsert) и напольные контексты (${cs.join(', ')}) — поверхность пол: на грани стен он не встанет (слоты граней берут только настенные); настенный проп — отдельная модель с одними настенными контекстами` });
+  }
+  // ⭐ 12.10 (Ф2): высокая модель без отметки tall — по габариту манифеста (у ключа бывает и строка .mat библиотеки без габарита — её мимо)
+  for (const a of art) {
+    if (!a.decor || !isPropArt(a) || a.decor.tall || !(a.decor.contexts ?? []).some((c) => c !== 'socket' && c !== 'scatter')) continue;
+    const top = a.bounds?.max?.[1];
+    if (typeof top === 'number' && top > DECOR_TALL_HEIGHT) {
+      out.push({ section: 'art', id: a.id, msg: `модель высотой ${top.toFixed(2)} м (выше ${DECOR_TALL_HEIGHT}) без отметки tall — слоты поставят её и у ближних к камере стен, она закроет героя; отметь tall в DmDecor` });
+    }
+  }
+  if (!biomes.length) return out;
+  // сырые строки редактора: нет поля — умолчание схемы
+  const rows: ObjCfgLite[] = objects.map((o) => ({ ...o, enabled: o.enabled !== false, biomes: o.biomes ?? [], footprint: o.footprint ?? { w: 1, h: 1 }, role: o.role ?? 'prop' }));
+  const byId = new Map(rows.map((o) => [o.id, o]));
+  for (const b of biomes) {
+    const d = b.dressing;
+    if (!d) continue;
+    // оформление: ссылка на объект — есть, включён, свой биому (иначе `placeDressing` его не ставит — правило молча пустое)
+    const refs: [string, string][] = [];
+    if (d.torch?.objectId) refs.push(['torch', d.torch.objectId]);
+    for (const id of d.statues?.objectIds ?? []) if (id) refs.push(['statues', id]);
+    for (const id of d.firePits?.objectIds ?? []) if (id) refs.push(['firePits', id]);
+    for (const [rule, id] of refs) {
+      const o = byId.get(id);
+      const why = !o ? 'нет в «Объектах»' : !o.enabled ? 'выключен' : o.biomes.length && !o.biomes.includes(b.id) ? `не из биома ${b.id}` : '';
+      if (why) out.push({ section: 'biomes', id: b.id, msg: `оформление ${rule}: объект «${id}» ${why} — правило молча пустое` });
+    }
+    const specs = decorSpecsFor(rows, [], b.id, [...art]).filter((s) => !!s.contexts);
+    const props = d.props;
+    if (!props) {
+      // путь Ф1: россыпь пола и грани строкой objects дальние стены не различают
+      for (const s of specs) {
+        if (!s.passport?.tall) continue;
+        const where = s.contexts!.includes('floor') ? 'россыпью пола' : s.contexts!.includes('wall') && !s.implicit ? 'на гранях стен' : '';
+        if (where) out.push({ section: 'biomes', id: b.id, msg: `высокий проп «${s.id}» без правил пропов (dressing.props) ставится ${where} и у ближних к камере стен — включи правила пропов (слоты ставят высокое только у дальних стен) или сними контекст` });
+      }
+      continue;
+    }
+    if (!specs.length) { out.push({ section: 'biomes', id: b.id, msg: 'правила пропов (dressing.props) есть, а пропов с паспортом декора у биома нет — слоты пусты' }); continue; }
+    for (const [slot, ctx, name] of SLOT_CONTEXT) {
+      if (slotOn(props[slot]) && !specs.some((s) => slotContexts(s, props).includes(ctx))) {
+        out.push({ section: 'biomes', id: b.id, msg: `правила пропов: слот «${name}» (${slot}) включён, а пропа, которого он ставит (контекст ${ctx}), у биома нет — слот пуст: выключи его или дай пропу контекст` });
+      }
+    }
+    for (const s of specs) {
+      if (slotContexts(s, props).length) continue;
+      const cs = s.contexts!;
+      if (cs.length && cs.every((c) => c === 'socket') && s.passport?.hosts?.length) continue;   // ждёт хозяина (наборы Ф4) — решение, не ошибка
+      out.push({ section: 'biomes', id: b.id, msg: `проп «${s.id}» (контексты ${cs.join(', ') || '—'}, след ${s.footprint.w} × ${s.footprint.h}${s.passport?.tall ? ', высокий' : ''}) слотами не ставится: центр — не высокий и со следом от minFoot ${props.center?.minFoot ?? 2}, угол — до 2 × 2, doorway — с шириной проёма, socket / scatter / doorFlank / wallInsert — наборы Ф4 и мелочь Ф5` });
+    }
   }
   return out;
 }

@@ -2372,6 +2372,68 @@ export const biomeDressingSchema = z.object({
     minRoom: z.number().int().min(1).default(7),              // меньшая сторона комнаты (клеток) не меньше
     chance: z.number().min(0).max(1).default(0.6),            // шанс костра в подходящей комнате
   }).optional(),
+  /**
+   * ⭐ 12.10 (Ф2 «Слоты и полосы», план декора): РАССТАНОВКА ПРОПОВ ПО ПАСПОРТАМ (`dungeon/slots.ts`) — пропы с паспортом декора (`art[].decor`:
+   * неявные объекты и строки `objects` с моделью-паспортом) встают не россыпью, а по СЛОТАМ, проходами от крупного к мелкому: центр большой
+   * комнаты (Р2), полосы прохода между проёмами и якорями (Р0), арка в проём (контекст doorway), спиной к стене (againstWall), угол (corner),
+   * грань стены (wall); каждая преграда проверяется проходимостью радиусом героя (Р6) и при отрезе откатывается. Есть поле — россыпь Ф1
+   * паспортов выключена (строки без паспорта — решётка пола — россыпью, как прежде); нет поля — этаж байт-в-байт Ф1 (сторож `slots.test.ts`).
+   * Клетка = 1 м. Числа — в `data/biomes.json` (умолчания схемы — страховка миграции).
+   */
+  props: z.object({
+    /** Плотность: пропов на комнату — от `min` до `max` на каждые `perArea` клеток пола комнаты (10 × 10 = 100); центр, углы и у стены — в
+     *  счёт, арки и грани стен — сверх. Вход — без пропов. */
+    density: z.object({
+      min: z.number().min(0).max(32).default(3),
+      max: z.number().min(0).max(32).default(6),
+      perArea: z.number().int().min(1).max(10000).default(100),
+    }).superRefine((d, ctx) => {
+      if (d.max < d.min) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['max'], message: 'max пропов меньше min' });
+    }).default({}),
+    emptyRoomShare: z.number().min(0).max(1).default(0.25),   // доля почти пустых комнат (ритм «полно — пусто»): ни центра, ни углов, ни у стен
+    sameNotNear: z.number().int().min(0).max(16).default(4),  // тот же проп не ближе, клеток (между точками); 0 — без правила; арок не касается
+    /** Полосы прохода: кратчайшие пути между проёмами комнаты и её якорями (спавн, выходы, рычаги, сундук, портал), шириной `width` клеток,
+     *  и устья проёмов с косяками — без преград и без пропов «не запирать проход» (keepPath). */
+    lanes: z.object({ width: z.number().int().min(1).max(4).default(2) }).default({}),
+    /** Р2: центральная вещь — обобщение костра: проп с контекстом floor и следом не меньше `minFoot` по меньшей стороне, в центре комнаты
+     *  с меньшей стороной от `minRoom`, кольцо пола в клетку вокруг; одна на комнату, не высокая. */
+    center: z.object({
+      on: z.boolean().default(true),
+      chance: z.number().min(0).max(1).default(0.35),
+      minRoom: z.number().int().min(1).default(9),
+      minFoot: z.number().int().min(1).max(8).default(2),
+    }).default({}),
+    /** Спиной к стене: пивот — линия стены + `backOffset` паспорта (якорь back) или полглубины МОДЕЛИ (⭐ 13.10: коллайдер поперёк стены при
+     *  повороте, без него — следа; `slots.ts wallPivot`), лицом в комнату (`along` — вдоль);
+     *  центры соседей на одной стене — не ближе `step` граней; от углов и проёмов — грань. */
+    againstWall: z.object({
+      on: z.boolean().default(true),
+      step: z.number().int().min(1).max(16).default(3),
+    }).default({}),
+    /** Угол: шаблон 2 × 2 по двум смежным стенам — проп в угол с шансом `chance`, второй по другой стене с шансом `pair`; клетка по
+     *  диагонали свободна. */
+    corner: z.object({
+      on: z.boolean().default(true),
+      chance: z.number().min(0).max(1).default(0.5),
+      pair: z.number().min(0).max(1).default(0.5),
+    }).default({}),
+    /** Арка в проём: паспорт с `doorway.width` = ширине проёма, по центру, поперёк; только проёмы дальних стен (арки высокие), с рамой стен
+     *  по краям, не дверь рычага. ⭐ 12.10 (ревью): `clearBeyond` — «тень» арки, клеток за проёмом в сторону от камеры: пол ДРУГОЙ комнаты там —
+     *  арки нет (для той комнаты это ближняя стена, а высокая арка со стеной не тает и закрыла бы героя; верх h м закрывает землю на
+     *  h / tan(возвышения камеры): 45° — h клеток, 20° — 2.7 h); 0 — без правила. «Одинаковое не рядом» арок не касается (рама каждого проёма). */
+    doorway: z.object({
+      on: z.boolean().default(true),
+      chance: z.number().min(0).max(1).default(1),
+      clearBeyond: z.number().int().min(0).max(32).default(6),
+    }).default({}),
+    /** Грань стены (контекст wall): позиции с шагом `step` граней, на каждой — шанс `chance`; `corridors` — и в коридорах. */
+    wall: z.object({
+      on: z.boolean().default(true),
+      step: z.number().int().min(1).max(16).default(4),
+      chance: z.number().min(0).max(1).default(0.5),
+      corridors: z.boolean().default(true),
+    }).default({}),
+  }).optional(),
 });
 export type BiomeDressing = z.infer<typeof biomeDressingSchema>;
 

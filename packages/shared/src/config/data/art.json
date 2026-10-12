@@ -46,11 +46,6 @@
   },
   {
     "id": "crypt_arch_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_arch_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -126,6 +121,16 @@
         "width": 3
       }
     }
+  },
+  {
+    "id": "crypt_arch_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_arch_04",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_arch_04",
@@ -206,16 +211,6 @@
     }
   },
   {
-    "id": "crypt_arch_04",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_books_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
     "id": "crypt_books_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -294,6 +289,11 @@
     }
   },
   {
+    "id": "crypt_books_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_column_01",
     "kind": "env",
     "group": "biome_crypt",
@@ -347,6 +347,11 @@
   },
   {
     "id": "crypt_fire_pit_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_fire_pit_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -394,7 +399,7 @@
     }
   },
   {
-    "id": "crypt_fire_pit_01",
+    "id": "crypt_fire_pit_02",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -445,11 +450,6 @@
       "shape": "circle",
       "r": 1.0
     }
-  },
-  {
-    "id": "crypt_fire_pit_02",
-    "kind": "material",
-    "group": "mat_crypt"
   },
   {
     "id": "crypt_floor_01",
@@ -561,6 +561,11 @@
   },
   {
     "id": "crypt_floor_grille_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_floor_grille_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -606,11 +611,6 @@
       "shape": "circle",
       "r": 1.0
     }
-  },
-  {
-    "id": "crypt_floor_grille_01",
-    "kind": "material",
-    "group": "mat_crypt"
   },
   {
     "id": "crypt_metal_props_01",
@@ -659,8 +659,7 @@
     "decor": {
       "contexts": [
         "corner",
-        "againstWall",
-        "floor"
+        "againstWall"
       ],
       "footprint": {
         "w": 2,
@@ -830,11 +829,6 @@
   },
   {
     "id": "crypt_wall_statue_02",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_02",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -872,6 +866,16 @@
       "w": 2.0,
       "h": 0.63595
     }
+  },
+  {
+    "id": "crypt_wall_statue_02",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_statue_03",
@@ -914,16 +918,6 @@
     }
   },
   {
-    "id": "crypt_wall_statue_03",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_04",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
     "id": "crypt_wall_statue_04",
     "kind": "env",
     "group": "biome_crypt",
@@ -962,6 +956,11 @@
       "w": 2.0,
       "h": 0.62197
     }
+  },
+  {
+    "id": "crypt_wall_statue_04",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_torch_01",
@@ -1057,7 +1056,7 @@
     },
     "decor": {
       "contexts": [
-        "floor"
+        "socket"
       ],
       "footprint": {
         "w": 1,
@@ -1088,7 +1087,11 @@
         "scaleMin": 1.0,
         "scaleMax": 1.0
       },
-      "biomes": []
+      "biomes": [],
+      "hosts": [
+        "crypt_wooden_table_3x_01",
+        "crypt_wooden_table_2x_01"
+      ]
     }
   },
   {
@@ -1439,7 +1442,7 @@
     },
     "decor": {
       "contexts": [
-        "floor"
+        "socket"
       ],
       "footprint": {
         "w": 1,
@@ -1470,7 +1473,11 @@
         "scaleMin": 1.0,
         "scaleMax": 1.0
       },
-      "biomes": []
+      "biomes": [],
+      "hosts": [
+        "crypt_wooden_table_3x_01",
+        "crypt_wooden_table_2x_01"
+      ]
     }
   },
   {
@@ -1514,8 +1521,7 @@
     },
     "decor": {
       "contexts": [
-        "againstWall",
-        "floor"
+        "againstWall"
       ],
       "footprint": {
         "w": 1,
@@ -1590,8 +1596,8 @@
     },
     "decor": {
       "contexts": [
-        "floor",
-        "againstWall"
+        "againstWall",
+        "floor"
       ],
       "footprint": {
         "w": 2,

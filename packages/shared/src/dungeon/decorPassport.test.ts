@@ -146,7 +146,8 @@ describe('⭐ 12.10 (Ф1): неявные объекты паспортов (`pl
 
   it('G15: роль decor, паспорт без биома и без контекстов — предупреждения; живой конфиг чист', () => {
     const w = decorWarnings([...objects, obj('ghost', 'x', { role: 'decor' })], art);
-    expect(w.map((x) => `${x.section}:${x.id}`).sort()).toEqual(['art:empty', 'art:nobiome', 'objects:ghost']);
+    // ⭐ 12.10 (ревью Ф2): + `mixed` (wall вперемешку с floor — поверхность пол, на гранях стен не встанет)
+    expect(w.map((x) => `${x.section}:${x.id}`).sort()).toEqual(['art:empty', 'art:mixed', 'art:nobiome', 'objects:ghost']);
     expect(decorWarnings(reg.get('objects'), reg.get('art'))).toEqual([]);
   });
 
@@ -344,7 +345,8 @@ describe('⭐ 12.10 (Ф1): расстановка прежними проход�
   });
 });
 
-/** Паспорта первых пропов крипты — как семя Unity (`Assets/DM/Art/Editor/decor_seed.json`); след — по габариту манифеста (⌈размер − 0.1⌉). */
+/** Паспорта первых пропов крипты — семя Unity дня Ф1 (`Assets/DM/Art/Editor/decor_seed.json` до правки Ф2: стулья и табуреты на полу, стол 2x и
+ *  камень — и в комнате); след — по габариту манифеста (⌈размер − 0.1⌉). ⭐ 12.10 (Ф2): семя Ф2 — в `slots.test.ts`; здесь — сторожа пути Ф1. */
 const SEED: Record<string, Partial<ArtDecor>> = {
   crypt_wooden_shelf_01: { contexts: ['againstWall'], anchor: 'back', backOffset: 0.25, facing: 'room', keepPath: true, blocks: true, blocksSight: true, tall: true, tags: ['furniture', 'storage'], rooms: { small: 1, large: 1, treasure: 1, boss: 0, corridor: 0 } },
   crypt_wooden_table_3x_01: { contexts: ['floor', 'againstWall'], clearance: 1, keepPath: true, blocks: true, tags: ['furniture', 'table'], rooms: { small: 0, large: 1, treasure: 0.5, boss: 0, corridor: 0 } },
@@ -358,11 +360,18 @@ const SEED: Record<string, Partial<ArtDecor>> = {
   crypt_arch_04: { contexts: ['doorway'], facing: 'room', doorway: { width: 4 }, tall: true, tags: ['arch', 'frame'] },
   crypt_books_01: { contexts: ['socket'], anchor: 'back', backOffset: 0.25, facing: 'room', hosts: ['crypt_wooden_shelf_01'], tall: true, tags: ['clutter', 'books'] },
 };
+/** ⭐ 12.10 (Ф2): ПУТЬ Ф1 — биомы без правил пропов (`dressing.props`, слоты `slots.ts`): паспорта ставятся прежними проходами (россыпь пола,
+ *  грани стен). Крипта в data — уже с правилами; сторожа Ф1 ниже стерегут путь биома без них. */
+function withoutPropRules(r: ConfigRegistry): void {
+  r.reload({ biomes: r.get('biomes').map((b) => (b.dressing?.props ? { ...b, dressing: (({ props: _p, ...d }) => d)(b.dressing) } : b)) });
+}
+
 /** Живой конфиг с паспортами семени в манифесте — через настоящий загрузчик (`reload`: схема и перекрёстные правила, как файл с диска).
- *  `extra` — паспорта сверх семени (ключ → поля), `rows` — строки `objects` сверх живых. */
+ *  `extra` — паспорта сверх семени (ключ → поля), `rows` — строки `objects` сверх живых. ⭐ 12.10 (Ф2): биомы — без правил пропов (путь Ф1). */
 function withSeed(extra: Record<string, Partial<ArtDecor>> = {}, rows: Record<string, unknown>[] = []): ConfigRegistry {
   const r = new ConfigRegistry();
   r.loadAll();
+  withoutPropRules(r);
   const seed = { ...SEED, ...extra };
   const art = structuredClone(r.get('art')).map((a) => {
     const s = seed[a.id];
@@ -496,7 +505,7 @@ describe('⭐ 12.10 (Ф1): игровая ревизия — паспорт иг
     expect(ctx.gameRevision()).not.toBe(game);
     const bare = withSeed(); bare.reload({ art: bare.get('art').map(({ decor: _d, ...a }) => a) });
     expect(bare.gameRevision(), 'без паспортов — другая игровая ревизия').not.toBe(game);
-    const plain = new ConfigRegistry(); plain.loadAll(); plain.reload({ art: plain.get('art').map(({ decor: _d, ...a }) => a) });
+    const plain = new ConfigRegistry(); plain.loadAll(); withoutPropRules(plain); plain.reload({ art: plain.get('art').map(({ decor: _d, ...a }) => a) });
     expect(bare.gameRevision(), 'манифест без паспортов — та же ревизия, что у живого конфига без них').toBe(plain.gameRevision());
     const w = edit((t) => { (t as { weight?: number }[])[0]!.weight = 2; }, 'objects');
     expect(w.gameRevision()).not.toBe(game);

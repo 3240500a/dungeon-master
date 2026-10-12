@@ -207,14 +207,23 @@ function segDist2(px: number, py: number, ax: number, ay: number, bx: number, by
 /** Отрезок заходит ВНУТРЬ открытого прямоугольника |x| < ex, |y| < ey (отсечение Лианга — Барски по открытым полосам). */
 function segInBox(ax: number, ay: number, bx: number, by: number, ex: number, ey: number): boolean {
   if (!(ex > 0) || !(ey > 0)) return false;
+  // ⭐ 12.10 (Ф2 декора): тот же счёт по осям X, затем Y, но без замыкания на каждый вызов — горячий путь маски навигации и проверки
+  // проходимости слотов декора (`dungeon/slots.ts`): замыкание `clip` было главной ценой расстановки (замер: ~0.7 мс этажа крипты)
   let t0 = 0, t1 = 1;
-  const clip = (a: number, d: number, e: number): boolean => {
-    if (Math.abs(d) < 1e-12) return Math.abs(a) < e;   // параллельно полосе: весь внутри или весь вне
-    let ta = (-e - a) / d, tb = (e - a) / d;
+  let d = bx - ax;
+  if (Math.abs(d) < 1e-12) { if (!(Math.abs(ax) < ex)) return false; }   // параллельно полосе: весь внутри или весь вне
+  else {
+    let ta = (-ex - ax) / d, tb = (ex - ax) / d;
     if (ta > tb) { const s = ta; ta = tb; tb = s; }
     if (ta > t0) t0 = ta;
     if (tb < t1) t1 = tb;
-    return t0 < t1;
-  };
-  return clip(ax, bx - ax, ex) && clip(ay, by - ay, ey);
+    if (!(t0 < t1)) return false;
+  }
+  d = by - ay;
+  if (Math.abs(d) < 1e-12) return Math.abs(ay) < ey;
+  let ta = (-ey - ay) / d, tb = (ey - ay) / d;
+  if (ta > tb) { const s = ta; ta = tb; tb = s; }
+  if (ta > t0) t0 = ta;
+  if (tb < t1) t1 = tb;
+  return t0 < t1;
 }

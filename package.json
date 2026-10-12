@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "tsx packages/server/src/sim-cli.ts",
+    "decor:stats": "tsx packages/server/src/decor-stats-cli.ts",
     "lint": "eslint .",
     "loadtest": "tsx packages/server/src/loadtest/run.ts",
     "bench:ramp": "tsx packages/server/src/loadtest/bench.ts",

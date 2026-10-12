@@ -37,6 +37,15 @@ export const fieldCustomRenderers: Record<string, (value: unknown, onChange: (v:
  */
 export const fieldLabels: Record<string, string> = {};
 
+/**
+ * ⭐ 12.10 (Ф2 декора): подпись по ПУТИ «родитель.ключ» — главнее `fieldLabels`. Для общих имён в своём месте: `props.center` — «центр
+ * комнаты», а одноимённый `center` баланса клинка подписи не получает; `againstWall.step` и `wall.step` — каждый свой шаг. Родитель — ключ
+ * объекта, внутри которого поле нарисовано при сборке формы (стек `labelPath`); при перерисовке вложенного массива или union позже сборки
+ * родителя не видно — тогда подпись по одному ключу, как прежде.
+ */
+export const fieldPathLabels: Record<string, string> = {};
+const labelPath: string[] = [];
+
 /** Контрол поля: кастомный рендер по имени → спец-источник (тиры и т.п.) → по схеме. */
 function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void, parent?: Record<string, unknown>): HTMLElement {
   const custom = fieldCustomRenderers[key];
@@ -152,8 +161,11 @@ const FIELD_GRID = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(2
 function gridCell(grid: HTMLElement, key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void, parent?: Record<string, unknown>): void {
   const cell = document.createElement('div');
   if (isBlockSchema(sub) || fieldCustomRenderers[key]) cell.style.gridColumn = '1 / -1';
-  cell.appendChild(label(fieldLabels[key] ? `${fieldLabels[key]} · ${key}` : key));
-  cell.appendChild(fieldControl(key, sub, value, onChange, parent));
+  const parentKey = labelPath[labelPath.length - 1];
+  const text = (parentKey !== undefined ? fieldPathLabels[`${parentKey}.${key}`] : undefined) ?? fieldLabels[key];
+  cell.appendChild(label(text ? `${text} · ${key}` : key));
+  labelPath.push(key);
+  try { cell.appendChild(fieldControl(key, sub, value, onChange, parent)); } finally { labelPath.pop(); }
   grid.appendChild(cell);
 }
 

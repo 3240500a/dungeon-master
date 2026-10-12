@@ -116,10 +116,12 @@ const QUADS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
 export function wallRuns(L: DungeonLayout): Run[] {
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
   const at = (x: number, y: number): Cell | undefined => L.grid[y]?.[x];
-  // Зона клетки: индекс комнаты, в прямоугольнике которой она лежит (первая), иначе −1 (коридор).
+  // Зона клетки: индекс комнаты, в прямоугольнике которой она лежит (первая), иначе −1 (коридор). ⭐ 12.10 (Ф2): заливкой прямоугольников
+  // с конца списка (первая комната ложится последней) — то же, что `findIndex` по каждой клетке, без замыкания на клетку (замер: ~0.6 мс этажа)
   const zone: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));
-  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-    zone[y]![x] = L.rooms.findIndex((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+  for (let ri = L.rooms.length - 1; ri >= 0; ri--) {
+    const r = L.rooms[ri]!;
+    for (let y = Math.max(0, r.y); y < Math.min(rows, r.y + r.h); y++) for (let x = Math.max(0, r.x); x < Math.min(cols, r.x + r.w); x++) zone[y]![x] = ri;
   }
   const isFace = (x: number, y: number, dx: number, dz: number): boolean => {
     if (at(x, y) !== Cell.Wall) return false;

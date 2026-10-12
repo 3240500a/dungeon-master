@@ -1,5 +1,6 @@
 import type { Rng } from '../formulas/rng.js';
 import { Cell, cellToWorld, worldToCell, gridSize, type Grid } from '../world/grid.js';
+import type { Doorway, LaneSet, SlotLog } from './slots.js';
 
 /**
  * Общие типы и helper'ы поклеточной генерации этажа, разделяемые ВСЕМИ алгоритмами
@@ -83,6 +84,13 @@ export interface DungeonLayout {
   levers: Lever[];
   /** Сундуки этажа (Ч6). Пусто — на этаже их нет. */
   chests: ChestSpawn[];
+  /** ⭐ 12.10 (Ф2 «Слоты и полосы»): проёмы комнат (`slots.ts roomDoorways`) — только у биома с правилами пропов (`dressing.props`); у прочих
+   *  поля нет (этаж байт-в-байт прежний). Только сервер, сим и превью редактора — клиенту не едет. */
+  doorways?: Doorway[];
+  /** ⭐ 12.10 (Ф2): полосы прохода по комнатам — клетки `cy * cols + cx` без преград и пропов «не запирать проход». */
+  lanes?: LaneSet[];
+  /** ⭐ 12.10 (Ф2): журнал расстановки по слотам — бюджеты комнат и счётчики проходов (поставлено / откачено проверкой проходимости). */
+  slotLog?: SlotLog;
 }
 
 export function roomCenter(r: Room): { cx: number; cy: number } {
