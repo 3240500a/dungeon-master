@@ -2,6 +2,7 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { Biome } from '../config/schemas.js';
 import { decorPlaceOf, decorSpecsFor, obstaclesFromDecor, type DecorSpec, type PlaceDecorOpts } from './decor.js';
 import { dressingOf, type DressingOpts } from './dressing.js';
+import { setSpecsFor } from './sets.js';
 import type { DungeonLayout } from './floorCommon.js';
 import { generateFloor, type GenFloorOpts } from './generateFloor.js';
 import type { FloorSpec } from './run/types.js';
@@ -34,11 +35,20 @@ export interface FloorInputs {
 /** Входы сборки этажа биома `biome` из конфига `cfg` (нет биома — без декора и оформления, сундуки — как у всех). */
 export function floorInputs(cfg: FloorConfig, biome: Biome | undefined): FloorInputs {
   const balance = cfg.get('balance');
+  const decorSpecs = biome ? decorSpecsFor(cfg.get('objects'), cfg.get('models'), biome.id, cfg.get('art')) : [];
+  let dressing = dressingOf(biome, balance);
+  // ⭐ 13.10 (Ф4 «Наборы»): наборы-сценки биома — только при правилах наборов (`dressing.props.sets`) и только те, что встанут (члены — объекты
+  // биома); нет правил или ни одного набора — поле не появляется, этаж прежний
+  const setRules = dressing?.rules.props?.sets;
+  if (dressing && biome && setRules && setRules.on !== false) {
+    const { sets } = setSpecsFor(cfg.get('art'), biome.id, decorSpecs, setRules);
+    if (sets.length) dressing = { ...dressing, sets };
+  }
   return {
-    decorSpecs: biome ? decorSpecsFor(cfg.get('objects'), cfg.get('models'), biome.id, cfg.get('art')) : [],
+    decorSpecs,
     decorPlace: decorPlaceOf(biome),
     chests: { tiers: cfg.get('chests'), perFloor: balance.loot.chestsPerFloor },
-    dressing: dressingOf(biome, balance),
+    dressing,
   };
 }
 

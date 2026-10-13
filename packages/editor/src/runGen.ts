@@ -290,7 +290,7 @@ export function decorDrawIds(specs: readonly DecorSpec[]): { wallIds: Set<string
 }
 
 /** ⭐ 12.10 (Ф2): цвета наложения слотов (превью «Этажи» и «Забеги v2»; легенда — `legend`). */
-export const SLOT_OVERLAY = { lane: 'rgba(56,189,248,0.20)', doorway: '#fb923c', arch: '#e2b04a' } as const;
+export const SLOT_OVERLAY = { lane: 'rgba(56,189,248,0.20)', doorway: '#fb923c', arch: '#e2b04a', set: '#a3e635' } as const;   // ⭐ 13.10 (Ф4): set — рамка набора
 
 /** ⭐ 12.10: `wallIds` — id настенных объектов (`DecorSpec.surface === 'wall'`): их декор — точкой на линии стены, а не следом.
  *  ⭐ 12.10 (Ф2 «Слоты и полосы»): `opts.slots` (по умолчанию да) — наложение раскладки слотов, если она есть (биом с правилами пропов):
@@ -335,9 +335,15 @@ export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters:
       continue;
     }
     if (!d.footprint || (d.objectId && wallIds?.has(d.objectId))) { dotWorld(d.x, d.y, '#9aa4b8', cell * 0.35); continue; }
+    if (d.h !== undefined) { dotWorld(d.x, d.y, '#e8d9b0', cell * 0.25); continue; }   // ⭐ 13.10 (Ф4): стоит на другом члене набора — точкой
     const r = footprintRect(d);
     ctx.fillStyle = 'rgba(176,132,84,0.55)';
     ctx.fillRect(r.x0 * cell + 1, r.y0 * cell + 1, (r.x1 - r.x0 + 1) * cell - 2, (r.y1 - r.y0 + 1) * cell - 2);
+  }
+  // ⭐ 13.10 (Ф4 «Наборы»): рамка каждого вставшего набора — его действительный след (журнал слотов); члены — следами выше
+  if (slots) {
+    ctx.strokeStyle = SLOT_OVERLAY.set; ctx.lineWidth = Math.max(1, cell * 0.12);
+    for (const e of L.slotLog?.sets?.list ?? []) ctx.strokeRect(e.rect.x0 * cell + 0.5, e.rect.y0 * cell + 0.5, (e.rect.x1 - e.rect.x0 + 1) * cell - 1, (e.rect.y1 - e.rect.y0 + 1) * cell - 1);
   }
   // монстры
   for (const m of monsters) {
@@ -364,7 +370,8 @@ export function slotSummary(L: DungeonLayout): string {
   const rooms = log.rooms.filter((r) => r.type !== 'entrance');
   const placed = rooms.reduce((s, r) => s + r.placed, 0), target = rooms.reduce((s, r) => s + r.target, 0);
   const passes = Object.entries(log.passes).filter(([, v]) => v.placed || v.rejected).map(([k, v]) => `${k} ${v.placed}${v.rejected ? ` (откат ${v.rejected})` : ''}`);
-  return `в комнатах ${placed} из цели ${target} · пустых ${rooms.filter((r) => r.empty).length} из ${rooms.length} · ${passes.join(' · ') || 'ничего'} · проёмов ${L.doorways?.length ?? 0}`;
+  const sets = log.sets ? ` · наборов ${log.sets.placed}${log.sets.rejected ? ` (откат ${log.sets.rejected})` : ''}${log.sets.list.length ? `: ${log.sets.list.map((e) => e.id).join(', ')}` : ''}` : '';   // ⭐ 13.10 (Ф4)
+  return `в комнатах ${placed} из цели ${target} · пустых ${rooms.filter((r) => r.empty).length} из ${rooms.length} · ${passes.join(' · ') || 'ничего'} · проёмов ${L.doorways?.length ?? 0}${sets}`;
 }
 
 /** Описание того, что сгенерировано в клетке под курсором (для hover-подсказки). */
@@ -386,10 +393,12 @@ function annotationAt(cx: number, cy: number, L: DungeonLayout, monByCell: Map<s
     : near(d.x, d.y))).map((d) => d.objectId!);
   const door = L.doorways?.find((d) => d.cells.some((c) => c.cx === cx && c.cy === cy));
   const lane = !!L.lanes?.some((l) => l.cells.includes(cy * (L.grid[0]?.length ?? 0) + cx));
+  const set = L.slotLog?.sets?.list.find((e) => cx >= e.rect.x0 && cx <= e.rect.x1 && cy >= e.rect.y0 && cy <= e.rect.y1);   // ⭐ 13.10 (Ф4)
   const slotNote = [
     door ? `проём комнаты шириной ${door.width}${door.door ? ' (дверь рычага)' : door.framed ? '' : ' (без рамы стен)'}` : '',
     lane ? 'полоса прохода' : '',
     decorHere.length ? `декор: ${decorHere.join(', ')}` : '',
+    set ? `набор: ${set.id} (членов ${set.idx.length}, поворот ${set.place.q * 90}°${set.place.mirror ? ', зеркало' : ''})` : '',
   ].filter(Boolean).join('\n');
   const ms = monByCell.get(`${cx},${cy}`);
   if (ms && ms.length) {
@@ -418,6 +427,7 @@ function legend(): HTMLElement {
     ['#3fb0a0', 'лавка'], ['#e6c34a', 'добыча'], ['#7fa0d0', 'монстр'], ['#ffcf4a', 'чемпион'],
     // ⭐ 12.10 (Ф2): наложение слотов (биом с правилами пропов)
     ['rgba(176,132,84,0.85)', 'декор (след)'], [SLOT_OVERLAY.lane.replace('0.20', '0.6'), 'полоса прохода'], [SLOT_OVERLAY.doorway, 'проём'], [SLOT_OVERLAY.arch, 'арка'],
+    [SLOT_OVERLAY.set, 'набор (рамка)'], ['#e8d9b0', 'на другом члене (штабель, сокет)'],   // ⭐ 13.10 (Ф4)
   ];
   for (const [c, l] of items) {
     const s = document.createElement('span'); s.style.cssText = 'display:flex;align-items:center;gap:4px';

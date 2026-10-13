@@ -185,11 +185,13 @@ const SEED_F2: Record<string, Partial<ArtDecor>> = {
   crypt_arch_04: { contexts: ['doorway'], facing: 'room', doorway: { width: 3, jambs: 'replace' }, tall: true, tags: ['arch', 'frame'] },
   crypt_books_01: { contexts: ['socket'], anchor: 'back', backOffset: 0.25, facing: 'room', hosts: ['crypt_wooden_shelf_01'], tall: true, tags: ['clutter', 'books'] },
 };
-/** Живой конфиг с паспортами семени Ф2 (через загрузчик); `rules` — правка правил пропов крипты. */
+/** Живой конфиг с паспортами семени Ф2 (через загрузчик); `rules` — правка правил пропов крипты. ⭐ 13.10 (Ф4): без строк наборов-сценок
+ *  манифеста — сторожа Ф2 судят одиночек слотов (их правила: шаг, спинка у стены, «одинаковое не рядом», сокеты не одиночками); наборы и
+ *  одиночки рядом с ними — `sets.test.ts`. */
 function withSeedF2(rules?: (p: PropRules) => PropRules): ConfigRegistry {
   const r = new ConfigRegistry();
   r.loadAll();
-  const art = structuredClone(r.get('art')).map((a) => {
+  const art = structuredClone(r.get('art')).filter((a) => a.kind !== 'set').map((a) => {
     const s = SEED_F2[a.id];
     if (!s || a.kind === 'material' || !a.bounds) return a;
     const fp = { w: Math.max(1, Math.ceil(a.bounds.max[0]! - a.bounds.min[0]! - 0.1 - 1e-4)), h: Math.max(1, Math.ceil(a.bounds.max[2]! - a.bounds.min[2]! - 0.1 - 1e-4)) };

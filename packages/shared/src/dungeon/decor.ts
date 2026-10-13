@@ -2,6 +2,7 @@ import type { Rng } from '../formulas/rng.js';
 import { Cell, TILE, isBlockedCell, worldToCell } from '../world/grid.js';
 import type { Obstacle } from '../world/state.js';
 import type { DungeonLayout, DecorObject, Room } from './floorCommon.js';
+import { setSpecsFor, type ArtSetLite, type SetRulesLite } from './sets.js';
 
 /**
  * Напольный декор этажа (внутрикомнатные колонны/очаги/пропы): СЕРВЕРНАЯ детерминированная
@@ -164,6 +165,7 @@ export function claimLayoutAnchors(claims: FloorClaims, L: DungeonLayout): void 
 export function claimsOf(decor: readonly DecorObject[], known?: ReadonlyMap<string, DecorSpec>): FloorClaims {
   const claims = new FloorClaims();
   for (const d of decor) {
+    if (d.h !== undefined) continue;   // ⭐ 13.10 (Ф4): стоит на другом члене набора — пол занимает тот, кто под ним
     const spec = d.kind === 'obj' && d.objectId ? known?.get(d.objectId) : undefined;
     if (spec?.surface === 'wall') continue;
     if (spec) claims.claim(footprintRect(d), spec.clearance ?? 0);
@@ -242,7 +244,7 @@ export function placeFloorDecor(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rn
   const markBlocked = (r: CellRect): void => { for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) blockedFeet.add(key(x, y)); };
   for (const d of L.decor) {
     const s = d.kind === 'obj' && d.objectId ? byId.get(d.objectId) : undefined;
-    if (s?.blocks && s.surface === 'floor') markBlocked(footprintRect(d));
+    if (s?.blocks && s.surface === 'floor' && d.h === undefined) markBlocked(footprintRect(d));   // ⭐ 13.10 (Ф4): стоящий на другом — не преграда
   }
   /**
    * ⭐ 12.10 (G11): ПРАВИЛО ПРОХОДИМОСТИ преграждающей россыпи — вокруг следа кольцо в клетку проходимого пола, и в кольце нет следа другой
@@ -346,19 +348,33 @@ export function placeWallProps(L: DungeonLayout, allSpecs: DecorSpec[], rng: Rng
 }
 
 /**
+ * ⭐ 13.10 (Ф4 «Наборы»): КУРС БОКСА ПРЕГРАДЫ — как у модели. Рендеры (Unity `EnvBuild`: точка (mx·x, y), курс −rot при mx = −1; веб three
+ * `rotation.y = rot`; сверено формулой Unity `EnvRules.WallClear`) кладут ось X модели в мире сервера в (cos rot, −sin rot), ось Z (лицо) — в
+ * (sin rot, cos rot); бокс `Obstacle` с курсом `yaw` (`movement.ts pushOutObstacle`, `pathfind.ts segmentHits`, `lineOfSight.ts`) — в (cos yaw,
+ * sin yaw) и (−sin yaw, cos yaw). При курсе на четверть оборота это один и тот же прямоугольник (бокс симметричен), а при любом другом бокс стоял
+ * ЗЕРКАЛЬНО модели — повёрнутым на −rot (до наборов таких курсов не было: россыпь, оформление и слоты ставят четверти). Член набора стоит под
+ * авторским курсом (камень завала — 178.21°): бокс — с курсом −rot. На четверти число прежнее — преграды этажей байт-в-байт те же.
+ */
+export function boxYaw(rot: number): number {
+  return Math.abs(Math.sin(2 * rot)) < 1e-9 ? rot : -rot;
+}
+
+/**
  * Деривит суб-тайловые препятствия из размещённого декора: для каждого `kind:'obj'`-декора,
  * чей объект `blocks`, строит `Obstacle` из коллайдера (доли тайла → world px, повёрнут на rot).
  * Нет коллайдера → дефолт-круг r=0.4 тайла (умещается в клетке, не запирает её целиком).
+ * ⭐ 13.10 (Ф4): запись с `h` (стоит на другом члене набора — штабель, сокет) преграды не даёт — её даёт тот, кто под ней; курс бокса —
+ * `boxYaw` (как у модели).
  */
 export function obstaclesFromDecor(decor: DecorObject[], byId: Map<string, DecorSpec>): Obstacle[] {
   const out: Obstacle[] = [];
   for (const d of decor) {
-    if (d.kind !== 'obj' || !d.objectId) continue;
+    if (d.kind !== 'obj' || !d.objectId || d.h !== undefined) continue;
     const spec = byId.get(d.objectId);
     if (!spec || !spec.blocks) continue;
     const col = spec.collider;
     if (col?.shape === 'box') {
-      out.push({ x: d.x, y: d.y, shape: 'box', hw: ((col.w ?? 0.6) * TILE) / 2, hh: ((col.h ?? 0.6) * TILE) / 2, yaw: d.rot ?? 0, blocksSight: spec.blocksSight });
+      out.push({ x: d.x, y: d.y, shape: 'box', hw: ((col.w ?? 0.6) * TILE) / 2, hh: ((col.h ?? 0.6) * TILE) / 2, yaw: boxYaw(d.rot ?? 0), blocksSight: spec.blocksSight });
     } else {
       out.push({ x: d.x, y: d.y, shape: 'circle', r: (col?.r ?? 0.4) * TILE, blocksSight: spec.blocksSight });
     }
@@ -379,7 +395,7 @@ export interface ObjCfgLite {
 
 /** ⭐ 12.10: строка манифеста арта, как её читает расстановка: ключ, вид, группа каталога, коллайдер, паспорт декора; ⭐ 12.10 (Ф2) габарит
  *  модели (`bounds`, м, в осях модели; Y — вверх) — только для предупреждений (`decorWarnings`: высокая модель без отметки tall). */
-export interface ArtRowLite { id: string; kind?: string; group?: string; collider?: Col; decor?: DecorPassportLite; bounds?: { min: number[]; max: number[] } }
+export interface ArtRowLite { id: string; kind?: string; group?: string; collider?: Col; decor?: DecorPassportLite; bounds?: { min: number[]; max: number[] }; set?: ArtSetLite }
 
 /** ⭐ 12.10: объект расстановки — строка `objects` либо неявный объект паспорта; `passport` — паспорт его модели (если есть). */
 export type PlaceableObject = ObjCfgLite & { passport?: DecorPassportLite; implicit?: boolean };
@@ -490,6 +506,8 @@ export interface BiomeDecorLite {
       corner?: { on?: boolean };
       doorway?: { on?: boolean };
       wall?: { on?: boolean };
+      /** ⭐ 13.10 (Ф4): правила наборов-сценок. */
+      sets?: SetRulesLite;
     };
   };
 }
@@ -598,6 +616,34 @@ export function decorWarnings(
       if (cs.length && cs.every((c) => c === 'socket') && s.passport?.hosts?.length) continue;   // ждёт хозяина (наборы Ф4) — решение, не ошибка
       out.push({ section: 'biomes', id: b.id, msg: `проп «${s.id}» (контексты ${cs.join(', ') || '—'}, след ${s.footprint.w} × ${s.footprint.h}${s.passport?.tall ? ', высокий' : ''}) слотами не ставится: центр — не высокий и со следом от minFoot ${props.center?.minFoot ?? 2}, угол — до 2 × 2, doorway — с шириной проёма, socket / scatter / doorFlank / wallInsert — наборы Ф4 и мелочь Ф5` });
     }
+    setWarningsOf(b, props, decorSpecsFor(rows, [], b.id, [...art]), art, out);
   }
   return out;
+}
+
+/**
+ * ⭐ 13.10 (Ф4 «Наборы»): ПРЕДУПРЕЖДЕНИЯ НАБОРОВ биома с правилами пропов (часть `decorWarnings`): строка набора, которая не встанет
+ * (`setSpecsFor`: член без объекта в биоме, хозяин `on` не раньше члена, высота без хозяина, группа без описания, пустой, якорь не из списка);
+ * набор с высоким членом и якорем «центр» (высокое в центр не ставится); в правилах `setIds` — id, которого у биома нет; наборы биома в
+ * манифесте есть, а правил наборов (`dressing.props.sets`) нет — не встанут.
+ */
+function setWarningsOf(b: BiomeDecorLite, props: PropSlotsLite, specs: readonly DecorSpec[], art: readonly ArtRowLite[], out: { section: 'objects' | 'art' | 'biomes'; id: string; msg: string }[]): void {
+  const rules = props.sets;
+  const all = setSpecsFor(art, b.id, specs);   // без правил биома — каждая строка биома, чтобы и выключенные правилом проверялись
+  const mine = art.filter((a) => a.kind === 'set' && a.set).map((a) => a.id);
+  for (const p of all.problems) out.push({ section: 'art', id: p.id, msg: `набор (биом ${b.id}): ${p.msg}` });
+  for (const s of all.sets) {
+    if (s.tall && s.anchor === 'center') out.push({ section: 'art', id: s.id, msg: `набор с высоким членом и якорем «центр» не встанет никогда (высокое — только у дальних стен): якорь farWall / againstWall или член без tall` });
+  }
+  const ids = new Set([...all.sets.map((s) => s.id), ...all.problems.map((p) => p.id)]);
+  if (!rules) {
+    if (ids.size) out.push({ section: 'biomes', id: b.id, msg: `наборы биома в манифесте есть (${[...ids].join(', ')}), а правил наборов (dressing.props.sets) нет — наборы не встанут` });
+    return;
+  }
+  for (const id of rules.setIds ?? []) {
+    if (id && !ids.has(id)) out.push({ section: 'biomes', id: b.id, msg: `правила наборов: «${id}» — ${mine.includes(id) ? `набор не биома ${b.id}` : 'такого набора нет в манифесте'} — пропущен` });
+  }
+  for (const l of rules.setLimits ?? []) {
+    if (l?.id && !ids.has(l.id)) out.push({ section: 'biomes', id: b.id, msg: `правила наборов: лимиты «${l.id}» — такого набора у биома нет` });
+  }
 }

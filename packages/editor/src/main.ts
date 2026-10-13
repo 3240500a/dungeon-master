@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, dressingWarnings, decorWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, fieldPathLabels, renderEnum } from './form.js';
-import { DECOR_FIELD_LABELS, DECOR_PATH_LABELS } from './decorLabels.js';
+import { DECOR_FIELD_LABELS, DECOR_PATH_LABELS, SET_ART_LABELS } from './decorLabels.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
 import { mountFloorPreview } from './floorPreview.js';
@@ -348,6 +348,9 @@ Object.assign(fieldLabels, {
 // ⭐ 12.10 (Ф2 «Слоты и полосы»): правила пропов биома (`dressing.props`) — подписи по имени и по пути «родитель.ключ» (`decorLabels.ts`)
 Object.assign(fieldLabels, DECOR_FIELD_LABELS);
 Object.assign(fieldPathLabels, DECOR_PATH_LABELS);
+// ⭐ 13.10 (Ф4 «Наборы»): блок набора в строке манифеста (только смотреть — пишет Unity) и выпадашка наборов в правилах наборов биома
+Object.assign(fieldLabels, SET_ART_LABELS);
+fieldArrayEnumSources.setIds = () => [...new Set(((data['art'] as { id?: string; kind?: string }[]) ?? []).filter((a) => a.kind === 'set' && a.id).map((a) => String(a.id)))];
 // ⭐ 13.10: модель сундука лута биома («Мир → Окружение», `environment[].chestModel`) — выпадашка моделей каталога Unity (манифест `art`, вид
 // env/prop); '' — заглушка-бокс. Читает только Unity (крышка откидывается по `chest-opened`, окова — цвета тира); сервер и веб-3D — нет
 fieldLabels.chestModel = 'Модель сундука лута (Unity)';

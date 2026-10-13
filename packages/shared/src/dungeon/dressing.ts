@@ -3,6 +3,7 @@ import { Cell, TILE, worldToCell } from '../world/grid.js';
 import type { BiomeDressing } from '../config/schemas.js';
 import type { DungeonLayout } from './floorCommon.js';
 import { claimLayoutAnchors, claimsOf, type DecorSpec } from './decor.js';
+import type { SetSpec } from './sets.js';
 
 /**
  * ⭐ 08.10: ОФОРМЛЕНИЕ БИОМА ПО ПРАВИЛУ (`biomes[].dressing`) — настенные факелы с шагом, статуи в нишах дальних стен, костры в
@@ -29,6 +30,9 @@ import { claimLayoutAnchors, claimsOf, type DecorSpec } from './decor.js';
 export interface DressingOpts {
   rules: BiomeDressing;
   camAzimuthDeg: number;
+  /** ⭐ 13.10 (Ф4 «Наборы»): наборы-сценки биома (`setSpecsFor`: строки манифеста вида set + правила `dressing.props.sets`) — их ставит проход Р3
+   *  слотов. Кладёт только путь сервера (`floorInputs`); `dressingOf` их не знает (манифеста у него нет) — без них этаж прежний. */
+  sets?: readonly SetSpec[];
 }
 
 /** Что заняло оформление: клетки пола «cx,cy» (обходит `placeFloorDecor`) и грани стен «x,y,dx,dz» (обходит `placeWallProps`). */

@@ -72,6 +72,13 @@ const GAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
  */
 const GAME_ROW_EXTRA: Readonly<Record<string, (row: Record<string, unknown>, out: Record<string, unknown>) => void>> = {
   art: (r, out) => {
+    // ⭐ 13.10 (Ф4 «Наборы»): строка набора-сценки (вид set) — игре нужен весь блок набора (члены, раскладка, группы, якорь, веса, лимиты:
+    // их разворачивает сервер, `dungeon/sets.ts`), кроме подписи `name` (только для людей), и группа каталога (биом набора — `biome_<id>`)
+    if (r.set && typeof r.set === 'object') {
+      const { name: _label, ...game } = r.set as Record<string, unknown>;
+      out.set = game;
+      if (r.group !== undefined) out.group = r.group;
+    }
     if (!r.decor || typeof r.decor !== 'object') return;
     const { variance: _visual, ...game } = r.decor as Record<string, unknown>;
     out.decor = game;

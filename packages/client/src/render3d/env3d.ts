@@ -499,7 +499,8 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
     for (const [oid, list] of byId) {
       const pv = kit.props.get(oid)!;
       // Инстанс = ОБЩИЙ доворот propTune.rotX (одинаково на все) + yaw объекта d.rot + подъём propTune.offY. Пивот в origin.
-      const mats = list.map((d) => { dummy.position.set(d.x, propTune.offY, d.y); dummy.rotation.set(propTune.rotX, d.rot ?? 0, 0); dummy.updateMatrix(); return dummy.matrix.clone(); });
+      // ⭐ 13.10 (Ф4 «Наборы»): + высота основания члена набора, стоящего на другом (`d.h`, ед. мира: ящик на ящике — 24), — как у Unity
+      const mats = list.map((d) => { dummy.position.set(d.x, propTune.offY + (d.h ?? 0), d.y); dummy.rotation.set(propTune.rotX, d.rot ?? 0, 0); dummy.updateMatrix(); return dummy.matrix.clone(); });
       for (const part of pv.parts) {
         const im = new THREE.InstancedMesh(part.geo, part.mat, list.length); im.castShadow = im.receiveShadow = true;
         mats.forEach((m, i) => im.setMatrixAt(i, m));
@@ -514,7 +515,7 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
           const rm = new THREE.Matrix4().extractRotation(mats[i]!);
           for (const lp of pv.lights) {
             const wp = lp.clone().applyMatrix4(rm);
-            const wx = d.x + wp.x, wz = d.y + wp.z, wy = propTune.offY + wp.y;
+            const wx = d.x + wp.x, wz = d.y + wp.z, wy = propTune.offY + (d.h ?? 0) + wp.y;
             torches.push({ x: wx, z: wz, y: wy, base: (wx * 0.017 + wz * 0.013) % 6.283, color: col, intensity: lc?.intensity ?? 1500, dist: lc?.distance ?? 380, flicker: lc?.flicker ?? true, d2: 0, on: false });
           }
         }

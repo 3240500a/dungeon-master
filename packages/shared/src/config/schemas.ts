@@ -2440,6 +2440,22 @@ export const biomeDressingSchema = z.object({
       chance: z.number().min(0).max(1).default(0.5),
       corridors: z.boolean().default(true),
     }).default({}),
+    /** ⭐ 13.10 (Ф4 «Наборы»): НАБОРЫ-СЦЕНКИ (Р3, `slots.ts`; строки манифеста вида set — префабы Unity): непустая комната с шансом `chance`
+     *  пробует до `perRoom` наборов — центр сразу после Р2 (до полос: полосы его огибают), у стены и в угол — после полос и арок, до одиночек;
+     *  члены — в счёт плотности комнаты. Какие наборы — `setIds` (пусто — все наборы биома), вес и лимиты по id — `setLimits` поверх строки
+     *  набора. Нет поля — наборов нет (этаж прежний). */
+    sets: z.object({
+      on: z.boolean().default(true),
+      chance: z.number().min(0).max(1).default(0.6),
+      perRoom: z.number().int().min(0).max(8).default(1),
+      setIds: z.array(z.string()).default([]),
+      setLimits: z.array(z.object({
+        id: z.string(),
+        weight: z.number().min(0).max(100).optional(),
+        perRoomMax: z.number().int().min(0).max(8).optional(),
+        perFloorMax: z.number().int().min(0).max(64).optional(),
+      })).default([]),
+    }).optional(),
   }).optional(),
 });
 export type BiomeDressing = z.infer<typeof biomeDressingSchema>;
@@ -3336,6 +3352,11 @@ export const DECOR_ROOM_KINDS = ['small', 'large', 'treasure', 'boss', 'corridor
  *  косяков (большая crypt_arch_04: модель 4.06 м на проём 3), и Unity этих двух колонн не ставит (`EnvRules.ArchJambCorners`). Сервер флагом не
  *  пользуется: расстановка та же. Имена — те же, что у enum `DM.Art.DecorJambs` Unity (сторож `EnvCheck`, раздел `decor` эталона). */
 export const DECOR_JAMBS = ['keep', 'replace'] as const;
+/** ⭐ 13.10 (Ф4 «Наборы», план декора): куда набор-сценка встаёт ЦЕЛИКОМ: `center` — центр комнаты (как костёр: кольцо пола вокруг, полосы
+ *  прохода его огибают), `againstWall` — задним краем следа на линию стены, `corner` — в угол (задний край на одну стену, левый — на смежную),
+ *  `farWall` — как againstWall, но только ДАЛЬНИЕ стены (север и восток при азимуте камеры −45°). Имена — те же, что у enum
+ *  `DM.Art.DecorSetAnchor` Unity (сторож `EnvCheck`, раздел `sets` эталона). */
+export const DECOR_SET_ANCHORS = ['center', 'againstWall', 'corner', 'farWall'] as const;
 const decorRoomWeight = z.number().min(0).max(100).default(1);
 /**
  * ⭐ 12.10 (Ф1 «Паспорт», план декора): ПАСПОРТ ДЕКОРА — свойства САМОГО пропа для расстановки сервером (слой «факты ассета»; «где и
@@ -3373,9 +3394,49 @@ export const artDecorSchema = z.object({
 });
 export type ArtDecor = z.infer<typeof artDecorSchema>;
 
+/**
+ * ⭐ 13.10 (Ф4 «Наборы», план декора): НАБОР-СЦЕНКА — несколько пропов с авторской взаимной раскладкой (трапезная, писарский угол, библиотека,
+ * склад, завал). Пишет только Unity: префаб `Env/<биом>/sets/<id>/` → `ArtManifestExporter` → строка манифеста вида `set` с этим блоком.
+ * Сервер разворачивает набор в отдельные пропы (`dungeon/sets.ts`, проход Р3 `slots.ts`): у каждого члена своя запись декора, своя преграда и
+ * свой след; необязательных членов выбирает только сервер. РАМКА НАБОРА: клетка = 1 м, начало — центр следа `footprint` (w — по x, h — по z),
+ * +z — лицо набора (у стены — в комнату; задний край следа z = −h/2 — на линии стены, у углового ещё и x = −w/2 — на смежной стене), курс
+ * члена `yaw` — градусы, как курс сервера (+Z модели → (sin, cos) рамки). Unity переводит из префаба: x = −X, z = Z, h = Y, yaw = −курс
+ * (обратное постройке EnvBuild при mirrorX = −1). Умолчания — страховка миграции; Unity пишет все поля.
+ */
+const setMemberSchema = z.object({
+  key: z.string().min(1),                                   // ключ модели (= id неявного объекта её паспорта в биоме)
+  x: z.number().min(-16).max(16),                           // м, рамка набора (от центра следа)
+  z: z.number().min(-16).max(16),                           // м, рамка набора; +z — лицо набора
+  h: z.number().min(0).max(8).default(0),                   // м, высота основания над полом — только у стоящего на другом члене (`on`)
+  yaw: z.number().min(-360).max(360).default(0),            // град, курс в рамке набора (Unity пишет в (−180, 180])
+  group: z.string().default(''),                            // группа необязательных («оставить k из n»); '' — член обязателен
+  on: z.number().int().min(0).optional(),                   // стоит НА члене с этим индексом (штабель, сокет): ни преграды, ни пола; без хозяина — нет и его
+});
+export const artSetSchema = z.object({
+  name: z.string().default(''),                             // подпись (редактор, сводка) — только для людей, в игровую ревизию не входит
+  anchor: z.enum(DECOR_SET_ANCHORS).default('center'),
+  footprint: z.object({ w: z.number().int().min(1).max(16).default(1), h: z.number().int().min(1).max(16).default(1) }).default({}),   // клетки, рамка набора
+  members: z.array(setMemberSchema).min(1),
+  groups: z.array(z.object({                                // необязательные: из группы встаёт от min до max членов (бросок сервера)
+    id: z.string().min(1),
+    min: z.number().int().min(0).max(32).default(0),
+    max: z.number().int().min(0).max(32).default(1),
+  })).default([]),
+  rooms: z.object({
+    small: decorRoomWeight, large: decorRoomWeight, treasure: decorRoomWeight, boss: decorRoomWeight, corridor: decorRoomWeight,
+  }).default({}),                                           // множитель веса по типу комнаты (0 — не ставить; в коридорах наборов нет)
+  minRoom: z.number().int().min(1).max(64).default(1),      // меньшая сторона комнаты, клеток, — от
+  weight: z.number().min(0).max(100).default(1),            // вес выбора среди наборов комнаты (правило биома может перекрыть)
+  perRoomMax: z.number().int().min(0).max(8).default(1),    // наборов этого вида в комнате — до (правило биома может перекрыть)
+  perFloorMax: z.number().int().min(0).max(64).default(2),  // наборов этого вида на этаже — до (правило биома может перекрыть)
+  tags: z.array(z.string()).default([]),                    // furniture, storage, rubble… — для правил темы
+  biomes: z.array(z.string()).default([]),                  // пусто — биом папки каталога (группа `biome_<id>`)
+});
+export type ArtSet = z.infer<typeof artSetSchema>;
+
 export const artSchema = z.array(z.object({
   id: z.string(),
-  kind: z.enum(['character', 'monster', 'weapon', 'prop', 'env', 'material']),   // material — .mat библиотеки (ключ для materialBy*), без меша
+  kind: z.enum(['character', 'monster', 'weapon', 'prop', 'env', 'material', 'set']),   // material — .mat библиотеки (ключ для materialBy*), без меша; ⭐ 13.10 set — набор-сценка (префаб Env/<биом>/sets/<id>/, без меша)
   group: z.string().default(''),                         // группа Addressables
   source: z.object({ file: z.string(), sha256: z.string(), bytes: z.number().int().nonnegative() }).optional(),   // исходный FBX
   meshes: z.array(z.object({
@@ -3388,6 +3449,7 @@ export const artSchema = z.array(z.object({
   collider: z.object({ shape: z.enum(['circle', 'box']), r: z.number().optional(), w: z.number().optional(), h: z.number().optional() }).optional(),
   bounds: z.object({ min: vec3, max: vec3 }).optional(),
   decor: artDecorSchema.optional(),                      // ⭐ 12.10 (Ф1): паспорт декора (компонент DmDecor на префабе пропа)
+  set: artSetSchema.optional(),                          // ⭐ 13.10 (Ф4): набор-сценка (строка вида set; префаб набора в Unity)
 }));
 
 /** Реестр всех схем: ключ конфига → схема. */

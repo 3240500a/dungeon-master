@@ -181,6 +181,7 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   if (propRules && specs) {
     placeSlots(result, propRules, specs.filter((s) => !!s.contexts), seed, {
       camAzimuthDeg: opts.dressing!.camAzimuthDeg, known: new Map((opts.decorSpecs ?? specs).map((s) => [s.id, s])),
+      ...(opts.dressing!.sets?.length ? { sets: opts.dressing!.sets } : {}),   // ⭐ 13.10 (Ф4): наборы-сценки (Р3)
     });
     specs = specs.filter((s) => !s.contexts);
     // ⭐ 12.10 (ревью Ф2): полосы держат и преграды россыпи строк без паспорта (решётка крипты — не преграда: её раскладка прежняя)
@@ -203,9 +204,13 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
     // (`objects[].clearance`) — коллайдер решётки сундук не держал вовсе, а у костра пускал на край следа. Только объекты конфига (`obj`):
     // у биомов без них сундук там же, где был.
     const floorClaims = claimsOf(result.decor.filter((d) => d.kind === 'obj'), known);
+    // ⭐ 13.10 (Ф4 «Наборы»): и не в действительном следе набора-сценки (`slots.ts setAt`: следы членов и клетки, чей центр под их коллайдером
+    // радиусом героя — член стоит не по сетке); наборов нет — проверки нет, сундук там же, где был
+    const setRects = result.slotLog?.sets?.list.map((e) => e.rect) ?? [];
     const blocked = (x: number, y: number): boolean => {
       const c = worldToCell(x, y);
-      return !floorClaims.free({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }) || blockers.some((o) => pushOutObstacle(x, y, TILE / 4, o) !== null);
+      return !floorClaims.free({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }) || blockers.some((o) => pushOutObstacle(x, y, TILE / 4, o) !== null)
+        || setRects.some((r) => c.cx >= r.x0 && c.cx <= r.x1 && c.cy >= r.y0 && c.cy <= r.y1);
     };
     placeChests(result, createRng(((seed ^ 0xc4e5) >>> 0) || 1), opts.chests.tiers, opts.chests.perFloor, blocked);
   }

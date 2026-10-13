@@ -20,6 +20,8 @@ import { Passability, type SlotPass } from './slots.js';
  * и закрыты): клетки и якоря (выходы, рычаги, сундуки, проёмы), достижимые от спавна на этаже с прочим декором, обязаны оставаться достижимыми
  * и с пропами паспортов (`cut.props` = 0); что отрезал прочий декор (оформление Р1, россыпь без паспорта) — отдельно (`cut.other`, от этажа без
  * декора; замер 12.10: ниша статуи запирает тупик шириной в клетку — 2 клетки на 60 этажей крипты, якоря — 0).
+ * ⭐ 13.10 (Ф4 «Наборы»): наборы-сценки — сколько каждого на этаж и членов в нём, доля комнат с набором, откаты Р6 (весь набор); члены
+ * набора — пропы с паспортом, их счёт в «пропах на комнату» уже есть; `withoutSets` — тот же биом без правил наборов («до / после» Ф4).
  */
 
 /** Сводка одного биома. Числа «на этаж» — средние по этажам выборки. */
@@ -59,6 +61,9 @@ export interface DecorStats {
   /** Сторож Р6 по всей выборке (сумма): клетки и якоря, отрезанные пропами с паспортом (обязаны быть 0), и — отдельно — прочим декором
    *  (оформление Р1, россыпь без паспорта; меряется от этажа без декора, пропы — от этажа с прочим декором). */
   cut: { props: { cells: number; anchors: number }; other: { cells: number; anchors: number } };
+  /** ⭐ 13.10 (Ф4): наборы-сценки (журнал слотов; только у биома с наборами): на этаж, откачено Р6 на этаж, доля комнат (без входа) с набором,
+   *  по id — на этаж и членов в среднем на вставший набор. */
+  sets?: { perFloor: number; rejected: number; roomShare: number; byId: Record<string, { perFloor: number; members: number }> };
 }
 
 export interface DecorStatsOpts {
@@ -68,6 +73,8 @@ export interface DecorStatsOpts {
   warmup?: number;
   /** Без правил пропов биома (путь Ф1) — для «до / после». */
   withoutRules?: boolean;
+  /** ⭐ 13.10 (Ф4): без правил наборов биома (`dressing.props.sets`) — «до / после» наборов. */
+  withoutSets?: boolean;
   /** Часы (мс); по умолчанию `performance.now`. */
   now?: () => number;
 }
@@ -75,6 +82,12 @@ export interface DecorStatsOpts {
 /** Биом без правил пропов (`dressing.props`) — путь Ф1. */
 export function biomeWithoutPropRules(b: Biome): Biome {
   return b.dressing?.props ? { ...b, dressing: (({ props: _p, ...d }) => d)(b.dressing) } : b;
+}
+
+/** ⭐ 13.10 (Ф4): биом без правил наборов (`dressing.props.sets`) — слоты Ф2 без наборов. */
+export function biomeWithoutSetRules(b: Biome): Biome {
+  const p = b.dressing?.props;
+  return p?.sets ? { ...b, dressing: { ...b.dressing!, props: (({ sets: _s, ...r }) => r)(p) } } : b;
 }
 
 const quant = (sorted: readonly number[], p: number): number => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]! : 0);
@@ -115,7 +128,7 @@ function cutOf(L: DungeonLayout, base: Passability, dec: Passability): { cells: 
 
 /** Сводка декора биома `biome` по `opts.floors` этажам пути сервера. */
 export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts): DecorStats {
-  const b = opts.withoutRules ? biomeWithoutPropRules(biome) : biome;
+  const b = opts.withoutRules ? biomeWithoutPropRules(biome) : opts.withoutSets ? biomeWithoutSetRules(biome) : biome;
   const now = opts.now ?? (() => performance.now());
   const specOf = sampleFloors(cfg, b);
   const warm = Math.max(0, Math.min(opts.warmup ?? 20, opts.floors));
@@ -129,6 +142,8 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
   let rooms = 0, areaSum = 0, empty = 0, rolled = 0, logged = 0, target = 0, placedLog = 0;
   let floorCells = 0, occAll = 0, occProps = 0, laneCells = 0, corridorProps = 0, arches = 0, wallProps = 0;
   let doorways = 0, framed = 0, withLog = 0;
+  let setFloors = 0, setsPlaced = 0, setsRejected = 0, setRooms = 0;   // ⭐ 13.10 (Ф4)
+  const setById = new Map<string, { n: number; members: number }>();
   const cut: DecorStats['cut'] = { props: { cells: 0, anchors: 0 }, other: { cells: 0, anchors: 0 } };
 
   for (let i = 0; i < opts.floors; i++) {
@@ -157,7 +172,7 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
       const arch = passport && !!s.passport?.doorway && s.contexts!.includes('doorway');
       if (s.surface === 'wall') { if (passport) wallProps++; continue; }
       if (arch) { arches++; continue; }
-      if (s.blocks) {
+      if (s.blocks && d.h === undefined) {   // ⭐ 13.10 (Ф4): стоящий на другом члене набора пол не занимает
         const r = footprintRect(d);
         for (let y = Math.max(0, r.y0); y <= Math.min(rows - 1, r.y1); y++) for (let x = Math.max(0, r.x0); x <= Math.min(cols - 1, r.x1); x++) {
           hard[y * cols + x] = 1; if (passport) hardProp[y * cols + x] = 1;
@@ -188,6 +203,12 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
       for (const r of L.slotLog.rooms) {
         if (r.type === 'entrance') continue;
         logged++; if (r.empty) rolled++; target += r.target; placedLog += r.placed;
+      }
+      const sl = L.slotLog.sets;
+      if (sl) {
+        setFloors++; setsPlaced += sl.placed; setsRejected += sl.rejected;
+        setRooms += new Set(sl.list.map((e) => e.room)).size;
+        for (const e of sl.list) { const v = setById.get(e.id) ?? { n: 0, members: 0 }; v.n++; v.members += e.idx.length; setById.set(e.id, v); }
       }
     }
     for (const d of L.doorways ?? []) {
@@ -223,6 +244,12 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
     out.doorways = { perFloor: doorways / n, framedShare: doorways ? framed / doorways : 0, widths: Object.fromEntries([...widths].sort(([a], [c]) => (a < c ? -1 : 1)).map(([k, v]) => [k, v / n])) };
     out.laneShare = floorCells ? laneCells / floorCells : 0;
   }
+  if (setFloors) {
+    out.sets = {
+      perFloor: setsPlaced / n, rejected: setsRejected / n, roomShare: rooms ? setRooms / rooms : 0,
+      byId: Object.fromEntries([...setById].sort(([a], [c]) => (a < c ? -1 : 1)).map(([k, v]) => [k, { perFloor: v.n / n, members: v.n ? v.members / v.n : 0 }])),
+    };
+  }
   return out;
 }
 
@@ -234,7 +261,7 @@ const pc = (x: number): string => `${(100 * x).toFixed(1)} %`;
 export function formatDecorStats(s: DecorStats, before?: DecorStats): string {
   const L: string[] = [];
   const ba = (f: (x: DecorStats) => string): string => (before ? `${f(before)} → ${f(s)}` : f(s));
-  L.push(`── ${s.biomeId}: ${s.floors} этажей · правила пропов: ${s.rules ? 'есть (слоты Ф2)' : 'нет (путь Ф1)'}${before ? ' · «до» — тот же биом без правил (путь Ф1)' : ''}`);
+  L.push(`── ${s.biomeId}: ${s.floors} этажей · правила пропов: ${s.rules ? 'есть (слоты Ф2)' : 'нет (путь Ф1)'}${before ? (before.rules ? ' · «до» — тот же биом без наборов (слоты Ф2)' : ' · «до» — тот же биом без правил (путь Ф1)') : ''}`);
   L.push(`  сборка этажа, мс: p50 ${ba((x) => f2(x.genMs.p50))} · p95 ${ba((x) => f2(x.genMs.p95))} · среднее ${ba((x) => f2(x.genMs.mean))} · макс ${ba((x) => f1(x.genMs.max))}`);
   L.push(`  комнат (без входа) ${s.rooms}, пол комнаты в среднем ${f1(s.roomArea)} клеток`);
   L.push(`  пропов на комнату: мин ${ba((x) => String(x.perRoom.min))} · медиана ${ba((x) => String(x.perRoom.median))} · макс ${ba((x) => String(x.perRoom.max))} · среднее ${ba((x) => f2(x.perRoom.mean))} · на 100 клеток ${ba((x) => f2(x.perRoom.per100))}`);
@@ -248,6 +275,11 @@ export function formatDecorStats(s: DecorStats, before?: DecorStats): string {
   L.push(`  на этаж: арок ${ba((x) => f2(x.perFloor.arches))} · настенных с паспортом ${ba((x) => f2(x.perFloor.wallProps))} · пропов в коридорах ${ba((x) => f2(x.perFloor.corridorProps))}`);
   if (s.doorways) L.push(`  проёмов на этаж ${f2(s.doorways.perFloor)}, с рамой ${pc(s.doorways.framedShare)}; ширины: ${Object.entries(s.doorways.widths).map(([k, v]) => `${k}×${f2(v)}`).join(' ')}`);
   if (s.passes) L.push(`  проходы на этаж (поставлено / откачено Р6): ${Object.entries(s.passes).map(([k, v]) => `${k} ${f2(v.placed)}/${f2(v.rejected)}`).join(' · ')}`);
+  // ⭐ 13.10 (Ф4): наборы-сценки — на этаж (откат Р6), доля комнат с набором, по id — на этаж и членов в наборе
+  if (s.sets) {
+    L.push(`  наборы на этаж ${f2(s.sets.perFloor)} (откачено Р6 ${f2(s.sets.rejected)}) · комнат с набором ${pc(s.sets.roomShare)}${before && !before.sets ? ' (до — без наборов)' : ''}`);
+    L.push(`    ${Object.entries(s.sets.byId).map(([k, v]) => `${k} ${f2(v.perFloor)} (членов ${f2(v.members)})`).join(' · ') || '—'}`);
+  }
   const ids = [...new Set([...Object.keys(s.items), ...Object.keys(before?.items ?? {})])];
   ids.sort((a, c) => (s.items[c] ?? 0) - (s.items[a] ?? 0) || (a < c ? -1 : 1));
   L.push(`  предметов на этаж: ${ids.map((k) => `${k} ${before ? `${f2(before.items[k] ?? 0)} → ` : ''}${f2(s.items[k] ?? 0)}`).join(' · ') || '—'}`);

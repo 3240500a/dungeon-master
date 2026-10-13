@@ -129,11 +129,6 @@
   },
   {
     "id": "crypt_arch_04",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_arch_04",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -210,6 +205,11 @@
         "jambs": "replace"
       }
     }
+  },
+  {
+    "id": "crypt_arch_04",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_books_01",
@@ -348,11 +348,6 @@
   },
   {
     "id": "crypt_fire_pit_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_fire_pit_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -400,7 +395,7 @@
     }
   },
   {
-    "id": "crypt_fire_pit_02",
+    "id": "crypt_fire_pit_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -451,6 +446,11 @@
       "shape": "circle",
       "r": 1.0
     }
+  },
+  {
+    "id": "crypt_fire_pit_02",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_floor_01",
@@ -562,11 +562,6 @@
   },
   {
     "id": "crypt_floor_grille_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_floor_grille_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -614,9 +609,341 @@
     }
   },
   {
+    "id": "crypt_floor_grille_01",
+    "kind": "material",
+    "group": "mat_crypt"
+  },
+  {
     "id": "crypt_metal_props_01",
     "kind": "material",
     "group": "mat_crypt"
+  },
+  {
+    "id": "crypt_set_library",
+    "kind": "set",
+    "group": "biome_crypt",
+    "set": {
+      "name": "Библиотека",
+      "anchor": "farWall",
+      "footprint": {
+        "w": 2,
+        "h": 1
+      },
+      "members": [
+        {
+          "key": "crypt_wooden_shelf_01",
+          "x": 0.0,
+          "z": -0.25,
+          "h": 0.0,
+          "yaw": 0.0,
+          "group": ""
+        },
+        {
+          "key": "crypt_books_01",
+          "x": 0.0,
+          "z": -0.25,
+          "h": 0.0,
+          "yaw": 0.0,
+          "group": "",
+          "on": 0
+        }
+      ],
+      "groups": [],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.0,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "minRoom": 5,
+      "weight": 2.0,
+      "perRoomMax": 1,
+      "perFloorMax": 2,
+      "tags": [
+        "furniture",
+        "storage",
+        "books"
+      ],
+      "biomes": []
+    }
+  },
+  {
+    "id": "crypt_set_refectory",
+    "kind": "set",
+    "group": "biome_crypt",
+    "set": {
+      "name": "Трапезная",
+      "anchor": "center",
+      "footprint": {
+        "w": 3,
+        "h": 3
+      },
+      "members": [
+        {
+          "key": "crypt_wooden_table_3x_01",
+          "x": 0.0,
+          "z": 0.034,
+          "h": 0.0,
+          "yaw": -90.0,
+          "group": ""
+        },
+        {
+          "key": "crypt_wooden_stool_01",
+          "x": 0.885,
+          "z": 0.909,
+          "h": 0.0,
+          "yaw": -2.78,
+          "group": "stools"
+        },
+        {
+          "key": "crypt_wooden_stool_01",
+          "x": 0.01,
+          "z": 0.909,
+          "h": 0.0,
+          "yaw": 0.0,
+          "group": "stools"
+        },
+        {
+          "key": "crypt_wooden_stool_01",
+          "x": -0.74,
+          "z": 1.034,
+          "h": 0.0,
+          "yaw": 92.64,
+          "group": "stools"
+        },
+        {
+          "key": "crypt_wooden_stool_01",
+          "x": 1.0,
+          "z": -0.966,
+          "h": 0.0,
+          "yaw": -123.17,
+          "group": "stools"
+        },
+        {
+          "key": "crypt_wooden_stool_01",
+          "x": 0.135,
+          "z": -0.966,
+          "h": 0.0,
+          "yaw": 174.4,
+          "group": "stools"
+        },
+        {
+          "key": "crypt_wooden_stool_01",
+          "x": -0.865,
+          "z": -0.966,
+          "h": 0.0,
+          "yaw": -123.17,
+          "group": "stools"
+        }
+      ],
+      "groups": [
+        {
+          "id": "stools",
+          "min": 2,
+          "max": 6
+        }
+      ],
+      "rooms": {
+        "small": 0.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "minRoom": 7,
+      "weight": 3.0,
+      "perRoomMax": 1,
+      "perFloorMax": 2,
+      "tags": [
+        "furniture",
+        "table"
+      ],
+      "biomes": []
+    }
+  },
+  {
+    "id": "crypt_set_rubble",
+    "kind": "set",
+    "group": "biome_crypt",
+    "set": {
+      "name": "Завал",
+      "anchor": "corner",
+      "footprint": {
+        "w": 2,
+        "h": 2
+      },
+      "members": [
+        {
+          "key": "crypt_stone_01",
+          "x": -0.237,
+          "z": -0.512,
+          "h": 0.0,
+          "yaw": 178.21,
+          "group": ""
+        },
+        {
+          "key": "crypt_stone_01",
+          "x": 0.013,
+          "z": 0.108,
+          "h": 0.0,
+          "yaw": 116.21,
+          "group": "second"
+        }
+      ],
+      "groups": [
+        {
+          "id": "second",
+          "min": 0,
+          "max": 1
+        }
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 1.0,
+        "corridor": 0.0
+      },
+      "minRoom": 4,
+      "weight": 0.8,
+      "perRoomMax": 1,
+      "perFloorMax": 3,
+      "tags": [
+        "rubble"
+      ],
+      "biomes": []
+    }
+  },
+  {
+    "id": "crypt_set_scribe",
+    "kind": "set",
+    "group": "biome_crypt",
+    "set": {
+      "name": "Писарский угол",
+      "anchor": "againstWall",
+      "footprint": {
+        "w": 2,
+        "h": 4
+      },
+      "members": [
+        {
+          "key": "crypt_wooden_table_2x_01",
+          "x": 0.0,
+          "z": -1.5,
+          "h": 0.0,
+          "yaw": -90.0,
+          "group": ""
+        },
+        {
+          "key": "crypt_wooden_chair_01",
+          "x": -0.25,
+          "z": -0.625,
+          "h": 0.0,
+          "yaw": -62.36,
+          "group": "chair"
+        },
+        {
+          "key": "crypt_wooden_crate_02",
+          "x": -0.247,
+          "z": 0.81,
+          "h": 0.0,
+          "yaw": 62.4,
+          "group": "crate"
+        }
+      ],
+      "groups": [
+        {
+          "id": "chair",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "crate",
+          "min": 0,
+          "max": 1
+        }
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 0.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "minRoom": 5,
+      "weight": 1.0,
+      "perRoomMax": 1,
+      "perFloorMax": 3,
+      "tags": [
+        "furniture",
+        "table"
+      ],
+      "biomes": []
+    }
+  },
+  {
+    "id": "crypt_set_storage",
+    "kind": "set",
+    "group": "biome_crypt",
+    "set": {
+      "name": "Склад",
+      "anchor": "corner",
+      "footprint": {
+        "w": 2,
+        "h": 1
+      },
+      "members": [
+        {
+          "key": "crypt_wooden_crate_02",
+          "x": 0.196,
+          "z": -0.093,
+          "h": 0.0,
+          "yaw": 75.0,
+          "group": ""
+        },
+        {
+          "key": "crypt_wooden_crate_02",
+          "x": -0.64,
+          "z": -0.125,
+          "h": 0.0,
+          "yaw": 0.0,
+          "group": ""
+        },
+        {
+          "key": "crypt_wooden_crate_02",
+          "x": -0.265,
+          "z": 0.0,
+          "h": 0.75,
+          "yaw": -34.3,
+          "group": "top",
+          "on": 1
+        }
+      ],
+      "groups": [
+        {
+          "id": "top",
+          "min": 0,
+          "max": 1
+        }
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.5,
+        "boss": 0.0,
+        "corridor": 0.0
+      },
+      "minRoom": 4,
+      "weight": 1.0,
+      "perRoomMax": 2,
+      "perFloorMax": 4,
+      "tags": [
+        "storage",
+        "crate"
+      ],
+      "biomes": []
+    }
   },
   {
     "id": "crypt_stone_01",
@@ -785,11 +1112,6 @@
   },
   {
     "id": "crypt_wall_statue_01",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_01",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -827,6 +1149,11 @@
       "w": 2.0,
       "h": 0.59378
     }
+  },
+  {
+    "id": "crypt_wall_statue_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_statue_02",
@@ -875,11 +1202,6 @@
   },
   {
     "id": "crypt_wall_statue_03",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_statue_03",
     "kind": "env",
     "group": "biome_crypt",
     "source": {
@@ -917,6 +1239,11 @@
       "w": 2.0,
       "h": 0.59378
     }
+  },
+  {
+    "id": "crypt_wall_statue_03",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wall_statue_04",
@@ -960,11 +1287,6 @@
   },
   {
     "id": "crypt_wall_statue_04",
-    "kind": "material",
-    "group": "mat_crypt"
-  },
-  {
-    "id": "crypt_wall_torch_01",
     "kind": "material",
     "group": "mat_crypt"
   },
@@ -1016,6 +1338,11 @@
       "w": 0.16138,
       "h": 0.25391
     }
+  },
+  {
+    "id": "crypt_wall_torch_01",
+    "kind": "material",
+    "group": "mat_crypt"
   },
   {
     "id": "crypt_wooden_chair_01",

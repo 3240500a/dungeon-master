@@ -6,6 +6,7 @@ import type { BiomeDressing } from '../config/schemas.js';
 import type { DecorObject, DungeonLayout } from './floorCommon.js';
 import { FOOTPRINT_SNAP, footprintRect, obstaclesFromDecor, type CellRect, type DecorSpec } from './decor.js';
 import { isFarFace, snapCenter, toCameraXY, wallRuns } from './dressing.js';
+import { chooseMembers, quarterOf, requiredCount, setFootprintAt, setMemberRecords, setOffset, setWeight, shrinkMembers, type SetPlace, type SetSpec } from './sets.js';
 
 /**
  * ⭐ 12.10 (Ф2 «Слоты и полосы», план декора): РАССТАНОВКА ПРОПОВ ПО ПАСПОРТАМ — правило биома `biomes[].dressing.props` вместо россыпи Ф1.
@@ -23,6 +24,8 @@ import { isFarFace, snapCenter, toCameraXY, wallRuns } from './dressing.js';
  *  • Р1 оформление — уже стоит (`placeDressing`): его ниши и костры — чужие следы, факелы — грани, перед которыми высокому нельзя;
  *  • бюджет комнаты (`SLOT_STREAMS.budget`): доля пустых `emptyRoomShare`, иначе от `density.min` до `density.max` на `perArea` клеток пола;
  *  • Р2 центр (`center`): проп с контекстом floor и следом от `minFoot` в центре комнаты от `minRoom`, кольцо пола вокруг — одна на комнату;
+ *  • ⭐ 13.10 (Ф4) Р3а наборы-сценки в центр (`sets`, якорь center; `SLOT_STREAMS.sets`): сразу после Р2 и как он — до полос (полосы огибают
+ *    набор), кольцо пола вокруг, если Р2 центр не занял; набор разворачивается в отдельные пропы (`sets.ts setMemberRecords`), Р6 — всем набором;
  *  • Р0 полосы (`lanes`): дерево кратчайших путей между проёмами комнаты и её якорями, шириной `lanes.width`, + устья проёмов с косяками;
  *    ведутся ПОСЛЕ центра и костра (огибают их по кольцу) и по клеткам, где можно стоять (центр не под коллайдером радиусом героя: ниши статуй) —
  *    в полосе нет ни преграды, ни пропа «не запирать проход» (и преграды россыпи строк без паспорта — `placeFloorDecor`, ⭐ 12.10 ревью);
@@ -30,6 +33,8 @@ import { isFarFace, snapCenter, toCameraXY, wallRuns } from './dressing.js';
  *    арки (`doorway.clearBeyond` клеток от камеры) не на полу другой комнаты; «одинаковое не рядом» арок не касается (рама каждого проёма);
  *    ⭐ 13.10 (отзыв владельца): кандидаты — все арки ширины проёма, выбор по весу паспорта (у крипты обе — проём 3; проём 4 — без арки),
  *    след записи — проём (`archOf`: модель бывает шире — ноги над косяками), колонны косяков снимает Unity по флагу паспорта `doorway.jambs`;
+ *  • ⭐ 13.10 (Ф4) Р3б наборы у стены / у дальней стены / в угол (`sets`): после полос и арок, до одиночек — полосы и якоря держат; члены идут в
+ *    счёт бюджета комнаты; лимиты на комнату и этаж; всё или ничего — Р6 отрезал хоть что-то — откатывается весь набор;
  *  • Р4 одиночки: заявки углов (`corner`, шаблон 2 × 2: шанс на угол и пара) берут свою долю бюджета, спиной к стене (`againstWall`,
  *    раньше углов, выбор по весу паспорта; шаг по центрам на стене; ⭐ 13.10 спинка МОДЕЛИ на линии стены — `wallPivot`) — остальное, затем
  *    ставятся углы, а недобор углов (не встали) — снова спиной к стене (⭐ 12.10, ревью); грани стен (`wall`, только настенные спеки; шаг и
@@ -46,7 +51,7 @@ import { isFarFace, snapCenter, toCameraXY, wallRuns } from './dressing.js';
 export type PropRules = NonNullable<BiomeDressing['props']>;
 
 /** Константы потоков rng проходов слотов (под-сид комнаты — `slotSeed`). */
-export const SLOT_STREAMS = { budget: 0x5107, center: 0xce47, corner: 0xc0e2, againstWall: 0xa6a1, doorway: 0xa7c4, wall: 0xfa11 } as const;
+export const SLOT_STREAMS = { budget: 0x5107, center: 0xce47, corner: 0xc0e2, againstWall: 0xa6a1, doorway: 0xa7c4, wall: 0xfa11, sets: 0x5e75 } as const;
 /** Номер «комнаты» потока граней стен коридоров (одна ветка на все коридоры этажа). */
 export const CORRIDOR_STREAM = 0xffff;
 
@@ -86,6 +91,17 @@ export interface LaneSet { room: number; cells: number[] }
 export interface SlotLog {
   rooms: { room: number; type: string; area: number; target: number; empty: boolean; placed: number }[];
   passes: Record<SlotPass, { placed: number; rejected: number }>;
+  /** ⭐ 13.10 (Ф4): наборы-сценки — только у биома с наборами (иначе поля нет: раскладка прежняя). */
+  sets?: SetLog;
+}
+
+/** ⭐ 13.10 (Ф4): журнал наборов этажа — поставлено / откачено Р6 (весь набор) и каждый вставший набор: id, комната, `at` — индекс первого члена
+ *  в `L.decor` (члены набора идут подряд: `L.decor[at … at + idx.length − 1]`; после слотов декор только дописывается), `idx` — выбранные члены
+ *  (индексы в строке набора), `place` — центр полного следа, поворот и зеркало, `rect` — действительный след (сводка, превью, сторожа). */
+export interface SetLog {
+  placed: number;
+  rejected: number;
+  list: { id: string; room: number; at: number; idx: number[]; place: SetPlace; rect: CellRect }[];
 }
 export type SlotPass = 'center' | 'againstWall' | 'corner' | 'doorway' | 'wall';
 
@@ -316,6 +332,7 @@ function gridClaimsOf(L: DungeonLayout, known: ReadonlyMap<string, DecorSpec>, c
   const g = new GridClaims(cols, rows);
   const cell = (p: { x: number; y: number }): void => { const c = worldToCell(p.x, p.y); g.claim({ x0: c.cx, y0: c.cy, x1: c.cx, y1: c.cy }); };
   for (const d of L.decor) {
+    if (d.h !== undefined) continue;   // ⭐ 13.10 (Ф4): стоит на другом члене набора — пол занимает тот, кто под ним
     const s = d.kind === 'obj' && d.objectId ? known.get(d.objectId) : undefined;
     if (s?.surface === 'wall') continue;
     if (s) g.claim(footprintRect(d), s.clearance ?? 0); else cell(d);
@@ -355,6 +372,9 @@ interface Ctx {
   /** Центры пропов у стены по пробегу — шаг. */
   runAt: Map<Run, number[]>;
   log: SlotLog;
+  /** ⭐ 13.10 (Ф4): наборы-сценки биома и сколько каждого уже на этаже (`perFloorMax`). */
+  sets: readonly SetSpec[];
+  setsOnFloor: Map<string, number>;
 }
 
 const idxOf = (ctx: Ctx, x: number, y: number): number => (x < 0 || y < 0 || x >= ctx.cols || y >= ctx.L.grid.length ? -1 : y * ctx.cols + x);
@@ -733,6 +753,258 @@ export function archOf(L: Pick<DungeonLayout, 'grid'>, d: Doorway): { cells: num
   };
 }
 
+// ── ⭐ 13.10 (Ф4 «Наборы», план декора): проход Р3 — наборы-сценки ────────────────────────────────────────────────────────────────────
+
+/** Кандидат набора: точка и поворот полного следа (`SetPlace`), записи выбранных членов, их действительный след (объединение следов записей);
+ *  у стены — пробег и центр набора вдоль него (шаг). */
+interface SetCand { place: SetPlace; recs: DecorObject[]; rect: CellRect; run?: Run; at?: number }
+
+/** Прямоугольник клеток, объединяющий следы записей (`footprintRect`) — действительный след набора выбранного состава. */
+export function recordsRect(recs: readonly DecorObject[]): CellRect {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const d of recs) {
+    const r = footprintRect(d);
+    x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1);
+  }
+  return { x0, y0, x1, y1 };
+}
+
+/** Взвешенный выбор набора (вес × множитель типа комнаты); нет ни одного с весом — null. */
+function pickSet(sets: readonly SetSpec[], place: string, rng: Rng): SetSpec | null {
+  let total = 0;
+  for (const s of sets) total += setWeight(s, place);
+  if (total <= 0) return null;
+  let r = rng.float(0, total);
+  for (const s of sets) { const w = setWeight(s, place); r -= w; if (w > 0 && r <= 0) return s; }
+  for (let i = sets.length - 1; i >= 0; i--) if (setWeight(sets[i]!, place) > 0) return sets[i]!;
+  return null;
+}
+
+/**
+ * Набор годится на месте: клетки действительного следа — пол своей комнаты и не перед нишей; клетки высоких членов — не перед факелом; следы
+ * членов «не запирать проход» (преграда или `keepPath`), стоящих на полу, — не на полосе, и центр клетки полосы — не под их коллайдером
+ * радиусом героя (`covered`: член стоит не по сетке и коллайдером достаёт соседнюю клетку); отступ набора (наибольший у членов) — свой и
+ * соседей (`GridClaims`, якоря там же); тот же набор не ближе `sameNotNear` (по центру действительного следа), и каждый член — к уже стоящему
+ * тому же пропу (точки слотов; внутри набора повтор — раскладка автора).
+ */
+function canPlaceSet(ctx: Ctx, s: SetSpec, recs: readonly DecorObject[], rect: CellRect, zone: number, covered: readonly number[]): boolean {
+  for (const i of covered) if (ctx.lane[i]) return false;   // полоса — там, где герой стоит: коллайдер члена её центра не закрывает
+  for (let y = rect.y0; y <= rect.y1; y++) for (let x = rect.x0; x <= rect.x1; x++) {
+    const i = idxOf(ctx, x, y);
+    if (i < 0 || ctx.zone[i] !== zone || !isFloor(ctx, i) || ctx.statueFront.has(i)) return false;
+  }
+  for (const d of recs) {
+    const sp = ctx.known.get(d.objectId!);
+    if (!sp) return false;
+    const lanesBan = d.h === undefined && keepsPath(sp), tall = tallOf(sp);
+    if (!lanesBan && !tall) continue;
+    const r = footprintRect(d);
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) {
+      const i = idxOf(ctx, x, y);
+      if (i < 0 || (lanesBan && ctx.lane[i]) || (tall && ctx.wallFront.has(i))) return false;
+    }
+  }
+  if (!ctx.claims.free(rect, s.clearance)) return false;
+  const r = ctx.rules.sameNotNear;
+  if (r > 0) {
+    const q = slotPoint(rect);
+    for (const p of ctx.points.get(`set:${s.id}`) ?? []) if (Math.hypot(p.x - q.x, p.y - q.y) <= r * TILE + 1e-6) return false;
+    // и каждый член — не ближе к уже стоящему тому же пропу (одиночке, члену другого набора; внутри набора повтор — раскладка автора)
+    for (const d of recs) {
+      const m = slotPoint(footprintRect(d));
+      for (const p of ctx.points.get(d.objectId!) ?? []) if (Math.hypot(p.x - m.x, p.y - m.y) <= r * TILE + 1e-6) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Кандидат в точке `place`: записи выбранных членов и их ДЕЙСТВИТЕЛЬНЫЙ СЛЕД — следы записей (`recordsRect`) и клетки пола, чей центр под
+ * коллайдером члена радиусом героя (`PLAYER_RADIUS`). Член набора стоит не по сетке (раскладка автора): ящик писарского угла — в 0.19 клетки от
+ * края своей клетки, его коллайдер радиусом героя закрывает центр соседней. Без этой добавки соседняя клетка оставалась «свободной»: в неё вставал
+ * сундук этажа (замер: 1 сундук на 504 этажа крипты — центр его клетки герою недоступен, сводка Р6 считала отрезанный якорь), а якорь рядом
+ * (выход, рычаг) мог оказаться под коллайдером. Теперь такая клетка — в следе набора: занятость слотов её держит (якоря заняты — набор там не
+ * встанет), сундуки обходят следы наборов (`generateFloor.ts`).
+ */
+function setAt(ctx: Ctx, s: SetSpec, chosen: readonly number[], place: SetPlace): { recs: DecorObject[]; rect: CellRect; covered: number[] } {
+  const recs = setMemberRecords(s, chosen, place);
+  const rect = recordsRect(recs);
+  const covered: number[] = [];   // клетки пола, чей центр под коллайдером члена радиусом героя (и в следах записей — тоже: полосе нельзя)
+  for (const o of obstaclesFromDecor(recs, ctx.known as Map<string, DecorSpec>)) {
+    const reach = (o.shape === 'circle' ? o.r ?? 0 : Math.hypot(o.hw ?? 0, o.hh ?? 0)) + PLAYER_RADIUS;
+    const x0 = Math.floor((o.x - reach) / TILE), x1 = Math.floor((o.x + reach) / TILE), y0 = Math.floor((o.y - reach) / TILE), y1 = Math.floor((o.y + reach) / TILE);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const c = ctx.L.grid[y]?.[x];
+      if (c !== Cell.Floor && c !== Cell.Door) continue;
+      const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2;
+      if (!segmentHits(o, cx, cy, cx, cy, PLAYER_RADIUS)) continue;
+      const i = idxOf(ctx, x, y);
+      if (i >= 0) covered.push(i);
+      rect.x0 = Math.min(rect.x0, x); rect.x1 = Math.max(rect.x1, x); rect.y0 = Math.min(rect.y0, y); rect.y1 = Math.max(rect.y1, y);
+    }
+  }
+  return { recs, rect, covered };
+}
+
+/** Центр полного следа (клетки `cells`, прямоугольник) — в мире. */
+const cellsCenter = (ctx: Ctx, cells: readonly number[]): { x: number; y: number } => {
+  const r = rectOf(ctx, cells);
+  return { x: ((r.x0 + r.x1 + 1) / 2) * TILE, y: ((r.y0 + r.y1 + 1) / 2) * TILE };
+};
+
+/**
+ * Набор В ЦЕНТР комнаты `ri` (якорь center): полный след по сетке (4 четверти × зеркало) — как можно ближе к центру комнаты: годные места с
+ * наименьшим расстоянием центра следа до центра комнаты (с допуском в четверть клетки — равные по сути), прочие отброшены. Центр комнаты бывает
+ * занят костром оформления (Р1: шанс 0.6 у комнат от 7 клеток — почти каждая большая) — тогда набор встаёт рядом с ним, а не пропадает (замер:
+ * строго в центре трапезная вставала на 0.07 этажа из 1.6 подходящих комнат). Вокруг действительного следа — кольцо пола своей комнаты
+ * (обойти со всех сторон), отступ от прочего — не меньше клетки.
+ */
+function centerSetCands(ctx: Ctx, s: SetSpec, chosen: readonly number[], ri: number): SetCand[] {
+  const room = ctx.L.rooms[ri]!;
+  const mx = (room.x + room.w / 2) * TILE, my = (room.y + room.h / 2) * TILE, tol = TILE / 4;
+  // места полного следа — по расстоянию до центра комнаты (при равных — четверть, строка, столбец): проверяются от ближнего, до первого годного
+  // и его ровни (в допуске), дальше — нет (большая комната — сотни мест на четверть)
+  const spots: { q: number; cx: number; cy: number; d: number }[] = [];
+  for (let q = 0; q < 4; q++) {
+    const fp = setFootprintAt(s, q);
+    for (let y0 = room.y + 1; y0 + fp.h <= room.y + room.h - 1; y0++) for (let x0 = room.x + 1; x0 + fp.w <= room.x + room.w - 1; x0++) {
+      const cx = (x0 + fp.w / 2) * TILE, cy = (y0 + fp.h / 2) * TILE;
+      spots.push({ q, cx, cy, d: Math.hypot(cx - mx, cy - my) });
+    }
+  }
+  spots.sort((a, b) => a.d - b.d || a.q - b.q || a.cy - b.cy || a.cx - b.cx);
+  const out: SetCand[] = [];
+  let best = Infinity;
+  for (const sp of spots) {
+    if (sp.d > best + tol) break;
+    for (const mirror of [false, true]) {
+      const place: SetPlace = { cx: sp.cx, cy: sp.cy, q: sp.q, mirror };
+      const { recs, rect, covered } = setAt(ctx, s, chosen, place);
+      let ring = true;
+      for (let y = rect.y0 - 1; y <= rect.y1 + 1 && ring; y++) for (let x = rect.x0 - 1; x <= rect.x1 + 1 && ring; x++) {
+        const i = idxOf(ctx, x, y);
+        if (i < 0 || ctx.zone[i] !== ri || !isFloor(ctx, i)) ring = false;
+      }
+      if (!ring || !canPlaceSet(ctx, s, recs, rect, ri, covered) || !ctx.claims.free(rect, Math.max(1, s.clearance))) continue;
+      out.push({ place, recs, rect });
+      if (best === Infinity) best = sp.d;
+    }
+  }
+  return out;
+}
+
+/** Набор СПИНОЙ К СТЕНЕ (againstWall; farWall и набор с высоким членом — только дальние стены): задний край полного следа — на линии стены
+ *  пробега, лицо — нормаль стены (четверть `quarterOf`), вдоль — с грани от концов пробега, шаг центров на стене — как у одиночек; зеркало — оба. */
+function wallSetCands(ctx: Ctx, s: SetSpec, chosen: readonly number[], ri: number, runs: readonly Run[]): SetCand[] {
+  const out: SetCand[] = [];
+  const far = s.anchor === 'farWall' || s.tall, step = ctx.rules.againstWall.step;
+  const A = s.footprint.w, D = s.footprint.h;
+  for (const run of runs) {
+    if (far && !isFarFace(run.dx, run.dz, ctx.toCam)) continue;
+    const q = quarterOf({ x: run.dx, y: run.dz }), m = run.faces.length, taken = ctx.runAt.get(run) ?? [];
+    next: for (let i = 1; i + A - 1 <= m - 2; i++) {
+      const at = i + (A - 1) / 2;
+      for (const a of taken) if (Math.abs(a - at) < step) continue next;
+      const cells: number[] = [];
+      for (let j = 0; j < A; j++) for (let k = 0; k < D; k++) {
+        const f = run.faces[i + j]!;
+        const c = idxOf(ctx, f.x + f.dx * (k + 1), f.y + f.dz * (k + 1));
+        if (c < 0) continue next;
+        cells.push(c);
+      }
+      const p = cellsCenter(ctx, cells);
+      for (const mirror of [false, true]) {
+        const place: SetPlace = { cx: p.x, cy: p.y, q, mirror };
+        const { recs, rect, covered } = setAt(ctx, s, chosen, place);
+        if (canPlaceSet(ctx, s, recs, rect, ri, covered)) out.push({ place, recs, rect, run, at });
+      }
+    }
+  }
+  return out;
+}
+
+/** Набор В УГОЛ (corner): клетка комнаты со стенами с двух смежных сторон; каждая из двух стен — по очереди «задняя» (на ней задний край
+ *  полного следа, w клеток вдоль неё от угла), вторая — смежная (на ней левый край рамки, h клеток вдоль неё); обе стены — на всю длину следа;
+ *  зеркало — то, при котором левый край рамки (x = −w/2) у смежной стены; высокий член — обе стены дальние. */
+function cornerSetCands(ctx: Ctx, s: SetSpec, chosen: readonly number[], ri: number): SetCand[] {
+  const room = ctx.L.rooms[ri]!, out: SetCand[] = [];
+  const wall = (x: number, y: number): boolean => ctx.L.grid[y]?.[x] === Cell.Wall;
+  const W = s.footprint.w, H = s.footprint.h;
+  for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) {
+    const i0 = idxOf(ctx, x, y);
+    if (i0 < 0 || ctx.zone[i0] !== ri || !isFloor(ctx, i0)) continue;
+    for (const [a, b] of CORNER_DIRS) {
+      if (!wall(x + a[0], y + a[1]) || !wall(x + b[0], y + b[1])) continue;
+      for (const [bw, sw] of [[a, b], [b, a]] as const) {
+        const n = { x: -bw[0], y: -bw[1] };   // нормаль задней стены — в комнату (лицо набора)
+        if (s.tall && !(isFarFace(n.x, n.y, ctx.toCam) && isFarFace(-sw[0], -sw[1], ctx.toCam))) continue;
+        const cells: number[] = [];
+        let ok = true;
+        for (let j = 0; j < W && ok; j++) {
+          if (!wall(x - sw[0] * j + bw[0], y - sw[1] * j + bw[1])) ok = false;   // задняя стена — вдоль всего следа
+          for (let k = 0; k < H && ok; k++) {
+            const c = idxOf(ctx, x - sw[0] * j + n.x * k, y - sw[1] * j + n.y * k);
+            if (c < 0) ok = false; else cells.push(c);
+          }
+        }
+        for (let k = 0; k < H && ok; k++) if (!wall(x + sw[0] + n.x * k, y + sw[1] + n.y * k)) ok = false;   // смежная — вдоль всей глубины
+        if (!ok) continue;
+        const q = quarterOf(n);
+        const ex = setOffset(1, 0, q, false);   // +x рамки в мире: смотрит на смежную стену — зеркало (левый край рамки — к ней)
+        const p = cellsCenter(ctx, cells);
+        const place: SetPlace = { cx: p.x, cy: p.y, q, mirror: ex.x === sw[0] && ex.y === sw[1] };
+        const { recs, rect, covered } = setAt(ctx, s, chosen, place);
+        if (canPlaceSet(ctx, s, recs, rect, ri, covered)) out.push({ place, recs, rect });
+      }
+    }
+  }
+  return out;
+}
+
+/** Поставить набор: преграды членов — Р6 РАЗОМ (`Passability.tryAdd`: отрезали хоть что-то — откат всего набора), записи — в декор, действительный
+ *  след — занятость (отступ набора), следы стоящих на полу преград — полосам (у центра — весь след: полосы огибают набор), точки — членов (их
+ *  «одинаковое не рядом» с одиночками) и самого набора, центр на пробеге — шаг. */
+function commitSet(ctx: Ctx, s: SetSpec, c: SetCand, ri: number, idx: readonly number[]): boolean {
+  const log = ctx.log.sets!;
+  const obs = obstaclesFromDecor(c.recs, ctx.known as Map<string, DecorSpec>);
+  if (obs.length && !ctx.pass.tryAdd(obs)) { log.rejected++; return false; }
+  const at = ctx.L.decor.length;
+  for (const d of c.recs) ctx.L.decor.push(d);
+  ctx.claims.claim(c.rect, s.clearance);
+  const mark = (r: CellRect): void => { for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) { const i = idxOf(ctx, x, y); if (i >= 0) ctx.blockedFeet[i] = 1; } };
+  if (s.anchor === 'center') mark(c.rect);
+  else for (const d of c.recs) if (d.h === undefined && ctx.known.get(d.objectId!)?.blocks) mark(footprintRect(d));
+  for (const d of c.recs) { const pts = ctx.points.get(d.objectId!) ?? []; pts.push(slotPoint(footprintRect(d))); ctx.points.set(d.objectId!, pts); }
+  const sp = ctx.points.get(`set:${s.id}`) ?? []; sp.push(slotPoint(c.rect)); ctx.points.set(`set:${s.id}`, sp);
+  if (c.run && c.at !== undefined) { const a = ctx.runAt.get(c.run) ?? []; a.push(c.at); ctx.runAt.set(c.run, a); }
+  log.placed++;
+  log.list.push({ id: s.id, room: ri, at, idx: [...idx], place: c.place, rect: c.rect });
+  return true;
+}
+
+/**
+ * Поставить набор `s` в комнату `ri`: состав (`chooseMembers` — k из n по группам в пределах бюджета `budget`), кандидаты состава; нет ни одного —
+ * запасной состав (группы на своих min); затем случайный кандидат — Р6 всем набором, откат — следующий (до 4). Вернул число членов (0 — не встал).
+ */
+function placeSet(ctx: Ctx, s: SetSpec, ri: number, rng: Rng, budget: number, cands: (s: SetSpec, chosen: readonly number[]) => SetCand[]): number {
+  let chosen: number[] | null = chooseMembers(s, rng, budget);
+  if (!chosen) return 0;
+  let cs = cands(s, chosen);
+  // нет места составу — по одному необязательному прочь (`shrinkMembers`: с последней группы), пока не встанет или группы не на своих min:
+  // писарский угол без ящика (он в 2.8 м от стены) остаётся со стулом, а не голым столом
+  while (!cs.length) {
+    chosen = shrinkMembers(s, chosen);
+    if (!chosen) return 0;
+    cs = cands(s, chosen);
+  }
+  for (let t = 0; t < 4 && cs.length; t++) {
+    const k = rng.int(0, cs.length - 1);
+    if (commitSet(ctx, s, cs[k]!, ri, chosen)) return chosen.length;
+    cs.splice(k, 1);
+  }
+  return 0;
+}
+
 /** Клетки якорей этажа (Р0): спавн, выходы, рычаги, сундук сокровищницы, портал, лавка, арена босса. */
 function anchorCells(L: DungeonLayout, cols: number): number[] {
   const out: number[] = [];
@@ -749,6 +1021,8 @@ export interface SlotOpts {
   camAzimuthDeg: number;
   /** Все спеки биома, и объекты оформления тоже (коллайдеры и отступы уже стоящего декора). */
   known: ReadonlyMap<string, DecorSpec>;
+  /** ⭐ 13.10 (Ф4): наборы-сценки биома (`setSpecsFor`); нет — прохода Р3 нет (раскладка прежняя). */
+  sets?: readonly SetSpec[];
 }
 
 /**
@@ -765,10 +1039,14 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
   }
   const claims = gridClaimsOf(L, opts.known, cols, rows);
   const log: SlotLog = { rooms: [], passes: { center: { placed: 0, rejected: 0 }, againstWall: { placed: 0, rejected: 0 }, corner: { placed: 0, rejected: 0 }, doorway: { placed: 0, rejected: 0 }, wall: { placed: 0, rejected: 0 } } };
+  // ⭐ 13.10 (Ф4): наборы — только при правилах наборов и хотя бы одном наборе биома; иначе ни бросков, ни поля журнала
+  const sets = rules.sets && rules.sets.on !== false ? opts.sets ?? [] : [];
+  if (sets.length) log.sets = { placed: 0, rejected: 0, list: [] };
   const ctx: Ctx = {
     L, rules, cols, zone, toCam: toCameraXY(opts.camAzimuthDeg), known: opts.known, claims, lane: new Uint8Array(rows * cols),
     statueFront: new Set(), wallFront: new Set(), faces: new Set(), blockedFeet: new Uint8Array(rows * cols),
     pass: new Passability(L, obstaclesFromDecor(L.decor, opts.known as Map<string, DecorSpec>)), points: new Map(), runAt: new Map(), log,
+    sets, setsOnFloor: new Map(),
   };
   // стоящий декор: грани и клетки перед ними (ниши — всем, прочие настенные — высоким), следы преград пола, точки пропов
   for (const d of L.decor) {
@@ -785,7 +1063,7 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
         const i = idxOf(ctx, x + dx, y + dz);
         if (i >= 0) (d.wallFaces ? ctx.statueFront : ctx.wallFront).add(i);
       }
-    } else if (s?.blocks) {
+    } else if (s?.blocks && d.h === undefined) {
       const r = footprintRect(d);
       for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) { const i = idxOf(ctx, x, y); if (i >= 0) ctx.blockedFeet[i] = 1; }
     }
@@ -807,6 +1085,7 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
     const target = entrance || empty ? 0 : Math.max(0, Math.round(rb.float(rules.density.min, rules.density.max) * area / rules.density.perArea));
     let placed = 0;
     const roomRuns = runs.filter((r) => r.zone === ri);
+    let centerTaken = false;
     // ── Р2 центр: проп пола со следом от minFoot, центр комнаты по сетке следа, кольцо пола вокруг, одна на комнату ──
     if (rules.center.on && target > 0 && Math.min(room.w, room.h) >= rules.center.minRoom) {
       const rc = createRng(slotSeed(seed, SLOT_STREAMS.center, ri));
@@ -833,7 +1112,41 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
           return out;
         }, 'center');
         if (got) placed++;
+        centerTaken = !!got;
       }
+    }
+    // ── ⭐ 13.10 (Ф4) Р3а наборы-сценки: бросок «комната с наборами» (шанс `sets.chance`, до `sets.perRoom` наборов), первый выбор — по весу
+    //    среди всех годных; набор в центр — сейчас (до полос: полосы его огибают, как Р2; если центр не занят Р2), у стены / в угол — после арок ──
+    const rs = ctx.sets.length && target - placed > 0 ? createRng(slotSeed(seed, SLOT_STREAMS.sets, ri)) : null;
+    let setTries = rs && rs.chance(rules.sets?.chance ?? 0) ? Math.max(0, rules.sets?.perRoom ?? 0) : 0;
+    const inRoom = new Map<string, number>();
+    const setOk = (s: SetSpec, centerOk: boolean): boolean => setWeight(s, room.type) > 0 && Math.min(room.w, room.h) >= s.minRoom
+      && (inRoom.get(s.id) ?? 0) < s.perRoomMax && (ctx.setsOnFloor.get(s.id) ?? 0) < s.perFloorMax && requiredCount(s) <= target - placed
+      && (s.anchor !== 'center' || (centerOk && !s.tall));
+    const trySets = (pool: SetSpec[], first: SetSpec | undefined, cands: (s: SetSpec, chosen: readonly number[]) => SetCand[]): void => {
+      let left = [...pool];
+      for (let k = 0; k < 6 && left.length; k++) {
+        const s = k === 0 && first ? first : pickSet(left, room.type, rs!);
+        if (!s) return;
+        const n = placeSet(ctx, s, ri, rs!, target - placed, cands);
+        if (n > 0) {
+          placed += n;
+          inRoom.set(s.id, (inRoom.get(s.id) ?? 0) + 1);
+          ctx.setsOnFloor.set(s.id, (ctx.setsOnFloor.get(s.id) ?? 0) + 1);
+          if (s.anchor === 'center') centerTaken = true;
+          return;
+        }
+        left = left.filter((x) => x !== s);
+      }
+    };
+    let deferred: SetSpec | undefined;
+    if (setTries > 0) {
+      const sPool = ctx.sets.filter((s) => setOk(s, !centerTaken));
+      const s = pickSet(sPool, room.type, rs!);
+      if (s?.anchor === 'center') {
+        setTries--;
+        trySets(sPool.filter((x) => x.anchor === 'center'), s, (x, chosen) => centerSetCands(ctx, x, chosen, ri));
+      } else deferred = s ?? undefined;
     }
     // ── Р0 полосы комнаты: после центра и костра (огибают их) ──
     const myDoors = doorways.filter((d) => d.room === ri);
@@ -856,6 +1169,15 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
         const c: Cand = archOf(L, d);
         if (ctx.claims.free(c.rect, 0)) commit(ctx, s, c, 'doorway');
       }
+    }
+    // ── ⭐ 13.10 (Ф4) Р3б наборы у стены / у дальней стены / в угол: после полос и арок, до одиночек (их заявки углов уже видят набор) ──
+    while (setTries > 0) {
+      setTries--;
+      const sPool = ctx.sets.filter((s) => s.anchor !== 'center' && setOk(s, false));
+      if (!sPool.length) break;
+      const first = deferred && sPool.includes(deferred) ? deferred : undefined;
+      deferred = undefined;
+      trySets(sPool, first, (x, chosen) => (x.anchor === 'corner' ? cornerSetCands(ctx, x, chosen, ri) : wallSetCands(ctx, x, chosen, ri, roomRuns)));
     }
     // ── Р4 одиночки: заявки углов (шанс и пара) — их доля бюджета; спиной к стене — раньше углов (выбор по весу), затем углы ──
     const rk = createRng(slotSeed(seed, SLOT_STREAMS.corner, ri));
