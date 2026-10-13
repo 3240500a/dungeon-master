@@ -2186,8 +2186,15 @@ export const difficultiesSchema = z.array(
 const floorSizeCommon = {
   cols: z.number().int().min(20).max(200).default(56),
   rows: z.number().int().min(20).max(200).default(42),
-  /** Ширина коридоров в клетках (для rooms/bsp — проёмы/связки между комнатами). Пусто = 4 (просторно). */
+  /** Ширина коридоров в клетках (для rooms/bsp — проёмы/связки между комнатами). Пусто = 4 (просторно). ⭐ 13.10: с `corridorWidthMax` — «от». */
   corridorWidth: z.number().int().min(1).max(8).optional(),
+  /**
+   * ⭐ 13.10 (владелец: «коридоры шириной от 2 до 4 клеток, чтобы были разные варианты»): ширина «до» — у КАЖДОЙ связки комнат (`connectRooms`)
+   * своя ширина от `corridorWidth` до этой, концы входят; бросок — свой поток rng этажа (`seed ^ 0xc0dd`, `corridorWidths`): комнаты, спавн
+   * и выходы не сдвигаются (двери и рычаги — могут: ~20 % этажей крипты). Пусто или равно `corridorWidth` — все одной ширины, этаж байт-в-байт прежний (поток не трогается); меньше
+   * `corridorWidth` — границы меняются местами. Г-коридоры (комнаты по диагонали) — 2, как были. Крипта — 2…4 (`data/floors.json`).
+   */
+  corridorWidthMax: z.number().int().min(1).max(8).optional(),
 };
 const roomsParamsSchema = z.object({
   algorithm: z.literal('rooms'),
@@ -3314,6 +3321,11 @@ export const DECOR_ANCHORS = ['center', 'back', 'corner'] as const;
 export const DECOR_FACINGS = ['room', 'along', 'quad', 'free'] as const;
 /** ⭐ 12.10: веса паспорта по месту: типы комнат `Room.type` (кроме входа — там россыпи нет) и коридор (зона вне комнат). */
 export const DECOR_ROOM_KINDS = ['small', 'large', 'treasure', 'boss', 'corridor'] as const;
+/** ⭐ 13.10 (отзыв владельца по Ф2: «большая арка сама заменяет колонны, при маленькой колонны ставятся»): арка проёма и колонны его косяков —
+ *  `keep` (умолчание): колонны углов проёма стоят, арка между ними (малая crypt_arch_01); `replace`: ноги арки стоят там, где были бы колонны
+ *  косяков (большая crypt_arch_04: модель 4.06 м на проём 3), и Unity этих двух колонн не ставит (`EnvRules.ArchJambCorners`). Сервер флагом не
+ *  пользуется: расстановка та же. Имена — те же, что у enum `DM.Art.DecorJambs` Unity (сторож `EnvCheck`, раздел `decor` эталона). */
+export const DECOR_JAMBS = ['keep', 'replace'] as const;
 const decorRoomWeight = z.number().min(0).max(100).default(1);
 /**
  * ⭐ 12.10 (Ф1 «Паспорт», план декора): ПАСПОРТ ДЕКОРА — свойства САМОГО пропа для расстановки сервером (слой «факты ассета»; «где и
@@ -3344,7 +3356,8 @@ export const artDecorSchema = z.object({
     scaleMax: z.number().min(0.1).max(10).default(1),
   }).default({}),
   biomes: z.array(z.string()).default([]),                    // пусто — биом папки каталога (группа `biome_<id>`)
-  doorway: z.object({ width: z.number().int().min(1).max(8) }).optional(),   // арка: ширина проёма, клеток
+  // арка: ширина проёма, клеток (⭐ 13.10: модель бывает шире проёма — ноги над косяками; запись сервера — след проёма), и колонны косяков (`DECOR_JAMBS`; нет поля — keep)
+  doorway: z.object({ width: z.number().int().min(1).max(8), jambs: z.enum(DECOR_JAMBS).optional() }).optional(),
   stack: z.object({ max: z.number().int().min(2).max(8) }).optional(),       // штабель: сколько штук друг на друге (подсказка Ф5)
   hosts: z.array(z.string()).optional(),                      // socket: ключи пропов-хозяев (книги → полка; Ф4)
 });

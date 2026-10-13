@@ -206,7 +206,8 @@
       },
       "biomes": [],
       "doorway": {
-        "width": 4
+        "width": 3,
+        "jambs": "replace"
       }
     }
   },

@@ -49,7 +49,8 @@ export interface DecorPassportLite {
   rooms?: Readonly<Partial<Record<string, number>>>;
   weight?: number;
   biomes?: readonly string[];
-  doorway?: { width: number }; stack?: { max: number }; hosts?: readonly string[];
+  /** Арка: ширина проёма; ⭐ 13.10 `jambs` — колонны косяков (`replace` — арка вместо них, их не ставит Unity; сервер флаг не читает). */
+  doorway?: { width: number; jambs?: string }; stack?: { max: number }; hosts?: readonly string[];
 }
 
 /** Параметры плотности расстановки (⭐ 12.10: из конфига биома `biomes[].decorDensity` — `decorPlaceOf`). */

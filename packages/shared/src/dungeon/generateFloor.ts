@@ -1,7 +1,7 @@
 import { createRng, type Rng } from '../formulas/rng.js';
 import { Cell, TILE, cellToWorld, worldToCell } from '../world/grid.js';
 import type { FloorAlgoParams, FloorFeatures, RoomPrefab } from '../config/schemas.js';
-import { type DungeonLayout, type Room, validate, roomCenter } from './floorCommon.js';
+import { type DungeonLayout, type Room, validate, roomCenter, CORRIDOR_WIDTH_STREAM } from './floorCommon.js';
 import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
 import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
@@ -134,7 +134,8 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   const prefabs = selectPrefabs(opts.prefabs ?? [], { biomeId: opts.biomeId, algorithm: effective.algorithm });
   const build = (s: number): DungeonLayout => {
     const rng = createRng(s || 1);
-    const L = algo(effective, rng, { lock, prefabs });
+    // ⭐ 13.10: ширина коридоров «от … до» — свой поток на попытку (читается только при диапазоне — `corridorWidths`; без него этаж прежний)
+    const L = algo(effective, rng, { lock, prefabs, corridorRng: createRng(((s ^ CORRIDOR_WIDTH_STREAM) >>> 0) || 1) });
     // prefab-этаж сам определяет выходы (зоны 'x'); прочие — farthest-point среди комнат.
     if (effective.algorithm === 'prefab') L.exits = exitCount <= 0 ? [] : L.exits.slice(0, Math.max(1, exitCount));
     else applyExits(L, exitCount, rng);

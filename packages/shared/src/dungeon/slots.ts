@@ -28,6 +28,8 @@ import { isFarFace, snapCenter, toCameraXY, wallRuns } from './dressing.js';
  *    в полосе нет ни преграды, ни пропа «не запирать проход» (и преграды россыпи строк без паспорта — `placeFloorDecor`, ⭐ 12.10 ревью);
  *  • проёмы — арки (`doorway`): ширина паспорта = ширине проёма, дальняя стена, рама из стен по краям, не дверь рычага; ⭐ 12.10 (ревью) тень
  *    арки (`doorway.clearBeyond` клеток от камеры) не на полу другой комнаты; «одинаковое не рядом» арок не касается (рама каждого проёма);
+ *    ⭐ 13.10 (отзыв владельца): кандидаты — все арки ширины проёма, выбор по весу паспорта (у крипты обе — проём 3; проём 4 — без арки),
+ *    след записи — проём (`archOf`: модель бывает шире — ноги над косяками), колонны косяков снимает Unity по флагу паспорта `doorway.jambs`;
  *  • Р4 одиночки: заявки углов (`corner`, шаблон 2 × 2: шанс на угол и пара) берут свою долю бюджета, спиной к стене (`againstWall`,
  *    раньше углов, выбор по весу паспорта; шаг по центрам на стене; ⭐ 13.10 спинка МОДЕЛИ на линии стены — `wallPivot`) — остальное, затем
  *    ставятся углы, а недобор углов (не встали) — снова спиной к стене (⭐ 12.10, ревью); грани стен (`wall`, только настенные спеки; шаг и
@@ -325,8 +327,9 @@ function gridClaimsOf(L: DungeonLayout, known: ReadonlyMap<string, DecorSpec>, c
   return g;
 }
 
-/** Кандидат на место: клетки следа, их прямоугольник, точка (пивот модели), поворот; у стены — пробег и центр вдоль него. */
-interface Cand { cells: number[]; rect: CellRect; x: number; y: number; rot: number; run?: Run; at?: number }
+/** Кандидат на место: клетки следа, их прямоугольник, точка (пивот модели), поворот; у стены — пробег и центр вдоль него; `foot` — след
+ *  записи, если он не след паспорта (⭐ 13.10: арка — проём). */
+interface Cand { cells: number[]; rect: CellRect; x: number; y: number; rot: number; run?: Run; at?: number; foot?: { w: number; h: number } }
 
 /** Общее состояние проходов этажа. */
 interface Ctx {
@@ -403,7 +406,8 @@ function canPlace(ctx: Ctx, s: DecorSpec, c: Cand, zone: number): boolean {
 
 /** Поставить проп: преграда — сперва проверка проходимости (Р6; отрезала — откат только её), затем запись, след, точка. */
 function commit(ctx: Ctx, s: DecorSpec, c: Cand, pass: SlotPass): boolean {
-  const d: DecorObject = { x: c.x, y: c.y, kind: 'obj', objectId: s.id, rot: normRot(c.rot), footprint: { w: s.footprint.w, h: s.footprint.h } };
+  const foot = c.foot ?? s.footprint;
+  const d: DecorObject = { x: c.x, y: c.y, kind: 'obj', objectId: s.id, rot: normRot(c.rot), footprint: { w: foot.w, h: foot.h } };
   if (s.blocks && !ctx.pass.tryAdd(obstaclesFromDecor([d], ctx.known as Map<string, DecorSpec>))) { ctx.log.passes[pass].rejected++; return false; }
   ctx.L.decor.push(d);
   ctx.claims.claim(c.rect, s.clearance ?? 0);
@@ -707,6 +711,28 @@ function archShadowsRoom(ctx: Ctx, d: Doorway, len: number): boolean {
   return false;
 }
 
+/**
+ * ⭐ 13.10 (отзыв владельца по Ф2): МЕСТО АРКИ В ПРОЁМЕ `d` — занято клетки проёма и его устья (ряд комнаты перед ним), пивот — середина проёма
+ * на линии стены, лицом (+Z модели) в комнату; СЛЕД ЗАПИСИ — тоже проём: ширина проёма × 1 поперёк (точка на линии стены — `footprintRect`
+ * записи даёт ровно ряд проёма и устье, то, что занято). След паспорта — от габарита модели и бывает шире проёма: crypt_arch_04 — 4.06 м (след
+ * 4) на проём 3, её ноги стоят над косяками, на стенах; с ним `footprintRect` записи залезал бы в стены косяков (5 × 2 клетки), а след записи
+ * читают прочие проходы (россыпь, сундуки) и превью редактора. Unity ставит модель по точке и повороту, колонны косяков снимает по ширине и
+ * флагу паспорта (`doorway.jambs`, `EnvRules.ArchJambCorners`).
+ */
+export function archOf(L: Pick<DungeonLayout, 'grid'>, d: Doorway): { cells: number[]; rect: CellRect; x: number; y: number; rot: number; foot: { w: number; h: number } } {
+  const cols = L.grid[0]?.length ?? 0;
+  const n = { x: -d.dir.dx, y: -d.dir.dy };
+  const all = [...d.cells, ...d.inner];
+  const cells = all.map((c) => c.cy * cols + c.cx);
+  const xs = all.map((c) => cellToWorld(c.cx, c.cy));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const c of all) { x0 = Math.min(x0, c.cx); x1 = Math.max(x1, c.cx); y0 = Math.min(y0, c.cy); y1 = Math.max(y1, c.cy); }
+  return {
+    cells, rect: { x0, y0, x1, y1 }, x: xs.reduce((a, p) => a + p.x, 0) / xs.length, y: xs.reduce((a, p) => a + p.y, 0) / xs.length,
+    rot: Math.atan2(n.x, n.y), foot: { w: d.width, h: 1 },
+  };
+}
+
 /** Клетки якорей этажа (Р0): спавн, выходы, рычаги, сундук сокровищницы, портал, лавка, арена босса. */
 function anchorCells(L: DungeonLayout, cols: number): number[] {
   const out: number[] = [];
@@ -813,8 +839,10 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
     const myDoors = doorways.filter((d) => d.room === ri);
     lanes.push({ room: ri, cells: traceLanes(ctx, ri, myDoors, anchors.filter((i) => i >= 0 && zone[i] === ri)) });
     // ── арки в проёмы: ширина паспорта = ширине проёма; дальняя стена (арки высокие), рама из стен, не дверь; ⭐ 12.10 (ревью) тень арки не
-    //    ложится на другую комнату (`archShadowsRoom`, `doorway.clearBeyond`). «Одинаковое не рядом» арок НЕ касается: арка — рама КАЖДОГО проёма
-    //    (решение владельца: 01/04 обрамляют проёмы 3/4), два проёма в шаге друг от друга — обе в арках; число арок рулит `doorway.chance` ──
+    //    ложится на другую комнату (`archShadowsRoom`, `doorway.clearBeyond`). «Одинаковое не рядом» арок НЕ касается: арка — рама КАЖДОГО проёма,
+    //    два проёма в шаге друг от друга — обе в арках; число арок рулит `doorway.chance`. ⭐ 13.10 (отзыв владельца по Ф2: «и высокая арка, и
+    //    низкая — в проём 3 клетки, на 4 решения пока нет»): кандидаты — все арки ширины проёма (обе арки крипты — 3), выбор по весу паспорта
+    //    (сейчас поровну); проём 4 (и любой без арки своей ширины) — без арки. Занято и в записи — ПРОЁМ (`archOf`) ──
     if (rules.doorway.on) {
       const rd = createRng(slotSeed(seed, SLOT_STREAMS.doorway, ri));
       for (const d of myDoors) {
@@ -825,9 +853,7 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
         if (!cand.length || !rd.chance(rules.doorway.chance)) continue;
         const s = pickWeighted(cand, room.type, rd);
         if (!s) continue;
-        const cells = [...d.cells, ...d.inner].map((c) => c.cy * cols + c.cx);
-        const xs = [...d.cells, ...d.inner].map((c) => cellToWorld(c.cx, c.cy));
-        const c: Cand = { cells, rect: rectOf(ctx, cells), x: xs.reduce((a, p) => a + p.x, 0) / xs.length, y: xs.reduce((a, p) => a + p.y, 0) / xs.length, rot: Math.atan2(n.x, n.y) };
+        const c: Cand = archOf(L, d);
         if (ctx.claims.free(c.rect, 0)) commit(ctx, s, c, 'doorway');
       }
     }

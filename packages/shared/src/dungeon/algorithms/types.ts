@@ -7,6 +7,9 @@ import type { DungeonLayout } from '../floorCommon.js';
 export interface FloorAlgoOpts {
   lock?: boolean;
   prefabs?: RoomPrefab[];
+  /** ⭐ 13.10: свой поток rng ширины коридоров (`seed ^ CORRIDOR_WIDTH_STREAM` попытки, `generateFloorParams`) — читается, только если у
+   *  параметров есть диапазон ширины (`corridorWidthMax`, `corridorWidths`); без него этаж байт-в-байт прежний. */
+  corridorRng?: Rng;
 }
 
 /**

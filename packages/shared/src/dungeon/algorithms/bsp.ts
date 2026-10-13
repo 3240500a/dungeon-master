@@ -3,7 +3,7 @@ import type { FloorAlgoParams } from '../../config/schemas.js';
 import { Cell, makeGrid, cellToWorld } from '../../world/grid.js';
 import {
   type DungeonLayout, type Room,
-  roomCenter, carveRoom, carveRoomShaped, pickShape, connectByNeighborGraph, pickSpawnExit, lockRoom, decorate,
+  roomCenter, carveRoom, carveRoomShaped, pickShape, connectByNeighborGraph, pickSpawnExit, lockRoom, decorate, corridorWidths,
 } from '../floorCommon.js';
 import { stampRoomPrefab } from '../prefab.js';
 import type { FloorAlgoOpts } from './types.js';
@@ -108,6 +108,7 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgo
     excludeIdx: lock ? exitIdx : -1,
     branch: lock ? [spawnIdx] : [spawnIdx, exitIdx],
     width: params.corridorWidth ?? 4,
+    widthOf: corridorWidths(params, opts?.corridorRng),   // ⭐ 13.10: «от corridorWidth до corridorWidthMax» на связку, свой поток
   }, rng);
 
   const doors: DungeonLayout['doors'] = [];

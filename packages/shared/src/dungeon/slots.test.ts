@@ -12,7 +12,7 @@ import { isFarFace, toCameraXY } from './dressing.js';
 import { generateFloorFor, type FloorConfig } from './floorInputs.js';
 import { resolveFloorSpec } from './floorSpec.js';
 import { generateFloorParams } from './generateFloor.js';
-import { Passability, placeSlots, roomDoorways, slotSeed, SLOT_STREAMS, type PropRules } from './slots.js';
+import { archOf, Passability, placeSlots, roomDoorways, slotSeed, SLOT_STREAMS, type Doorway, type PropRules } from './slots.js';
 
 /**
  * ⭐ 12.10 (Ф2 «Слоты и полосы», план декора): СТОРОЖА РАССТАНОВКИ ПРОПОВ ПО СЛОТАМ (`slots.ts`, правило биома `dressing.props`):
@@ -26,7 +26,9 @@ import { Passability, placeSlots, roomDoorways, slotSeed, SLOT_STREAMS, type Pro
  *    отказ закрытой проверки не портит кэш открытой, фаззер против оракула (решения и маска);
  *  • ⭐ 13.10 (ревью): у стены спинка МОДЕЛИ на линии стены (пивот — полглубины коллайдера при повороте; живые этажи — по габариту манифеста),
  *    след записи — клетки слота (`FOOTPRINT_SNAP`);
- *  • потоки rng по комнатам: правка правила одного прохода не трогает другие проходы; правила — игровая ревизия.
+ *  • потоки rng по комнатам: правка правила одного прохода не трогает другие проходы; правила — игровая ревизия;
+ *  • ⭐ 13.10 (отзыв владельца по скринам Ф2): обе арки крипты — только в проём 3 (на 4 — никогда), обе встают; след записи арки — проём
+ *    (`archOf`), паспорт большой — колонны косяков снимает Unity (`doorway.jambs`); выбор — по весу паспорта.
  */
 const reg = new ConfigRegistry();
 reg.loadAll();
@@ -168,7 +170,8 @@ describe('⭐ 12.10 (Ф2): правила пропов — в data, схема, 
 // ── живые этажи крипты с семенем Ф2 ──────────────────────────────────────────────────────────────────────────────────────
 /** Семя паспортов Ф2 — как `Assets/DM/Art/Editor/decor_seed.json` Unity после правки 12.10 (отзыв владельца): стулья и табуреты — только сокет
  *  стола (ждут наборов Ф4), стол 3x — у стены и центр большой комнаты, стол 2x — у стены, камни и ящики — угол/у стены, полка — у дальней стены,
- *  арки — в проём своей ширины, книги — сокет полки. */
+ *  арки — в проём своей ширины, книги — сокет полки. ⭐ 13.10 (отзыв владельца по скринам Ф2): обе арки — проём 3, большая (arch_04) стоит на
+ *  косяках вместо колонн (`jambs: 'replace'`), при малой (arch_01) колонны косяков стоят (keep — без поля, как пишет `DecorPassport.ToJson`). */
 const SEED_F2: Record<string, Partial<ArtDecor>> = {
   crypt_wooden_shelf_01: { contexts: ['againstWall'], anchor: 'back', backOffset: 0.25, facing: 'room', keepPath: true, blocks: true, blocksSight: true, tall: true, tags: ['furniture', 'storage'], rooms: { small: 1, large: 1, treasure: 1, boss: 0, corridor: 0 } },
   crypt_wooden_table_3x_01: { contexts: ['againstWall', 'floor'], facing: 'quad', clearance: 1, keepPath: true, blocks: true, tags: ['furniture', 'table'], rooms: { small: 0, large: 1, treasure: 0.5, boss: 0, corridor: 0 } },
@@ -179,7 +182,7 @@ const SEED_F2: Record<string, Partial<ArtDecor>> = {
   crypt_wooden_crate_02: { contexts: ['corner', 'againstWall'], keepPath: true, blocks: true, stack: { max: 3 }, tags: ['storage', 'crate'], rooms: { small: 1, large: 1, treasure: 1.5, boss: 0, corridor: 0 } },
   crypt_stone_01: { contexts: ['corner', 'againstWall'], keepPath: true, blocks: true, weight: 0.6, tags: ['rubble'], rooms: { small: 1, large: 1, treasure: 0.5, boss: 1, corridor: 0 } },
   crypt_arch_01: { contexts: ['doorway'], facing: 'room', doorway: { width: 3 }, tall: true, tags: ['arch', 'frame'] },
-  crypt_arch_04: { contexts: ['doorway'], facing: 'room', doorway: { width: 4 }, tall: true, tags: ['arch', 'frame'] },
+  crypt_arch_04: { contexts: ['doorway'], facing: 'room', doorway: { width: 3, jambs: 'replace' }, tall: true, tags: ['arch', 'frame'] },
   crypt_books_01: { contexts: ['socket'], anchor: 'back', backOffset: 0.25, facing: 'room', hosts: ['crypt_wooden_shelf_01'], tall: true, tags: ['clutter', 'books'] },
 };
 /** Живой конфиг с паспортами семени Ф2 (через загрузчик); `rules` — правка правил пропов крипты. */
@@ -369,7 +372,7 @@ describe('⭐ 12.10 (Ф2): живые этажи крипты — слоты и 
         const rot = d.rot ?? 0;
         const ax = { x: Math.cos(rot), y: -Math.sin(rot) }, az = { x: Math.sin(rot), y: Math.cos(rot) };   // оси X и Z модели в мире сервера
         let gap = Infinity;
-        const gaps: number[] = [];
+        const gaps: number[] = [], norms: [number, number][] = [];
         for (const [nx, ny] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
           // стена со стороны −n вдоль всего края следа (у угла — две; проп прижат к одной из них)
           let wall = true;
@@ -380,13 +383,15 @@ describe('⭐ 12.10 (Ф2): живые этажи крипты — слоты и 
           let back = Infinity;   // спинка — ближняя к стене точка габарита, вдоль нормали от пивота
           for (const X of [b.min[0]!, b.max[0]!]) for (const Z of [b.min[2]!, b.max[2]!]) back = Math.min(back, (ax.x * X + az.x * Z) * nx + (ax.y * X + az.y * Z) * ny);
           const g = (((nx ? d.x : d.y) - line) * (nx || ny)) / TILE + back;
-          gaps.push(g);
+          gaps.push(g); norms.push([nx, ny]);
           if (Math.abs(g) < Math.abs(gap)) gap = g;
         }
         if (gap === Infinity) continue;   // центр комнаты — без стены за следом
         n++;
-        // ⭐ 13.10 (ревью): клетка 1 × 1 у двух стен — только угол; модель прижата к ОБЕИМ (было: ящик в 0.14 м от второй стены)
-        if (r.x0 === r.x1 && r.y0 === r.y1 && gaps.length === 2) { corner2++; gap = Math.max(...gaps.map(Math.abs)); }
+        // ⭐ 13.10 (ревью): клетка 1 × 1 у двух СМЕЖНЫХ стен — угол; модель прижата к ОБЕИМ (было: ящик в 0.14 м от второй стены). ⭐ 13.10
+        // (коридоры 2…4): две стены НАПРОТИВ (щель в клетку — у фигурной комнаты бывает: 1 место на 200 этажей) — проп прижат к одной
+        const perp = gaps.length === 2 && norms[0]![0] * norms[1]![0] + norms[0]![1] * norms[1]![1] === 0;
+        if (r.x0 === r.x1 && r.y0 === r.y1 && perp) { corner2++; gap = Math.max(...gaps.map(Math.abs)); }
         worst.set(d.objectId!, Math.max(worst.get(d.objectId!) ?? 0, Math.abs(gap)));
         if (Math.hypot(d.x - ((r.x0 + r.x1 + 1) / 2) * TILE, d.y - ((r.y0 + r.y1 + 1) / 2) * TILE) > 0.1 * TILE) shifted++;
       }
@@ -869,6 +874,128 @@ describe('⭐ 12.10 (Ф2): опция оформления без правил �
     for (let seed = 1; seed <= 20; seed++) {
       expect(JSON.stringify(generateFloorParams(PARAMS, seed, { decorSpecs: s, dressing: { rules: {}, camAzimuthDeg: -45 } })))
         .toBe(JSON.stringify(generateFloorParams(PARAMS, seed, { decorSpecs: s })));
+    }
+  });
+});
+
+// ── ⭐ 13.10: арки — обе в проём 3, на 4 никогда; след записи — проём; колонны косяков — флаг паспорта (Unity) ─────────────────────
+/** Арка в проёме сервера: точка — середина проёма и его устья (`archOf`). */
+const doorOfArch = (L: DungeonLayout, d: DecorObject): Doorway | undefined => (L.doorways ?? []).find((q) => {
+  const xs = [...q.cells, ...q.inner];
+  const mx = xs.reduce((a, c) => a + c.cx * TILE + 16, 0) / xs.length, my = xs.reduce((a, c) => a + c.cy * TILE + 16, 0) / xs.length;
+  return Math.abs(mx - d.x) < 1e-6 && Math.abs(my - d.y) < 1e-6;
+});
+
+describe('⭐ 13.10 (отзыв владельца по скринам Ф2): арки по проёму 3 и колонны косяков', () => {
+  const ARCHES = ['crypt_arch_01', 'crypt_arch_04'];
+  const cfg = withSeedF2();
+  const runs = cryptRuns(cfg, 24);
+
+  it('живая крипта (коридоры 2…4): обе арки — только в проёмах ширины 3, в проём 4 — никогда; обе встают, по весу поровну', () => {
+    const by = new Map<string, number>();
+    let open3 = 0, open4 = 0, arch4 = 0;
+    for (const { L, id } of runs) {
+      for (const q of L.doorways ?? []) { if (q.width === 3) open3++; if (q.width === 4) open4++; }
+      for (const d of L.decor.filter((x) => ARCHES.includes(x.objectId ?? ''))) {
+        const door = doorOfArch(L, d);
+        expect(door, `${id}: арка ${d.objectId} не в проёме`).toBeDefined();
+        expect(door!.width, `${id}: ${d.objectId} в проёме ${door!.width}`).toBe(3);
+        if (door!.width === 4) arch4++;
+        by.set(d.objectId!, (by.get(d.objectId!) ?? 0) + 1);
+      }
+    }
+    expect(open4, 'проёмы 4 есть (коридоры 4) — и все без арки').toBeGreaterThan(200);
+    expect(open3).toBeGreaterThan(200);
+    expect(arch4).toBe(0);
+    const a1 = by.get('crypt_arch_01') ?? 0, a4 = by.get('crypt_arch_04') ?? 0;
+    expect(a1, 'малая').toBeGreaterThan(50); expect(a4, 'большая').toBeGreaterThan(50);
+    expect(Math.abs(a1 - a4) / (a1 + a4), `малых ${a1}, больших ${a4} — вес паспортов поровну`).toBeLessThan(0.2);
+  });
+
+  it('след записи арки — проём (ширина × 1 по линии стены): `footprintRect` — ровно ряд проёма и устье, не стены косяков; у большой модель шире', () => {
+    const bounds = new Map(cfg.get('art').filter((a) => a.bounds && a.kind !== 'material').map((a) => [a.id, a.bounds!]));
+    let n = 0;
+    for (const { L } of runs) {
+      for (const d of L.decor.filter((x) => ARCHES.includes(x.objectId ?? ''))) {
+        const door = doorOfArch(L, d)!;
+        expect(d.footprint).toEqual({ w: door.width, h: 1 });
+        expect(footprintRect(d)).toEqual(archOf(L, door).rect);
+        const r = footprintRect(d);
+        for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) expect(L.grid[y]![x], 'след арки — на проходимом').not.toBe(Cell.Wall);
+        n++;
+      }
+    }
+    expect(n).toBeGreaterThan(100);
+    // модель большой — 4.06 м на проём 3 (ноги над косяками), малой — 3 м: в проём впору
+    const b4 = bounds.get('crypt_arch_04')!, b1 = bounds.get('crypt_arch_01')!;
+    expect(b4.max[0]! - b4.min[0]!).toBeGreaterThan(4);
+    expect(b1.max[0]! - b1.min[0]!).toBeCloseTo(3, 2);
+  });
+
+  it('флаг колонн косяков — в паспорте (большая replace, малая — без поля = keep); сервер его не читает: раскладка с ним и без — та же', () => {
+    const passports = new Map(runs[0]!.specs.filter((s) => s.passport).map((s) => [s.id, s.passport!]));
+    expect(passports.get('crypt_arch_04')!.doorway).toEqual({ width: 3, jambs: 'replace' });
+    expect(passports.get('crypt_arch_01')!.doorway).toEqual({ width: 3 });
+    const plain = new ConfigRegistry(); plain.loadAll();
+    plain.reload({ art: structuredClone(cfg.get('art')).map((a) => (a.id === 'crypt_arch_04' && a.decor?.doorway ? { ...a, decor: { ...a.decor, doorway: { width: 3 } } } : a)) });
+    const again = cryptRuns(plain, 6);
+    expect(again.map((r) => JSON.stringify(r.L))).toEqual(runs.filter((r) => Number(r.id.split('/')[1]) <= 6).map((r) => JSON.stringify(r.L)));
+  });
+
+  // синтетика: комната 3…16 × 6…13; вверху (дальняя стена) проём 3 (x 8…10) в коридор до y 1, справа (дальняя) — проём 4 (y 7…10) в коридор на восток
+  const layout = (): DungeonLayout => {
+    const rows: string[] = [];
+    for (let y = 0; y < 16; y++) rows.push([...Array(30)].map((_, x) => {
+      const A = x >= 3 && x < 17 && y >= 6 && y < 14, top = x >= 8 && x < 11 && y >= 1 && y < 6, east = x >= 17 && x < 28 && y >= 7 && y < 11;
+      return A || top || east ? '.' : '#';
+    }).join(''));
+    return synth(rows, [{ x: 3, y: 6, w: 14, h: 8, type: 'large' }], { cx: 10, cy: 10 });
+  };
+  const arch = (id: string, width: number, weight = 1, jambs?: 'keep' | 'replace'): DecorSpec => spec(id, {
+    footprint: { w: width + 1, h: 1 }, contexts: ['doorway'], weight,
+    passport: { contexts: ['doorway'], footprint: { w: width + 1, h: 1 }, blocks: false, blocksSight: false, tall: true, doorway: { width, ...(jambs ? { jambs } : {}) } },
+  });
+  const place = (specs: DecorSpec[], seed = 1): DecorObject[] => {
+    const L = layout();
+    placeSlots(L, rules({ emptyRoomShare: 0, center: { on: false }, corner: { on: false }, againstWall: { on: false }, wall: { on: false }, doorway: { on: true, chance: 1, clearBeyond: 6 } }), specs, seed,
+      { camAzimuthDeg: -45, known: new Map(specs.map((s) => [s.id, s])) });
+    return L.decor.filter((d) => d.kind === 'obj');
+  };
+
+  it('правило — ширина паспорта = ширине проёма: арки 3 — в проём 3, проём 4 — без арки; арка 4 — в проём 4; вес 0 — никогда; след — проём', () => {
+    const got = place([arch('big', 3, 1, 'replace'), arch('small', 3, 1)]);
+    expect(got.map((d) => [d.x / TILE, d.y / TILE, d.footprint])).toEqual([[9.5, 6, { w: 3, h: 1 }]]);   // верх: середина x 8…10, линия y = 6
+    expect(['big', 'small']).toContain(got[0]!.objectId);
+    const four = place([arch('big', 3), arch('wide', 4)]);
+    expect(four.map((d) => [d.objectId, d.x / TILE, d.y / TILE, d.footprint])).toEqual([['big', 9.5, 6, { w: 3, h: 1 }], ['wide', 17, 9, { w: 4, h: 1 }]]);
+    for (let seed = 1; seed <= 20; seed++) expect(place([arch('never', 3, 0), arch('always', 3, 1)], seed).map((d) => d.objectId)).toEqual(['always']);
+    // поровну по весу: на 60 сидах встают обе
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 60; seed++) for (const d of place([arch('big', 3, 1, 'replace'), arch('small', 3, 1)], seed)) seen.add(d.objectId!);
+    expect([...seen].sort()).toEqual(['big', 'small']);
+  });
+
+  it('`archOf`: на любой стороне и ширине 2…4 след записи — ряд проёма и устье, точка — на линии стены, лицом в комнату', () => {
+    // комната 4…11 × 4…9: верх проём 2 (x 6…7), низ 4 (x 5…8), лево 3 (y 5…7), право 3 (y 6…8)
+    const rows: string[] = [];
+    for (let y = 0; y < 14; y++) rows.push([...Array(16)].map((_, x) => {
+      const R = x >= 4 && x < 12 && y >= 4 && y < 10;
+      const t = y < 4 && y >= 1 && x >= 6 && x < 8, b = y >= 10 && y < 13 && x >= 5 && x < 9, l = x < 4 && x >= 1 && y >= 5 && y < 8, r = x >= 12 && x < 15 && y >= 6 && y < 9;
+      return R || t || b || l || r ? '.' : '#';
+    }).join(''));
+    const L = synth(rows, [{ x: 4, y: 4, w: 8, h: 6, type: 'large' }]);
+    const doors = roomDoorways(L);
+    expect(doors.map((d) => d.width)).toEqual([2, 4, 3, 3]);
+    for (const d of doors) {
+      const a = archOf(L, d);
+      const rec = { x: a.x, y: a.y, rot: a.rot, footprint: a.foot };
+      const cells = [...d.cells, ...d.inner];
+      expect(footprintRect(rec)).toEqual({ x0: Math.min(...cells.map((c) => c.cx)), y0: Math.min(...cells.map((c) => c.cy)), x1: Math.max(...cells.map((c) => c.cx)), y1: Math.max(...cells.map((c) => c.cy)) });
+      // лицо (+Z модели) — в комнату: (sin rot, cos rot) = −dir
+      expect(Math.round(Math.sin(a.rot)) + 0).toBe(-d.dir.dx + 0); expect(Math.round(Math.cos(a.rot)) + 0).toBe(-d.dir.dy + 0);
+      // точка — на линии стены (между рядом проёма и устьем)
+      const line = d.dir.dy !== 0 ? Math.max(d.cells[0]!.cy, d.inner[0]!.cy) * TILE : Math.max(d.cells[0]!.cx, d.inner[0]!.cx) * TILE;
+      expect(d.dir.dy !== 0 ? a.y : a.x).toBe(line);
     }
   });
 });

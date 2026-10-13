@@ -1,4 +1,4 @@
-import type { Rng } from '../formulas/rng.js';
+import { createRng, type Rng } from '../formulas/rng.js';
 import { Cell, cellToWorld, worldToCell, gridSize, type Grid } from '../world/grid.js';
 import type { Doorway, LaneSet, SlotLog } from './slots.js';
 
@@ -301,6 +301,25 @@ export function neighborEdges(rooms: Room[], maxGap = 8): [number, number][] {
 }
 
 /**
+ * ⭐ 13.10 (владелец: «коридоры шириной от 2 до 4 клеток, чтобы были разные варианты»): ШИРИНА СВЯЗКИ КОМНАТ — `corridorWidth` (пусто — 4)
+ * и `corridorWidthMax` параметров алгоритма. Без «до» (или «до» = «от») — одна ширина на этаж, `rng` не трогается: этаж байт-в-байт прежний.
+ * С ней — на каждую связку (`connectByNeighborGraph` → `connectRooms`; Г-коридор её не читает — он 2, как был) своя ширина от min до max
+ * включительно, бросок `rng.int` из СВОЕГО потока этажа (`generateFloorParams`: `seed ^ 0xc0dd` на попытку): комнаты, спавн и выходы
+ * бросаются до связок и не сдвигаются; запасной бросок `pickStrip` (зависит от ширины) и зависящие от сетки броски `lockRoom`/`decorate`
+ * основной поток сдвинуть могут (ревью: ~20 % этажей крипты — двери и рычаги в другом месте). Потока нет (алгоритм
+ * позван напрямую) — свой поток от констант, тоже детерминированно.
+ */
+export function corridorWidths(params: { corridorWidth?: number; corridorWidthMax?: number }, rng?: Rng): () => number {
+  const a = params.corridorWidth ?? 4, b = params.corridorWidthMax ?? a;
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  if (hi <= lo) return () => lo;
+  const r = rng ?? createRng(CORRIDOR_WIDTH_STREAM);
+  return () => r.int(lo, hi);
+}
+/** ⭐ 13.10: поток rng ширины коридоров (`seed ^ CORRIDOR_WIDTH_STREAM` — `generateFloorParams`). */
+export const CORRIDOR_WIDTH_STREAM = 0xc0dd;
+
+/**
  * Связность через граф соседства: MST (Kruskal по рёбрам соседства, вес = дистанция) — база и
  * гарантия проходимости; браид добавляет ОСТАВШИЕСЯ рёбра соседства (≈`loops×комнат`, приоритет
  * ДАЛЁКИХ в графе — крупные обходы) → каждое ребро режется РОВНО раз ⇒ НЕТ параллельных дублей.
@@ -310,12 +329,14 @@ export function neighborEdges(rooms: Room[], maxGap = 8): [number, number][] {
 export function connectByNeighborGraph(
   grid: Grid,
   rooms: Room[],
-  opts: { loops: number; excludeIdx?: number; branch?: number[]; width?: number },
+  opts: { loops: number; excludeIdx?: number; branch?: number[]; width?: number; widthOf?: () => number },
   rng: Rng,
 ): number {
   const n = rooms.length;
   if (n <= 1) return 0;
   const width = opts.width ?? 2;
+  // ⭐ 13.10: ширина — на КАЖДУЮ связку (`corridorWidths`: свой поток rng); нет — одна на этаж, как прежде
+  const widthOf = opts.widthOf ?? ((): number => width);
   const excl = opts.excludeIdx ?? -1;
   const key = (i: number, j: number): string => (i < j ? `${i}-${j}` : `${j}-${i}`);
   const cand = neighborEdges(rooms);
@@ -330,7 +351,7 @@ export function connectByNeighborGraph(
   const adj: number[][] = rooms.map(() => []);
   const carve = (i: number, j: number): void => {
     const k = key(i, j); if (carved.has(k)) return; carved.add(k);
-    connectRooms(grid, rooms[i]!, rooms[j]!, rooms, width, rng);
+    connectRooms(grid, rooms[i]!, rooms[j]!, rooms, widthOf(), rng);
     adj[i]!.push(j); adj[j]!.push(i);
   };
 
