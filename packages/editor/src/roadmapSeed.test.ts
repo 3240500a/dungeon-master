@@ -217,13 +217,14 @@ describe('правка 13.10: декор подземелий и экран за
     d.seedRev = 4;
     return d;
   };
-  const migrated = (): RoadmapDoc => { const d = rev4Copy(); migrateRoadmap(d); return d; };
   const rev5 = SEED_PATCHES.find((p) => p.rev === 5)!;
+  /** ⭐ 14.10: только правка 5 (правка 6 закрывает m2-29/m2-30 — её проверяет свой блок ниже). */
+  const migrated = (): RoadmapDoc => { const d = rev4Copy(); rev5.apply(d); d.seedRev = 5; return d; };
   const ms = (d: RoadmapDoc, id: string) => d.milestones.find((m) => m.id === id)!;
 
-  it('правка 5 — последняя ревизия, и свежий сид её уже содержит', () => {
+  it('правка 5 есть, и свежий сид её уже содержит', () => {
     expect(rev5, 'правка 5 есть').toBeTruthy();
-    expect(SEED_REV).toBe(5);
+    expect(SEED_REV).toBeGreaterThanOrEqual(5);
     expect(item(SEED(), 'm2-25')?.done).toBe(true);
     expect(item(SEED(), 'm4-12')?.done).toBe(true);
   });
@@ -269,10 +270,58 @@ describe('правка 13.10: декор подземелий и экран за
     migrateRoadmap(d);
     expect(item(d, 'm4-12'), 'удалённый пункт не вернулся').toBeUndefined();
 
-    const full = migrated();
+    const full = rev4Copy();
+    migrateRoadmap(full);   // ⭐ 14.10: до последней ревизии (правка 6 и дальше), затем повтор правки 5
     const snapshot = JSON.stringify(full);
-    expect(migrateRoadmap(full), 'ревизия уже 5').toBe(false);
+    expect(migrateRoadmap(full), 'ревизия уже последняя').toBe(false);
     rev5.apply(full);   // мимо `seedRev`: addItem / markDone / addNote сами обязаны не дублировать
     expect(JSON.stringify(full), 'повтор правки 5 — без изменений').toBe(snapshot);
+  });
+});
+
+/**
+ * ⭐ ПРАВКА 6 (14.10.2026). Копия у пользователя на ревизии 5. Проверяем: наборы и Мастерская — с галкой, коммитами и датой,
+ * заметка правки 5 у m2-29 осталась первой, m2-7 галку не получил, повтор ничего не меняет.
+ */
+describe('правка 14.10: декор Ф4 «Наборы» и Ф3 «Мастерская»', () => {
+  const rev5Copy = (): RoadmapDoc => {
+    const d = BASE_SEED();
+    for (const p of SEED_PATCHES) if (p.rev <= 5) p.apply(d);
+    d.seedRev = 5;
+    return d;
+  };
+  const migrated = (): RoadmapDoc => { const d = rev5Copy(); migrateRoadmap(d); return d; };
+
+  it('правка 6 — последняя ревизия, и свежий сид её уже содержит', () => {
+    expect(SEED_PATCHES.find((p) => p.rev === 6), 'правка 6 есть').toBeTruthy();
+    expect(SEED_REV).toBe(6);
+    expect(item(SEED(), 'm2-29')?.done).toBe(true);
+    expect(item(SEED(), 'm2-30')?.done).toBe(true);
+  });
+
+  it('наборы и Мастерская — с галкой, датой и коммитом; заметка правки 5 у наборов — целиком и первой', () => {
+    const before = item(rev5Copy(), 'm2-29')!;
+    expect(before.done, 'до правки наборы в работе').toBeFalsy();
+    const d = migrated();
+    for (const id of ['m2-29', 'm2-30']) {
+      expect(item(d, id)?.done, `${id} сделан`).toBe(true);
+      expect(item(d, id)?.note, `у ${id} дата`).toMatch(/1[34]\.10/);
+      expect(item(d, id)?.note, `у ${id} коммит`).toMatch(/\b[0-9a-f]{7}\b/);
+    }
+    expect(item(d, 'm2-29')!.note!.startsWith(before.note! + '\n'), 'старая заметка целиком и первой').toBe(true);
+    expect(item(d, 'm2-30')?.note).toMatch(/214f217/);
+    for (const id of ['m2-31', 'm2-32']) expect(item(d, id)?.done, `${id} — впереди`).toBeFalsy();
+    expect(item(d, 'm2-7')?.done, 'вид крипты принимает владелец — галки нет').toBeFalsy();
+    expect(item(d, 'm2-7')?.note).toMatch(/Сверка 14\.10/);
+  });
+
+  it('удалённое руками не воскресает; повтор правки ничего не меняет', () => {
+    const d = rev5Copy();
+    for (const m of d.milestones) m.items = m.items.filter((it) => it.id !== 'm2-30');
+    migrateRoadmap(d);
+    expect(item(d, 'm2-30'), 'удалённый пункт не вернулся').toBeUndefined();
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 6)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 6 — без изменений').toBe(once);
   });
 });
