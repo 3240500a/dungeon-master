@@ -122,17 +122,19 @@ describe('правка 11.10: Unity — основной клиент', () => {
   };
   const migrated = (): RoadmapDoc => { const d = rev3Copy(); migrateRoadmap(d); return d; };
   const rev4 = SEED_PATCHES.find((p) => p.rev === 4)!;
+  /** Ровно то, что дала правка 4, — без поздних правок (правка 5 закрыла m4-12). */
+  const at4 = (): RoadmapDoc => { const d = rev3Copy(); rev4.apply(d); d.seedRev = 4; return d; };
   const ms = (d: RoadmapDoc, id: string) => d.milestones.find((m) => m.id === id)!;
 
-  it('правка 4 — последняя ревизия, и свежий сид её уже содержит', () => {
+  it('правка 4 есть, и свежий сид её уже содержит', () => {
     expect(rev4, 'правка 4 есть').toBeTruthy();
-    expect(SEED_REV).toBe(4);
+    expect(SEED_REV).toBeGreaterThanOrEqual(4);
     expect(item(SEED(), 'm1-7')?.done).toBe(true);
     expect(item(SEED(), 'm2-23')?.done).toBe(true);
   });
 
   it('новые пункты появились с верными галками и заметками', () => {
-    const d = migrated();
+    const d = at4();
     for (const id of ['m1-7', 'm2-18', 'm2-19', 'm2-21', 'm2-22', 'm2-23', 'm2-24', 'm3-24']) {
       expect(item(d, id), `пункт ${id} обязан появиться`).toBeTruthy();
       expect(item(d, id)?.done, `пункт ${id} сделан`).toBe(true);
@@ -184,7 +186,7 @@ describe('правка 11.10: Unity — основной клиент', () => {
   it('второй прогон миграции — ничего, и повтор самой правки ничего не удваивает', () => {
     const d = migrated();
     const snapshot = JSON.stringify(d);
-    expect(migrateRoadmap(d), 'ревизия уже 4').toBe(false);
+    expect(migrateRoadmap(d), 'ревизия уже последняя').toBe(false);
     expect(JSON.stringify(d)).toBe(snapshot);
     rev4.apply(d);   // мимо `seedRev`: addItem / addNote / appendDesc сами обязаны не дублировать
     expect(JSON.stringify(d), 'повтор правки 4 — без изменений').toBe(snapshot);
@@ -199,5 +201,78 @@ describe('правка 11.10: Unity — основной клиент', () => {
       expect(desc.startsWith(ms(base, id).desc! + '\n\n'), `${id}: прежнее описание целиком`).toBe(true);
       expect(desc.split('⚠ СВЕРКА 11.10.2026:').length - 1, `${id}: абзац сверки ровно один`).toBe(1);
     }
+  });
+});
+
+/**
+ * ⭐ ПРАВКА 5 (13.10.2026). Копия у пользователя на ревизии 4. Проверяем: фазы декора встали в м02 ПЕРЕД итоговым
+ * пунктом вехи, галки — только у сделанного, m4-12 закрыт с дописанной (не затёртой) заметкой правки 4, m2-7 галку
+ * не получил (базовую крипту принимает владелец), удалённое руками не воскресает.
+ */
+describe('правка 13.10: декор подземелий и экран загрузки', () => {
+  /** Копия «как у пользователя до 13.10»: снимок + правки 2–4, ревизия 4. */
+  const rev4Copy = (): RoadmapDoc => {
+    const d = BASE_SEED();
+    for (const p of SEED_PATCHES) if (p.rev <= 4) p.apply(d);
+    d.seedRev = 4;
+    return d;
+  };
+  const migrated = (): RoadmapDoc => { const d = rev4Copy(); migrateRoadmap(d); return d; };
+  const rev5 = SEED_PATCHES.find((p) => p.rev === 5)!;
+  const ms = (d: RoadmapDoc, id: string) => d.milestones.find((m) => m.id === id)!;
+
+  it('правка 5 — последняя ревизия, и свежий сид её уже содержит', () => {
+    expect(rev5, 'правка 5 есть').toBeTruthy();
+    expect(SEED_REV).toBe(5);
+    expect(item(SEED(), 'm2-25')?.done).toBe(true);
+    expect(item(SEED(), 'm4-12')?.done).toBe(true);
+  });
+
+  it('сделанное — с галкой, датой и коммитами; план и работа в процессе — без галки', () => {
+    const d = migrated();
+    for (const id of ['m2-25', 'm2-26', 'm2-27', 'm2-28']) {
+      expect(item(d, id), `пункт ${id} обязан появиться`).toBeTruthy();
+      expect(item(d, id)?.done, `пункт ${id} сделан`).toBe(true);
+      expect(item(d, id)?.note, `у ${id} дата`).toMatch(/1[23]\.10/);
+      expect(item(d, id)?.note, `у ${id} коммит`).toMatch(/\b[0-9a-f]{7}\b/);
+    }
+    for (const id of ['m2-29', 'm2-30', 'm2-31', 'm2-32', 'm4-13']) {
+      expect(item(d, id), `пункт ${id} обязан появиться`).toBeTruthy();
+      expect(item(d, id)?.done, `${id} — работа впереди, без галки`).toBeFalsy();
+    }
+    expect(item(d, 'm2-29')?.note, 'наборы — в работе').toMatch(/в работе/);
+    expect(item(d, 'm2-7')?.done, 'базовую крипту принимает владелец — галки нет').toBeFalsy();
+    expect(item(d, 'm2-7')?.note, 'но сверка дописана').toMatch(/Сверка 13\.10/);
+  });
+
+  it('новые пункты — в своих вехах и перед итоговым «✅»', () => {
+    const d = migrated();
+    expect(ms(d, 'м02').items.map((x) => x.id).slice(-9)).toEqual(
+      ['m2-25', 'm2-26', 'm2-27', 'm2-28', 'm2-29', 'm2-30', 'm2-31', 'm2-32', 'm2-10']);
+    const m4 = ms(d, 'м04').items.map((x) => x.id);
+    expect(m4.indexOf('m4-13'), 'логотип экрана загрузки — сразу за самим экраном').toBe(m4.indexOf('m4-12') + 1);
+    expect(m4[m4.length - 1], 'итог вехи остаётся последним').toBe('m4-11');
+  });
+
+  it('⭐ m4-12 закрыт, а заметка правки 4 осталась целиком и первой', () => {
+    const before = item(rev4Copy(), 'm4-12')!;
+    expect(before.done, 'до правки экран загрузки открыт').toBeFalsy();
+    const after = item(migrated(), 'm4-12')!;
+    expect(after.done).toBe(true);
+    expect(after.note!.startsWith(before.note! + '\n'), 'старая заметка целиком и первой').toBe(true);
+    expect(after.note).toMatch(/1fd5b76[\s\S]*bd6e88c[\s\S]*30722bd/);
+  });
+
+  it('удалённое руками не воскресает; второй прогон и повтор правки ничего не меняют', () => {
+    const d = rev4Copy();
+    for (const m of d.milestones) m.items = m.items.filter((it) => it.id !== 'm4-12');
+    migrateRoadmap(d);
+    expect(item(d, 'm4-12'), 'удалённый пункт не вернулся').toBeUndefined();
+
+    const full = migrated();
+    const snapshot = JSON.stringify(full);
+    expect(migrateRoadmap(full), 'ревизия уже 5').toBe(false);
+    rev5.apply(full);   // мимо `seedRev`: addItem / markDone / addNote сами обязаны не дублировать
+    expect(JSON.stringify(full), 'повтор правки 5 — без изменений').toBe(snapshot);
   });
 });
