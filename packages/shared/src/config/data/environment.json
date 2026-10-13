@@ -4,7 +4,8 @@
     "name": "Крипта",
     "biomeId": "crypt",
     "enabled": true,
-    "fade": { "start": 95, "end": 230, "kneeLow": 20, "kneeHigh": 46, "faceYaw": 0 }
+    "fade": { "start": 95, "end": 230, "kneeLow": 20, "kneeHigh": 46, "faceYaw": 0 },
+    "chestModel": "crypt_wooden_chest_01"
   },
   {
     "id": "caves",

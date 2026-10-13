@@ -348,6 +348,11 @@ Object.assign(fieldLabels, {
 // ⭐ 12.10 (Ф2 «Слоты и полосы»): правила пропов биома (`dressing.props`) — подписи по имени и по пути «родитель.ключ» (`decorLabels.ts`)
 Object.assign(fieldLabels, DECOR_FIELD_LABELS);
 Object.assign(fieldPathLabels, DECOR_PATH_LABELS);
+// ⭐ 13.10: модель сундука лута биома («Мир → Окружение», `environment[].chestModel`) — выпадашка моделей каталога Unity (манифест `art`, вид
+// env/prop); '' — заглушка-бокс. Читает только Unity (крышка откидывается по `chest-opened`, окова — цвета тира); сервер и веб-3D — нет
+fieldLabels.chestModel = 'Модель сундука лута (Unity)';
+const artModelKeys = (): string[] => [...new Set(((data['art'] as { id?: string; kind?: string }[]) ?? []).filter((a) => (a.kind === 'env' || a.kind === 'prop') && a.id).map((a) => String(a.id)))];
+fieldEnumSources.chestModel = () => ['', ...artModelKeys()];
 // ⭐ 08.10: огонь объекта (objects[].fx) — вид выпадашкой, «— нет огня —» снимает поле целиком (общий рендер необязательного объекта
 // оставил бы `{ scale }` без `kind`, и конфиг не прошёл бы схему); размер и сдвиг — только при выбранном виде. Читает только Unity.
 fieldCustomRenderers.fx = (value, onChange) => {
@@ -1391,6 +1396,7 @@ async function validateConfig(): Promise<ConfigIssue[]> {
   for (const f of ['baseMap', 'bumpMap', 'maskMap', 'occlusionMap', 'emissionMap']) ref('materials', f, textures, 'textures', 'error');
   ref('items.base', 'modelId', models, 'models', 'warn');       // шмотка ссылается на незалитую 3D-модель — фолбэк на процедурку
   ref('monster-gear', 'modelId', models, 'models', 'warn');
+  ref('environment', 'chestModel', new Set(artModelKeys()), 'art (модели каталога Unity)', 'warn');   // ⭐ 13.10: нет — сундуки Unity на боксах
 
   // 3) submeshMaterials{} на моделях → materials [error]
   for (const m of arr('models')) { const sm = m.submeshMaterials; if (sm && typeof sm === 'object') for (const [k, v] of Object.entries(sm as Record<string, unknown>)) if (typeof v === 'string' && v && !materials.has(v)) issues.push({ section: 'models', id: String(m.id), msg: `submeshMaterials["${k}"]="${v}" — нет в materials`, severity: 'error' }); }
