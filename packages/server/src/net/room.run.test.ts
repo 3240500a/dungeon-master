@@ -2413,7 +2413,11 @@ describe('Room — раунд 4: узел забега не фармится в�
     expect(db.data.get(save.charId)?.run?.node?.chests, 'и в базу — с возвратом в город').toContain(chest.id);
     await resume(room, pid);
     expect(nodeNow(ws).id, 'продолжили тот же узел').toBe(node);
-    expect(ws.last('areaChanged')!.floor.chests.map((c) => c.id), 'открытый сундук клиенту не приходит').not.toContain(chest.id);
+    // ⭐ 13.10 (владелец: «пусть сундук не пропадает»): открытый приходит — с `opened: true` (было — не приходил вовсе, и после
+    // продолжения узла сундука в комнате не было); закрытые — без поля
+    const sent = ws.last('areaChanged')!.floor.chests;
+    expect(sent.map((c) => c.id).sort(), 'клиенту — все сундуки узла').toEqual([...all].sort());
+    expect(sent.filter((c) => c.opened).map((c) => c.id), 'открытый — открытым, остальные — без поля').toEqual([chest.id]);
     expect(wOf(room).chests.map((c) => c.id).sort(), 'сундуки узла те же').toEqual([...all].sort());
     const again = wOf(room).chests.find((c) => c.id === chest.id)!;
     expect(again.opened, 'сундук открыт и после продолжения').toBe(true);
@@ -2426,6 +2430,18 @@ describe('Room — раунд 4: узел забега не фармится в�
     room.setInput(pid, idle);
     expect(itemDrops(room), 'второй добычи нет ни командой, ни по [E]').toBe(0);
     expect(save.run?.node?.chests.filter((id) => id === chest.id), 'запись без повторов').toHaveLength(1);
+
+    // ⭐ 13.10: и вошедший посреди этажа (кадр `joined`) видит его открытым; его [E] и команда тоже ничего не дают
+    const peer = addPeer(room, 'user-r401-chest-b');
+    const seen = peer.ws.last('joined')!.floor.chests;
+    expect(seen.map((c) => c.id).sort(), 'вошедшему — все сундуки узла').toEqual([...all].sort());
+    expect(seen.filter((c) => c.opened).map((c) => c.id), 'вошедшему — открытый открытым').toEqual([chest.id]);
+    standAt(room, peer.pid, again.pos);
+    room.openChest(peer.pid, chest.id);
+    room.setInput(peer.pid, { ...idle, interact: true });
+    room.step(false);
+    room.setInput(peer.pid, idle);
+    expect(itemDrops(room), 'и вошедшему второй добычи нет').toBe(0);
   });
 
   it('⭐ убитые уник и босс не встают: продолжение узла — без них, и повтор круга награды не даёт', async () => {

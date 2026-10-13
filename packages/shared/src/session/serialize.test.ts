@@ -5,7 +5,7 @@ import { generateMonster } from '../formulas/monstergen.js';
 import { Cell, makeGrid, cellToWorld, type Grid } from '../world/grid.js';
 import { newBotSave } from '../sim/playerBot.js';
 import { GameSession, type PlayerInput } from './session.js';
-import { serializeWorld, peerInfoOf } from './serialize.js';
+import { serializeWorld, peerInfoOf, floorInit } from './serialize.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -65,5 +65,53 @@ describe('serializeWorld / removePlayer', () => {
     expect(Object.keys(s.world.players)).toEqual(['p2']);
     expect(() => s.tick(1 / 30, { p2: idle })).not.toThrow();
     expect(serializeWorld(s.world).players.map((p) => p.id)).toEqual(['p2']);
+  });
+});
+
+/**
+ * ⭐ 13.10 (владелец: «пусть сундук не пропадает»): `FloorInit.chests` — ВСЕ сундуки этажа, открытый — с `opened: true`, у закрытого поля
+ * нет (кадр прежний). Было — открытые отбрасывались, и вошедший посреди этажа / продолжение узла видели комнату без сундука. Открыть его
+ * второй раз нельзя ни по id, ни ближайшим ([E] 2D-клиента и бота) — правило ядра, клиент ему не нужен.
+ */
+describe('⭐ 13.10: floorInit — сундуки этажа все, открытый с `opened: true`', () => {
+  it('закрытый — без поля, открытый — с полем и на своём месте; повторное открытие — отказ без добычи', () => {
+    const r = reg();
+    const s = new GameSession(r, 3, 'normal', { rewards: true });
+    s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const tier = r.get('chests')[0]!.id;
+    const a = cellToWorld(5, 5), b = cellToWorld(12, 5);
+    s.enterFloor(3, { grid: field(20, 12), spawn: cellToWorld(6, 6), monsters: [], chests: [{ id: 1, ...a, tier }, { id: 2, ...b, tier }] });
+    const before = floorInit('dungeon', s.world, []).chests;
+    expect(before).toEqual([{ id: 1, x: a.x, y: a.y, tier }, { id: 2, x: b.x, y: b.y, tier }]);
+    for (const c of before) expect(c, 'у закрытого поля нет — кадр прежний').not.toHaveProperty('opened');
+
+    s.world.players.p1!.pos = { ...a };
+    expect(s.openChest('p1', 1), 'открылся').toBe(true);
+    const dropped = s.world.drops.length;
+    expect(dropped, 'высыпал добычу').toBeGreaterThan(0);
+    const after = floorInit('dungeon', s.world, []).chests;
+    expect(after.map((c) => c.id), 'открытый не пропал').toEqual([1, 2]);
+    expect(after[0]).toEqual({ id: 1, x: a.x, y: a.y, tier, opened: true });
+    expect(after[1], 'соседний закрытый — без поля').not.toHaveProperty('opened');
+    expect(JSON.parse(JSON.stringify(after)), 'по проводу — то же').toEqual(after);
+
+    expect(s.openChest('p1', 1), 'второй раз по id — отказ').toBe(false);
+    expect(s.openChest('p1'), 'и ближайшим без id ([E]) — тоже').toBe(false);
+    expect(s.world.drops.length, 'второй добычи нет').toBe(dropped);
+  });
+
+  it('продолжение узла (`opened` в раскладке) — открыт с первого кадра; город и этаж без сундуков — пусто', () => {
+    const r = reg();
+    const s = new GameSession(r, 3, 'normal', { rewards: true });
+    s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const tier = r.get('chests')[0]!.id;
+    const a = cellToWorld(5, 5);
+    s.enterFloor(3, { grid: field(20, 12), spawn: cellToWorld(6, 6), monsters: [], chests: [{ id: 7, ...a, tier, opened: true }] });
+    expect(floorInit('dungeon', s.world, []).chests).toEqual([{ id: 7, x: a.x, y: a.y, tier, opened: true }]);
+    s.world.players.p1!.pos = { ...a };
+    expect(s.openChest('p1', 7)).toBe(false);
+    expect(s.world.drops).toHaveLength(0);
+    s.enterFloor(1, { grid: field(20, 12), spawn: cellToWorld(6, 6), monsters: [] });
+    expect(floorInit('town', s.world, []).chests).toEqual([]);
   });
 });

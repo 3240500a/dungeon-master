@@ -671,9 +671,11 @@ export async function startOnline3d(): Promise<void> {
         mk.position.set(lv.x, 11, lv.y); floorGroup.add(mk); leverMeshes.set(lv.doorId, mk);
         interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });
       }
-      // Сундуки: цвет говорит о тире, подпись — о том, что он вообще открывается. Открытые
-      // сервер не шлёт вовсе — гасим только те, что открыли при нас (событие `chest-opened`).
+      // Сундуки: цвет говорит о тире, подпись — о том, что он вообще открывается. Открытый при нас гасим по событию
+      // `chest-opened`. ⭐ 13.10: открытый раньше сервер шлёт с `opened: true` (вход посреди этажа, продолжение узла) —
+      // веб-3D (стенд) рисует его так же, как после события: ни меша, ни [E] (крышку откидывает только Unity).
       for (const ch of floor.chests) {
+        if (ch.opened) continue;
         const tint = ch.tier === 'rare' ? 0xd0a24a : ch.tier === 'magic' ? 0x7fb6e0 : 0x9a7a52;
         const box = new THREE.Mesh(new THREE.BoxGeometry(26, 18, 18),
           new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: 0.25 }));

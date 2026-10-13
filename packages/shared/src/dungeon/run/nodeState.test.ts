@@ -151,7 +151,7 @@ describe('R4-01: ядро собирает узел по записи', () => {
     return s;
   }
 
-  it('открытый сундук не открывается второй раз — ни по id, ни ближайший; клиенту не приходит', () => {
+  it('открытый сундук не открывается второй раз — ни по id, ни ближайший; клиенту приходит открытым (⭐ 13.10)', () => {
     const s = session();
     s.enterFloor(3, layout({ opened: [1] }));
     const p = s.world.players.p1!;
@@ -159,7 +159,8 @@ describe('R4-01: ядро собирает узел по записи', () => {
     p.pos = { ...c1.pos };
     expect(s.openChest('p1', 1)).toBe(false);
     expect(s.world.drops, 'второй добычи нет').toHaveLength(0);
-    expect(floorInit('dungeon', s.world, []).chests.map((c) => c.id)).toEqual([2]);
+    // ⭐ 13.10 (владелец: «пусть сундук не пропадает»): было — открытый клиенту не приходил вовсе, и после продолжения узла его не было
+    expect(floorInit('dungeon', s.world, []).chests.map((c) => [c.id, c.opened])).toEqual([[1, true], [2, undefined]]);
   });
 
   it('дёрнутый рычаг: дверь открыта с первого кадра, рычаг и дверь клиенту не приходят', () => {

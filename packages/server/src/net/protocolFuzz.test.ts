@@ -46,6 +46,9 @@ import { Prng, mutateFrame, junkText, junkBytes, shrinkOps } from './protocolFuz
  *       эскиз, отказ и прочие команды — ноль. Судится только операция, начатая в тишине (иначе в окно попала бы чужая запись в полёте).
  *       ⭐ E2E 29.09 (шестой прогон): и строки `play_sessions` (своя модель с задержкой базы, периодическая запись — раз в 2 с): у сессии одна
  *       строка, у закрытой — закрыта и несёт её итог.
+ *  I11 — ⭐ 13.10: последний кадр этажа соединения (`joined`/`areaChanged`) несёт ВСЕ сундуки области; `opened` — только `true` и только у
+ *       открытого в мире; открытый в мире без пометки открыт позже — и событие `chest-opened` соединению пришло. Было — открытые не слались,
+ *       и вошедший посреди этажа (код, реконнект, «Продолжить») видел комнату без сундука.
  * HTTP-ручки аккаунта — свой блок в конце файла (H1–H4).
  *
  * МОДЕЛЬ. Сценарии: «смесь» (честный один или с другом, соседняя вкладка аккаунта, чужие аккаунты, анонимы, мусор всех видов) и
@@ -388,7 +391,10 @@ type HonestAct =
   | { a: 'enter'; p: number } | { a: 'joinFriend' } | { a: 'ping' } | { a: 'runStatus' } | { a: 'leave' }
   | { a: 'input'; n: number; hz: 30 | 60; press: 0 | 1 | 2 | 3; mv: number }
   | { a: 'cmd'; cmd: CmdKind; pick: number }
-  | { a: 'descend'; alt: boolean } | { a: 'return' } | { a: 'arena' } | { a: 'lever' } | { a: 'chest' }
+  | { a: 'descend'; alt: boolean } | { a: 'return' } | { a: 'arena' } | { a: 'lever' }
+  /** `walk` — ⭐ 13.10 (I11): сперва подойти к ближайшему ЗАКРЫТОМУ сундуку (как честный клиент к подсказке [E]); случайная модель ставит его
+   *  всегда (раньше команда уходила от входа и сервер её молча отклонял — сундуки в прогонах не открывались), старые повторы без поля — как было. */
+  | { a: 'chest'; walk?: true }
   | { a: 'reconnect'; mode: Mode; p: number }
   | { a: 'flap'; mode: Mode; p: number }
   /** ⭐ R15-04: связь пропала на `sec` секунд без закрытия сокета — клиент копил ввод (`hz`), TCP отдал всё разом. */
@@ -422,7 +428,26 @@ interface Violation {
 
 // ── Транспорт ────────────────────────────────────────────────────────────────
 /** Кадр, полученный клиентом: тип, размер, разобранный JSON (для маленьких). */
-interface Got { t: string; bytes: number; f?: Record<string, unknown>; op: number }
+interface Got {
+  t: string; bytes: number; f?: Record<string, unknown>; op: number;
+  /** ⭐ 13.10 (I11): сундуки кадра этажа (`joined`/`areaChanged` — большие, целиком не разбираются). */
+  chests?: { id: number; opened?: unknown }[];
+  /** ⭐ 13.10 (I11): id сундуков из событий `chest-opened` этого кадра. */
+  opened?: number[];
+}
+
+/** ⭐ 13.10 (I11): сундуки из текста кадра этажа — массив `chests` объекта `floor` (в сундуке массивов нет: до первой `]`). */
+function floorChests(data: string): { id: number; opened?: unknown }[] | undefined {
+  const fl = data.indexOf('"floor":{');
+  const at = fl < 0 ? -1 : data.indexOf('"chests":[', fl);
+  if (at < 0) return undefined;
+  const from = at + '"chests":'.length;
+  try { return JSON.parse(data.slice(from, data.indexOf(']', from) + 1)) as { id: number; opened?: unknown }[]; } catch { return undefined; }
+}
+/** ⭐ 13.10 (I11): id сундуков событий `chest-opened` из текста кадра `events` (большой кадр целиком не разбирается). */
+function chestOpenedIds(data: string): number[] {
+  return [...data.matchAll(/\{"type":"chest-opened","id":(\d+)/g)].map((m) => Number(m[1]));
+}
 
 /** Сокет uWS для настоящего `gameWsBehavior`: `end`/`close` зовут обработчик закрытия сразу — как uWS. */
 class FakeUwsSocket {
@@ -638,7 +663,8 @@ class Run {
   }
   private restore: (() => void)[] = [];
 
-  constructor(readonly seed: number) {}
+  /** `bug` — самопроверка этого прогона (по умолчанию — `DM_FUZZ_SELFTEST`). */
+  constructor(readonly seed: number, readonly bug = SELFTEST) {}
 
   get now(): number { return clock; }
 
@@ -707,7 +733,7 @@ class Run {
     // Фоновая дописка копий (R3-19) — по своему таймеру процесса; фаззер зовёт её сам (конец последовательности).
     const si = vi.spyOn(globalThis, 'setInterval').mockImplementation((() => ({ unref() { return this; } })) as never);
     try { this.rm = new RoomManagerCtor(cfg) as RMIn; } finally { si.mockRestore(); }
-    if (SELFTEST) this.restore.push(injectBug(SELFTEST, this.rm));
+    if (this.bug) this.restore.push(injectBug(this.bug, this.rm));
     this.behavior = gameWsBehavior({ DISABLED: 0 }, (conn) => {
       const slot = this.opening;
       if (slot) slot.conn = conn;
@@ -738,7 +764,12 @@ class Run {
       t = /^\{"t":"([a-zA-Z]+)"/.exec(data)?.[1] ?? '?';
       if (data.length < 8192) { try { f = JSON.parse(data) as Record<string, unknown>; } catch { /* не JSON — видно по типу */ } }
     }
-    slot.frames.push({ t, bytes, f, op: this.opIndex });
+    const got: Got = { t, bytes, f, op: this.opIndex };
+    if (typeof data === 'string') {   // ⭐ 13.10 (I11)
+      if (t === 'joined' || t === 'areaChanged') got.chests = floorChests(data);
+      else if (t === 'events' && data.includes('"chest-opened"')) got.opened = chestOpenedIds(data);
+    }
+    slot.frames.push(got);
     if (!this.ticking) { this.opOut.bytes += bytes; this.opOut.frames.push({ slot: slot.n, t, bytes }); }
   }
 
@@ -927,6 +958,39 @@ class Run {
       this.refused(s, 'сервер закрыл честное соединение', `код ${s.serverClosed}`, 'close');
     }
     this.checkItems();
+    for (const s of this.slots) if (s) this.checkChests(s);
+  }
+
+  /**
+   * ⭐ 13.10 (I11): СУНДУКИ ЭТАЖА У КЛИЕНТА — КАК В МИРЕ. Последний кадр этажа соединения, которое играет в комнате, несёт все сундуки
+   * области в её порядке; `opened` — только `true` и только у открытого (открытие в пределах этажа монотонно); открытый в мире без пометки
+   * открыт после кадра — и событие `chest-opened` соединение получило. Иначе клиент рисует открытый закрытым с [E] — или не рисует вовсе.
+   */
+  checkChests(s: SlotRt, where = `слот ${s.n} (${s.role})`): void {
+    if (!this.alive(s) || s.serverClosed !== undefined) return;
+    const e = this.rm.conns.get(s.conn);
+    if (!e || !e.room.clients.has(e.pid)) return;
+    let k = -1;
+    for (let i = s.frames.length - 1; i >= 0; i--) if (s.frames[i]!.chests) { k = i; break; }
+    if (k < 0) return;
+    const sent = s.frames[k]!.chests!;
+    const world = e.room.session.world.chests ?? [];
+    const at = `${where}, комната ${e.room.code} (${e.room.area})`;
+    const ids = (l: readonly { id: number }[]): string => l.map((c) => c.id).join(',');
+    if (ids(sent) !== ids(world)) {
+      this.violate('I11', 'кадр этажа — не все сундуки области', `${at}: прислано [${ids(sent)}], в мире [${ids(world)}]`);
+      return;
+    }
+    const later = new Set<number>();
+    for (let i = k + 1; i < s.frames.length; i++) for (const id of s.frames[i]!.opened ?? []) later.add(id);
+    world.forEach((w, i) => {
+      const f = sent[i]!;
+      if (f.opened !== undefined && f.opened !== true) this.violate('I11', '`opened` не `true`', `${at}: сундук ${w.id} — ${JSON.stringify(f.opened)}`);
+      else if (f.opened === true && !w.opened) this.violate('I11', 'закрытый сундук прислан открытым', `${at}: сундук ${w.id}`);
+      else if (w.opened && f.opened !== true && !later.has(w.id)) {
+        this.violate('I11', 'открытый сундук у клиента закрыт (ни пометки, ни события)', `${at}: сундук ${w.id}`);
+      }
+    });
   }
 
   /** I7: вещь — в одном месте; золото — целое ≥ 0. */
@@ -1173,9 +1237,11 @@ class Run {
       case 'lever': case 'chest': {
         if (!me || me.room.area !== 'dungeon') return;
         const w = me.room.session.world;
-        const list = act.a === 'lever' ? w.levers ?? [] : w.chests ?? [];
+        const walk = act.a === 'chest' && act.walk === true;
+        const list = act.a === 'lever' ? w.levers ?? [] : (w.chests ?? []).filter((c) => !walk || !c.opened);
         const near = [...list].sort((x, y) => Math.hypot(x.pos.x - me.p.pos.x, x.pos.y - me.p.pos.y) - Math.hypot(y.pos.x - me.p.pos.x, y.pos.y - me.p.pos.y))[0];
         if (!near) return;
+        if (walk) me.p.pos = { ...near.pos };   // ⭐ 13.10 (I11): дошёл до сундука, как честный клиент к подсказке [E]
         this.pace(s, 500);
         await this.honestSend(s, act.a === 'lever' ? { t: 'lever', leverId: near.id } : { t: 'chest', chestId: near.id }, () => null);
         return;
@@ -1672,7 +1738,7 @@ class Run {
         if (!s.frames.some((g) => g.t === 'joined')) {
           const err = s.frames.filter((g) => g.t === 'error').map((g) => `${String(g.f?.code)}: ${String(g.f?.msg)}`).join(' | ');
           this.violate('I8', `герой не входит снова после последовательности${st ? '' : ' (нет статуса забега)'}`, `${hero} (забег: ${String(st?.hasRun)}): ${err || 'молчание'}; закрыт ${String(s.serverClosed ?? '-')}`);
-        }
+        } else this.checkChests(s, `вход снова ${hero}`);   // ⭐ 13.10 (I11): «Продолжить» — и открытые сундуки узла открытыми
         this.close99(s);
         await this.quiesce();
         this.advance(3000);
@@ -1736,7 +1802,8 @@ function errorClass(e: string): string {
  *  • `r1504`      — ввод сверх потолка снова рвёт соединение (4008), а не отбрасывается: хвост обрыва связи (`stall`) — I5;
  *  • `i10-sketch` — эскиз пишется с причиной ковки, как до правки E2E 29.09: `/metrics` считает его ковкой (I10);
  *  • `i10-tmrace` — записи телеметрии сессии наперегонки, как до правки E2E 29.09 (шестой прогон): снятие посреди периодической — вторая
- *    строка сессии или её закрытие затёрто (I10).
+ *    строка сессии или её закрытие затёрто (I10);
+ *  • `i11-chest`  — кадр этажа без открытых сундуков, как до 13.10 (`floorInit` их отбрасывал): после продолжения узла сундука нет (I11).
  */
 const SELFTEST = process.env.DM_FUZZ_SELFTEST ?? '';
 function injectBug(name: string, rm: RMIn): () => void {
@@ -1799,6 +1866,14 @@ function injectBug(name: string, rm: RMIn): () => void {
         const p = this.session.world.players[cl.pid];
         if (!p) return;
         cl.tmRow = await upsertPlaySession(cl.tmRow, cl.userId, p.save.charId, cl.ws.ip, cl.tm as never, ended as boolean);
+      }));
+      break;
+    }
+    case 'i11-chest': {
+      const orig = R.currentFloorInit!;
+      spies.push(vi.spyOn(R, 'currentFloorInit').mockImplementation(function (this: unknown) {
+        const f = orig.call(this) as { chests: { opened?: true }[] };
+        return { ...f, chests: f.chests.filter((c) => !c.opened) };
       }));
       break;
     }
@@ -1870,7 +1945,7 @@ function genOps(seed: number, len = OPS_PER_SEQ): Op[] {
     [5, { a: 'return' }],
     [2, { a: 'arena' }],
     [3, { a: 'lever' }],
-    [3, { a: 'chest' }],
+    [3, { a: 'chest', walk: true }],
     [3, { a: 'leave' }],
     [3, { a: 'reconnect', mode: mode(), p: r.int(1000) }],
     [2, { a: 'flap', mode: mode(), p: r.int(1000) }],
@@ -1968,7 +2043,7 @@ function genPartyOps(r: Prng, len: number): Op[] {
         break;
       }
       case 'vote': ops.push(maybeRace(r.chance(0.6)
-        ? { k: 'honest', s: r.pick(honest), act: r.weighted<HonestAct>([[3, { a: 'descend', alt: r.chance(0.5) }], [3, { a: 'return' }], [1, { a: 'arena' }], [1, { a: 'chest' }], [1, { a: 'lever' }]]) }
+        ? { k: 'honest', s: r.pick(honest), act: r.weighted<HonestAct>([[3, { a: 'descend', alt: r.chance(0.5) }], [3, { a: 'return' }], [1, { a: 'arena' }], [1, { a: 'chest', walk: true }], [1, { a: 'lever' }]]) }
         : { k: 'junk', s: r.pick([2, 3]), junk: { j: 'valid', base: r.pick(['vote', 'vote', 'descend', 'return', 'arena'] as const), seed: r.fork() } })); break;
       case 'input': ops.push({ k: 'honest', s: r.pick(honest), act: { a: 'input', n: r.range(1, 20), hz: r.chance(0.5) ? 30 : 60, press: r.pick([0, 0, 1, 3] as const), mv: r.int(16) } }); break;
       case 'wait': ops.push({ k: 'wait', ms: r.pick([50, 200, 1000, 3000, 12_000]) }); break;
@@ -1981,8 +2056,8 @@ function genPartyOps(r: Prng, len: number): Op[] {
 }
 
 /** Прогнать последовательность с миром сида `seed`. */
-async function runOps(ops: readonly Op[], seed: number): Promise<Run> {
-  const run = new Run(seed);
+async function runOps(ops: readonly Op[], seed: number, bug = SELFTEST): Promise<Run> {
+  const run = new Run(seed, bug);
   run.setup();
   try {
     for (const op of ops) {
@@ -2222,6 +2297,36 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
     const uws = (ops: Op[]): Op[] => ops.map((o) => (o.k === 'open' ? { ...o, mode: 'uws' } : o));
     expect(i9(await runOps(uws(V1_OPS), 7))).toEqual([]);
     expect(i9(await runOps(uws(V2_OPS), 40014))).toEqual([]);
+  });
+
+  /**
+   * ⭐ 13.10 (владелец: «пусть сундук не пропадает»; I11): честный открыл сундук на узле, друг вошёл к нему по коду посреди этажа, честный
+   * переподключился («Продолжить» в ту же комнату) — оба видят тот сундук открытым (`opened: true`), а не пустое место. Случайная модель (с
+   * подходом) открывает сундуки редко, а до повторного входа после этого доходит ещё реже: самопроверка `i11-chest` (кадр этажа без открытых,
+   * как до 13.10) на 32 сидах по умолчанию не ловится, на 400 — ловится (сид 3, ужато 73 → 7 операций). Поэтому путь — нацеленный: на той же
+   * последовательности самопроверка — нарушение I11.
+   */
+  it('⭐ I11 (13.10): открытый сундук — открытым у вошедшего посреди этажа и у переподключившегося; без правки — нарушение', async () => {
+    const ops: Op[] = [
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 1 } },
+      { k: 'honest', s: 0, act: { a: 'descend', alt: false } },
+      { k: 'honest', s: 0, act: { a: 'chest', walk: true } },
+      { k: 'open', s: 1, mode: 'uws', ip: 1 },
+      { k: 'honest', s: 1, act: { a: 'joinFriend' } },
+      { k: 'honest', s: 0, act: { a: 'reconnect', mode: 'uws', p: 1 } },
+    ];
+    const run = await runOps(ops, 1310);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    // слот 0 после переподключения — новое соединение (свои кадры); открытие видно по кадрам этажа обоих
+    const openIds = (n: number): number[] => {
+      const fl = (run.slots[n]?.frames ?? []).filter((f) => f.chests).at(-1)?.chests ?? [];
+      return fl.filter((c) => c.opened === true).map((c) => c.id);
+    };
+    expect(openIds(1).length, 'вошедший по коду посреди этажа видит открытый сундук открытым').toBe(1);
+    expect(openIds(0), 'переподключившийся — тот же').toEqual(openIds(1));
+    const bad = await runOps(ops, 1310, 'i11-chest');
+    expect(bad.violations.filter((v) => v.inv === 'I11').map((v) => v.key), 'как до 13.10 — открытый сундук пропадает').toContain('I11: кадр этажа — не все сундуки области');
   });
 
   /**

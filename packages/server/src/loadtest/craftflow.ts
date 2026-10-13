@@ -296,7 +296,7 @@ async function hunt(c: Conn, reg: ConfigRegistry): Promise<boolean> {
     if (now - lastLog > 10_000) {
       lastLog = now;
       console.log(`  … этаж ${fl.depth} (${fl.runNodeId ?? '—'}), HP ${Math.round(me.hp)}/${c.maxHp}, в сумке ${save.inventory.length}, `
-        + `сундуков ${fl.chests.length - [...c.opened].length}, смертей ${c.died}`);
+        + `сундуков ${fl.chests.filter((ch) => !ch.opened && !c.opened.has(ch.id)).length}, смертей ${c.died}`);
     }
     if (!me.alive) { c.input({ move: { x: 0, y: 0 }, facing, attack: false, cast: null, interact: false }); continue; }
     const pos = { x: me.x, y: me.y };
@@ -326,7 +326,8 @@ async function hunt(c: Conn, reg: ConfigRegistry): Promise<boolean> {
           if (d.kind === 'item') goals.push({ key: `d${d.id}`, at: d, reach: 36, act: () => { void c.cmd({ cmd: 'pickup', dropId: d.id }).catch(() => undefined); } });
         }
         for (const ch of fl.chests) {
-          if (!c.opened.has(ch.id)) goals.push({ key: `c${ch.id}`, at: ch, reach: 42, act: () => c.send({ t: 'chest', chestId: ch.id }) });
+          // ⭐ 13.10: открытый раньше (продолжение узла, вход посреди этажа) сервер шлёт с `opened: true` — он не цель
+          if (!ch.opened && !c.opened.has(ch.id)) goals.push({ key: `c${ch.id}`, at: ch, reach: 42, act: () => c.send({ t: 'chest', chestId: ch.id }) });
         }
         if (!goals.some((g) => usable(g.key))) {
           for (const lv of fl.levers) goals.push({ key: `l${lv.id}`, at: lv, reach: 44, act: () => c.send({ t: 'lever', leverId: lv.id }) });

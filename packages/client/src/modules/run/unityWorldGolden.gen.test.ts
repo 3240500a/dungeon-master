@@ -40,6 +40,7 @@ const SRC: [string, string][] = [
   [ONLINE3D, ": { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });"],
   [ONLINE3D, "interactables.push({ x: floor.spawn.x, y: floor.spawn.y, radius: 40, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });"],
   [ONLINE3D, "interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });"],
+  [ONLINE3D, 'if (ch.opened) continue;'],   // ⭐ 13.10: открытый (`opened: true`, вход посреди этажа / продолжение узла) — без [E]
   [ONLINE3D, "const tint = ch.tier === 'rare' ? 0xd0a24a : ch.tier === 'magic' ? 0x7fb6e0 : 0x9a7a52;"],
   [ONLINE3D, "interactables.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', run: () => app.net.send({ t: 'chest', chestId: ch.id }) });"],
   [ONLINE3D, 'const wx = n.cx * TILE + TILE / 2, wz = n.cy * TILE + TILE / 2;'],
@@ -112,7 +113,7 @@ function areaActs(floor: FloorInit, plan: RunPlan | undefined, currentNodeId: st
     }
     out.push({ x: floor.spawn.x, y: floor.spawn.y, radius: 40, label: 'Вернуться в город (голосование)', act: 'return' });
     for (const lv of floor.levers) out.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', act: 'lever', id: lv.id, doorId: lv.doorId });
-    for (const ch of floor.chests) out.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', act: 'chest', id: ch.id });
+    for (const ch of floor.chests) if (!ch.opened) out.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', act: 'chest', id: ch.id });
   } else {
     for (const n of TOWN_NPCS) {
       const wx = n.cx * TILE + TILE / 2, wz = n.cy * TILE + TILE / 2;
@@ -201,6 +202,17 @@ const AREAS: { name: string; floor: FloorInit; plan?: number; current?: string }
   { name: 'без exits и без stairs: финал, выходов нет', floor: dungeon({ decor: [{ x: 300, y: 300, kind: 'portal' }] }) },
   { name: 'город 22×15', floor: { area: 'town', depth: 0, grid: Array.from({ length: 15 }, () => Array.from({ length: 22 }, () => 0)), spawn: { x: 352, y: 240 }, decor: [], doors: [], levers: [], chests: [] } as unknown as FloorInit },
   { name: 'город 30×20', floor: { area: 'town', depth: 0, grid: Array.from({ length: 20 }, () => Array.from({ length: 30 }, () => 0)), spawn: { x: 352, y: 240 }, decor: [], doors: [], levers: [], chests: [] } as unknown as FloorInit },
+  {
+    // ⭐ 13.10: продолжение узла / вход посреди этажа — сервер шлёт и открытые сундуки (`opened: true`): [E] — только у закрытых; открытый
+    // рядом с закрытым ближайшим не становится (опрос между ними), сундук-декор на месте открытого — не интерактив
+    name: 'продолжение узла: два сундука открыты (opened: true) — без [E], закрытые — с [E]', plan: 0, current: 'n1_0',
+    floor: dungeon({
+      runNodeId: 'n1_0', exits: [{ x: 400, y: 600 }],
+      decor: [{ x: 150, y: 300, kind: 'chest' }],
+      chests: [{ id: 11, x: 150, y: 300, tier: 'rare', opened: true }, { id: 12, x: 190, y: 300, tier: 'magic' }, { id: 13, x: 600, y: 600, tier: 'common', opened: true },
+        { id: 14, x: 640, y: 640, tier: 'common' }],
+    }),
+  },
 ];
 
 /** Точки опроса ближайшего: центр каждого, граница по оси (включена), чуть за ней, середины пар, пустое место. */
@@ -364,6 +376,10 @@ describe('unityWorldGolden — продюсер эталона мира этаж
     expect(g.areas[3]!.acts.filter((a) => a.act === 'exit').map((a) => a.target)).toEqual(['n3_0', 'ghost', null]);
     expect(g.areas[3]!.acts.filter((a) => a.act === 'exit').map((a) => a.label)).toEqual(['Спуститься: Финал (голосование)', 'Спуститься глубже (голосование)', 'Спуститься глубже (голосование)']);
     expect(g.areas.every((a) => a.near.some((n) => n.near >= 0) && a.near.some((n) => n.near < 0))).toBe(true);
+    // ⭐ 13.10: открытый сундук (`opened: true`) приходит, но [E] у него нет — ни своей, ни «ближайшей» у его точки
+    const cont = g.areas[g.areas.length - 1]!;
+    expect(cont.acts.filter((a) => a.act === 'chest').map((a) => a.id), 'открытым — без [E]').toEqual([12, 14]);
+    expect(g.areas[0]!.acts.filter((a) => a.act === 'chest').map((a) => a.id), 'без поля — как было').toEqual([11, 12, 13, 14]);
   });
 
   it('эталон на диске совпадает с правилами веба (иначе: перезаписать -u и отдать порту Unity)', async () => {

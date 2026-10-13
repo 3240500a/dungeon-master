@@ -124,7 +124,11 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
       .filter((d) => !w.levers.some((l) => l.used && l.doorId === d.id))
       .map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),
     levers: w.levers.filter((l) => !l.used).map((l) => ({ id: l.id, x: l.pos.x, y: l.pos.y, doorId: l.doorId })),
-    chests: w.chests.filter((c) => !c.opened).map((c) => ({ id: c.id, x: c.pos.x, y: c.pos.y, tier: c.tier })),
+    // ⭐ 13.10 (владелец: «пусть сундук не пропадает»): ВСЕ сундуки этажа, открытый — с `opened: true` (у закрытого поля нет — кадр
+    // прежний). Было — открытые отбрасывались: вошедший посреди этажа и продолжение узла (R4-01) видели комнату без сундука, хотя на
+    // живом заходе Unity оставляет его стоять с откинутой крышкой. Клиенту открытый — без [E] (Unity: открыт с порога; веб-3D: не
+    // рисуется, как после `chest-opened`); сервер его второй раз не открывает (`GameSession.openChest` берёт только `!opened`).
+    chests: w.chests.map((c) => ({ id: c.id, x: c.pos.x, y: c.pos.y, tier: c.tier, ...(c.opened ? { opened: true as const } : {}) })),
     ...(rooms && rooms.length ? { rooms: rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h })) } : {}),
   };
 }
