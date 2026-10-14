@@ -7,7 +7,7 @@ import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
 import { claimsOf, obstaclesFromDecor, placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
 import { dressingObjectIds, placeDressing, type DressingOpts, type DressingResult } from './dressing.js';
-import { placeSlots } from './slots.js';
+import { placeSlots, placeStatueSets } from './slots.js';
 import { pushOutObstacle } from '../world/movement.js';
 import { placeChests } from './floorCommon.js';
 import type { FloorSpec } from './run/types.js';
@@ -178,7 +178,9 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   // `objects` без паспорта (решётка пола — её слоты снова её). Свои потоки rng (под-сид на комнату и проход). Нет правил — как прежде.
   const propRules = opts.dressing?.rules.props;
   let laneKeys: Set<string> | undefined;
+  let slotted = false;   // ⭐ 14.10 (у статуи): слоты прошли — есть полосы и журнал для прохода у статуй
   if (propRules && specs) {
+    slotted = true;
     placeSlots(result, propRules, specs.filter((s) => !!s.contexts), seed, {
       camAzimuthDeg: opts.dressing!.camAzimuthDeg, known: new Map((opts.decorSpecs ?? specs).map((s) => [s.id, s])),
       ...(opts.dressing!.sets?.length ? { sets: opts.dressing!.sets } : {}),   // ⭐ 13.10 (Ф4): наборы-сценки (Р3)
@@ -213,6 +215,15 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
         || setRects.some((r) => c.cx >= r.x0 && c.cx <= r.x1 && c.cy >= r.y0 && c.cy <= r.y1);
     };
     placeChests(result, createRng(((seed ^ 0xc4e5) >>> 0) || 1), opts.chests.tiers, opts.chests.perFloor, blocked);
+  }
+  // ⭐ 14.10 (у статуи): наборы у статуй (якорь statue) — ПОСЛЕДНИМ проходом, после слотов, россыпи и сундуков, своим потоком на статую
+  // (`slots.ts placeStatueSets`): прочие наборы, пропы, решётки и сундуки этажа те же, что без него; нет строки набора у статуи — прохода нет
+  const statueSets = opts.dressing?.sets?.filter((s) => s.anchor === 'statue') ?? [];
+  if (slotted && propRules && statueSets.length) {
+    placeStatueSets(result, propRules, seed, {
+      camAzimuthDeg: opts.dressing!.camAzimuthDeg, known: new Map((opts.decorSpecs ?? []).map((s) => [s.id, s])), sets: statueSets,
+      statueIds: opts.dressing!.rules.statues?.objectIds ?? [],
+    });
   }
   return result;
 }

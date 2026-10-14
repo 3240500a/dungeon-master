@@ -35,6 +35,7 @@ export const DECOR_PATH_LABELS: Record<string, string> = {
   // ⭐ 13.10 (Ф4 «Наборы»)
   'props.sets': 'наборы-сценки (префабы Unity: стол со стульями, полка с книгами, штабель…)',
   'sets.on': 'вкл', 'sets.chance': 'шанс, что комната пробует набор', 'sets.perRoom': 'наборов на комнату до',
+  'sets.statueChance': 'шанс набора у статуи (на каждую статую, сверх плотности)',   // ⭐ 14.10 (у статуи)
   'setLimits.id': 'набор', 'setLimits.weight': 'вес', 'setLimits.perRoomMax': 'в комнате до', 'setLimits.perFloorMax': 'на этаже до',
 };
 

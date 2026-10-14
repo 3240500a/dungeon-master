@@ -6,7 +6,9 @@ import type { BiomeDressing } from '../config/schemas.js';
 import type { DecorObject, DungeonLayout } from './floorCommon.js';
 import { FOOTPRINT_SNAP, footprintRect, obstaclesFromDecor, type CellRect, type DecorSpec } from './decor.js';
 import { isFarFace, snapCenter, toCameraXY, wallRuns } from './dressing.js';
-import { chooseMembers, quarterOf, requiredCount, setFootprintAt, setMemberRecords, setOffset, setWeight, shrinkMembers, type SetPlace, type SetSpec } from './sets.js';
+import {
+  chooseMembers, quarterOf, requiredCount, setFootprintAt, setMemberRecords, setOffset, setWeight, shrinkMembers, statueSetPlace, type SetPlace, type SetSpec,
+} from './sets.js';
 
 /**
  * ⭐ 12.10 (Ф2 «Слоты и полосы», план декора): РАССТАНОВКА ПРОПОВ ПО ПАСПОРТАМ — правило биома `biomes[].dressing.props` вместо россыпи Ф1.
@@ -42,6 +44,9 @@ import { chooseMembers, quarterOf, requiredCount, setFootprintAt, setMemberRecor
  *    `isFarFace`) и не перед факелом; «одинаковое не рядом» (`sameNotNear`, ⭐ 13.10 — между точками слотов, `slotPoint`);
  *  • Р6 проверка на месте: каждая преграда проверяется проходимостью радиусом героя (`Passability`); отрезала клетку, выход, рычаг или
  *    проём, легла на спавн (⭐ 13.10) — откатывается ТОЛЬКО она (счётчик `rejected`), этаж заново не строится.
+ *  • ⭐ 14.10 (у статуи) Р3в наборы у статуй (якорь statue; `placeStatueSets`) — НЕ здесь, а последним проходом этажа (`generateFloorParams`:
+ *    после слотов, россыпи без паспорта и сундуков), свой поток на статую (`SLOT_STREAMS.statue`): прочие наборы, пропы, решётки и сундуки этажа
+ *    те же, что без него, — добавляется только набор перед нишей. В Р3 наборы с якорем statue не идут.
  *
  * Результат — в раскладке: `L.doorways` (проёмы комнат), `L.lanes` (полосы), `L.slotLog` (бюджеты и счётчики проходов — сводка по сидам и
  * превью редактора). Биом без `props` сюда не попадает: его этаж байт-в-байт прежний (поля раскладки не появляются).
@@ -50,8 +55,9 @@ import { chooseMembers, quarterOf, requiredCount, setFootprintAt, setMemberRecor
 /** Правила пропов биома (`biomes[].dressing.props`). */
 export type PropRules = NonNullable<BiomeDressing['props']>;
 
-/** Константы потоков rng проходов слотов (под-сид комнаты — `slotSeed`). */
-export const SLOT_STREAMS = { budget: 0x5107, center: 0xce47, corner: 0xc0e2, againstWall: 0xa6a1, doorway: 0xa7c4, wall: 0xfa11, sets: 0x5e75 } as const;
+/** Константы потоков rng проходов слотов (под-сид комнаты — `slotSeed`). ⭐ 14.10: `statue` — наборы у статуй (под-сид — порядковый номер
+ *  статуи на этаже, не комнаты: `placeStatueSets`). */
+export const SLOT_STREAMS = { budget: 0x5107, center: 0xce47, corner: 0xc0e2, againstWall: 0xa6a1, doorway: 0xa7c4, wall: 0xfa11, sets: 0x5e75, statue: 0x57a7 } as const;
 /** Номер «комнаты» потока граней стен коридоров (одна ветка на все коридоры этажа). */
 export const CORRIDOR_STREAM = 0xffff;
 
@@ -97,12 +103,17 @@ export interface SlotLog {
 
 /** ⭐ 13.10 (Ф4): журнал наборов этажа — поставлено / откачено Р6 (весь набор) и каждый вставший набор: id, комната, `at` — индекс первого члена
  *  в `L.decor` (члены набора идут подряд: `L.decor[at … at + idx.length − 1]`; после слотов декор только дописывается), `idx` — выбранные члены
- *  (индексы в строке набора), `place` — центр полного следа, поворот и зеркало, `rect` — действительный след (сводка, превью, сторожа). */
+ *  (индексы в строке набора), `place` — центр полного следа, поворот и зеркало, `rect` — действительный след (сводка, превью, сторожа).
+ *  ⭐ 14.10 (у статуи): набор у статуи — с пометкой `anchor: 'statue'` и `statue` — индексом записи статуи в `L.decor` (у прочих полей нет:
+ *  журнал этажа без наборов у статуй — прежний); `statues` — сводка прохода (только при строке набора у статуи): статуй на этаже, выпало шансом,
+ *  встало. */
 export interface SetLog {
   placed: number;
   rejected: number;
-  list: { id: string; room: number; at: number; idx: number[]; place: SetPlace; rect: CellRect }[];
+  list: SetLogEntry[];
+  statues?: { total: number; rolled: number; placed: number };
 }
+export interface SetLogEntry { id: string; room: number; at: number; idx: number[]; place: SetPlace; rect: CellRect; anchor?: 'statue'; statue?: number }
 export type SlotPass = 'center' | 'againstWall' | 'corner' | 'doorway' | 'wall';
 
 /** Стороны комнаты по порядку обхода: верх, низ, лево, право (нормаль наружу). */
@@ -756,8 +767,8 @@ export function archOf(L: Pick<DungeonLayout, 'grid'>, d: Doorway): { cells: num
 // ── ⭐ 13.10 (Ф4 «Наборы», план декора): проход Р3 — наборы-сценки ────────────────────────────────────────────────────────────────────
 
 /** Кандидат набора: точка и поворот полного следа (`SetPlace`), записи выбранных членов, их действительный след (объединение следов записей);
- *  у стены — пробег и центр набора вдоль него (шаг). */
-interface SetCand { place: SetPlace; recs: DecorObject[]; rect: CellRect; run?: Run; at?: number }
+ *  у стены — пробег и центр набора вдоль него (шаг); ⭐ 14.10 у статуи — индекс записи статуи в `L.decor` (в журнал). */
+interface SetCand { place: SetPlace; recs: DecorObject[]; rect: CellRect; run?: Run; at?: number; statue?: number }
 
 /** Прямоугольник клеток, объединяющий следы записей (`footprintRect`) — действительный след набора выбранного состава. */
 export function recordsRect(recs: readonly DecorObject[]): CellRect {
@@ -785,13 +796,14 @@ function pickSet(sets: readonly SetSpec[], place: string, rng: Rng): SetSpec | n
  * членов «не запирать проход» (преграда или `keepPath`), стоящих на полу, — не на полосе, и центр клетки полосы — не под их коллайдером
  * радиусом героя (`covered`: член стоит не по сетке и коллайдером достаёт соседнюю клетку); отступ набора (наибольший у членов) — свой и
  * соседей (`GridClaims`, якоря там же); тот же набор не ближе `sameNotNear` (по центру действительного следа), и каждый член — к уже стоящему
- * тому же пропу (точки слотов; внутри набора повтор — раскладка автора).
+ * тому же пропу (точки слотов; внутри набора повтор — раскладка автора). ⭐ 14.10 (у статуи): `open` — клетки перед нишей, открытые этому набору
+ * (перед СВОЕЙ статуей набор у статуи стоит; ниши прочих статуй — как прежде, мимо).
  */
-function canPlaceSet(ctx: Ctx, s: SetSpec, recs: readonly DecorObject[], rect: CellRect, zone: number, covered: readonly number[]): boolean {
+function canPlaceSet(ctx: Ctx, s: SetSpec, recs: readonly DecorObject[], rect: CellRect, zone: number, covered: readonly number[], open?: ReadonlySet<number>): boolean {
   for (const i of covered) if (ctx.lane[i]) return false;   // полоса — там, где герой стоит: коллайдер члена её центра не закрывает
   for (let y = rect.y0; y <= rect.y1; y++) for (let x = rect.x0; x <= rect.x1; x++) {
     const i = idxOf(ctx, x, y);
-    if (i < 0 || ctx.zone[i] !== zone || !isFloor(ctx, i) || ctx.statueFront.has(i)) return false;
+    if (i < 0 || ctx.zone[i] !== zone || !isFloor(ctx, i) || (ctx.statueFront.has(i) && !open?.has(i))) return false;
   }
   for (const d of recs) {
     const sp = ctx.known.get(d.objectId!);
@@ -978,7 +990,7 @@ function commitSet(ctx: Ctx, s: SetSpec, c: SetCand, ri: number, idx: readonly n
   const sp = ctx.points.get(`set:${s.id}`) ?? []; sp.push(slotPoint(c.rect)); ctx.points.set(`set:${s.id}`, sp);
   if (c.run && c.at !== undefined) { const a = ctx.runAt.get(c.run) ?? []; a.push(c.at); ctx.runAt.set(c.run, a); }
   log.placed++;
-  log.list.push({ id: s.id, room: ri, at, idx: [...idx], place: c.place, rect: c.rect });
+  log.list.push({ id: s.id, room: ri, at, idx: [...idx], place: c.place, rect: c.rect, ...(c.statue !== undefined ? { anchor: 'statue' as const, statue: c.statue } : {}) });
   return true;
 }
 
@@ -1016,6 +1028,30 @@ function anchorCells(L: DungeonLayout, cols: number): number[] {
   return out;
 }
 
+/** Зона клетки — индекс ПЕРВОЙ комнаты, в прямоугольнике которой она лежит (как `wallRuns`), иначе −1 (коридор): заливка с конца списка. */
+function zoneMap(L: DungeonLayout, rows: number, cols: number): Int32Array {
+  const zone = new Int32Array(rows * cols).fill(-1);
+  for (let ri = L.rooms.length - 1; ri >= 0; ri--) {
+    const r = L.rooms[ri]!;
+    for (let y = Math.max(0, r.y); y < Math.min(rows, r.y + r.h); y++) for (let x = Math.max(0, r.x); x < Math.min(cols, r.x + r.w); x++) zone[y * cols + x] = ri;
+  }
+  return zone;
+}
+
+/** Стоящий настенный декор: его грани (ниша статуи — `wallFaces`, прочий — грань под точкой по курсу) заняты, клетки перед нишей — ничему,
+ *  перед прочим настенным (факелы) — высокому нельзя. */
+function markWallDecor(ctx: Ctx, d: DecorObject): void {
+  const faces = d.wallFaces ?? [(() => {
+    const dx = Math.round(Math.sin(d.rot ?? 0)), dz = Math.round(Math.cos(d.rot ?? 0));
+    return [Math.round((d.x - TILE / 2 - (dx * TILE) / 2) / TILE), Math.round((d.y - TILE / 2 - (dz * TILE) / 2) / TILE), dx, dz] as [number, number, number, number];
+  })()];
+  for (const [x, y, dx, dz] of faces) {
+    ctx.faces.add(`${x},${y},${dx},${dz}`);
+    const i = idxOf(ctx, x + dx, y + dz);
+    if (i >= 0) (d.wallFaces ? ctx.statueFront : ctx.wallFront).add(i);
+  }
+}
+
 export interface SlotOpts {
   /** Азимут камеры (`balance.camera.azimuthDeg`) — какие стены дальние. */
   camAzimuthDeg: number;
@@ -1031,16 +1067,12 @@ export interface SlotOpts {
  */
 export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly DecorSpec[], seed: number, opts: SlotOpts): SlotLog {
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
-  // зона клетки — индекс ПЕРВОЙ комнаты, в прямоугольнике которой она лежит (как `wallRuns`), иначе −1 (коридор): заливка с конца списка
-  const zone = new Int32Array(rows * cols).fill(-1);
-  for (let ri = L.rooms.length - 1; ri >= 0; ri--) {
-    const r = L.rooms[ri]!;
-    for (let y = Math.max(0, r.y); y < Math.min(rows, r.y + r.h); y++) for (let x = Math.max(0, r.x); x < Math.min(cols, r.x + r.w); x++) zone[y * cols + x] = ri;
-  }
+  const zone = zoneMap(L, rows, cols);
   const claims = gridClaimsOf(L, opts.known, cols, rows);
   const log: SlotLog = { rooms: [], passes: { center: { placed: 0, rejected: 0 }, againstWall: { placed: 0, rejected: 0 }, corner: { placed: 0, rejected: 0 }, doorway: { placed: 0, rejected: 0 }, wall: { placed: 0, rejected: 0 } } };
-  // ⭐ 13.10 (Ф4): наборы — только при правилах наборов и хотя бы одном наборе биома; иначе ни бросков, ни поля журнала
-  const sets = rules.sets && rules.sets.on !== false ? opts.sets ?? [] : [];
+  // ⭐ 13.10 (Ф4): наборы — только при правилах наборов и хотя бы одном наборе биома; иначе ни бросков, ни поля журнала. ⭐ 14.10 (у статуи):
+  // наборы с якорем statue — мимо Р3 (их ставит последний проход этажа `placeStatueSets`): без них этаж прежний, с ними Р3 тот же
+  const sets = (rules.sets && rules.sets.on !== false ? opts.sets ?? [] : []).filter((s) => s.anchor !== 'statue');
   if (sets.length) log.sets = { placed: 0, rejected: 0, list: [] };
   const ctx: Ctx = {
     L, rules, cols, zone, toCam: toCameraXY(opts.camAzimuthDeg), known: opts.known, claims, lane: new Uint8Array(rows * cols),
@@ -1053,17 +1085,8 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
     if (d.kind !== 'obj' || !d.objectId) continue;
     const s = opts.known.get(d.objectId);
     const pts = ctx.points.get(d.objectId) ?? []; pts.push({ x: d.x, y: d.y }); ctx.points.set(d.objectId, pts);
-    if (s?.surface === 'wall') {
-      const faces = d.wallFaces ?? [(() => {
-        const dx = Math.round(Math.sin(d.rot ?? 0)), dz = Math.round(Math.cos(d.rot ?? 0));
-        return [Math.round((d.x - TILE / 2 - (dx * TILE) / 2) / TILE), Math.round((d.y - TILE / 2 - (dz * TILE) / 2) / TILE), dx, dz] as [number, number, number, number];
-      })()];
-      for (const [x, y, dx, dz] of faces) {
-        ctx.faces.add(`${x},${y},${dx},${dz}`);
-        const i = idxOf(ctx, x + dx, y + dz);
-        if (i >= 0) (d.wallFaces ? ctx.statueFront : ctx.wallFront).add(i);
-      }
-    } else if (s?.blocks && d.h === undefined) {
+    if (s?.surface === 'wall') markWallDecor(ctx, d);
+    else if (s?.blocks && d.h === undefined) {
       const r = footprintRect(d);
       for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) { const i = idxOf(ctx, x, y); if (i >= 0) ctx.blockedFeet[i] = 1; }
     }
@@ -1226,6 +1249,104 @@ export function placeSlots(L: DungeonLayout, rules: PropRules, specs: readonly D
   L.lanes = lanes;
   L.slotLog = log;
   return log;
+}
+
+// ── ⭐ 14.10 (у статуи): Р3в — наборы у статуй ──────────────────────────────────────────────────────────────────────────────────────────
+
+/** Опции прохода наборов у статуй. */
+export interface StatueSetOpts {
+  /** Азимут камеры (`balance.camera.azimuthDeg`). */
+  camAzimuthDeg: number;
+  /** Все спеки биома (коллайдеры и отступы стоящего декора). */
+  known: ReadonlyMap<string, DecorSpec>;
+  /** Наборы биома (`setSpecsFor`); берутся только с якорем statue. */
+  sets: readonly SetSpec[];
+  /** Id статуй оформления (`dressing.statues.objectIds`): кандидаты — их записи с гранями ниши (`wallFaces`). */
+  statueIds: readonly string[];
+}
+
+/** Кандидаты набора у статуи: точка — середина ниши на линии стены + h/2 следа в комнату (`statueSetPlace`), лицом в комнату, зеркало — оба;
+ *  клетки перед СВОЕЙ нишей открыты (`open`), прочее — как у Р3 (`canPlaceSet`). */
+function statueSetCands(ctx: Ctx, s: SetSpec, chosen: readonly number[], zone: number, faces: readonly (readonly [number, number, number, number])[], open: ReadonlySet<number>, statue: number): SetCand[] {
+  const out: SetCand[] = [];
+  for (const mirror of [false, true]) {
+    const place = statueSetPlace(faces, s.footprint.h, mirror);
+    const { recs, rect, covered } = setAt(ctx, s, chosen, place);
+    if (canPlaceSet(ctx, s, recs, rect, zone, covered, open)) out.push({ place, recs, rect, statue });
+  }
+  return out;
+}
+
+/**
+ * ⭐ 14.10 (у статуи): НАБОРЫ У СТАТУЙ — последний проход этажа (`generateFloorParams`: после слотов, россыпи строк без паспорта и сундуков), так
+ * что прочие наборы, пропы, решётки и сундуки этажа — ровно те же, что без него; добавляется только набор перед нишей. Состояние — заново с
+ * раскладки: занятость (`gridClaimsOf` + клетки сундуков), полосы (`L.lanes`), ниши и факелы (`markWallDecor`), точки «одинаковое не рядом»
+ * (одиночки — точкой слота, наборы — центром действительного следа по журналу), проходимость радиусом героя со всем декором (`Passability`).
+ * Кандидаты — записи статуй оформления (`statueIds`, есть `wallFaces`) по порядку декора; у каждой — свой поток (`slotSeed(seed,
+ * SLOT_STREAMS.statue, номер статуи)`): шанс `sets.statueChance`; вход — без (как пропы слотов); набор — по весу строки (× тип комнаты, коридор —
+ * `rooms.corridor`) среди годных (`minRoom`, `perRoomMax`, `perFloorMax`), состав «k из n» без бюджета комнаты (набор у статуи — часть ниши,
+ * сверх плотности), сторона — зеркало (оба, выбор случаем среди годных), не встал состав — меньший (`shrinkMembers`), Р6 всем набором с откатом,
+ * до 6 наборов на статую. Журнал — `L.slotLog.sets` (запись с `anchor: 'statue'` и индексом статуи) и сводка `statues`. Нет набора с якорем statue
+ * (или правила наборов выключены) — ничего не трогает.
+ */
+export function placeStatueSets(L: DungeonLayout, rules: PropRules, seed: number, opts: StatueSetOpts): void {
+  const sets = rules.sets && rules.sets.on !== false ? opts.sets.filter((s) => s.anchor === 'statue') : [];
+  if (!sets.length || !L.slotLog) return;
+  const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
+  const known = opts.known;
+  const log = L.slotLog;
+  const sl = (log.sets ??= { placed: 0, rejected: 0, list: [] });
+  const ctx: Ctx = {
+    L, rules, cols, zone: zoneMap(L, rows, cols), toCam: toCameraXY(opts.camAzimuthDeg), known, claims: gridClaimsOf(L, known, cols, rows),
+    lane: new Uint8Array(rows * cols), statueFront: new Set(), wallFront: new Set(), faces: new Set(), blockedFeet: new Uint8Array(rows * cols),
+    pass: new Passability(L, obstaclesFromDecor(L.decor, known as Map<string, DecorSpec>)), points: new Map(), runAt: new Map(), log, sets, setsOnFloor: new Map(),
+  };
+  // сундуки этажа — якоря: клеткой, как спавн и выходы (набор встаёт после них — их не трогает)
+  for (const c of L.chests) { const k = worldToCell(c.x, c.y); ctx.claims.claim({ x0: k.cx, y0: k.cy, x1: k.cx, y1: k.cy }); }
+  for (const l of L.lanes ?? []) for (const i of l.cells) ctx.lane[i] = 1;
+  // стоящий декор: настенный — грани и «перед ним»; точки — настенный и без спеки точкой записи, напольный — точкой слота (как их меряли слоты)
+  for (const d of L.decor) {
+    if (d.kind !== 'obj' || !d.objectId) continue;
+    const s = known.get(d.objectId);
+    const wall = s?.surface === 'wall';
+    if (wall) markWallDecor(ctx, d);
+    const pts = ctx.points.get(d.objectId) ?? []; pts.push(wall || !s ? { x: d.x, y: d.y } : slotPoint(footprintRect(d))); ctx.points.set(d.objectId, pts);
+  }
+  for (const e of sl.list) { const sp = ctx.points.get(`set:${e.id}`) ?? []; sp.push(slotPoint(e.rect)); ctx.points.set(`set:${e.id}`, sp); }
+
+  const ids = new Set(opts.statueIds.filter((x) => !!x));
+  const statues: number[] = [];
+  L.decor.forEach((d, i) => { if (d.kind === 'obj' && !!d.objectId && ids.has(d.objectId) && !!d.wallFaces?.length) statues.push(i); });
+  const chance = rules.sets?.statueChance ?? 0;
+  const inRoom = new Map<string, number>();
+  let rolled = 0, placed = 0;
+  statues.forEach((si, k) => {
+    const rng = createRng(slotSeed(seed, SLOT_STREAMS.statue, k));
+    if (!rng.chance(chance)) return;
+    rolled++;
+    const faces = L.decor[si]!.wallFaces!;
+    const front = faces.map(([x, y, dx, dz]) => idxOf(ctx, x + dx, y + dz)).filter((i) => i >= 0);
+    if (!front.length) return;
+    const zone = ctx.zone[front[0]!]!;
+    const room = zone >= 0 ? L.rooms[zone] : undefined;
+    if (room?.type === 'entrance') return;   // вход — без пропов (как у слотов)
+    const place = room ? room.type : 'corridor';
+    const open = new Set(front);
+    let left = sets.filter((s) => setWeight(s, place) > 0 && (!room || Math.min(room.w, room.h) >= s.minRoom)
+      && (inRoom.get(`${zone}:${s.id}`) ?? 0) < s.perRoomMax && (ctx.setsOnFloor.get(s.id) ?? 0) < s.perFloorMax);
+    for (let t = 0; t < 6 && left.length; t++) {
+      const s = pickSet(left, place, rng);
+      if (!s) return;
+      if (placeSet(ctx, s, zone, rng, s.members.length, (x, chosen) => statueSetCands(ctx, x, chosen, zone, faces, open, si)) > 0) {
+        placed++;
+        inRoom.set(`${zone}:${s.id}`, (inRoom.get(`${zone}:${s.id}`) ?? 0) + 1);
+        ctx.setsOnFloor.set(s.id, (ctx.setsOnFloor.get(s.id) ?? 0) + 1);
+        return;
+      }
+      left = left.filter((x) => x !== s);
+    }
+  });
+  sl.statues = { total: statues.length, rolled, placed };
 }
 
 /** Грани стен пробегов `runs` (место `place` — тип комнаты или corridor): позиции с шагом `wall.step` от грани у конца, на свободной —

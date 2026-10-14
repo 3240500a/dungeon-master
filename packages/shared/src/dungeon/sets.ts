@@ -20,11 +20,16 @@ import type { DecorSpec } from './decor.js';   // только типы: decor.t
  * второй стене. Курс члена `yaw` — градусы, как курс сервера (+Z модели смотрит в (sin, cos) рамки (x, z)). Набор с поворотом `q` четвертей:
  * точка рамки (x, z) → мир (x·c + z·s, −x·s + z·c) (c, s — косинус и синус q·90°), курс члена → q·90° + yaw; зеркало — x → −x, yaw → −yaw
  * (модель не отражается — только раскладка).
+ *
+ * ⭐ 14.10 (у статуи): якорь `statue` — набор перед нишей статуи оформления (Р1): задний край следа — на линии лица стены (как у стены), а по x
+ * начало рамки — СЕРЕДИНА СТАТУИ, не центр габарита членов (камень у основания с одной стороны, ящик — с другой; сторона — зеркалом); центр
+ * следа в мире — середина статуи на линии стены + h/2 по нормали в комнату. Ставит его свой проход после всего прочего (`slots.ts
+ * placeStatueSets`); в Р3 такие наборы не идут.
  */
 
 /** Якорь набора (имена — `DECOR_SET_ANCHORS` схемы и enum `DM.Art.DecorSetAnchor` Unity). */
-export type SetAnchor = 'center' | 'againstWall' | 'corner' | 'farWall';
-const ANCHORS: readonly SetAnchor[] = ['center', 'againstWall', 'corner', 'farWall'];
+export type SetAnchor = 'center' | 'againstWall' | 'corner' | 'farWall' | 'statue';
+const ANCHORS: readonly SetAnchor[] = ['center', 'againstWall', 'corner', 'farWall', 'statue'];
 
 /** Строка набора, как её читает расстановка: разобранная схемой или СЫРАЯ (рабочая копия редактора) — нет поля — умолчание схемы. */
 export interface ArtSetLite {
@@ -50,6 +55,8 @@ export interface SetRulesLite {
   on?: boolean;
   chance?: number;
   perRoom?: number;
+  /** ⭐ 14.10: шанс набора у статуи (на каждую статую этажа); сырые без поля — 0 (наборов у статуй нет). */
+  statueChance?: number;
   setIds?: readonly string[];
   setLimits?: readonly { id: string; weight?: number; perRoomMax?: number; perFloorMax?: number }[];
 }
@@ -234,6 +241,18 @@ export function quarterOf(n: { x: number; y: number }): number {
 /** Стороны полного следа набора в осях сетки при повороте `q` (нечётная четверть меняет их местами). */
 export function setFootprintAt(s: Pick<SetSpec, 'footprint'>, q: number): { w: number; h: number } {
   return q % 2 === 0 ? { w: s.footprint.w, h: s.footprint.h } : { w: s.footprint.h, h: s.footprint.w };
+}
+
+/**
+ * ⭐ 14.10 (у статуи): ТОЧКА НАБОРА У СТАТУИ — центр полного следа в мире: середина граней ниши (`wallFaces` записи статуи: клетка-стена и нормаль
+ * в комнату; точка грани — на линии лица стены, как у `placeDressing`) + h/2 следа по нормали; четверть — лицом по нормали (`quarterOf`). Начало
+ * рамки по x — середина статуи (x = 0 рамки — посреди ниши), так что зеркало кладёт набор в другую сторону от той же статуи.
+ */
+export function statueSetPlace(faces: readonly (readonly [number, number, number, number])[], fpH: number, mirror: boolean): SetPlace {
+  let x = 0, y = 0;
+  for (const [fx, fy, dx, dz] of faces) { x += fx * TILE + TILE / 2 + (dx * TILE) / 2; y += fy * TILE + TILE / 2 + (dz * TILE) / 2; }
+  const n = faces.length || 1, dx = faces[0]?.[2] ?? 0, dz = faces[0]?.[3] ?? 1;
+  return { cx: x / n + (dx * fpH * TILE) / 2, cy: y / n + (dz * fpH * TILE) / 2, q: quarterOf({ x: dx, y: dz }), mirror };
 }
 
 /** Точка рамки набора → смещение в мире, клеток (поворот `q` и зеркало). */

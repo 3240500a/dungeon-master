@@ -625,7 +625,8 @@ export function decorWarnings(
  * ⭐ 13.10 (Ф4 «Наборы»): ПРЕДУПРЕЖДЕНИЯ НАБОРОВ биома с правилами пропов (часть `decorWarnings`): строка набора, которая не встанет
  * (`setSpecsFor`: член без объекта в биоме, хозяин `on` не раньше члена, высота без хозяина, группа без описания, пустой, якорь не из списка);
  * набор с высоким членом и якорем «центр» (высокое в центр не ставится); в правилах `setIds` — id, которого у биома нет; наборы биома в
- * манифесте есть, а правил наборов (`dressing.props.sets`) нет — не встанут.
+ * манифесте есть, а правил наборов (`dressing.props.sets`) нет — не встанут. ⭐ 14.10 (у статуи): набор с якорем statue у биома без статуй
+ * оформления (`dressing.statues.objectIds` пусто) — не встанет никогда.
  */
 function setWarningsOf(b: BiomeDecorLite, props: PropSlotsLite, specs: readonly DecorSpec[], art: readonly ArtRowLite[], out: { section: 'objects' | 'art' | 'biomes'; id: string; msg: string }[]): void {
   const rules = props.sets;
@@ -634,6 +635,7 @@ function setWarningsOf(b: BiomeDecorLite, props: PropSlotsLite, specs: readonly 
   for (const p of all.problems) out.push({ section: 'art', id: p.id, msg: `набор (биом ${b.id}): ${p.msg}` });
   for (const s of all.sets) {
     if (s.tall && s.anchor === 'center') out.push({ section: 'art', id: s.id, msg: `набор с высоким членом и якорем «центр» не встанет никогда (высокое — только у дальних стен): якорь farWall / againstWall или член без tall` });
+    if (s.anchor === 'statue' && !(b.dressing?.statues?.objectIds ?? []).some((x) => !!x)) out.push({ section: 'art', id: s.id, msg: `набор у статуи (якорь statue), а статуй у биома ${b.id} нет (оформление dressing.statues) — не встанет никогда` });
   }
   const ids = new Set([...all.sets.map((s) => s.id), ...all.problems.map((p) => p.id)]);
   if (!rules) {

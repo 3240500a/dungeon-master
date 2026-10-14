@@ -31,7 +31,8 @@ export interface DressingOpts {
   rules: BiomeDressing;
   camAzimuthDeg: number;
   /** ⭐ 13.10 (Ф4 «Наборы»): наборы-сценки биома (`setSpecsFor`: строки манифеста вида set + правила `dressing.props.sets`) — их ставит проход Р3
-   *  слотов. Кладёт только путь сервера (`floorInputs`); `dressingOf` их не знает (манифеста у него нет) — без них этаж прежний. */
+   *  слотов. Кладёт только путь сервера (`floorInputs`); `dressingOf` их не знает (манифеста у него нет) — без них этаж прежний.
+   *  ⭐ 14.10 (у статуи): наборы с якорем statue — не Р3, а последний проход этажа перед нишами статуй (`slots.ts placeStatueSets`). */
   sets?: readonly SetSpec[];
 }
 

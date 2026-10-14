@@ -22,6 +22,8 @@ import { Passability, type SlotPass } from './slots.js';
  * декора; замер 12.10: ниша статуи запирает тупик шириной в клетку — 2 клетки на 60 этажей крипты, якоря — 0).
  * ⭐ 13.10 (Ф4 «Наборы»): наборы-сценки — сколько каждого на этаж и членов в нём, доля комнат с набором, откаты Р6 (весь набор); члены
  * набора — пропы с паспортом, их счёт в «пропах на комнату» уже есть; `withoutSets` — тот же биом без правил наборов («до / после» Ф4).
+ * ⭐ 14.10 (у статуи): проход у статуй — статуй на этаж, выпало шансом, встало (журнал `slotLog.sets.statues`); `withoutStatueSets` — тот же биом
+ * с шансом набора у статуи 0 («до / после» только наборов у статуй: прочий декор этажа тот же).
  */
 
 /** Сводка одного биома. Числа «на этаж» — средние по этажам выборки. */
@@ -62,8 +64,12 @@ export interface DecorStats {
    *  (оформление Р1, россыпь без паспорта; меряется от этажа без декора, пропы — от этажа с прочим декором). */
   cut: { props: { cells: number; anchors: number }; other: { cells: number; anchors: number } };
   /** ⭐ 13.10 (Ф4): наборы-сценки (журнал слотов; только у биома с наборами): на этаж, откачено Р6 на этаж, доля комнат (без входа) с набором,
-   *  по id — на этаж и членов в среднем на вставший набор. */
-  sets?: { perFloor: number; rejected: number; roomShare: number; byId: Record<string, { perFloor: number; members: number }> };
+   *  по id — на этаж и членов в среднем на вставший набор. ⭐ 14.10 (у статуи): `statue` — проход у статуй (только при строке набора у
+   *  статуи): статуй на этаж, выпало шансом и встало наборов на этаж, доля статуй с набором и доля выпавших, что встали. */
+  sets?: {
+    perFloor: number; rejected: number; roomShare: number; byId: Record<string, { perFloor: number; members: number }>;
+    statue?: { statues: number; rolled: number; perFloor: number; share: number; rolledShare: number };
+  };
 }
 
 export interface DecorStatsOpts {
@@ -75,6 +81,8 @@ export interface DecorStatsOpts {
   withoutRules?: boolean;
   /** ⭐ 13.10 (Ф4): без правил наборов биома (`dressing.props.sets`) — «до / после» наборов. */
   withoutSets?: boolean;
+  /** ⭐ 14.10 (у статуи): шанс набора у статуи 0 — «до / после» наборов у статуй. */
+  withoutStatueSets?: boolean;
   /** Часы (мс); по умолчанию `performance.now`. */
   now?: () => number;
 }
@@ -88,6 +96,12 @@ export function biomeWithoutPropRules(b: Biome): Biome {
 export function biomeWithoutSetRules(b: Biome): Biome {
   const p = b.dressing?.props;
   return p?.sets ? { ...b, dressing: { ...b.dressing!, props: (({ sets: _s, ...r }) => r)(p) } } : b;
+}
+
+/** ⭐ 14.10 (у статуи): биом с шансом набора у статуи 0 — прочее как есть (нет правил наборов — биом как есть). */
+export function biomeWithoutStatueSets(b: Biome): Biome {
+  const p = b.dressing?.props;
+  return p?.sets ? { ...b, dressing: { ...b.dressing!, props: { ...p, sets: { ...p.sets, statueChance: 0 } } } } : b;
 }
 
 const quant = (sorted: readonly number[], p: number): number => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]! : 0);
@@ -128,7 +142,7 @@ function cutOf(L: DungeonLayout, base: Passability, dec: Passability): { cells: 
 
 /** Сводка декора биома `biome` по `opts.floors` этажам пути сервера. */
 export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts): DecorStats {
-  const b = opts.withoutRules ? biomeWithoutPropRules(biome) : opts.withoutSets ? biomeWithoutSetRules(biome) : biome;
+  const b = opts.withoutRules ? biomeWithoutPropRules(biome) : opts.withoutSets ? biomeWithoutSetRules(biome) : opts.withoutStatueSets ? biomeWithoutStatueSets(biome) : biome;
   const now = opts.now ?? (() => performance.now());
   const specOf = sampleFloors(cfg, b);
   const warm = Math.max(0, Math.min(opts.warmup ?? 20, opts.floors));
@@ -143,6 +157,7 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
   let floorCells = 0, occAll = 0, occProps = 0, laneCells = 0, corridorProps = 0, arches = 0, wallProps = 0;
   let doorways = 0, framed = 0, withLog = 0;
   let setFloors = 0, setsPlaced = 0, setsRejected = 0, setRooms = 0;   // ⭐ 13.10 (Ф4)
+  let stFloors = 0, stTotal = 0, stRolled = 0, stPlaced = 0;            // ⭐ 14.10 (у статуи)
   const setById = new Map<string, { n: number; members: number }>();
   const cut: DecorStats['cut'] = { props: { cells: 0, anchors: 0 }, other: { cells: 0, anchors: 0 } };
 
@@ -209,6 +224,7 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
         setFloors++; setsPlaced += sl.placed; setsRejected += sl.rejected;
         setRooms += new Set(sl.list.map((e) => e.room)).size;
         for (const e of sl.list) { const v = setById.get(e.id) ?? { n: 0, members: 0 }; v.n++; v.members += e.idx.length; setById.set(e.id, v); }
+        if (sl.statues) { stFloors++; stTotal += sl.statues.total; stRolled += sl.statues.rolled; stPlaced += sl.statues.placed; }
       }
     }
     for (const d of L.doorways ?? []) {
@@ -249,6 +265,9 @@ export function decorStats(cfg: FloorConfig, biome: Biome, opts: DecorStatsOpts)
       perFloor: setsPlaced / n, rejected: setsRejected / n, roomShare: rooms ? setRooms / rooms : 0,
       byId: Object.fromEntries([...setById].sort(([a], [c]) => (a < c ? -1 : 1)).map(([k, v]) => [k, { perFloor: v.n / n, members: v.n ? v.members / v.n : 0 }])),
     };
+    if (stFloors) {
+      out.sets.statue = { statues: stTotal / n, rolled: stRolled / n, perFloor: stPlaced / n, share: stTotal ? stPlaced / stTotal : 0, rolledShare: stRolled ? stPlaced / stRolled : 0 };
+    }
   }
   return out;
 }
@@ -261,7 +280,10 @@ const pc = (x: number): string => `${(100 * x).toFixed(1)} %`;
 export function formatDecorStats(s: DecorStats, before?: DecorStats): string {
   const L: string[] = [];
   const ba = (f: (x: DecorStats) => string): string => (before ? `${f(before)} → ${f(s)}` : f(s));
-  L.push(`── ${s.biomeId}: ${s.floors} этажей · правила пропов: ${s.rules ? 'есть (слоты Ф2)' : 'нет (путь Ф1)'}${before ? (before.rules ? ' · «до» — тот же биом без наборов (слоты Ф2)' : ' · «до» — тот же биом без правил (путь Ф1)') : ''}`);
+  // ⭐ 14.10 (у статуи): «до» с проходом у статуй, но без единого набора у статуи — сравнение только наборов у статуй (шанс 0)
+  const statueOnly = !!before?.sets?.statue && before.sets.statue.perFloor === 0 && !!s.sets?.statue;
+  const was = !before ? '' : !before.rules ? ' · «до» — тот же биом без правил (путь Ф1)' : statueOnly ? ' · «до» — тот же биом без наборов у статуй (шанс 0)' : ' · «до» — тот же биом без наборов (слоты Ф2)';
+  L.push(`── ${s.biomeId}: ${s.floors} этажей · правила пропов: ${s.rules ? 'есть (слоты Ф2)' : 'нет (путь Ф1)'}${was}`);
   L.push(`  сборка этажа, мс: p50 ${ba((x) => f2(x.genMs.p50))} · p95 ${ba((x) => f2(x.genMs.p95))} · среднее ${ba((x) => f2(x.genMs.mean))} · макс ${ba((x) => f1(x.genMs.max))}`);
   L.push(`  комнат (без входа) ${s.rooms}, пол комнаты в среднем ${f1(s.roomArea)} клеток`);
   L.push(`  пропов на комнату: мин ${ba((x) => String(x.perRoom.min))} · медиана ${ba((x) => String(x.perRoom.median))} · макс ${ba((x) => String(x.perRoom.max))} · среднее ${ba((x) => f2(x.perRoom.mean))} · на 100 клеток ${ba((x) => f2(x.perRoom.per100))}`);
@@ -279,6 +301,10 @@ export function formatDecorStats(s: DecorStats, before?: DecorStats): string {
   if (s.sets) {
     L.push(`  наборы на этаж ${f2(s.sets.perFloor)} (откачено Р6 ${f2(s.sets.rejected)}) · комнат с набором ${pc(s.sets.roomShare)}${before && !before.sets ? ' (до — без наборов)' : ''}`);
     L.push(`    ${Object.entries(s.sets.byId).map(([k, v]) => `${k} ${f2(v.perFloor)} (членов ${f2(v.members)})`).join(' · ') || '—'}`);
+    // ⭐ 14.10 (у статуи): статуй на этаж → выпало шансом → встало; доля статуй с набором
+    const st = s.sets.statue;
+    const bst = before?.sets?.statue;
+    if (st) L.push(`  у статуй: статуй на этаж ${f2(st.statues)} · выпало шансом ${f2(st.rolled)} · встало наборов ${bst ? `${f2(bst.perFloor)} → ` : ''}${f2(st.perFloor)} (${pc(st.share)} статуй, ${pc(st.rolledShare)} выпавших)`);
   }
   const ids = [...new Set([...Object.keys(s.items), ...Object.keys(before?.items ?? {})])];
   ids.sort((a, c) => (s.items[c] ?? 0) - (s.items[a] ?? 0) || (a < c ? -1 : 1));

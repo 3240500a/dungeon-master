@@ -883,6 +883,81 @@
     }
   },
   {
+    "id": "crypt_set_statue",
+    "kind": "set",
+    "group": "biome_crypt",
+    "set": {
+      "name": "У статуи",
+      "anchor": "statue",
+      "footprint": {
+        "w": 6,
+        "h": 2
+      },
+      "members": [
+        {
+          "key": "crypt_stone_01",
+          "x": 1.8,
+          "z": -0.48,
+          "h": 0.0,
+          "yaw": 178.21,
+          "group": ""
+        },
+        {
+          "key": "crypt_stone_01",
+          "x": 1.25,
+          "z": 0.3,
+          "h": 0.0,
+          "yaw": 160.0,
+          "group": "stone"
+        },
+        {
+          "key": "crypt_wooden_crate_01",
+          "x": -1.52,
+          "z": -0.54,
+          "h": 0.0,
+          "yaw": 8.0,
+          "group": "crate"
+        },
+        {
+          "key": "crypt_wooden_crate_02",
+          "x": -1.52,
+          "z": -0.54,
+          "h": 0.0,
+          "yaw": -14.0,
+          "group": "crate"
+        }
+      ],
+      "groups": [
+        {
+          "id": "stone",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "crate",
+          "min": 0,
+          "max": 1
+        }
+      ],
+      "rooms": {
+        "small": 1.0,
+        "large": 1.0,
+        "treasure": 1.0,
+        "boss": 1.0,
+        "corridor": 0.0
+      },
+      "minRoom": 4,
+      "weight": 1.0,
+      "perRoomMax": 2,
+      "perFloorMax": 16,
+      "tags": [
+        "rubble",
+        "statue"
+      ],
+      "biomes": []
+    }
+  },
+  {
     "id": "crypt_set_storage",
     "kind": "set",
     "group": "biome_crypt",

@@ -8,6 +8,7 @@ import { ConfigRegistry, decorStats, formatDecorStats, type DecorStats } from '@
  *   npm run decor:stats -- --biome=crypt --n=500     — один биом
  *   npm run decor:stats -- --biome=crypt --compare   — «до / после»: тот же биом без правил пропов (путь Ф1: паспорта россыпью) и с ними
  *   npm run decor:stats -- --biome=crypt --compare-sets — ⭐ 13.10 (Ф4) «до / после» наборов: тот же биом без правил наборов (слоты Ф2) и с ними
+ *   npm run decor:stats -- --biome=crypt --compare-statue — ⭐ 14.10 «до / после» наборов у статуй: тот же биом с шансом набора у статуи 0 и с ним
  *   npm run decor:stats -- --json                    — сводка JSON (без текста)
  *
  * Время сборки — после прогрева (`--warmup=20` этажей на чужих сидах); сиды и этажи выборки одни и те же у «до» и «после».
@@ -23,6 +24,7 @@ const warmup = Math.max(0, Math.floor(Number(args.get('warmup') ?? 20)));
 const only = args.get('biome');
 const compare = args.has('compare') && args.get('compare') !== 'false';
 const compareSets = args.has('compare-sets') && args.get('compare-sets') !== 'false';   // ⭐ 13.10 (Ф4)
+const compareStatue = args.has('compare-statue') && args.get('compare-statue') !== 'false';   // ⭐ 14.10 (у статуи)
 const json = args.has('json') && args.get('json') !== 'false';
 
 const reg = new ConfigRegistry();
@@ -35,7 +37,8 @@ if (!biomes.length) {
 
 const out: { biomeId: string; before?: DecorStats; after: DecorStats }[] = [];
 for (const b of biomes) {
-  const before = compareSets && b.dressing?.props?.sets ? decorStats(reg, b, { floors: n, warmup, withoutSets: true })
+  const before = compareStatue && b.dressing?.props?.sets ? decorStats(reg, b, { floors: n, warmup, withoutStatueSets: true })
+    : compareSets && b.dressing?.props?.sets ? decorStats(reg, b, { floors: n, warmup, withoutSets: true })
     : compare && b.dressing?.props ? decorStats(reg, b, { floors: n, warmup, withoutRules: true }) : undefined;
   const after = decorStats(reg, b, { floors: n, warmup });
   out.push({ biomeId: b.id, ...(before ? { before } : {}), after });

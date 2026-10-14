@@ -122,7 +122,7 @@ const digest = (x: unknown): string => createHash('sha256').update(JSON.stringif
 
 describe('⭐ 13.10 (Ф4): схема набора, данные, игровая ревизия', () => {
   it('строки наборов крипты проходят схему (вид set манифеста); имена якорей; умолчания — страховка миграции', () => {
-    expect(DECOR_SET_ANCHORS).toEqual(['center', 'againstWall', 'corner', 'farWall']);
+    expect(DECOR_SET_ANCHORS).toEqual(['center', 'againstWall', 'corner', 'farWall', 'statue']);   // ⭐ 14.10: + у статуи (`statueSets.test.ts`)
     for (const r of CRYPT_SETS) {
       expect(() => artSchema.parse([r]), r.id).not.toThrow();
       expect(artSetSchema.parse(r.set)).toEqual(r.set);   // Unity пишет все поля — разбор их не меняет
@@ -136,9 +136,9 @@ describe('⭐ 13.10 (Ф4): схема набора, данные, игровая
   it('правила наборов крипты — в data/biomes.json (все поля); у прочих биомов правил наборов нет', () => {
     const live = new ConfigRegistry(); live.loadAll();
     const raw = live.get('biomes').find((b) => b.id === 'crypt')!.dressing!.props!.sets;
-    expect(raw).toEqual({ on: true, chance: 0.6, perRoom: 1, setIds: [], setLimits: [] });
+    expect(raw).toEqual({ on: true, chance: 0.6, perRoom: 1, statueChance: 0.5, setIds: [], setLimits: [] });   // ⭐ 14.10: + шанс у статуи
     for (const b of live.get('biomes')) if (b.id !== 'crypt') expect(b.dressing?.props?.sets, b.id).toBeUndefined();
-    expect(biomeDressingSchema.parse({ props: { sets: {} } }).props!.sets).toEqual({ on: true, chance: 0.6, perRoom: 1, setIds: [], setLimits: [] });
+    expect(biomeDressingSchema.parse({ props: { sets: {} } }).props!.sets).toEqual({ on: true, chance: 0.6, perRoom: 1, statueChance: 0.5, setIds: [], setLimits: [] });
   });
 
   it('игровая ревизия: строки наборов — игровые (член, раскладка), подпись `name` — нет', () => {
