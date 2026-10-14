@@ -290,11 +290,12 @@ describe('правка 14.10: декор Ф4 «Наборы» и Ф3 «Маст�
     d.seedRev = 5;
     return d;
   };
-  const migrated = (): RoadmapDoc => { const d = rev5Copy(); migrateRoadmap(d); return d; };
+  /** ⭐ 14.10 (вечер): только правка 6 (правка 7 дописывает заметки m2-29/m2-30 — её проверяет свой блок ниже). */
+  const migrated = (): RoadmapDoc => { const d = rev5Copy(); SEED_PATCHES.find((p) => p.rev === 6)!.apply(d); d.seedRev = 6; return d; };
 
-  it('правка 6 — последняя ревизия, и свежий сид её уже содержит', () => {
+  it('правка 6 есть, и свежий сид её уже содержит', () => {
     expect(SEED_PATCHES.find((p) => p.rev === 6), 'правка 6 есть').toBeTruthy();
-    expect(SEED_REV).toBe(6);
+    expect(SEED_REV).toBeGreaterThanOrEqual(6);
     expect(item(SEED(), 'm2-29')?.done).toBe(true);
     expect(item(SEED(), 'm2-30')?.done).toBe(true);
   });
@@ -323,5 +324,32 @@ describe('правка 14.10: декор Ф4 «Наборы» и Ф3 «Маст�
     const once = JSON.stringify(d);
     SEED_PATCHES.find((p) => p.rev === 6)!.apply(d);
     expect(JSON.stringify(d), 'повтор правки 6 — без изменений').toBe(once);
+  });
+});
+
+/** ⭐ ПРАВКА 7 (14.10.2026, вечер): строки к заметкам m2-29 и m2-30 — дописываются, галки не трогаются, повтор — без изменений. */
+describe('правка 14.10 (вечер): Мастерская v2 и набор у статуи', () => {
+  const rev6Copy = (): RoadmapDoc => {
+    const d = BASE_SEED();
+    for (const p of SEED_PATCHES) if (p.rev <= 6) p.apply(d);
+    d.seedRev = 6;
+    return d;
+  };
+
+  it('правка 7 — последняя ревизия; заметки дописаны после прежних, коммиты на месте', () => {
+    expect(SEED_REV).toBe(7);
+    const before = rev6Copy();
+    const d = rev6Copy();
+    migrateRoadmap(d);
+    for (const id of ['m2-29', 'm2-30']) {
+      const was = item(before, id)!.note!;
+      expect(item(d, id)!.note!.startsWith(was + '\n'), `${id}: старая заметка целиком и первой`).toBe(true);
+      expect(item(d, id)!.done, `${id}: галка прежняя`).toBe(item(before, id)!.done);
+    }
+    expect(item(d, 'm2-29')!.note).toMatch(/5a8977d[\s\S]*c7c7be0/);
+    expect(item(d, 'm2-30')!.note).toMatch(/04595ff/);
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 7)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 7 — без изменений').toBe(once);
   });
 });
