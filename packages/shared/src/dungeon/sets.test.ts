@@ -136,7 +136,7 @@ describe('⭐ 13.10 (Ф4): схема набора, данные, игровая
   it('правила наборов крипты — в data/biomes.json (все поля); у прочих биомов правил наборов нет', () => {
     const live = new ConfigRegistry(); live.loadAll();
     const raw = live.get('biomes').find((b) => b.id === 'crypt')!.dressing!.props!.sets;
-    expect(raw).toEqual({ on: true, chance: 0.6, perRoom: 1, statueChance: 0.5, setIds: [], setLimits: [] });   // ⭐ 14.10: + шанс у статуи
+    expect(raw).toEqual({ on: true, chance: 1, perRoom: 2, statueChance: 1, setIds: [], setLimits: [] });   // ⭐ 14.10: + шанс у статуи; ⭐ 15.10 владелец «наборов не видно»: 0.6/1/0.5 → 1/2/1
     for (const b of live.get('biomes')) if (b.id !== 'crypt') expect(b.dressing?.props?.sets, b.id).toBeUndefined();
     expect(biomeDressingSchema.parse({ props: { sets: {} } }).props!.sets).toEqual({ on: true, chance: 0.6, perRoom: 1, statueChance: 0.5, setIds: [], setLimits: [] });
   });

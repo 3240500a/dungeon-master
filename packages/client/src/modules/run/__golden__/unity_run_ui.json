@@ -2046,9 +2046,9 @@
         },
         "sets": {
          "on": true,
-         "chance": 0.6,
-         "perRoom": 1,
-         "statueChance": 0.5,
+         "chance": 1,
+         "perRoom": 2,
+         "statueChance": 1,
          "setIds": [],
          "setLimits": []
         }
