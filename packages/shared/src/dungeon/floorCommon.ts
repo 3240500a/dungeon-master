@@ -206,6 +206,8 @@ export function connectRooms(grid: Grid, a: Room, b: Room, rooms: Room[], width:
   if (!f) { carveCorridorSmart(grid, a, b, rooms, rng); return; }
   const F = (x: number, y: number): boolean => grid[y]?.[x] === Cell.Floor;
   const w = Math.max(1, Math.min(width, f.hi - f.lo));
+  // Где встал стаб каждой линии: первая клетка пола на пути — или центральная линия комнаты (дальше стаб не идёт, там крест формы).
+  const landA: [number, number][] = [], landB: [number, number][] = [];
   if (f.axis === 'h') {
     const left = a.x <= b.x ? a : b, right = a.x <= b.x ? b : a;
     const lE = left.x + left.w - 1, rE = right.x, lc = roomCenter(left).cx, rc = roomCenter(right).cx;
@@ -213,9 +215,14 @@ export function connectRooms(grid: Grid, a: Room, b: Room, rooms: Room[], width:
     for (let dy = 0; dy < w; dy++) {
       const y = start + dy;
       for (let x = lE; x <= rE; x++) carveCell(grid, x, y, 1);                       // проём/коридор через зазор
-      for (let x = lE - 1; x > lc; x--) { if (F(x, y)) break; carveCell(grid, x, y, 1); } // стаб в левую комнату до пола
-      for (let x = rE + 1; x < rc; x++) { if (F(x, y)) break; carveCell(grid, x, y, 1); } // стаб в правую комнату до пола
+      let x = lE - 1;
+      for (; x > lc; x--) { if (F(x, y)) break; carveCell(grid, x, y, 1); }           // стаб в левую комнату до пола
+      landA.push([x, y]);
+      for (x = rE + 1; x < rc; x++) { if (F(x, y)) break; carveCell(grid, x, y, 1); } // стаб в правую комнату до пола
+      landB.push([x, y]);
     }
+    reachInterior(grid, left, landA, -1, 0, lc);
+    reachInterior(grid, right, landB, 1, 0, rc);
   } else {
     const top = a.y <= b.y ? a : b, bot = a.y <= b.y ? b : a;
     const tE = top.y + top.h - 1, bE = bot.y, tc = roomCenter(top).cy, bc = roomCenter(bot).cy;
@@ -223,10 +230,61 @@ export function connectRooms(grid: Grid, a: Room, b: Room, rooms: Room[], width:
     for (let dx = 0; dx < w; dx++) {
       const x = start + dx;
       for (let y = tE; y <= bE; y++) carveCell(grid, x, y, 1);
-      for (let y = tE - 1; y > tc; y--) { if (F(x, y)) break; carveCell(grid, x, y, 1); }
-      for (let y = bE + 1; y < bc; y++) { if (F(x, y)) break; carveCell(grid, x, y, 1); }
+      let y = tE - 1;
+      for (; y > tc; y--) { if (F(x, y)) break; carveCell(grid, x, y, 1); }
+      landA.push([x, y]);
+      for (y = bE + 1; y < bc; y++) { if (F(x, y)) break; carveCell(grid, x, y, 1); }
+      landB.push([x, y]);
+    }
+    reachInterior(grid, top, landA, 0, -1, tc);
+    reachInterior(grid, bot, landB, 0, 1, bc);
+  }
+}
+
+/**
+ * ⭐ 15.10 (тупики, скрин владельца: крипта, этаж 7 — коридор шириной 2 упёрся в стену в клетке от пола комнаты): СТАБ ДОХОДИТ ДО НАСТОЯЩЕГО
+ * ПОЛА КОМНАТЫ. Стаб `connectRooms` встаёт на первой клетке пола — а ею бывала клетка КАРМАНА: угла рамки, который два укуса формы blob (или
+ * укус и край рамки) отрезали от интерьера; грань у кармана — пол, `pickStrip` брал её как годную, и коридор кончался в кармане, в стене
+ * от комнаты. Теперь после прорезки связки: если ни одна линия не встала на пол, связный с центром комнаты (`roomInterior`), — каждая линия
+ * идёт дальше, сквозь карман и укус, до интерьера (не дальше центральной линии, как и прежде, — там крест формы). Линии связки сшиты кромкой
+ * грани (клетки грани режет проём), поэтому «хоть одна дошла» = «связка в комнате»: дошла — ничего не меняется, этаж байт-в-байт прежний;
+ * броски rng (`pickStrip`) — те же. `lands` — где встал стаб каждой линии, `(sx, sy)` — ход стаба внутрь, `center` — столбец (строка) центра.
+ * Центр не пол (префаб без пола в середине) — комнату не трогаем: её достраивает подстраховка `mendCorridors`.
+ */
+function reachInterior(grid: Grid, room: Room, lands: [number, number][], sx: number, sy: number, center: number): void {
+  const inner = roomInterior(grid, room);
+  if (!inner) return;
+  if (lands.some(([x, y]) => inner(x, y))) return;
+  for (const [lx, ly] of lands) {
+    let x = lx + sx, y = ly + sy;
+    while ((sx ? (sx < 0 ? x > center : x < center) : (sy < 0 ? y > center : y < center)) && !inner(x, y)) {
+      carveCell(grid, x, y, 1);
+      x += sx; y += sy;
     }
   }
+}
+
+/**
+ * ⭐ 15.10 (тупики): НАСТОЯЩИЙ ПОЛ КОМНАТЫ — клетки пола её рамки, связные с центром (4-связность, не выходя из рамки). Центр (а с ним
+ * крест формы, `carveRoomShaped`) — всегда интерьер; клетка пола рамки вне интерьера — карман: укусы формы blob отрезали её от комнаты,
+ * изнутри до неё не дойти. Колонны (`Cell.Pillar`) — не пол: зал обходится между ними. Ответ — предикат `(x, y)` по клеткам грида (вне рамки —
+ * false); снимок на момент вызова. Центр не пол (префаб без пола в середине) — `null`.
+ */
+export function roomInterior(grid: Grid, r: Room): ((x: number, y: number) => boolean) | null {
+  const c = roomCenter(r);
+  if (grid[c.cy]?.[c.cx] !== Cell.Floor) return null;
+  const w = r.w, h = r.h, mask = new Uint8Array(w * h), q = new Int32Array(w * h);
+  const open = (lx: number, ly: number): boolean => grid[r.y + ly]![r.x + lx] === Cell.Floor;
+  let tail = 1;
+  q[0] = (c.cy - r.y) * w + (c.cx - r.x); mask[q[0]] = 1;
+  for (let head = 0; head < tail; head++) {
+    const i = q[head]!, lx = i % w, ly = (i - lx) / w;
+    if (lx > 0 && !mask[i - 1] && open(lx - 1, ly)) { mask[i - 1] = 1; q[tail++] = i - 1; }
+    if (lx < w - 1 && !mask[i + 1] && open(lx + 1, ly)) { mask[i + 1] = 1; q[tail++] = i + 1; }
+    if (ly > 0 && !mask[i - w] && open(lx, ly - 1)) { mask[i - w] = 1; q[tail++] = i - w; }
+    if (ly < h - 1 && !mask[i + w] && open(lx, ly + 1)) { mask[i + w] = 1; q[tail++] = i + w; }
+  }
+  return (x, y) => x >= r.x && y >= r.y && x < r.x + w && y < r.y + h && mask[(y - r.y) * w + (x - r.x)] === 1;
 }
 
 /**
@@ -503,6 +561,171 @@ export function reconnectFloor(grid: Grid, spawn: { cx: number; cy: number }, _r
   }
 }
 
+/** ⭐ 15.10 (тупики): тупик коридора — полоса пола поперёк хода: `w` клеток от `(x, y)` по оси, перпендикулярной ходу `(dx, dy)`. */
+export interface CorridorTip { x: number; y: number; w: number; dx: number; dy: number }
+
+/**
+ * ⭐ 15.10 (тупики): ТУПИКИ КОРИДОРОВ — полоса пола поперёк хода шириной 1…4 (ширины связок), впереди — не пол, по концам полосы — не пол,
+ * позади — ещё две такие же полосы в боковых стенах (коридор, не край комнаты), и хоть одна из трёх клеток позади — вне рамок комнат (иначе
+ * это «нога» фигурной комнаты). Тот же признак, что у замера владельца (детектор 15.10) и у сторожа `deadEnds.test.ts`. Дверь — не пол: проход
+ * в запертую комнату босса этим признаком — тупик, поэтому зовётся до замков (`mendCorridors`), а сторож двери отличает сам.
+ */
+export function corridorTips(grid: Grid, rooms: readonly Room[]): CorridorTip[] {
+  const { cols, rows } = gridSize(grid);
+  const F = (x: number, y: number): boolean => grid[y]?.[x] === Cell.Floor;
+  const inRoom = (x: number, y: number): boolean => rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+  const out: CorridorTip[] = [];
+  for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
+    const px = dy !== 0 ? 1 : 0, py = dx !== 0 ? 1 : 0;   // ось полосы — поперёк хода
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      if (!F(x, y) || F(x - px, y - py)) continue;          // начало полосы: до неё по оси — не пол
+      let w = 0;
+      while (w < 5 && F(x + px * w, y + py * w)) w++;
+      if (w > 4 || F(x + px * w, y + py * w)) continue;
+      let ok = true;
+      for (let k = 0; k < w && ok; k++) if (F(x + px * k + dx, y + py * k + dy) || !F(x + px * k - dx, y + py * k - dy)) ok = false;
+      for (let s = 1; s <= 2 && ok; s++) {                   // позади — две такие же полосы в боковых стенах
+        const bx = x - dx * s, by = y - dy * s;
+        for (let k = 0; k < w && ok; k++) if (!F(bx + px * k, by + py * k)) ok = false;
+        if (F(bx - px, by - py) || F(bx + px * w, by + py * w)) ok = false;
+      }
+      if (!ok) continue;
+      let outside = false;
+      for (let s = 1; s <= 3 && !outside; s++) if (!inRoom(x - dx * s, y - dy * s)) outside = true;
+      if (outside) out.push({ x, y, w, dx, dy });
+    }
+  }
+  return out;
+}
+
+/** ⭐ 15.10 (тупики): сколько клеток стены подстраховка `mendCorridors` прорубает тупику до пола впереди («пара клеток» — толщина укуса формы). */
+export const MEND_DIG = 2;
+
+/**
+ * ⭐ 15.10 (тупики): ПОДСТРАХОВКА ПОСЛЕ СВЯЗОК (rooms / bsp — после `connectByNeighborGraph`, до замков и декора; дверей ещё нет, весь проход — пол):
+ *  1. тупик коридора (`corridorTips`), до которого дойти от `spawn`: пол впереди в `MEND_DIG` клетках — коридор дотягивается до него (кроме
+ *     пола комнаты босса, уже связанной со спавном: там второй вход стал бы лишними воротами замка); иначе коридор никуда не ведёт —
+ *     заделывается стеной назад, полоса за полосой, пока полоса — лист (пол только позади): до развилки или комнаты;
+ *  2. пол, до которого от `spawn` не дойти, — стена. Карман формы, куда не зашёл ни один коридор, оставался лоскутом пола в стенах (cat436:
+ *     угол комнаты blob за двумя укусами) — изолированный «тупик» замера, а декор с монстрами видели его полом комнаты.
+ * Броски rng не трогает (замки ищут рычаг по достижимому полу, факел — бросок до проверки клетки): этаж без кармана и тупика — байт-в-байт
+ * прежний. Связность не рвётся: заделываются только листья и недостижимое; заделка тупика центры комнат (спавн, выходы, сундуки) обходит.
+ * Возвращает, сколько клеток заделано и прорублено (замер 15.10 на ~15 тыс. этажей: тупиков шагу 1 не досталось ни одного — их снимает
+ * `reachInterior` (8 связок); шаг 2 заделал карманы без хода на 1–3 % этажей rooms / bsp, 1–8 клеток).
+ */
+export function mendCorridors(grid: Grid, rooms: readonly Room[], spawn: { cx: number; cy: number }): { sealed: number; dug: number } {
+  const { cols, rows } = gridSize(grid);
+  const F = (x: number, y: number): boolean => grid[y]?.[x] === Cell.Floor;
+  let sealed = 0, dug = 0;
+  if (!F(spawn.cx, spawn.cy)) return { sealed, dug };
+  const keep = new Set(rooms.map((r) => { const c = roomCenter(r); return c.cy * cols + c.cx; }));
+  const inner = (x: number, y: number): boolean => x > 0 && y > 0 && x < cols - 1 && y < rows - 1;   // рамку грида не трогаем
+  /** Пол, достижимый от спавна: маска `y * cols + x`. */
+  const reach = (): Uint8Array => {
+    const seen = new Uint8Array(cols * rows), q = new Int32Array(cols * rows);
+    seen[q[0] = spawn.cy * cols + spawn.cx] = 1;
+    for (let head = 0, tail = 1; head < tail; head++) {
+      const i = q[head]!, x = i % cols, y = (i / cols) | 0;
+      if (x > 0 && !seen[i - 1] && grid[y]![x - 1] === Cell.Floor) { seen[i - 1] = 1; q[tail++] = i - 1; }
+      if (x < cols - 1 && !seen[i + 1] && grid[y]![x + 1] === Cell.Floor) { seen[i + 1] = 1; q[tail++] = i + 1; }
+      if (y > 0 && !seen[i - cols] && grid[y - 1]![x] === Cell.Floor) { seen[i - cols] = 1; q[tail++] = i - cols; }
+      if (y < rows - 1 && !seen[i + cols] && grid[y + 1]![x] === Cell.Floor) { seen[i + cols] = 1; q[tail++] = i + cols; }
+    }
+    return seen;
+  };
+  let main = reach(), changed = false;
+  /** Клетка — в рамке комнаты босса, чей центр уже достижим от спавна (по текущей маске `main`). */
+  const linkedBoss = (x: number, y: number): boolean => rooms.some((r) => {
+    if (r.type !== 'boss' || x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) return false;
+    const c = roomCenter(r);
+    return main[c.cy * cols + c.cx] === 1;
+  });
+  for (let pass = 0; pass < 4; pass++) {
+    if (changed) { main = reach(); changed = false; }
+    const tips = corridorTips(grid, rooms).filter((t) => main[t.y * cols + t.x]);   // карман без хода — шаг 2
+    if (!tips.length) break;
+    changed = true;
+    for (const t of tips) {
+      const px = t.dy !== 0 ? 1 : 0, py = t.dx !== 0 ? 1 : 0;
+      const cell = (k: number, s: number): [number, number] => [t.x + px * k + t.dx * s, t.y + py * k + t.dy * s];
+      const stripFloor = (s: number): boolean => { for (let k = 0; k < t.w; k++) { const [x, y] = cell(k, s); if (!F(x, y)) return false; } return true; };
+      if (!stripFloor(0)) continue;                          // прошлая правка этого прохода уже тронула полосу
+      // дотянуть: пол впереди в MEND_DIG клетках
+      let floorAt = 0, intoBoss = false;   // на каком шаге впереди пол; пол ли это связанной комнаты босса
+      for (let s = 2; s <= MEND_DIG + 1 && !floorAt; s++) for (let k = 0; k < t.w; k++) {
+        const [x, y] = cell(k, s);
+        if (F(x, y)) { floorAt = s; if (linkedBoss(x, y)) intoBoss = true; }
+      }
+      // ⭐ 15.10 (ревью): в комнату босса, уже связанную со спавном, не прорубаем — второй вход `lockRoom` обратил бы в лишние ворота с рычагом;
+      // такой тупик заделывается. Не связанную — дотягиваем: это её связка
+      let canDig = floorAt > 0 && !intoBoss;
+      for (let s = 1; s < floorAt && canDig; s++) for (let k = 0; k < t.w; k++) { const [x, y] = cell(k, s); if (!inner(x, y)) canDig = false; }
+      if (canDig) {
+        for (let s = 1; s < floorAt; s++) for (let k = 0; k < t.w; k++) { const [x, y] = cell(k, s); if (grid[y]![x] !== Cell.Floor) { grid[y]![x] = Cell.Floor; dug++; } }
+        continue;
+      }
+      // заделать: полоса за полосой назад, пока полоса — лист (впереди — уже стена, концы по оси — не пол; пол только позади)
+      for (let s = 0; s > -64; s--) {
+        if (!stripFloor(s)) break;
+        const [ax, ay] = cell(-1, s), [bx, by] = cell(t.w, s);
+        if (F(ax, ay) || F(bx, by)) break;
+        let prot = false;
+        for (let k = 0; k < t.w && !prot; k++) { const [x, y] = cell(k, s); if (keep.has(y * cols + x)) prot = true; }
+        if (prot) break;
+        for (let k = 0; k < t.w; k++) { const [x, y] = cell(k, s); grid[y]![x] = Cell.Wall; sealed++; }
+      }
+    }
+  }
+  if (changed) main = reach();
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (grid[y]![x] === Cell.Floor && !main[y * cols + x]) { grid[y]![x] = Cell.Wall; sealed++; }
+  return { sealed, dug };
+}
+
+/**
+ * ⭐ 15.10 (тупики): разрежет ли пол клетка `(cx, cy)`, став непроходимой (колонна `decorate`): её соседи-пол (4-связность) без неё не связны?
+ * Сначала кольцо 3×3: соседи лежат на одной дуге пола кольца — обход рядом есть (так почти всегда); иначе — поиск по полу в обход клетки.
+ * ⭐ 15.10 (ревью): `box` — рамка комнаты колонны: и поиск, и кольцо — только внутри неё. Обход ВНЕ комнаты не в счёт: у rift-halls
+ * (забег deep-expedition/46, n13_2) колонна (w−3, h−3) комнаты blob встала между её полом и коридором, вошедшим в рамку за укусом, — по всему
+ * этажу соседи связны (кругом через другие комнаты), а коридор кончался колонной и стеной укуса: тупик шириной 3.
+ */
+export function cutsFloor(grid: Grid, cx: number, cy: number, box?: { x: number; y: number; w: number; h: number }): boolean {
+  const inBox = (x: number, y: number): boolean => !box || (x >= box.x && y >= box.y && x < box.x + box.w && y < box.y + box.h);
+  const F = (x: number, y: number): boolean => grid[y]?.[x] === Cell.Floor && inBox(x, y);
+  const ring: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];   // по кругу: соседние — 4-смежны
+  const side = (i: number): boolean => i % 2 === 0;
+  const nb = ring.filter(([dx, dy], i) => side(i) && F(cx + dx, cy + dy));
+  if (nb.length <= 1) return false;
+  let arcs = 0;   // дуги пола кольца, на которых есть сосед по стороне
+  for (let i = 0; i < 8; i++) {
+    const [dx, dy] = ring[i]!, [px, py] = ring[(i + 7) % 8]!;
+    if (!F(cx + dx, cy + dy) || F(cx + px, cy + py)) continue;   // начало дуги
+    let has = false;
+    for (let j = i; j < i + 8 && F(cx + ring[j % 8]![0], cy + ring[j % 8]![1]); j++) if (side(j % 8)) has = true;
+    if (has) arcs++;
+  }
+  if (arcs === 0) arcs = 1;   // кольцо целиком пол — одна дуга без начала
+  if (arcs <= 1) return false;
+  const { cols, rows } = gridSize(grid);
+  const seen = new Uint8Array(cols * rows);
+  seen[cy * cols + cx] = 1;
+  const [sx, sy] = [cx + nb[0]![0], cy + nb[0]![1]];
+  const want = new Set(nb.slice(1).map(([dx, dy]) => (cy + dy) * cols + cx + dx));
+  const q = [sy * cols + sx]; seen[q[0]!] = 1;
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h]!, x = i % cols, y = (i / cols) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      const j = ny * cols + nx;
+      if (seen[j] || !F(nx, ny)) continue;
+      seen[j] = 1;
+      if (want.delete(j) && !want.size) return false;
+      q.push(j);
+    }
+  }
+  return want.size > 0;
+}
+
 export interface Entrance { cx: number; cy: number; ox: number; oy: number }
 
 /** Первая клетка пола, шагая наружу от проёма. */
@@ -602,6 +825,10 @@ export function decorate(r: Room, out: DecorObject[], rng: Rng, grid: Grid): voi
     for (const [dx, dy] of spots) {
       const cx = r.x + dx, cy = r.y + dy;
       if (grid[cy]?.[cx] !== Cell.Floor) continue;   // клетка-стена/пустота (нерегулярная комната) → не «замуровываем» колонну
+      // ⭐ 15.10 (тупики): и не отрезаем ею пол — у комнаты blob клетка (2, 2) бывает единственным ходом в угол за укусом (лабиринт, rift-halls/97:
+      // карман 2×3 за колонной); бросков нет — пропуск колонны остальной этаж не сдвигает. ⭐ ревью: связность — внутри рамки комнаты (обход
+      // кругом через другие комнаты не спасает коридор, который колонна отрезала от пола комнаты)
+      if (cutsFloor(grid, cx, cy, r)) continue;
       grid[cy]![cx] = Cell.Pillar;
       out.push({ ...cellToWorld(cx, cy), kind: 'pillar' });
     }

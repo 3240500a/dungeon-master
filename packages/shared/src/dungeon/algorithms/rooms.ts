@@ -3,7 +3,7 @@ import type { FloorAlgoParams } from '../../config/schemas.js';
 import { Cell, makeGrid, cellToWorld } from '../../world/grid.js';
 import {
   type DungeonLayout, type Room,
-  roomCenter, carveRoomShaped, pickShape, connectByNeighborGraph, pickSpawnExit, lockRoom, decorate, corridorWidths,
+  roomCenter, carveRoomShaped, pickShape, connectByNeighborGraph, pickSpawnExit, lockRoom, decorate, corridorWidths, mendCorridors,
 } from '../floorCommon.js';
 import { stampRoomPrefab } from '../prefab.js';
 import type { FloorAlgoOpts } from './types.js';
@@ -61,6 +61,8 @@ export function roomsAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAl
       width: params.corridorWidth ?? 4,
       widthOf: corridorWidths(params, opts?.corridorRng),   // ⭐ 13.10: «от corridorWidth до corridorWidthMax» на связку, свой поток
     }, rng);
+    // ⭐ 15.10 (тупики): подстраховка — недостижимый пол (карман формы без коридора) в стену, тупик коридора дотянуть до пола или заделать
+    mendCorridors(grid, rooms, roomCenter(rooms[spawnIdx]!));
   }
 
   const doors: DungeonLayout['doors'] = [];
