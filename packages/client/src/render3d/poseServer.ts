@@ -27,9 +27,11 @@
  * ⚠ `pe_roadmap` — трекер вех проекта (вкладка «Роадмап» в конфиг-редакторе). Он тут, а НЕ в игровом
  * конфиге, намеренно: `ConfigRegistry.loadAll()` бросает исключение на невалидном ключе, то есть
  * опечатка в задаче проекта уронила бы игровой сервер. Здесь запись и так DEV-only, а связи с игрой нет.
+ * ⭐ 16.10 (Артбук): `pe_artbook` — того же рода (вкладка «🎨 Артбук» конфиг-редактора: правки текстов и картинки концептов,
+ * `editor/src/artbook/store.ts`); пишет его конфиг-редактор своим POST-ом и сам сливает с серверным.
  */
 import { devFetch } from '../devAuth.js';   // публикация — инструментальный роут: нужен токен админа
-export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps', 'pe_roadmap', 'pe_anim', 'pe_gaitbake', 'pe_layers', 'pe_swing'] as const;
+export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps', 'pe_roadmap', 'pe_anim', 'pe_gaitbake', 'pe_layers', 'pe_swing', 'pe_artbook'] as const;
 export type PoseKey = typeof POSE_KEYS[number];
 
 /** Состояние синка (ЛИЧНОЕ, на сервер не уходит): на какой ревизии основана рабочая копия и что в ней правлено. */
@@ -234,8 +236,9 @@ export const isCharacterModel = (m: WipeModel): boolean =>
  * Ключи, которые лежат в том же хранилище (`pe_*` / `pose_store`), но контентом поз-редактора НЕ являются —
  * «чистый лист» их не трогает ни локально, ни на сервере. Роадмап — трекер работ из редактора конфигов:
  * он попал в `pose_store` только ради готовой синхронизации между машинами, к анимациям отношения не имеет.
+ * ⭐ 16.10: артбук (`pe_artbook`) — так же: правки владельца и ссылки на концепты; «чистый лист» анимаций его не касается.
  */
-export const WIPE_SPARED: readonly string[] = ['pe_roadmap', 'pe_roadmap_seen'];
+export const WIPE_SPARED: readonly string[] = ['pe_roadmap', 'pe_roadmap_seen', 'pe_artbook', 'pe_artbook_seen'];
 
 /**
  * ЧИСТЫЙ ЛИСТ: снести ВЕСЬ авторский контент — и рабочую копию, и опубликованное.

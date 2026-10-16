@@ -23,6 +23,7 @@ import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 import { renderColorField, renderUploadField, renderBatchUpload, renderMaterialPanel, currentAssetCategory } from './assetFields.js';
 import { renderDocs } from './docs.js';
+import { renderArtbookPage } from './artbook/artbook.js';
 import { LiveConfigBase, bundledWorkingCopy, loadLiveConfig } from './liveConfig.js';
 import { ConfigChannel } from './configChannel.js';
 
@@ -180,8 +181,9 @@ let selectedIndex = 0;
 let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' | 'loot' | 'craft' = 'config';
 // Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
 // ⭐ 08.10 (Д3): «Выпуски» — релизы контента и каналы dev / beta / live (`releases.ts`).
-type Section = 'game' | 'pose' | 'docs' | 'roadmap' | 'releases';
-let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' || s === 'roadmap' || s === 'releases' ? s : 'game'; } catch { return 'game'; } })();
+// ⭐ 16.10 (Артбук): «🎨 Артбук» — облик мира для художника: локации, монстры, персонажи, модели (`artbook/artbook.ts`).
+type Section = 'game' | 'pose' | 'docs' | 'artbook' | 'roadmap' | 'releases';
+let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' || s === 'artbook' || s === 'roadmap' || s === 'releases' ? s : 'game'; } catch { return 'game'; } })();
 const setSection = (s: Section): void => { section = s; try { localStorage.setItem('editor_section', s); } catch { /* */ } render(); };
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
@@ -756,6 +758,7 @@ function render(): void {
     { id: 'game', label: '🎮 Игра' },
     { id: 'pose', label: '🧍 3D-эдитор' },
     { id: 'docs', label: '📖 Документация' },
+    { id: 'artbook', label: '🎨 Артбук' },
     { id: 'roadmap', label: '📍 Роадмап' },
     { id: 'releases', label: '📦 Выпуски' },
   ];
@@ -774,6 +777,7 @@ function render(): void {
   app.appendChild(body);
   if (section === 'pose') renderPose(body);
   else if (section === 'docs') renderDocs(body, { gotoConfig });
+  else if (section === 'artbook') renderArtbookPage(body, data, { gotoConfig: (key) => gotoConfig(key) });
   else if (section === 'roadmap') renderRoadmapPage(body, data);
   else if (section === 'releases') renderReleasesPage(body);
   else renderGame(body);

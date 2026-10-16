@@ -18,8 +18,8 @@ import { sha256 } from './blobStore.js';
 export const CONTENT_ABI = 1;
 /** Формат самого манифеста. */
 export const MANIFEST_FORMAT = 1;
-/** Ключи поз-редактора, которые не контент игры (роадмап — данные вкладки редактора). */
-export const POSE_EXCLUDED: ReadonlySet<string> = new Set(['pe_roadmap']);
+/** Ключи поз-редактора, которые не контент игры (роадмап и ⭐ 16.10 артбук — данные вкладок редактора конфигов). */
+export const POSE_EXCLUDED: ReadonlySet<string> = new Set(['pe_roadmap', 'pe_artbook']);
 
 export interface ReleaseInput {
   /** Тело `/api/config` — JSON снимка реестра. */
