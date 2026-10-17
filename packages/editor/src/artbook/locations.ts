@@ -1,15 +1,20 @@
 /**
  * ⭐ 16.10 (Артбук): подвкладка «🏛 Локации». Список биомов из конфига (`data.biomes`) → страница биома: описание и девиз из
  * конфига (правятся в «Игра → Мир → Биомы»), заметки художнику и слоты концептов окружения. У крипты — страница «Некрополь»
- * из черновика: вступление, эпохи мира, слои по глубине (со слотом концепта на слой), лестница разложения, статусы, подписи
- * подтипов, пачки, читаемость на камере, рычаги движка, вопросы, источники.
+ * из черновика: сводка решений владельца, вступление, эпохи мира, выбор подтипа при спуске (печать подтипа, слот концепта яруса
+ * Некрополя у каждого подтипа — лор), лестница разложения, статусы, подписи подтипов, пачки, читаемость на камере, рычаги движка,
+ * составные юниты, вопросы и решения, источники.
+ *
+ * ⭐ 17.10: решения владельца 16–17.10 — шесть подтипов, подтип выпадает на отрезок до вейпоинта (вместо слоёв по этажам круга),
+ * код сейчас не пишем (пометки есть / легко / на будущее), у каждого вопроса — «Решение владельца» (правится кликом).
  *
  * Маршруты: `''` — список, `biome:<id>` — страница биома.
  */
 import type { ArtbookCtx } from './ctx.js';
 import { SLOT_SETS, slotKey } from './model.js';
 import { FACTION_LABEL } from './classNumbers.js';
-import { C, btn, chip, el, h2, h3, kv, muted, section, sourcesList, table, type Cell } from './ui.js';
+import { C, btn, chip, el, h2, h3, kv, markColor, muted, section, sourcesList, table, type Cell } from './ui.js';
+import { hasField } from './widgets.js';
 
 interface BiomeRow {
   id: string; name: string; enabled?: boolean; desc?: string; tagline?: string; faction?: string; tileset?: string;
@@ -90,6 +95,13 @@ function renderBiome(host: HTMLElement, ctx: ArtbookCtx, b: BiomeRow): void {
 
 // ── Некрополь (черновик «Артбук: нежить крипты») ─────────────────────────────────────────────────
 
+/** Врезка-пометка («это лор, а не раскладка», «код сейчас не пишем»). */
+function callout(n: Node): HTMLElement {
+  const b = el('div', `border-left:3px solid ${C.gold}88;padding:4px 10px;margin:4px 0 8px;background:${C.bg};border-radius:0 6px 6px 0`);
+  b.append(n);
+  return b;
+}
+
 function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
   const d = ctx.view.crypt;
   const P = (p: string): string => 'crypt/' + p;
@@ -106,6 +118,21 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
   host.append(ctx.text(P('subtitle'), { css: `font-size:12.5px;color:${C.dim}` }));
   host.append(ctx.text(P('status'), { css: `font-size:12px;color:${C.faint}` }));
 
+  // ⭐ 17.10: сводка решений владельца (16–17.10) — первым разделом: итог развилок, подробности — в вопросах ниже.
+  host.append(section(d.decisionsTitle || 'Сводка решений владельца', 'crypt:decisions', (body) => {
+    body.append(t('decisionsIntro', { tag: 'div' }));
+    const nav = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px');
+    nav.append(btn('▦ Ярусы × подтипы →', () => ctx.open('monsters', 'tiers')), btn('☰ Ростер и очерёдность →', () => ctx.open('monsters', 'roster')), btn('💀 Подтипы →', () => ctx.open('monsters', '')));
+    body.append(nav);
+    const ol = el('ol', 'margin:2px 0 8px;padding-left:22px');
+    for (const x of d.decisions) {
+      const li = el('li', `margin:3px 0;color:${C.soft}`);
+      li.append(ctx.text(P(`decisions/${x.id}/text`), { css: 'margin:0', lead: x.title }));
+      ol.append(li);
+    }
+    body.append(ol);
+  }, { open: true, note: `${d.decisions.length} пунктов` }));
+
   host.append(section('Вступление: зачем документ, как работаем, имена, лор', 'crypt:intro', (body) => {
     body.append(h3('Зачем'), ctx.list(P('intro/purpose'), { paragraphs: true }));
     body.append(h3('Как работаем'), ctx.list(P('intro/workflow'), { ordered: true }));
@@ -113,7 +140,7 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
     body.append(h3('Порядок подтипов'));
     body.append(table(['№ владельца', 'Подтип', 'Как выглядит'], d.intro.ownerOrder.owner.map((o, i) => [String(o.n), subCell(o.id), t(`intro/ownerOrder/owner/${i}/text`)]), { widths: ['90px', '200px'] }));
     body.append(t('intro/ownerOrder/doc', { tag: 'div' }));
-    body.append(h3('Лор: почему мертвецы лежат слоями'), ctx.list(P('intro/lore'), { paragraphs: true }));
+    body.append(h3('Лор: почему мертвецы лежат слоями'), callout(t('intro/loreNote', { tag: 'div' })), ctx.list(P('intro/lore'), { paragraphs: true }));
     body.append(h3('Пометки движка в тексте'));
     body.append(table(['Пометка', 'Что значит'], d.intro.marks.map((m, i) => [el('span', `color:${C.gold}`, `[${m.mark}]`), t(`intro/marks/${i}/meaning`)]), { widths: ['130px'] }));
     body.append(h3('Как устроена вкладка'), ctx.list(P('intro/howTab')));
@@ -127,24 +154,21 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
     body.append(t('eraNote', { tag: 'div' }));
   }));
 
-  host.append(section('Слои крипты по глубине', 'crypt:layers', (body) => {
-    body.append(muted('Сверху вниз: чем ниже спуск, тем древнее мертвецы. У каждого слоя — свой слот концепта окружения.', 'margin-bottom:6px'));
-    for (const r of d.layers.rows) {
-      const card = el('div', `border:1px solid ${C.edgeSoft};border-radius:8px;padding:8px 10px;margin:0 0 8px;background:${C.bg}`);
-      const head = el('div', 'display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px');
-      head.append(chip(`этажи ${r.floors}`, C.accent), t(`layers/rows/${r.subtype}/layer`, { css: `font-weight:700;color:${C.text};font-size:14px` }), el('span', `color:${C.dim};font-size:12.5px`, '· ' + subName(r.subtype)));
-      card.append(head);
-      card.append(kv('Внутри слоя', t(`layers/rows/${r.subtype}/inner`)), kv('Босс', t(`layers/rows/${r.subtype}/boss`)), kv('Портал', t(`layers/rows/${r.subtype}/portal`)));
-      card.append(el('div', 'height:6px'));
-      card.append(ctx.slot(slotKey('loc', 'crypt', 'layer', r.subtype), { id: 'env', title: 'Концепт слоя', hint: `${r.layer}: как выглядит этот слой крипты` }));
-      body.append(card);
-    }
-    body.append(h3('Как расставлять подтипы по слоям'));
-    body.append(table(['Вариант', 'Что значит'], d.layers.variants.map((v) => [el('b', `color:${C.text}`, `${v.id}. ${v.name}`), t(`layers/variants/${v.id}/text`)]), { widths: ['190px'] }));
-    body.append(h3('Порталы и порядок производства'), t('layers/staging', { tag: 'div' }));
-    body.append(h3('Альтернатива'), t('layers/alternative', { tag: 'div' }));
-    body.append(h3('Движок'), t('layers/engine', { tag: 'div' }));
-    body.append(h3('Гир по глубине'), t('layers/gearNote', { tag: 'div' }));
+  // ⭐ 17.10: вместо «слоёв по этажам круга» — выбор подтипа при спуске (решение владельца 16.10). Слот концепта яруса
+  // Некрополя (`loc:crypt:layer:<подтип>`) остаётся у каждого подтипа — это лор, уже залитые картинки не теряются.
+  host.append(section('Выбор подтипа при спуске', 'crypt:selection', (body) => {
+    body.append(t('selection/intro', { tag: 'div' }));
+    body.append(table(['Правило', 'Как работает'], d.selection.rules.map((r) => [el('b', `color:${C.text}`, r.rule), t(`selection/rules/${r.id}/how`)]), { widths: ['150px'] }));
+    body.append(h3(d.selection.seal.title), t('selection/seal/intro', { tag: 'div' }));
+    for (const s of d.selection.seal.items) body.append(kv(s.name, t(`selection/seal/items/${s.id}/text`)));
+    body.append(t('selection/seal/note', { tag: 'div' }));
+    body.append(h3('Порядок производства'), t('selection/productionOrder', { tag: 'div' }));
+    body.append(h3('Если дойдём до кода (на будущее)'), t('selection/engine', { tag: 'div' }));
+    body.append(h3('Ступени гира'), t('selection/gearNote', { tag: 'div' }));
+    body.append(h3('Ярусы Некрополя — только лор'), callout(t('selection/loreNote', { tag: 'div' })));
+    const grid = el('div', 'display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px');
+    for (const s of d.subtypes) grid.append(ctx.slot(slotKey('loc', 'crypt', 'layer', s.id), { id: 'env', title: `Концепт яруса: ${s.name}`, hint: 'как выглядит ярус Некрополя этого подтипа (лор)' }));
+    body.append(grid);
   }));
 
   host.append(section('Лестница разложения', 'crypt:decay', (body) => {
@@ -163,6 +187,11 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
       d.statuses.rows.map((r) => [subCell(r.subtype), t(`statuses/rows/${r.subtype}/main`), t(`statuses/rows/${r.subtype}/second`), t(`statuses/rows/${r.subtype}/armor`), t(`statuses/rows/${r.subtype}/weak`), t(`statuses/rows/${r.subtype}/resist`)]),
       { widths: ['130px'] }));
     body.append(t('statuses/note', { tag: 'div' }));
+    // ⭐ 17.10: «Настройка» и «Не единственный, а самый частый» (решения владельца 16.10).
+    for (const n of d.statuses.notes) {
+      body.append(h3(n.title), t(`statuses/notes/${n.id}/text`, { tag: 'div' }), ctx.list(P(`statuses/notes/${n.id}/items`)));
+      if (hasField(ctx, P(`statuses/notes/${n.id}/after`))) body.append(t(`statuses/notes/${n.id}/after`, { tag: 'div' }));
+    }
     body.append(h3('Источники'), sourcesList(d.statuses.sources));
   }));
 
@@ -171,7 +200,7 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
     body.append(table(['Подтип', 'Чему учит игрока', 'Первая подпись', 'Вторая подпись', 'Подъём павших'],
       d.signatures.rows.map((r) => [subCell(r.subtype), t(`signatures/rows/${r.subtype}/habit`), t(`signatures/rows/${r.subtype}/first`), t(`signatures/rows/${r.subtype}/second`), t(`signatures/rows/${r.subtype}/raise`)]),
       { widths: ['130px'] }));
-    body.append(h3('Знаменосец у всех пяти'), t('signatures/bannerSplit', { tag: 'div' }));
+    body.append(h3('Знаменосцы по подтипам'), t('signatures/bannerSplit', { tag: 'div' }));
   }));
 
   host.append(section('Пачки', 'crypt:packs', (body) => {
@@ -182,9 +211,15 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
     body.append(h3('Правила сборки'), ctx.list(P('packs/rules')));
     body.append(h3('Шаблоны пачек'));
     const cols = d.matrix.columns;
+    body.append(muted('Шаблоны по ролям — справочные (прежняя раскладка, до 17.10). Пачки ростеров по ярусам — на страницах подтипов (вкладка «Монстры», раздел «Ярусы (v2)»).', 'margin:2px 0 2px'));
     body.append(table(['Шаблон', 'Что проверяет', ...cols.map((c) => c.name)],
       d.packs.templates.map((p) => [el('b', `color:${C.text}`, p.name), t(`packs/templates/${p.id}/checks`), ...cols.map((c) => (p.perSubtype[c.id] !== undefined ? t(`packs/templates/${p.id}/perSubtype/${c.id}`) : '—'))]),
       { widths: ['130px', '150px'] }));
+    const hall = d.packs.bossHall;
+    if (hall) {
+      body.append(h3('Босс-залы'), t('packs/bossHall/note', { tag: 'div' }));
+      for (const c of cols) if (hall.perSubtype[c.id] !== undefined) body.append(kv(c.name, t(`packs/bossHall/perSubtype/${c.id}`)));
+    }
   }));
 
   host.append(section('Читаемость на камере', 'crypt:readability', (body) => {
@@ -209,11 +244,16 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
   }));
 
   host.append(section('Рычаги движка', 'crypt:engine', (body) => {
-    body.append(muted('Коды К1–К23 — работа программиста; Д — правки данных в редакторе. Пометки в тексте подтипов и архетипов ссылаются сюда.', 'margin-bottom:4px'));
+    // ⭐ 17.10: код сейчас не пишем (решение владельца 16.10, вопрос 6) — пометки есть / легко / на будущее, всё ниже — справка.
+    body.append(callout(t('engine/marksIntro', { tag: 'div' })));
+    body.append(h3('Пометки в карточках'));
+    body.append(table(['Пометка', 'Что значит'], d.engine.marks.map((m) => [chip(m.mark, markColor(m.mark)), t(`engine/marks/${m.id}/meaning`)]), { widths: ['130px'] }));
+    body.append(muted('Коды К1–К23 — работа программиста (цена «мелко» — пометка [легко], «средне» и «крупно» — [на будущее]); Д — правки данных в редакторе. Пометки в тексте подтипов и карточек ссылаются сюда.', 'margin-bottom:4px'));
     body.append(table(['Код', 'Что', 'Цена', 'Заметка'], d.engine.codes.map((c) => [el('b', `color:${C.warn}`, c.code), t(`engine/codes/${c.code}/name`), t(`engine/codes/${c.code}/cost`), t(`engine/codes/${c.code}/note`)]), { widths: ['48px', '42%', '110px'] }));
     body.append(h3('Правки данных'), ctx.list(P('engine/dataFixes')));
-    body.append(h3('До демо'), ctx.list(P('engine/beforeDemo'), { ordered: true }));
-    body.append(h3('Нынешние монстры конфига → архетипы'));
+    body.append(h3(d.engine.beforeDemoTitle || 'Если дойдём до кода'), ctx.list(P('engine/beforeDemo'), { ordered: true }));
+    body.append(h3('Нынешние монстры конфига (тестовые) → архетипы архива'));
+    if (hasField(ctx, P('engine/existingMapNote'))) body.append(t('engine/existingMapNote', { tag: 'div' }));
     const mons = Array.isArray(ctx.data.monsters) ? ctx.data.monsters as { id: string }[] : [];
     body.append(table(['Монстр конфига', 'Сейчас', 'Куда идёт'], d.engine.existingMap.map((m) => {
       const has = mons.some((x) => x.id === m.id);
@@ -223,15 +263,36 @@ function renderNecropolis(host: HTMLElement, ctx: ArtbookCtx): void {
     }), { widths: ['150px', '170px'] }));
   }));
 
-  host.append(section('Открытые вопросы', 'crypt:questions', (body) => {
+  // ⭐ 17.10: составные юниты (К15) — как выглядят и как сделать (решение владельца 16.10).
+  const comp = d.engine.composite;
+  host.append(section(comp.title, 'crypt:composite', (body) => {
+    body.append(t('engine/composite/intro', { tag: 'div' }));
+    body.append(table(['Юнит', 'Как выглядит и как рвётся'], comp.units.map((u) => [t(`engine/composite/units/${u.id}/name`, { css: `font-weight:600;color:${C.text}` }), t(`engine/composite/units/${u.id}/text`)]), { widths: ['170px'] }));
+    body.append(h3('Как сделать'), t('engine/composite/stepsIntro', { tag: 'div' }));
+    for (const s of comp.steps) body.append(kv(s.name, t(`engine/composite/steps/${s.id}/text`)));
+    body.append(h3('Пока кода нет'), t('engine/composite/fallback', { tag: 'div' }));
+    body.append(h3('Художнику'), t('engine/composite/artist', { tag: 'div' }));
+  }));
+
+  // ⭐ 17.10: «Открытые вопросы» → «Вопросы и решения»: под каждым вопросом — «Решение владельца» (правится кликом).
+  host.append(section('Вопросы и решения', 'crypt:questions', (body) => {
+    body.append(muted('Развилки, которые закрыл владелец 16–17.10: варианты и рекомендация исследования, решение владельца и что поменялось в документе. Решение правится кликом, как любой текст.', 'margin-bottom:6px'));
     d.questions.forEach((q, i) => {
+      const Q = (f: string): string => `questions/${i}/${f}`;
       const card = el('div', `border:1px solid ${C.edgeSoft};border-radius:8px;padding:8px 10px;margin:0 0 8px;background:${C.bg}`);
       const head = el('div', 'display:flex;gap:8px;align-items:baseline');
-      head.append(el('span', `color:${C.gold};font-weight:700`, `${q.n}.`), t(`questions/${i}/q`, { css: `color:${C.text};font-weight:600` }));
-      card.append(head, kv('Варианты', t(`questions/${i}/options`)), kv('Рекомендация', t(`questions/${i}/rec`)));
+      head.append(el('span', `color:${C.gold};font-weight:700`, `${q.n}.`), t(Q('q'), { css: `color:${C.text};font-weight:600` }));
+      card.append(head);
+      if (hasField(ctx, P(Q('options')))) card.append(kv('Варианты', t(Q('options'))));
+      if (hasField(ctx, P(Q('rec')))) card.append(kv(q.recTitle || 'Рекомендация', t(Q('rec'))));
+      const dec = el('div', `margin:6px 0 2px;padding:6px 10px;border-left:3px solid ${C.ok};background:${C.panel};border-radius:0 6px 6px 0`);
+      dec.append(el('div', `font-size:11.5px;font-weight:700;color:${C.ok};text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px`, 'Решение владельца'));
+      dec.append(ctx.text(P(Q('decision')), { css: 'margin:0', placeholder: 'решения ещё нет — нажми, чтобы записать' }));
+      card.append(dec);
+      if (hasField(ctx, P(Q('changed')))) card.append(kv('Что поменялось в документе', t(Q('changed'))));
       body.append(card);
     });
-  }));
+  }, { open: true }));
 
   host.append(section('Источники', 'crypt:sources', (body) => {
     body.append(sourcesList(d.sources));

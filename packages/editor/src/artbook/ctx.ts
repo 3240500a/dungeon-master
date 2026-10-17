@@ -4,7 +4,7 @@
  */
 import type { ConfigRegistry } from '@dm/shared';
 import type { ArtbookDoc, SlotDef } from './model.js';
-import type { ArtbookSeed } from './seed.js';
+import type { ArtbookSeed, RosterIndex, RosterV2 } from './seed.js';
 
 export type ArtTab = 'locations' | 'monsters' | 'characters' | 'models';
 
@@ -20,6 +20,8 @@ export interface TextOpts {
   plain?: boolean;
   /** Не править по клику (текст внутри кликабельной карточки). */
   readonly?: boolean;
+  /** ⭐ 17.10: жирное начало — текст начинается с него (пункт сводки решений: заголовок пункта и пункт целиком). */
+  lead?: string;
 }
 
 export interface ListOpts extends TextOpts {
@@ -52,7 +54,7 @@ export interface ArtbookCtx {
   reg(): ConfigRegistry;
   /** Ошибка разбора конфига или `undefined`. */
   regError(): string | undefined;
-  /** Сид как в репозитории (без правок). */
+  /** Сид как в репозитории (без правок). ⭐ 17.10: с ЗАГРУЖЕННЫМИ ростерами v2 под `v2` (пути правки `v2/<подтип>/…`, `v2/index/…`). */
   seed: ArtbookSeed;
   /** Сид с правками владельца — то, что видно на странице (пересчитывается после каждой правки). */
   view: ArtbookSeed;
@@ -84,4 +86,15 @@ export interface ArtbookCtx {
   thumb(key: string, opts?: ThumbOpts): HTMLElement;
   /** Открыть конфиг в секции «Игра» (`biomes`, `monsters`, `classes`…). */
   gotoConfig(key: string): void;
+  /**
+   * ⭐ 17.10: ростер подтипа по ярусам (`seed/v2/<подтип>.json`) — ЛЕНИВО: первый вызов начинает загрузку и отдаёт `null`, по
+   * загрузке страница перерисуется сама. Тексты ростера правятся по пути `v2/<подтип>/…` (`ctx.text`), как и тексты черновика.
+   */
+  roster(subId: string): RosterV2 | null;
+  /** Сводка ростеров и общие таблицы (`seed/v2/index.json`), лениво; пути правки — `v2/index/…`. */
+  rosterIndex(): RosterIndex | null;
+  /** Ошибка загрузки (`<подтип>` или `index`) или `undefined`. */
+  rosterError(key: string): string | undefined;
+  /** Забыть ошибку загрузки и попробовать снова (перерисовка — сама). */
+  rosterRetry(key: string): void;
 }

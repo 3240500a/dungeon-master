@@ -48,8 +48,13 @@ export function textWidget(ctx: ArtbookCtx, path: string, opts: TextOpts = {}): 
   const show = (): void => {
     box.innerHTML = '';
     const st = textState(ctx.seed, ctx.doc(), path);
-    if (st.value) box.append(opts.plain ? document.createTextNode(st.value) : richText(st.value));
-    else if (editable) box.append(el('span', `color:${C.faint};font-style:italic`, opts.placeholder ?? 'пусто — нажми, чтобы написать'));
+    if (st.value) {
+      // ⭐ 17.10: жирное начало (заголовок пункта сводки), если текст по-прежнему с него начинается.
+      const lead = opts.lead && st.value.startsWith(opts.lead) ? opts.lead : '';
+      if (lead) box.append(el('b', `color:${C.text}`, lead));
+      const rest = st.value.slice(lead.length);
+      if (rest) box.append(opts.plain ? document.createTextNode(rest) : richText(rest));
+    } else if (editable) box.append(el('span', `color:${C.faint};font-style:italic`, opts.placeholder ?? 'пусто — нажми, чтобы написать'));
     if (st.edited) {
       const mark = el('sup', `color:${C.accent};margin-left:3px;font-size:10px;cursor:help`, '✎');
       mark.title = `правлено владельцем ${fmtWhen(ctx.doc().texts[path]?.at ?? 0)}`;
@@ -136,6 +141,21 @@ export function textWidget(ctx: ArtbookCtx, path: string, opts: TextOpts = {}): 
   show();
   return box;
 }
+
+/** Что видно в поле: правка владельца или текст сида (для подписей кнопок и выпадашек, где правимый виджет не годится). */
+export const fieldValue = (ctx: ArtbookCtx, path: string): string => textState(ctx.seed, ctx.doc(), path).value;
+
+/**
+ * Поле есть — в сиде или в правке: стёртое владельцем поле сида остаётся на странице (пустым), иначе его не вернуть «Текстом
+ * сида». Строка — непустая, массив — с пунктами.
+ */
+export const hasField = (ctx: ArtbookCtx, path: string): boolean => {
+  if (path in ctx.doc().texts) return true;
+  return [ctx.seed, ctx.view].some((root) => {
+    const v = getAt(root, path);
+    return (typeof v === 'string' && v.trim() !== '') || (Array.isArray(v) && v.length > 0);
+  });
+};
 
 export function listWidget(ctx: ArtbookCtx, path: string, opts: ListOpts = {}): HTMLElement {
   const arr = getAt(ctx.seed, path);

@@ -3,17 +3,23 @@
  * числами) и КАРТОЧКА АРХЕТИПА в подтипе (концепты, текст, рычаги движка, числа монстров конфига: бой, атрибуты, гир, умения).
  * Числа — `monsterNumbers.ts` (тем же кодом, что игра); здесь только DOM.
  *
+ * ⭐ 17.10: главный раздел страницы подтипа — «Ярусы (v2)» (ростер по ярусам, `rosterPages.ts`, грузится лениво). Таблица
+ * архетипов с живыми числами и карточки архетипов — АРХИВ прежней раскладки по ролям (до 17.10): раздел свёрнут, маршрут
+ * `arch:<архетип>:<подтип>` работает как раньше (нынешние 19 зомби конфига — тестовые).
+ *
  * Переключатели «этаж / сложность / редкость / бросок / сравнить с» общие для подтипа и карточки, помнятся (localStorage).
  */
 import { STAT_LABEL } from '@dm/shared';
 import type { ArtbookCtx } from './ctx.js';
-import { SLOT_SETS, getAt } from './model.js';
+import { SLOT_SETS } from './model.js';
 import {
   LEGACY_SUBTYPE, RARITIES, RARITY_LABEL, archetypesOf, bindArchetypes, floorMonsterLevel, monsterCard, protoOf, subtypeTable,
   type ArchRow, type MonsterCard, type MonsterNumbers, type MonsterRarity, type SubtypeTable,
 } from './monsterNumbers.js';
+import { navBar, renderRosterSection } from './rosterPages.js';
 import type { Archetype, Subtype } from './seed.js';
 import { C, btn, chip, el, h2, h3, kv, muted, section, sourcesList, swatches, table, type Cell } from './ui.js';
+import { hasField as has } from './widgets.js';
 
 // ── Переключатели (общие для страниц) ────────────────────────────────────────────────────────────
 
@@ -108,14 +114,13 @@ const subOf = (ctx: ArtbookCtx, id: string): Subtype | undefined => ctx.view.cry
 const archOf = (ctx: ArtbookCtx, id: string): Archetype | undefined => ctx.view.crypt.archetypes.find((a) => a.id === id);
 const mono = (s: string, css = ''): HTMLElement => el('span', `font-family:ui-monospace,monospace;font-size:11.5px;color:${C.dim};${css}`, s);
 const pct = (x: number): string => `${Math.round(x * 1000) / 10}%`;
-/** Поле есть — в сиде или в правке: стёртое владельцем поле сида остаётся на странице (пустым), иначе его не вернуть «Текстом сида». */
-const has = (ctx: ArtbookCtx, path: string): boolean => [ctx.seed, ctx.view].some((root) => {
-  const v = getAt(root, path);
-  return (typeof v === 'string' && v.trim() !== '') || (Array.isArray(v) && v.length > 0);
-});
 
-/** Цвет бейджа разложения по месту подтипа на лестнице (свежая гниль → сухая кость). */
-const DECAY_COLORS = ['#8fbf73', '#82aac4', '#c49a74', '#d8d2c2', '#d0aa62'];
+/**
+ * Цвет бейджа разложения по месту подтипа на лестнице — ⭐ 17.10 на шесть подтипов, в порядке документа (снизу вверх по слоям):
+ * ил и битум (Дом Праха) → лён и смола (Двор Тростника) → голая кость (Посеянные) → кожа-пергамент (легион) → мёрзлая плоть
+ * (дружина) → мокрая гниль (Присяжные Короны).
+ */
+const DECAY_COLORS = ['#a3916f', '#d0aa62', '#d8d2c2', '#c49a74', '#82aac4', '#8fbf73'];
 /** Бейдж разложения подтипа: начало строки лестницы до двоеточия («зомби», «мумии»…), подсказка — строка целиком. */
 export function decayBadge(ctx: ArtbookCtx, subId: string): HTMLElement | null {
   const rows = ctx.view.crypt.decayLadder.rows;
@@ -126,18 +131,13 @@ export function decayBadge(ctx: ArtbookCtx, subId: string): HTMLElement | null {
   return chip(word.length > 24 ? word.slice(0, 22) + '…' : word, DECAY_COLORS[i % DECAY_COLORS.length], body);
 }
 
-function topBar(ctx: ArtbookCtx, ...extra: HTMLElement[]): HTMLElement {
-  const top = el('div', 'display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap');
-  top.append(...extra, btn('▦ Матрица', () => ctx.go('matrix'), `color:${C.dim}`), btn('монстры в конфиге →', () => ctx.gotoConfig('monsters'), `color:${C.dim}`));
-  return top;
-}
 
 // ── Страница подтипа ─────────────────────────────────────────────────────────────────────────────
 
 export function renderSubtype(host: HTMLElement, ctx: ArtbookCtx, subId: string): void {
   const s = subOf(ctx, subId)!;
   const P = (f: string): string => `crypt/subtypes/${s.id}/${f}`;
-  host.append(topBar(ctx, btn('← все подтипы', () => ctx.go(''))));
+  host.append(navBar(ctx, btn('← все подтипы', () => ctx.go(''))));
 
   const title = el('div', 'display:flex;gap:8px;align-items:baseline;flex-wrap:wrap');
   title.append(ctx.text(P('name'), { tag: 'span', single: true, plain: true, css: `font-size:18px;font-weight:700;color:${C.text}` }), chip(`№ ${s.ownerNo}`, C.dim));
@@ -158,20 +158,27 @@ export function renderSubtype(host: HTMLElement, ctx: ArtbookCtx, subId: string)
   right.append(h3('Свечение'), ctx.text(P('glow')));
   right.append(h3('Подпись подтипа'), ctx.text(P('gameplay/signature')));
 
-  host.append(h3('Архетипы подтипа — живые числа (тем же кодом, что игра)'));
-  host.append(controls(ctx, { compareOf: s.id }));
-  let tbl: SubtypeTable | null = null;
-  try { tbl = subtypeTable(ctx.reg(), ctx.view.crypt, s.id, { floor: mon.floor, difficulty: mon.difficulty, rarity: mon.rarity, seed: mon.seed }); } catch (e) { host.append(regFail(ctx, e)); }
-  if (tbl) {
-    host.append(archTable(ctx, s.id, tbl));
-    if (tbl.extra.length) {
-      host.append(h3(`Монстры подтипа без архетипа (${tbl.extra.length})`));
-      host.append(muted('В конфиге они относятся к этому подтипу, но ни один архетип черновика их не берёт. Привязать — именем архетипа в подтипе или строкой черновика.', 'margin-bottom:2px'));
-      host.append(table(['Монстр конфига', ...NUM_HEAD], tbl.extra.map((x) => [monCell(x.n, !!x.off), ...numCells(ctx, x.n)])));
+  // ⭐ 17.10: главный раздел — ростер по ярусам (решения владельца 16–17.10), грузится лениво своим чанком.
+  host.append(section('Ярусы (v2)', `sub:${s.id}:v2`, (b) => renderRosterSection(b, ctx, s), { open: true, note: 'три яруса × (3 ближника + 2 стрелка), три босса, особые — решения владельца 17.10' }));
+
+  // Прежняя раскладка по ролям — архив: таблица архетипов на живых числах нынешних (тестовых) монстров конфига.
+  host.append(section('Архив: прежняя раскладка по ролям (до 17.10)', `sub:${s.id}:archive`, (b) => {
+    b.append(ctx.text('crypt/archiveNote', { css: `font-size:12.5px;color:${C.dim}` }));
+    b.append(h3('Архетипы подтипа — живые числа (тем же кодом, что игра)'));
+    b.append(controls(ctx, { compareOf: s.id }));
+    let tbl: SubtypeTable | null = null;
+    try { tbl = subtypeTable(ctx.reg(), ctx.view.crypt, s.id, { floor: mon.floor, difficulty: mon.difficulty, rarity: mon.rarity, seed: mon.seed }); } catch (e) { b.append(regFail(ctx, e)); }
+    if (tbl) {
+      b.append(archTable(ctx, s.id, tbl));
+      if (tbl.extra.length) {
+        b.append(h3(`Монстры подтипа без архетипа (${tbl.extra.length})`));
+        b.append(muted('В конфиге они относятся к этому подтипу, но ни один архетип черновика их не берёт. Привязать — именем архетипа в подтипе или строкой черновика.', 'margin-bottom:2px'));
+        b.append(table(['Монстр конфига', ...NUM_HEAD], tbl.extra.map((x) => [monCell(x.n, !!x.off), ...numCells(ctx, x.n)])));
+      }
+      const other = mon.cmp && mon.cmp !== s.id ? subOf(ctx, mon.cmp) : undefined;
+      if (other) b.append(compareTable(ctx, s, other, tbl));
     }
-    const other = mon.cmp && mon.cmp !== s.id ? subOf(ctx, mon.cmp) : undefined;
-    if (other) host.append(compareTable(ctx, s, other, tbl));
-  }
+  }, { note: 'общие архетипы + особые; живые числа нынешних (тестовых) монстров конфига' }));
 
   host.append(section('Лор', `sub:${s.id}:lore`, (b) => {
     b.append(ctx.text(P('lore')));
@@ -209,10 +216,10 @@ export function renderSubtype(host: HTMLElement, ctx: ArtbookCtx, subId: string)
     }
   }));
   host.append(section('Где встречается', `sub:${s.id}:depth`, (b) => {
+    // ⭐ 17.10: слоёв по этажам больше нет — подтип выпадает на отрезок до вейпоинта (раздел «Выбор подтипа при спуске»).
     b.append(ctx.text(P('depth')));
-    const layer = ctx.view.crypt.layers.rows.find((x) => x.subtype === s.id);
-    if (layer) b.append(kv('Слой крипты', `${layer.layer} · этажи ${layer.floors}`), kv('Босс слоя', ctx.text(`crypt/layers/rows/${s.id}/boss`, { tag: 'span' })));
-    b.append(h3('Первая волна'), ctx.list(P('firstWave'), { ordered: true }));
+    b.append(muted('Первая волна по ярусам — очередь «1 · сначала»: лёгкий и средний ярус, 10 карточек (раздел «Ярусы (v2)», вид «☰ Ростер и очерёдность»).', 'margin:2px 0 4px'));
+    b.append(h3('Первая волна прежней раскладки (архив до 17.10)'), ctx.list(P('firstWave'), { ordered: true }));
   }));
   host.append(section('Заметки художнику', `sub:${s.id}:art`, (b) => {
     b.append(ctx.list(P('artNotes')));
@@ -221,6 +228,7 @@ export function renderSubtype(host: HTMLElement, ctx: ArtbookCtx, subId: string)
       b.append(Array.isArray(s.notToDraw) ? ctx.list(P('notToDraw')) : ctx.text(P('notToDraw')));
     }
     if (s.mergeNotes?.length) b.append(h3('Что слито из других подтипов'), ctx.list(P('mergeNotes')));
+    if (s.splitNotes?.length) b.append(h3('Что разделено (Двор Тростника и Дом Праха, 16.10)'), ctx.list(P('splitNotes')));
     if (s.reserve?.length) {
       b.append(h3('В запасе'));
       b.append(table(['Кто', 'Справка', 'Зачем держим'], s.reserve.map((r, i) => [el('b', `color:${C.text}`, r.name), ctx.text(P(`reserve/${i}/ref`), { tag: 'span' }), ctx.text(P(`reserve/${i}/why`), { tag: 'span' })]), { widths: ['150px'] }));
@@ -322,7 +330,7 @@ export function renderArchetype(host: HTMLElement, ctx: ArtbookCtx, archId: stri
     switcher.append(el('span', `font-size:12px;color:${C.faint};margin-left:6px`, 'в других подтипах:'));
     for (const o of others) switcher.append(btn(a.perSubtype[o.id]?.name ?? o.name, () => ctx.go(`arch:${a.id}:${o.id}`), 'padding:2px 8px;font-size:11.5px'));
   }
-  host.append(topBar(ctx, btn(`← ${s.name}`, () => ctx.go('sub:' + s.id)), switcher));
+  host.append(navBar(ctx, btn(`← ${s.name}`, () => ctx.go('sub:' + s.id)), switcher));
 
   const title = el('div', 'display:flex;gap:8px;align-items:baseline;flex-wrap:wrap');
   if (ps) title.append(ctx.text(S('name'), { tag: 'span', single: true, plain: true, css: `font-size:18px;font-weight:700;color:${C.text}` }));

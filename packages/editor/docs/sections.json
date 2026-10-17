@@ -95,6 +95,13 @@
     "docs": [
       {
         "file": "04-monsters.md"
+      },
+      {
+        "file": "library/tz-nezhit-kripty.md",
+        "title": "ТЗ на программирование: нежить крипты",
+        "date": "2026-10-17",
+        "source": "https://claude.ai/code/artifact/dd1a3905-c26b-445c-afea-8ef51ec0ab57",
+        "about": "план доработок кода: Европа первой, затем общие системы и подтипы"
       }
     ]
   },

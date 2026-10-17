@@ -7,13 +7,17 @@
  *  • `model.ts` — чистое ядро: правки поверх сида по пути поля, картинки слотов, слияние двух машин;
  *  • `store.ts` — документ `pe_artbook` (localStorage сразу, сервер `/api/dev/pose` с задержкой и слиянием);
  *  • `widgets.ts` — правимый текст, слот картинок (загрузка `/api/dev/assets/<id>?dir=artbook`), миниатюра; `ui.ts` — кит;
- *  • страницы: `locations.ts`, `monsters.ts` (+ `monsterPages.ts`, `monsterNumbers.ts`), `characters.ts` (+ `classNumbers.ts`) —
- *    числа тем же кодом, что игра; «Модели» — заглушка до концептов.
+ *  • страницы: `locations.ts`, `monsters.ts` (+ `monsterPages.ts`, `monsterNumbers.ts`; ⭐ 17.10 ростеры по ярусам — `rosterPages.ts`
+ *    + чистое `roster.ts`), `characters.ts` (+ `classNumbers.ts`) — числа тем же кодом, что игра; «Модели» — заглушка до концептов.
  * Контракт страницы — `ctx.ts`.
+ *
+ * ⭐ 17.10: РОСТЕРЫ v2 (`seed/v2/*.json`, ~140 КБ на подтип) грузятся ЛЕНИВО по первому `ctx.roster(<подтип>)` / `ctx.rosterIndex()`,
+ * по загрузке страница перерисовывается одним разом. В `ctx.seed` они лежат под `v2` (пути правки `v2/<подтип>/…`), а в `applyTexts`
+ * не идут — сид клонируется на каждую отрисовку, и шесть ростеров сверху сделали бы её втрое дороже.
  */
 import type { ConfigRegistry } from '@dm/shared';
 import { applyTexts, editStats, slotState } from './model.js';
-import { loadSeed, type ArtbookSeed } from './seed.js';
+import { loadRoster, loadRosterIndex, loadSeed, type ArtbookSeed, type RosterIndex, type RosterV2 } from './seed.js';
 import { artbookStore, SAVE_LABEL } from './store.js';
 import { listWidget, saveOpenEditors, slotWidget, slotsWidget, textWidget, thumbWidget, whenNotEditing } from './widgets.js';
 import { regFromData } from './classNumbers.js';
@@ -42,6 +46,27 @@ const scrollMemo = new Map<string, number>();
 
 let seed: ArtbookSeed | null = null;
 let seedErr = '';
+
+/** ⭐ 17.10: загруженные ростеры v2 (`<подтип>` / `index`), ошибки загрузки и загрузки в пути. */
+const v2: Record<string, unknown> = {};
+const v2Err = new Map<string, string>();
+const v2Busy = new Set<string>();
+let v2Redraw = false;
+/** Перерисовать по загрузке ростера — одним разом на пачку загрузок (матрица ярусов ждёт шесть ростеров и сводку). */
+const redrawSoon = (): void => {
+  if (v2Redraw) return;
+  v2Redraw = true;
+  setTimeout(() => { v2Redraw = false; if (mounted?.host.isConnected) whenNotEditing(() => { if (mounted?.host.isConnected) mounted.draw(); }); }, 0);
+};
+function v2Get<T>(key: string, load: () => Promise<T>): T | null {
+  if (key in v2) return v2[key] as T;
+  if (!v2Busy.has(key) && !v2Err.has(key)) {
+    v2Busy.add(key);
+    load().then((x) => { v2[key] = x; }, (e: unknown) => { v2Err.set(key, e instanceof Error ? e.message : String(e)); })
+      .finally(() => { v2Busy.delete(key); redrawSoon(); });
+  }
+  return null;
+}
 
 /** Смонтированная вкладка (одна): её перерисовка и обновление надписи сохранения. */
 let mounted: { draw: () => void; status: () => void; host: HTMLElement } | null = null;
@@ -85,7 +110,7 @@ export function renderArtbookPage(host: HTMLElement, data: Record<string, unknow
     saveLbl.textContent = SAVE_LABEL[s];
     saveLbl.style.color = s === 'offline' || s === 'denied' ? C.warn : C.dim;
     if (seed) {
-      const st = editStats(seed, artbookStore.doc);
+      const st = editStats({ ...seed, v2 }, artbookStore.doc);
       const imgs = Object.values(artbookStore.doc.slots).reduce((n, l) => n + l.length, 0);
       const ok = Object.values(artbookStore.doc.slots).filter((l) => slotState(l) === 'approved').length;
       stats.textContent = `картинок ${imgs} · утверждённых слотов ${ok} · правок текста ${st.edited}${st.stale ? ` · ⚠ сид обновился: ${st.stale}` : ''}`;
@@ -135,7 +160,7 @@ export function renderArtbookPage(host: HTMLElement, data: Record<string, unknow
         return reg;
       },
       regError: () => regErr,
-      seed: sd, view,
+      seed: { ...sd, v2 }, view,
       doc: () => artbookStore.doc,
       commit: () => { artbookStore.touch(); draw(); },
       touch: () => { artbookStore.touch(); ctx.view = applyTexts(sd, artbookStore.doc.texts); status(); },
@@ -150,6 +175,10 @@ export function renderArtbookPage(host: HTMLElement, data: Record<string, unknow
       slots: (prefix, defs, o) => slotsWidget(ctx, prefix, defs, o),
       thumb: (key, o) => thumbWidget(ctx, key, o),
       gotoConfig: (key) => opts.gotoConfig(key),
+      roster: (id) => v2Get<RosterV2>(id, () => loadRoster(id)),
+      rosterIndex: () => v2Get<RosterIndex>('index', loadRosterIndex),
+      rosterError: (key) => v2Err.get(key),
+      rosterRetry: (key) => { v2Err.delete(key); draw(); },
     };
     const page = el('div', 'max-width:1280px;padding-bottom:40px');
     body.append(page);
@@ -185,7 +214,7 @@ export function renderArtbookPage(host: HTMLElement, data: Record<string, unknow
 /** «🧩 Модели» — заглушка: список моделей соберётся из утверждённых концептов (часть 3 черновика). */
 function renderModels(host: HTMLElement, ctx: ArtbookCtx): void {
   host.append(h2('Модели'));
-  host.append(muted('Появится после концептов. Когда концепты подтипов и архетипов утверждены, по ним выписываются детали модульного персонажа (база-тело, голова, шлем, торс, перчатки, ноги, оружие по классам движка, щиты, навесы) — и здесь будет список моделей с повторами между архетипами и подтипами.', 'max-width:820px;line-height:1.5;margin-bottom:12px'));
+  host.append(muted('Появится после концептов. Когда концепты подтипов и карточек ростера (бойцы ярусов, боссы, особые) утверждены, по ним выписываются детали модульного персонажа (база тела на три яруса, голова, шлем, нагрудник — с ним руки и ноги, оружие по классам движка, щиты, насадки) — и здесь будет список моделей с повторами между ярусами и подтипами. Комплект моделей по ярусам каждого подтипа — на его странице («Монстры» → подтип → «Ярусы (v2)»).', 'max-width:820px;line-height:1.5;margin-bottom:12px'));
   const slots = Object.entries(ctx.doc().slots);
   const approved = slots.filter(([, l]) => slotState(l) === 'approved');
   const box = el('div', 'display:flex;gap:6px;flex-wrap:wrap;align-items:center');

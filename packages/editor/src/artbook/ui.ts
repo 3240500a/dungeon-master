@@ -42,20 +42,35 @@ export const muted = (text: string, css = ''): HTMLElement => el('div', `font-si
 
 /**
  * Пометки движка в тексте черновика — `[есть]`, `[данные]`, `[код К13]`, `[К5 + К2]`, `[мёртвое поле]` — цветными бейджами:
- * программист видит их глазом, художник — пропускает.
+ * программист видит их глазом, художник — пропускает. ⭐ 17.10: и пометки ростеров v2 — `[есть: ranged-kiter]`, `[легко: новый щит]`,
+ * `[на будущее: К9]` (код сейчас не пишем — решение владельца 16.10).
  */
-const MARK_RE = /\[(есть|данные[^\]]*|код[^\]]*|мёртвое поле[^\]]*|К\d+[^\]]*)\]/g;
+const MARK_RE = /\[(есть[^\]]*|данные[^\]]*|легко[^\]]*|на будущее[^\]]*|код[^\]]*|мёртвое поле[^\]]*|К\d+[^\]]*)\]/g;
+/** Цвет пометки: есть — зелёный, данные / легко — голубой, мёртвое поле — серый, код / на будущее — охра. */
+export const markColor = (t: string): string =>
+  t.startsWith('есть') ? C.ok : t.startsWith('данные') || t.startsWith('легко') ? C.accent : t.startsWith('мёртвое') ? C.faint : C.warn;
+/** ⭐ 17.10: `id` в обратных кавычках (`u-buckler`, `packs.json`) — моноширинным, без кавычек. */
+const CODE_RE = /`([^`\n]+)`/g;
+function appendPlain(frag: DocumentFragment, s: string): void {
+  let last = 0;
+  for (const m of s.matchAll(CODE_RE)) {
+    if (m.index! > last) frag.append(s.slice(last, m.index));
+    frag.append(el('code', `font-family:ui-monospace,monospace;font-size:0.92em;color:${C.text};background:${C.input};padding:0 3px;border-radius:3px`, m[1]!));
+    last = m.index! + m[0].length;
+  }
+  if (last < s.length) frag.append(s.slice(last));
+}
 export function richText(s: string): DocumentFragment {
   const frag = document.createDocumentFragment();
   let last = 0;
   for (const m of s.matchAll(MARK_RE)) {
-    if (m.index! > last) frag.append(s.slice(last, m.index));
+    if (m.index! > last) appendPlain(frag, s.slice(last, m.index));
     const t = m[1]!;
-    const color = t === 'есть' ? C.ok : t.startsWith('данные') ? C.accent : t.startsWith('мёртвое') ? C.faint : C.warn;
+    const color = markColor(t);
     frag.append(chip(t, color));
     last = m.index! + m[0].length;
   }
-  if (last < s.length) frag.append(s.slice(last));
+  if (last < s.length) appendPlain(frag, s.slice(last));
   return frag;
 }
 

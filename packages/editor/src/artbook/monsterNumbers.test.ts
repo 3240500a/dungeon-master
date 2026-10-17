@@ -90,7 +90,7 @@ describe('artbook: кто в подтипе и какой архетип', () =>
 
   it('прочие подтипы пусты, у пустой строки — прообраз из черновика', () => {
     const r = reg();
-    for (const sub of ['egypt_mesopotamia', 'greece', 'rome', 'vikings']) {
+    for (const sub of ['mesopotamia', 'egypt', 'greece', 'rome', 'vikings']) {
       const t = subtypeTable(r, crypt, sub, { floor: 5, difficulty: 'normal', rarity: 'normal' });
       expect(t.rows.every((x) => !x.monsterId), sub).toBe(true);
       expect(t.extra, sub).toEqual([]);
