@@ -30,10 +30,12 @@ describe('artbook: ростеры v2 — чистые помощники', () =>
     for (const b of R.medieval!.bosses) expect(b.prompt, b.id).toMatch(/^Босс-зомби: /);
     // решение 22.10: в промтах нет формата и размера — их ставят в настройках генератора
     for (const b of R.medieval!.bosses) expect(b.prompt, b.id).not.toMatch(/2:3|соотношени|формат|пикс/);
-    // ⭐ 23.10: своё начало промта — у колесницы (не «один персонаж»); у остальных боссов его нет
-    const chariot = R.mesopotamia!.bosses.find((b) => b.id === 'boss14_dust_chariot')!;
-    expect(chariot.promptStyle).toMatch(/колесниц/);
-    expect(promptOf({ style: chariot.promptStyle, card: chariot.prompt })).toMatch(/^Мрачный реалистичный концепт-арт.*колесниц/);
+    // ⭐ 23.10: своё начало промта (`promptStyle`) встаёт вместо общего стиля; у всех 18 боссов есть описание
+    expect(promptOf({ style: 'Своё начало.', backdrop: 'Фон.', card: 'Кто.' })).toBe('Своё начало. Фон.\n\nКто.');
+    for (const id of idx.order) for (const b of R[id]!.bosses) {
+      expect(b.prompt, `${id}/${b.id}`).toMatch(/^Босс-(зомби|нежить): /);
+      if (b.promptStyle) expect(b.promptStyle, `${id}/${b.id}`).toMatch(/^Мрачный реалистичный концепт-арт/);
+    }
     // решение 23.10: рот у боссов свободен — они говорят в бою
     for (const id of idx.order) for (const b of R[id]!.bosses) expect(b.prompt ?? '', `${id}/${b.id}`).not.toMatch(/в зубах|во рту/);
   });
