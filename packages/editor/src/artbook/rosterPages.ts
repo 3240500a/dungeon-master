@@ -272,9 +272,10 @@ function bossesBlock(b: HTMLElement, ctx: ArtbookCtx, r: RosterV2, idx: RosterIn
     card.addEventListener('click', () => ctx.go(`card:${r.id}:${boss.id}`));
     card.addEventListener('mouseenter', () => { card.style.borderColor = C.active; });
     card.addEventListener('mouseleave', () => { card.style.borderColor = C.edge; });
-    const top = el('div', 'display:flex;gap:10px;align-items:flex-start');
-    top.append(ctx.thumb(conceptKey(r.id, boss.id), { w: 76, h: 96 }));
-    const info = el('div', 'min-width:0;flex:1');
+    // ⭐ 22.10: концепт босса крупно (200×300 под портрет 2:3, просьба владельца — «раза в три больше»), клик по нему — лайтбокс.
+    const top = el('div', 'display:flex;flex-direction:column;align-items:center;gap:8px');
+    top.append(ctx.thumb(conceptKey(r.id, boss.id), { w: 200, h: 300, zoom: true }));
+    const info = el('div', 'min-width:0;align-self:stretch');
     info.append(RO(ctx, BP('name'), `font-weight:700;font-size:14px;color:${C.text}`));
     const tags = el('div', 'display:flex;gap:4px;flex-wrap:wrap;margin:3px 0');
     tags.append(chip(`этаж ${boss.floor} · ${BOSS_LABEL[boss.floor] ?? TIER_RU[boss.tier]}`, C.gold), chip('тир boss', C.dim), chip(ARMOR_RU[boss.armorClass] ?? boss.armorClass, C.faint));
