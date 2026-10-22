@@ -494,15 +494,19 @@ export function renderRosterCard(host: HTMLElement, ctx: ArtbookCtx, s: Subtype,
 /**
  * ⭐ 22.10: промт Nano Banana карточки. Серым — общее (стиль у всех карточек, фон — у подтипа): правка меняет промт у всех; своё —
  * описание карточки. «Копировать» собирает промт из того, что видно сейчас (с правками владельца), — `promptOf`.
+ * ⭐ 23.10: у карточки может быть СВОЁ начало (`promptStyle`) вместо общего стиля — например у колесницы «одна повозка с упряжкой»,
+ * а не «один персонаж»; тогда оно показано белым и правится только у неё.
  */
 function promptBox(ctx: ArtbookCtx, s: Subtype, E: (f: string) => string): HTMLElement {
   const box = el('div', `margin-top:10px;padding:10px 12px;border:1px solid ${C.edge};border-radius:8px;background:${C.input}`);
   box.dataset.v2Prompt = s.id;
   const head = el('div', 'display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px');
   const LABEL = '📋 Копировать';
+  const ownStyle = hasField(ctx, E('promptStyle'));
+  const stylePath = ownStyle ? E('promptStyle') : I('prompt/style');
   const copy = btn(LABEL, () => {
     const text = promptOf({
-      style: fieldValue(ctx, I('prompt/style')), backdrop: fieldValue(ctx, V(s.id, 'promptBackdrop')),
+      style: fieldValue(ctx, stylePath), backdrop: fieldValue(ctx, V(s.id, 'promptBackdrop')),
       card: fieldValue(ctx, E('prompt')), close: fieldValue(ctx, I('prompt/close')),
     });
     if (!text) { flash('нет описания карточки'); return; }
@@ -512,11 +516,13 @@ function promptBox(ctx: ArtbookCtx, s: Subtype, E: (f: string) => string): HTMLE
   head.append(el('span', `font-weight:700;color:${C.text};font-size:13px`, 'Промт для Nano Banana'), copy);
   const shared = `color:${C.dim}`;
   const first = el('div', 'margin-bottom:6px;line-height:1.5');
-  first.append(T(ctx, I('prompt/style'), { plain: true, css: shared }), ' ', T(ctx, V(s.id, 'promptBackdrop'), { plain: true, css: shared }));
+  first.append(T(ctx, stylePath, { plain: true, css: ownStyle ? `color:${C.text}` : shared }), ' ', T(ctx, V(s.id, 'promptBackdrop'), { plain: true, css: shared }));
   box.append(head, first,
     ctx.text(E('prompt'), { plain: true, css: `color:${C.text}`, placeholder: 'описания для промта ещё нет — нажми, чтобы написать' }),
     T(ctx, I('prompt/close'), { plain: true, css: shared }),
-    dim(`Серым — общее: стиль (один на все карточки) и фон подтипа «${s.name}» — правка меняет промт у всех. Формат и размер картинки ставятся в настройках генератора.`, 'margin-top:6px'));
+    dim(ownStyle
+      ? `Начало промта — своё у этой карточки (вместо общего стиля). Серым — общее: фон подтипа «${s.name}» и концовка. Формат и размер картинки ставятся в настройках генератора.`
+      : `Серым — общее: стиль (один на все карточки) и фон подтипа «${s.name}» — правка меняет промт у всех. Формат и размер картинки ставятся в настройках генератора.`, 'margin-top:6px'));
   return box;
 }
 

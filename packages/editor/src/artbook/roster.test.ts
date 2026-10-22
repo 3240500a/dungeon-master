@@ -30,6 +30,12 @@ describe('artbook: ростеры v2 — чистые помощники', () =>
     for (const b of R.medieval!.bosses) expect(b.prompt, b.id).toMatch(/^Босс-зомби: /);
     // решение 22.10: в промтах нет формата и размера — их ставят в настройках генератора
     for (const b of R.medieval!.bosses) expect(b.prompt, b.id).not.toMatch(/2:3|соотношени|формат|пикс/);
+    // ⭐ 23.10: своё начало промта — у колесницы (не «один персонаж»); у остальных боссов его нет
+    const chariot = R.mesopotamia!.bosses.find((b) => b.id === 'boss14_dust_chariot')!;
+    expect(chariot.promptStyle).toMatch(/колесниц/);
+    expect(promptOf({ style: chariot.promptStyle, card: chariot.prompt })).toMatch(/^Мрачный реалистичный концепт-арт.*колесниц/);
+    // решение 23.10: рот у боссов свободен — они говорят в бою
+    for (const id of idx.order) for (const b of R[id]!.bosses) expect(b.prompt ?? '', `${id}/${b.id}`).not.toMatch(/в зубах|во рту/);
   });
 
   it('«механика держится на» — как в документе: есть / легко (новые вещи, коды «мелко») / на будущее с ценой', async () => {

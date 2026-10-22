@@ -323,6 +323,8 @@ export interface RosterCard {
   speed: number;
   /** ⭐ 22.10: описание для промта Nano Banana (середина промта; стиль и фон — общие, `promptOf`). */
   prompt?: string;
+  /** ⭐ 23.10: своё начало промта вместо общего стиля (`v2/index/prompt/style`) — когда «один персонаж в полный рост» не подходит (колесница с упряжкой). */
+  promptStyle?: string;
 }
 
 export interface RosterTier {
@@ -368,6 +370,8 @@ export interface RosterBoss {
   style?: string;
   /** ⭐ 22.10: описание для промта Nano Banana (середина промта; стиль и фон — общие, `promptOf`). */
   prompt?: string;
+  /** ⭐ 23.10: своё начало промта вместо общего стиля (`v2/index/prompt/style`) — когда «один персонаж в полный рост» не подходит (колесница с упряжкой). */
+  promptStyle?: string;
 }
 
 /** Особый подтипа (4–6, первая волна — 2–4): не больше одного на пачку, тир — своего яруса. */
@@ -392,6 +396,8 @@ export interface RosterSpecial {
   tierNote?: string;
   /** ⭐ 22.10: описание для промта Nano Banana (середина промта; стиль и фон — общие, `promptOf`). */
   prompt?: string;
+  /** ⭐ 23.10: своё начало промта вместо общего стиля (`v2/index/prompt/style`) — когда «один персонаж в полный рост» не подходит (колесница с упряжкой). */
+  promptStyle?: string;
 }
 
 /** Строка состава пачки: `id` — id карточки (`card` — её имя). */
