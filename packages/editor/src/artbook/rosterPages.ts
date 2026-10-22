@@ -3,6 +3,8 @@
  *  • раздел «Ярусы (v2)» на странице подтипа — сетка ярусов, по ярусу таблица карточек (3 ближника + 2 стрелка), три босса, особые,
  *    пачки, переход ярусов по кругу, комплект моделей, статусы, куда ушли прежние карточки, вопросы, банк идей (свёрнут);
  *  • страница карточки `card:<подтип>:<id>` — боец яруса, босс или особый: слоты `v2:<подтип>:<id>:<слот>` и все поля;
+ *    ⭐ 22.10 под слотами — «Промт для Nano Banana»: стиль (общий, `v2/index/prompt/style`) + фон подтипа (`v2/<подтип>/promptBackdrop`),
+ *    описание карточки (`…/prompt`), концовка (`v2/index/prompt/close`); всё правится на месте, «Копировать» собирает (`promptOf`);
  *  • вид «Ярусы × подтипы» (`tiers`) — имена карточек по ярусам шести подтипов и строка боссов;
  *  • вид «Ростер и очерёдность» (`roster`) — очереди 1 · сначала / 2 · следом / 3 · потом / Р, Европа первой, счёты.
  *
@@ -15,7 +17,7 @@ import type { ArtbookCtx, TextOpts } from './ctx.js';
 import { SLOT_SETS, slotImages, slotKey, slotState } from './model.js';
 import {
   ARMOR_RU, BOSS_LABEL, COMBAT_RU, STATUS_RU, TIER_IDS, TIER_POWER, TIER_RU, TIER_TITLE, armorMix, entryMech, fmtMult, queueCell,
-  queueCounts, queueTotalCell, resistText, rosterEntries, rosterEntry, statusMult, type MechSummary, type RosterEntry,
+  promptOf, queueCounts, queueTotalCell, resistText, rosterEntries, rosterEntry, statusMult, type MechSummary, type RosterEntry,
 } from './roster.js';
 import { rosterQueue, type RosterIndex, type RosterRules, type RosterTier, type RosterV2, type Subtype, type TierId } from './seed.js';
 import { C, btn, chip, el, h2, h3, kv, markColor, muted, section, swatches, table, type Cell } from './ui.js';
@@ -438,7 +440,7 @@ export function renderRosterCard(host: HTMLElement, ctx: ArtbookCtx, s: Subtype,
   const left = el('div', 'min-width:0'), right = el('div', 'min-width:0');
   cols.append(left, right);
   host.append(cols);
-  left.append(ctx.slots(['v2', s.id, e.id], SLOT_SETS.card));
+  left.append(ctx.slots(['v2', s.id, e.id], SLOT_SETS.card), promptBox(ctx, s, E));
 
   if (e.kind === 'card') {
     const c = e.card, w = c.weapon;
@@ -486,6 +488,44 @@ export function renderRosterCard(host: HTMLElement, ctx: ArtbookCtx, s: Subtype,
     }, { open: true }));
   }
   host.append(section('Живые числа', `v2card:numbers`, (b) => liveStub(b, ctx, s, e), { open: true }));
+}
+
+/**
+ * ⭐ 22.10: промт Nano Banana карточки. Серым — общее (стиль у всех карточек, фон — у подтипа): правка меняет промт у всех; своё —
+ * описание карточки. «Копировать» собирает промт из того, что видно сейчас (с правками владельца), — `promptOf`.
+ */
+function promptBox(ctx: ArtbookCtx, s: Subtype, E: (f: string) => string): HTMLElement {
+  const box = el('div', `margin-top:10px;padding:10px 12px;border:1px solid ${C.edge};border-radius:8px;background:${C.input}`);
+  box.dataset.v2Prompt = s.id;
+  const head = el('div', 'display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px');
+  const LABEL = '📋 Копировать';
+  const copy = btn(LABEL, () => {
+    const text = promptOf({
+      style: fieldValue(ctx, I('prompt/style')), backdrop: fieldValue(ctx, V(s.id, 'promptBackdrop')),
+      card: fieldValue(ctx, E('prompt')), close: fieldValue(ctx, I('prompt/close')),
+    });
+    if (!text) { flash('нет описания карточки'); return; }
+    void copyText(text).then((ok) => flash(ok ? 'скопировано ✓' : 'не вышло — выдели текст и скопируй вручную'));
+  }, 'padding:2px 10px;font-size:12px');
+  const flash = (t: string): void => { copy.textContent = t; setTimeout(() => { copy.textContent = LABEL; }, 1600); };
+  head.append(el('span', `font-weight:700;color:${C.text};font-size:13px`, 'Промт для Nano Banana'), copy);
+  const shared = `color:${C.dim}`;
+  const first = el('div', 'margin-bottom:6px;line-height:1.5');
+  first.append(T(ctx, I('prompt/style'), { plain: true, css: shared }), ' ', T(ctx, V(s.id, 'promptBackdrop'), { plain: true, css: shared }));
+  box.append(head, first,
+    ctx.text(E('prompt'), { plain: true, css: `color:${C.text}`, placeholder: 'описания для промта ещё нет — нажми, чтобы написать' }),
+    T(ctx, I('prompt/close'), { plain: true, css: shared }),
+    dim(`Серым — общее: стиль (один на все карточки) и фон подтипа «${s.name}» — правка меняет промт у всех. Формат и размер картинки ставятся в настройках генератора.`, 'margin-top:6px'));
+  return box;
+}
+
+/** В буфер обмена; нет доступа (фокус, разрешение) — запасной путь через выделенное поле. */
+async function copyText(text: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* ниже — запасной путь */ }
+  try {
+    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select();
+    const ok = document.execCommand('copy'); t.remove(); return ok;
+  } catch { return false; }
 }
 
 function liveStub(body: HTMLElement, ctx: ArtbookCtx, s: Subtype, e: RosterEntry): void {

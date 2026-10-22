@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import cryptJson from './seed/crypt.json';
 import { loadRoster, loadRosterIndex, type CryptDraft, type RosterIndex, type RosterV2 } from './seed.js';
 import {
-  armorMix, entryMech, fmtMult, mechSummary, plural, queueCell, queueCounts, queueTotalCell, resistText, rosterEntries, rosterEntry, statusMult,
+  armorMix, entryMech, fmtMult, mechSummary, plural, promptOf, queueCell, queueCounts, queueTotalCell, resistText, rosterEntries, rosterEntry, statusMult,
 } from './roster.js';
 
 /**
@@ -19,6 +19,19 @@ const load = async (): Promise<{ idx: RosterIndex; R: Record<string, RosterV2> }
 };
 
 describe('artbook: ростеры v2 — чистые помощники', () => {
+  it('⭐ 22.10 промт Nano Banana: стиль + фон — первый абзац, описание карточки, концовка; без описания — пусто; у боссов Европы описание есть', async () => {
+    expect(promptOf({ style: ' Стиль. ', backdrop: 'Фон.', card: 'Кто.', close: 'Без текста.' })).toBe('Стиль. Фон.\n\nКто.\n\nБез текста.');
+    expect(promptOf({ style: 'Стиль.', card: 'Кто.' })).toBe('Стиль.\n\nКто.');
+    expect(promptOf({ style: 'Стиль.', backdrop: 'Фон.', card: '  ', close: 'Без текста.' })).toBe('');
+    const { idx, R } = await load();
+    expect(idx.prompt?.style).toContain('Diablo IV');
+    expect(idx.prompt?.close).toBe('Без текста и надписей.');
+    for (const id of idx.order) expect(R[id]!.promptBackdrop, id).toMatch(/фон/);
+    for (const b of R.medieval!.bosses) expect(b.prompt, b.id).toMatch(/^Босс-зомби: /);
+    // решение 22.10: в промтах нет формата и размера — их ставят в настройках генератора
+    for (const b of R.medieval!.bosses) expect(b.prompt, b.id).not.toMatch(/2:3|соотношени|формат|пикс/);
+  });
+
   it('«механика держится на» — как в документе: есть / легко (новые вещи, коды «мелко») / на будущее с ценой', async () => {
     const { R } = await load();
     const med = R.medieval!;

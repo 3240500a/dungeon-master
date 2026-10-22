@@ -280,6 +280,22 @@ describe('artbook: страницы рисуются', () => {
     host.all().find((e) => e.dataset.v2Boss === med.bosses[0]!.id)!.dispatch('click');
     noCrash();
     for (const s of [med.bosses[0]!.name, 'босс 5 · лёгкий', 'тир boss', 'Облик', 'Зал и свита', 'Чем отличается', 'Бой по фазам', 'Базовая версия без кода']) expect(page(), s).toContain(s);
+    // ⭐ 22.10: промт Nano Banana под слотами — стиль и фон подтипа, описание босса, концовка; «Копировать» собирает целиком
+    const b0 = med.bosses[0]!;
+    for (const s of ['Промт для Nano Banana', IDX.prompt!.style, med.promptBackdrop!, b0.prompt!, IDX.prompt!.close]) expect(page(), s).toContain(s);
+    let copied = '';
+    vi.stubGlobal('navigator', { clipboard: { writeText: async (t: string) => { copied = t; } } });
+    clickText(host.all().find((e) => e.dataset.v2Prompt === 'medieval')!, '📋 Копировать');
+    await vi.waitFor(() => { if (!copied) throw new Error('ещё не скопировано'); });
+    expect(copied).toBe(`${IDX.prompt!.style} ${med.promptBackdrop}\n\n${b0.prompt}\n\n${IDX.prompt!.close}`);
+    // правка описания — по пути v2/<подтип>/bosses/<id>/prompt, копируется уже с правкой
+    editField(b0.prompt!, 'Босс-зомби: правка владельца.');
+    expect(store.doc.texts[`v2/medieval/bosses/${b0.id}/prompt`]?.text).toBe('Босс-зомби: правка владельца.');
+    copied = '';
+    clickText(host.all().find((e) => e.dataset.v2Prompt === 'medieval')!, '📋 Копировать');
+    await vi.waitFor(() => { if (!copied) throw new Error('ещё не скопировано'); });
+    expect(copied).toContain('\n\nБосс-зомби: правка владельца.\n\n');
+    vi.unstubAllGlobals();
     clickText(host, med.bosses[1]!.name);
     noCrash();
     expect(page()).toContain('босс 14 · средний');

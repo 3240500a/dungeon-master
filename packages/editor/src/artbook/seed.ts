@@ -321,6 +321,8 @@ export interface RosterCard {
   prototype: string;
   weight: number;
   speed: number;
+  /** ⭐ 22.10: описание для промта Nano Banana (середина промта; стиль и фон — общие, `promptOf`). */
+  prompt?: string;
 }
 
 export interface RosterTier {
@@ -364,6 +366,8 @@ export interface RosterBoss {
   prototype: string;
   title?: string;
   style?: string;
+  /** ⭐ 22.10: описание для промта Nano Banana (середина промта; стиль и фон — общие, `promptOf`). */
+  prompt?: string;
 }
 
 /** Особый подтипа (4–6, первая волна — 2–4): не больше одного на пачку, тир — своего яруса. */
@@ -386,6 +390,8 @@ export interface RosterSpecial {
   prototype: string;
   engineRole?: string;
   tierNote?: string;
+  /** ⭐ 22.10: описание для промта Nano Banana (середина промта; стиль и фон — общие, `promptOf`). */
+  prompt?: string;
 }
 
 /** Строка состава пачки: `id` — id карточки (`card` — её имя). */
@@ -533,6 +539,8 @@ export interface RosterV2 {
   decidedNote: string;
   decided: string[];
   ideaBank: { note: string; bosses: RosterBankBoss[]; ideas: RosterIdea[] };
+  /** ⭐ 22.10: фон подтипа для промтов Nano Banana (цвет фона и туман — у каждого подтипа свой). */
+  promptBackdrop?: string;
 }
 
 /** Очередь ростера: «1 · сначала» (лёгкий и средний ярус), «2 · следом» (тяжёлый + босс 5), «3 · потом» (боссы 14, 19 и особые), «Р» (банк идей). */
@@ -584,6 +592,8 @@ export interface RosterIndex {
   openAfterCheck: { intro: string; items: { id: string; title: string; text: string }[] };
   whereIs: string[];
   roster: { intro: string; queues: RosterQueue[]; orderNote: string; mechNote: string; productionOrder: string[]; countsNote: string };
+  /** ⭐ 22.10: общие части промта Nano Banana — стиль (начало первого абзаца) и концовка; `note` — как промт собирается. */
+  prompt?: { style: string; close: string; note?: string };
 }
 
 /** Строка очереди ростера: карточка яруса, босс, особый или запись банка идей. */

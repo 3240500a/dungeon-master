@@ -178,3 +178,14 @@ export function queueTotalCell(all: readonly QueueCounts[], q: RosterQueue): str
   const b = all.reduce((s, c) => s + (c.bossFloors[q.id]?.length ?? 0), 0);
   return `${n} (${b} ${plural(b, 'босс', 'босса', 'боссов')} + ${sp} ${plural(sp, 'особый', 'особых', 'особых')})`;
 }
+
+/**
+ * ⭐ 22.10: промт Nano Banana карточки — первый абзац: общий стиль + фон подтипа; второй: описание карточки; последняя строка —
+ * общая концовка. Пустые части пропускаются; нет описания карточки — `''` (копировать нечего). Формат и размер картинки в промт
+ * не пишем — их ставят в настройках генератора (решение владельца 22.10).
+ */
+export function promptOf(parts: { style?: string; backdrop?: string; card?: string; close?: string }): string {
+  const t = (s?: string): string => (s ?? '').trim();
+  if (!t(parts.card)) return '';
+  return [[t(parts.style), t(parts.backdrop)].filter(Boolean).join(' '), t(parts.card), t(parts.close)].filter(Boolean).join('\n\n');
+}
