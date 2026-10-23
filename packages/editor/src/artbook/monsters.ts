@@ -49,17 +49,18 @@ function renderList(host: HTMLElement, ctx: ArtbookCtx): void {
   const subIds = d.subtypes.map((s) => s.id);
   const mons = monstersRaw(ctx);
   const idx = ctx.rosterIndex();
-  const grid = el('div', 'display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px');
+  // ⭐ 23.10: заглавная картинка подтипа (групповой арт, широкий кадр) — крупно сверху карточки, текст под ней.
+  const grid = el('div', 'display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px');
   for (const s of ordered(ctx)) {
     const sum = idx?.subtypes.find((x) => x.id === s.id);
     const inCfg = monstersOfSubtype(mons, subIds, s.id).length;
     const approved = v2ConceptsApproved(ctx, s.id);
 
-    const card = el('div', `display:flex;gap:12px;padding:10px;border:1px solid ${C.edge};border-radius:8px;background:${C.bg};cursor:pointer`);
+    const card = el('div', `display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid ${C.edge};border-radius:8px;background:${C.bg};cursor:pointer`);
     card.addEventListener('click', () => ctx.go('sub:' + s.id));
     card.addEventListener('mouseenter', () => { card.style.borderColor = C.active; });
     card.addEventListener('mouseleave', () => { card.style.borderColor = C.edge; });
-    card.append(ctx.thumb(slotKey('sub', s.id, 'concept'), { w: 96, h: 124 }));
+    card.append(ctx.thumb(slotKey('sub', s.id, 'concept'), { w: 400, h: 225, empty: 'нет заглавной картинки' }));
     const info = el('div', 'min-width:0;flex:1');
     info.append(el('div', `font-weight:700;font-size:14.5px;color:${C.text}`, s.name));
     const tags = el('div', 'display:flex;gap:4px;flex-wrap:wrap;margin:3px 0 5px');
