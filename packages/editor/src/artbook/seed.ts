@@ -547,6 +547,17 @@ export interface RosterV2 {
   ideaBank: { note: string; bosses: RosterBankBoss[]; ideas: RosterIdea[] };
   /** ⭐ 22.10: фон подтипа для промтов Nano Banana (цвет фона и туман — у каждого подтипа свой). */
   promptBackdrop?: string;
+  /** ⭐ 25.10: промты заглавной картинки подтипа (отряд из 15 на лестнице склепа): целиком, окружение, у Европы — три группы. */
+  keyArt?: { prompts: RosterKeyArtPrompt[] };
+}
+
+/** Промт заглавной картинки — цельный, копируется как есть (не собирается из стиля и фона, как у карточек). */
+export interface RosterKeyArtPrompt {
+  id: string;
+  title: string;
+  text: string;
+  /** Как пользоваться: что приложить к промту, откуда он взялся. */
+  note?: string;
 }
 
 /** Очередь ростера: «1 · сначала» (лёгкий и средний ярус), «2 · следом» (тяжёлый + босс 5), «3 · потом» (боссы 14, 19 и особые), «Р» (банк идей). */
@@ -599,7 +610,8 @@ export interface RosterIndex {
   whereIs: string[];
   roster: { intro: string; queues: RosterQueue[]; orderNote: string; mechNote: string; productionOrder: string[]; countsNote: string };
   /** ⭐ 22.10: общие части промта Nano Banana — стиль (начало первого абзаца) и концовка; `note` — как промт собирается. */
-  prompt?: { style: string; close: string; note?: string };
+  /** `keyArt` — ⭐ 25.10 общая заметка к промтам заглавной картинки подтипа. */
+  prompt?: { style: string; close: string; note?: string; keyArt?: string };
 }
 
 /** Строка очереди ростера: карточка яруса, босс, особый или запись банка идей. */

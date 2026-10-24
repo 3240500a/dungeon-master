@@ -40,6 +40,27 @@ describe('artbook: ростеры v2 — чистые помощники', () =>
     for (const id of idx.order) for (const b of R[id]!.bosses) expect(b.prompt ?? '', `${id}/${b.id}`).not.toMatch(/в зубах|во рту/);
   });
 
+  it('⭐ 25.10 промты заглавной картинки: у всех шести — «целиком» (15 мертвецов, три группы) и окружение; у Европы — три группы; без формата', async () => {
+    const { idx, R } = await load();
+    expect(idx.prompt?.keyArt).toMatch(/пятнадцати/);
+    for (const id of idx.order) {
+      const ps = R[id]!.keyArt?.prompts ?? [];
+      const ids = ps.map((p) => p.id);
+      expect(new Set(ids).size, `${id}: id промтов не повторяются`).toBe(ids.length);
+      expect(ids.slice(0, 2), id).toEqual(['full', 'scene']);
+      const full = ps[0]!.text, scene = ps[1]!.text;
+      expect(full, id).toMatch(/^Мрачный реалистичный концепт-арт в духе Diablo IV и Path of Exile 2\. Отряд из пятнадцати мертвецов/);
+      for (const g of ['Слева — лёгкие', 'В центре — средние', 'Справа — тяжёлые', 'Окружение:']) expect(full, `${id}: ${g}`).toContain(g);
+      expect(scene, id).toMatch(/Без людей, без текста и надписей\.$/);
+      // решение 22.10: формат и размер — в настройках генератора, не в промте
+      for (const p of ps) {
+        expect(p.text, `${id}/${p.id}`).toMatch(/Без (людей, без )?текста и надписей\.$/);
+        expect(p.text, `${id}/${p.id}`).not.toMatch(/16:9|21:9|16 на 9|соотношени|формат|пикс/);
+      }
+    }
+    expect(R.medieval!.keyArt!.prompts.map((p) => p.id)).toEqual(['full', 'scene', 'light', 'medium', 'heavy']);
+  });
+
   it('«механика держится на» — как в документе: есть / легко (новые вещи, коды «мелко») / на будущее с ценой', async () => {
     const { R } = await load();
     const med = R.medieval!;

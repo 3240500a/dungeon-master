@@ -258,6 +258,27 @@ describe('artbook: страницы рисуются', () => {
     expect(page()).toContain(med.ideaBank.bosses[0]!.differs);
     expect(page()).toContain(med.ideaBank.ideas[0]!.what);
 
+    // ⭐ 25.10: «Промты заглавной картинки» под слотами — свёрнуты; раскрыл — все пять промтов Европы, копируются как есть, правятся на месте
+    const ka = med.keyArt!.prompts;
+    expect(page()).toContain('Промты заглавной картинки');
+    expect(page()).not.toContain(ka[0]!.text);
+    host.all().find((e) => e.textContent === 'Промты заглавной картинки' && e.tagName === 'SPAN')!.dispatch('click');
+    noCrash();
+    for (const p of ka) for (const s of [p.title, p.text]) expect(page(), `${p.id}: ${s.slice(0, 30)}`).toContain(s);
+    expect(page()).toContain(IDX.prompt!.keyArt!);
+    let copiedKa = '';
+    vi.stubGlobal('navigator', { clipboard: { writeText: async (t: string) => { copiedKa = t; } } });
+    clickText(host.all().find((e) => e.dataset.keyArt === 'medieval:full')!, '📋 Копировать');
+    await vi.waitFor(() => { if (!copiedKa) throw new Error('ещё не скопировано'); });
+    expect(copiedKa).toBe(ka[0]!.text);
+    editField(ka[1]!.text, 'Склеп: правка владельца.');
+    expect(store.doc.texts['v2/medieval/keyArt/prompts/scene/text']?.text).toBe('Склеп: правка владельца.');
+    copiedKa = '';
+    clickText(host.all().find((e) => e.dataset.keyArt === 'medieval:scene')!, '📋 Копировать');
+    await vi.waitFor(() => { if (!copiedKa) throw new Error('ещё не скопировано'); });
+    expect(copiedKa).toBe('Склеп: правка владельца.');
+    vi.unstubAllGlobals();
+
     // Боец яруса: клик по строке — его страница
     const c = med.tiers[0]!.cards[0]!;
     clickRows(host.all().find((e) => e.dataset.v2Tier === 'light')!).find((tr) => tr.textContent.includes(c.name))!.dispatch('click');

@@ -16,7 +16,7 @@ import {
   LEGACY_SUBTYPE, RARITIES, RARITY_LABEL, archetypesOf, bindArchetypes, floorMonsterLevel, monsterCard, protoOf, subtypeTable,
   type ArchRow, type MonsterCard, type MonsterNumbers, type MonsterRarity, type SubtypeTable,
 } from './monsterNumbers.js';
-import { navBar, renderRosterSection } from './rosterPages.js';
+import { keyArtBox, navBar, renderRosterSection } from './rosterPages.js';
 import type { Archetype, Subtype } from './seed.js';
 import { C, btn, chip, el, h2, h3, kv, muted, section, sourcesList, swatches, table, type Cell } from './ui.js';
 import { hasField as has } from './widgets.js';
@@ -152,7 +152,8 @@ export function renderSubtype(host: HTMLElement, ctx: ArtbookCtx, subId: string)
   const left = el('div', 'min-width:0'), right = el('div', 'min-width:0');
   cols.append(left, right);
   host.append(cols);
-  left.append(ctx.slots(['sub', s.id], SLOT_SETS.subtype));
+  // ⭐ 25.10: под слотами (заглавная картинка — в «Главном концепте») — её промты для Nano Banana.
+  left.append(ctx.slots(['sub', s.id], SLOT_SETS.subtype), keyArtBox(ctx, s));
   right.append(h3('Коротко'), ctx.text(P('short')));
   right.append(h3('Палитра'), swatches(s.palette));
   right.append(h3('Свечение'), ctx.text(P('glow')));

@@ -5,6 +5,7 @@
  *  • страница карточки `card:<подтип>:<id>` — боец яруса, босс или особый: слоты `v2:<подтип>:<id>:<слот>` и все поля;
  *    ⭐ 22.10 под слотами — «Промт для Nano Banana»: стиль (общий, `v2/index/prompt/style`) + фон подтипа (`v2/<подтип>/promptBackdrop`),
  *    описание карточки (`…/prompt`), концовка (`v2/index/prompt/close`); всё правится на месте, «Копировать» собирает (`promptOf`);
+ *  • ⭐ 25.10 на странице подтипа под слотами — «Промты заглавной картинки» (`keyArtBox`, `v2/<подтип>/keyArt/prompts/<id>/…`);
  *  • вид «Ярусы × подтипы» (`tiers`) — имена карточек по ярусам шести подтипов и строка боссов;
  *  • вид «Ростер и очерёдность» (`roster`) — очереди 1 · сначала / 2 · следом / 3 · потом / Р, Европа первой, счёты.
  *
@@ -501,18 +502,12 @@ function promptBox(ctx: ArtbookCtx, s: Subtype, E: (f: string) => string): HTMLE
   const box = el('div', `margin-top:10px;padding:10px 12px;border:1px solid ${C.edge};border-radius:8px;background:${C.input}`);
   box.dataset.v2Prompt = s.id;
   const head = el('div', 'display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px');
-  const LABEL = '📋 Копировать';
   const ownStyle = hasField(ctx, E('promptStyle'));
   const stylePath = ownStyle ? E('promptStyle') : I('prompt/style');
-  const copy = btn(LABEL, () => {
-    const text = promptOf({
-      style: fieldValue(ctx, stylePath), backdrop: fieldValue(ctx, V(s.id, 'promptBackdrop')),
-      card: fieldValue(ctx, E('prompt')), close: fieldValue(ctx, I('prompt/close')),
-    });
-    if (!text) { flash('нет описания карточки'); return; }
-    void copyText(text).then((ok) => flash(ok ? 'скопировано ✓' : 'не вышло — выдели текст и скопируй вручную'));
-  }, 'padding:2px 10px;font-size:12px');
-  const flash = (t: string): void => { copy.textContent = t; setTimeout(() => { copy.textContent = LABEL; }, 1600); };
+  const copy = copyBtn(() => promptOf({
+    style: fieldValue(ctx, stylePath), backdrop: fieldValue(ctx, V(s.id, 'promptBackdrop')),
+    card: fieldValue(ctx, E('prompt')), close: fieldValue(ctx, I('prompt/close')),
+  }), 'нет описания карточки');
   head.append(el('span', `font-weight:700;color:${C.text};font-size:13px`, 'Промт для Nano Banana'), copy);
   const shared = `color:${C.dim}`;
   const first = el('div', 'margin-bottom:6px;line-height:1.5');
@@ -524,6 +519,46 @@ function promptBox(ctx: ArtbookCtx, s: Subtype, E: (f: string) => string): HTMLE
       ? `Начало промта — своё у этой карточки (вместо общего стиля). Серым — общее: фон подтипа «${s.name}» и концовка. Формат и размер картинки ставятся в настройках генератора.`
       : `Серым — общее: стиль (один на все карточки) и фон подтипа «${s.name}» — правка меняет промт у всех. Формат и размер картинки ставятся в настройках генератора.`, 'margin-top:6px'));
   return box;
+}
+
+/**
+ * ⭐ 25.10: промты ЗАГЛАВНОЙ картинки подтипа (отряд из 15 мертвецов на лестнице склепа, без боссов) — под слотами страницы
+ * подтипа. Промты цельные: «целиком», окружение без людей, у Европы ещё три группы по одной. Всё правится на месте по пути
+ * `v2/<подтип>/keyArt/prompts/<id>/…`; «Копировать» берёт текст, как он виден сейчас. Общая заметка — `v2/index/prompt/keyArt`.
+ */
+export function keyArtBox(ctx: ArtbookCtx, s: Subtype): HTMLElement {
+  const r = ctx.roster(s.id);
+  const n = r?.keyArt?.prompts.length ?? 0;
+  return section('Промты заглавной картинки', `sub:${s.id}:keyart`, (b) => {
+    if (!r) { b.append(pending(ctx, [s.id])); return; }
+    if (hasField(ctx, I('prompt/keyArt'))) b.append(T(ctx, I('prompt/keyArt'), { tag: 'div', css: `font-size:12px;color:${C.dim}` }));
+    if (!n) b.append(muted('Промтов заглавной картинки у подтипа ещё нет.'));
+    for (const p of r.keyArt?.prompts ?? []) b.append(keyArtPrompt(ctx, s.id, p.id));
+  }, { level: 2, note: n ? `${n} — для Nano Banana, копировать кнопкой` : undefined });
+}
+
+function keyArtPrompt(ctx: ArtbookCtx, sub: string, id: string): HTMLElement {
+  const K = (f: string): string => V(sub, `keyArt/prompts/${id}/${f}`);
+  const box = el('div', `margin-top:8px;padding:10px 12px;border:1px solid ${C.edge};border-radius:8px;background:${C.input}`);
+  box.dataset.keyArt = `${sub}:${id}`;
+  const head = el('div', 'display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:4px');
+  head.append(T(ctx, K('title'), { single: true, plain: true, css: `font-weight:700;color:${C.text};font-size:13px` }), copyBtn(() => fieldValue(ctx, K('text')).trim(), 'промт пуст'));
+  box.append(head);
+  if (hasField(ctx, K('note'))) box.append(T(ctx, K('note'), { tag: 'div', css: `font-size:11.5px;color:${C.dim};margin-bottom:6px` }));
+  box.append(ctx.text(K('text'), { plain: true, css: `color:${C.text}` }));
+  return box;
+}
+
+/** «📋 Копировать»: текст берётся в момент нажатия (с правками владельца); пусто — подсказка на самой кнопке. */
+function copyBtn(get: () => string, empty: string): HTMLElement {
+  const LABEL = '📋 Копировать';
+  const b = btn(LABEL, () => {
+    const text = get();
+    if (!text) { flash(empty); return; }
+    void copyText(text).then((ok) => flash(ok ? 'скопировано ✓' : 'не вышло — выдели текст и скопируй вручную'));
+  }, 'padding:2px 10px;font-size:12px;flex:0 0 auto');
+  const flash = (t: string): void => { b.textContent = t; setTimeout(() => { b.textContent = LABEL; }, 1600); };
+  return b;
 }
 
 /** В буфер обмена; нет доступа (фокус, разрешение) — запасной путь через выделенное поле. */
