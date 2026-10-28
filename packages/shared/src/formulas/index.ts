@@ -6,6 +6,8 @@ export * from './combat.js';
 export * from './buffTiming.js';
 export * from './xp.js';
 export * from './itemgen.js';
+export * from './itemName.js';
+export * from './ruAgree.js';
 // ⚠ Разбор и трофеи нужны НЕ только сессии: редактор строит по ним таблицы дропа, и считать
 // их там своей формулой значило бы завести второй источник правды (правило «редактор и игра
 // видят одно и то же»).
@@ -19,6 +21,9 @@ export * from './itemReq.js';
 export * from './itemDescribe.js';
 export * from './monstergen.js';
 export * from './monsterDerive.js';
+// ⭐ Г8-3: ступень снаряжения монстра — ПУБЛИЧНЫЙ шов: её спрашивает вкладка «Круг забега» редактора, чтобы
+// колонка «гир монстров» в карте этажей считалась ТЕМ ЖЕ правилом, что в игре (а не своей таблицей порогов).
+export * from './monsterGearTier.js';
 export * from './spawnWeight.js';
 export * from './power.js';
 export * from './skills.js';

@@ -1,6 +1,6 @@
 import { configSchemas, configCrossIssues, crossIssuesWorse, CONFIG_CROSS_KEYS, type ConfigKey, type ConfigShapes } from './schemas.js';
 import { defaultConfigData } from './defaults.js';
-import { configSetRev, gameView } from './configRev.js';
+import { CONFIG_TEXT_ONLY_KEYS, configSetRev, gameView } from './configRev.js';
 import type { EventBus } from '../events/index.js';
 
 /**
@@ -112,5 +112,9 @@ export class ConfigRegistry {
   }
 }
 
-/** Таблицы реестра в порядке схемы — порядок ревизии (`revision`) у сервера и клиента один. */
-const CONFIG_KEYS: readonly string[] = Object.keys(configSchemas);
+/**
+ * Таблицы реестра в порядке схемы — порядок ревизии (`revision`) у сервера и клиента один.
+ * ⚠ Без таблиц чистого текста (`locales`): правка перевода не меняет ни одного исхода и не должна
+ * закрывать окна игрокам. Сверка 409 у редактора идёт по ПРАВЛЕНЫМ таблицам и от этого не страдает.
+ */
+const CONFIG_KEYS: readonly string[] = Object.keys(configSchemas).filter((k) => !CONFIG_TEXT_ONLY_KEYS.has(k));

@@ -33,6 +33,8 @@
     "items:rollback": "tsx packages/server/src/db/itemsCli.ts rollback",
     "items:revoke": "tsx packages/server/src/db/itemsCli.ts revoke",
     "items:orphans": "tsx packages/server/src/db/itemsCli.ts orphans",
+    "i18n": "tsx tools/i18n/extract.ts",
+    "i18n:stub": "tsx tools/i18n/extract.ts --stub",
     "anim-ai": "tsx tools/anim-ai/server.ts",
     "anim-ai:stub": "tsx tools/anim-ai/server.ts --stub",
     "create-admin": "tsx packages/server/src/db/createAdminCli.ts",

@@ -407,6 +407,7 @@
               "2"
             ]
           },
+          "id": "two-handed",
           "text": "двуручный меч",
           "gender": "m"
         },
@@ -419,6 +420,7 @@
               "pompeii"
             ]
           },
+          "id": "gladius",
           "text": "гладиус",
           "gender": "m"
         },
@@ -429,11 +431,13 @@
               "long"
             ]
           },
+          "id": "hand-and-half",
           "text": "полуторный меч",
           "gender": "m"
         },
         {
           "when": {},
+          "id": "plain",
           "text": "меч",
           "gender": "m"
         }

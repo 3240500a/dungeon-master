@@ -1,5 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
+import { ruAgree } from './ruAgree.js';
 
 /**
  * КЛАССИФИКАТОР ТИПОВ ОРУЖИЯ (docs/CRAFT_WEAPONS.md §3.3) — «что за меч получился».
@@ -99,25 +100,13 @@ export function matchWhen(anat: WeaponAnatomy, when: Record<string, string[]>, h
 
 // ── Грамматика ───────────────────────────────────────────────────────────────────────────────────
 
-const HARD_STEM = /[кгхжшчщ]$/;
-
 /**
- * Согласует прилагательное в МУЖСКОМ роде с родом имени: «поздний» → «поздняя», «широкий» →
- * «широкое». Слова, которые не прилагательные («с», «долом»), не трогает. Работает по словам.
+ * ⚠ АРИФМЕТИКА РУССКИХ ОКОНЧАНИЙ ЖИВЁТ В ОДНОМ МЕСТЕ — `formulas/ruAgree.ts`, и она ЗАПАС, а не
+ * правило: правило теперь данные (`i18n/forms.ts`, фрагмент несёт свои формы). Копий было четыре,
+ * в паритете их держали только золотые эталоны, и две из них расходились («падающое» против
+ * «падающее»). Здесь остался переходник — на имя `agree` ссылаются тесты ковки и `craftedName`.
  */
-export function agree(phrase: string, gender: string | undefined): string {
-  if (!phrase || !gender || gender === 'm') return phrase;
-  return phrase.split(' ').map((w) => {
-    const m = /^(.*?)(ый|ий|ой)$/.exec(w);
-    if (!m || m[1]!.length < 2) return w;
-    const stem = m[1]!, end = m[2]!;
-    const soft = end === 'ий' && !HARD_STEM.test(stem); // поздний, ранний, синий
-    if (gender === 'f') return stem + (soft ? 'яя' : 'ая');
-    if (gender === 'n') return stem + (soft ? 'ее' : end !== 'ой' && /[жшчщ]$/.test(stem) ? 'ее' : 'ое');
-    if (gender === 'p') return stem + (soft || HARD_STEM.test(stem) ? 'ие' : 'ые');
-    return w;
-  }).join(' ');
-}
+export const agree = ruAgree;
 
 const upFirst = (s: string): string => {
   const i = s.search(/[A-Za-zА-Яа-яЁё]/);

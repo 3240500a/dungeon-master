@@ -52,6 +52,14 @@ export function configSetRev(keys: readonly string[], table: (key: string) => un
 export const VISUAL_ONLY_KEYS: ReadonlySet<string> = new Set(['textures', 'materials', 'environment']);
 
 /**
+ * ⭐⭐ 26.10: ТАБЛИЦЫ ЧИСТОГО ТЕКСТА — вне ЛЮБОЙ ревизии конфига. Перевод не меняет ни одного исхода:
+ * ни цены, ни броска, ни расстановки, — а правки его идут сотнями во время перевода. Без этого
+ * исключения каждая из них закрывала бы кузницу и лавку всем игрокам (`configChanged` → «Цена изменилась»)
+ * и заново резала релиз контента — тот же случай, что с правкой текстуры в Д1, только частотой выше.
+ */
+export const CONFIG_TEXT_ONLY_KEYS: ReadonlySet<string> = new Set(['locales']);
+
+/**
  * ⭐ 08.10 (Д1): СМЕШАННЫЕ ТАБЛИЦЫ — в игровую ревизию идут только поля, которые читает серверная игра. Декор расставляет и сталкивает
  * сервер (`decorSpecsFor`: роль, биомы, частота, площадь, отступ, блокировка прохода и обзора, коллайдер объекта, а без него — коллайдер его модели),
  * а вид модели (ссылки, слоты, кости, материалы, свет) — только клиенты.
@@ -99,7 +107,7 @@ const gameViews = new WeakMap<object, unknown>();
  * только с игровыми полями (отсутствующее поле не попадает в строку), прочие — как есть.
  */
 export function gameView(key: string, table: unknown): unknown {
-  if (VISUAL_ONLY_KEYS.has(key)) return null;
+  if (VISUAL_ONLY_KEYS.has(key) || CONFIG_TEXT_ONLY_KEYS.has(key)) return null;
   const fields = GAME_FIELDS[key];
   if (!fields || !Array.isArray(table)) return table;
   let view = gameViews.get(table);

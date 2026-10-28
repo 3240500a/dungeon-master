@@ -24,10 +24,14 @@ import {
   SHOP_CONSUMABLE_STOCK, allocActive, allocAttr, allocPassive, applyConsumable, attrRespecRefund, buyItem, canEnchantItem, canUpgradeItem, craftAction,
   depositMaterials, enchantAction, enchantMaterials, equip, fieldSalvage, forgeGold, forgeRepair, forgeReroll, forgeSalvage, forgeUpgrade, rerollMaterials,
   moveInventoryItem, moveToBelt, passiveRespecFee, repairCost, respec, respecPassives, respecSkills, salvageMean, salvageRange,
+  sealReforge, sealReroll,
   salvageWorth, sellItem, settleEarned, shopBuyPrice, shopConsumableIds, shopSellPrice, sketchAction, skillRespecFee, unequip, upgradeCost,
   upgradedItem, pointsHeld, type ActionResult,
 } from '../townActions.js';
 import { emptyStash, sanitizeStash, stashDims, stashMove, type StashDst } from '../stashActions.js';
+import {
+  carriedSealsAll, giveSealsTo, liveSealDefs, parseSealKey, sealKey, sealNextTier, sealReforgeRules, sealRerollCost, sealTiers,
+} from '../seals.js';
 import { acceptQuest, ensureMainQuest, generateBoard, trackFloor, trackObjective, turnInQuest } from '../questLogic.js';
 import { newCharacterSave } from '../newCharacter.js';
 import { applyDeathPenalty } from '../death.js';
@@ -80,7 +84,8 @@ export type OpKind =
   | 'stashMove' | 'deposit' | 'equip' | 'unequip' | 'useConsumable' | 'moveBelt' | 'moveItem' | 'allocAttr' | 'respec'
   | 'allocPassive' | 'respecPassives' | 'allocSkill' | 'respecSkills' | 'acceptQuest' | 'ensureMain' | 'questProgress' | 'turnIn'
   | 'death' | 'loot' | 'lootMats' | 'gold' | 'xp' | 'config' | 'restock' | 'clientSync' | 'newHero' | 'classEdit' | 'progEdit' | 'reenter'
-  | 'priceEdit' | 'exchange';
+  | 'priceEdit' | 'exchange'
+  | 'sealLoot' | 'sealForge' | 'sealRoll';
 
 /** Шаг цепочки: вид, чей герой (0/1), сид его бросков. */
 export interface Op { k: OpKind; h: 0 | 1; s: number }
@@ -103,6 +108,11 @@ export const OP_WEIGHTS: Record<OpKind, number> = {
   priceEdit: 0,
   // ⭐ Обмен сырья у кузнеца (06.10) — свой профиль (`economyFuzz.test.ts`): здесь 0, чтобы цепочки прочих профилей не сдвинулись.
   exchange: 0,
+  // ⭐⭐ Ф5-6′ (23.10): ПЕЧАТИ — приход с тел, перековка 3→1 и перекат вида. Свой профиль (`economyFuzz.test.ts`),
+  // здесь 0 по тому же правилу: любой вес сдвинул бы цепочки всех прежних профилей, и их находки пришлось бы искать заново.
+  sealLoot: 0,
+  sealForge: 0,
+  sealRoll: 0,
 };
 
 /** Цепочка шагов из сида: виды по весам, от состояния не зависит (сжатие это и требует). */
@@ -432,6 +442,8 @@ export interface Census {
   gold: [number, number];
   /** Сырьё аккаунта по id: стеки в сумках и вкладках + кошелёк. */
   mats: Record<string, number>;
+  /** ⭐ Ф5-6′: печати ШТУКАМИ по паре «вид@ступень» (сумка + сундук + земля) — они стек, а не личность. */
+  seals: Record<string, number>;
   /** Вещи (не сырьё) по uid. */
   items: Map<string, Held>;
   /** Все uid (с сырьём) — для уникальности; где лежит каждый. */
@@ -455,6 +467,28 @@ export function liquidation(w: FuzzWorld, it: Item, key = keyOf(it)): number {
   return v;
 }
 
+/**
+ * ⭐⭐ Ф5-6′: ПЕРЕПИСЬ ПЕЧАТЕЙ АККАУНТА — сумка И сундук, по паре «вид@ступень» и по uid стеков.
+ *
+ * ⚠ Печать — предмет СО СТЕКОМ и вне леджера вещей: по uid её судьбу не сверить (стек меняет длину, а не
+ * личность), поэтому арифметика обмена проверяется ШТУКАМИ, а не uid-ами. Это и есть настоящий инвариант
+ * перековки: «ушло ровно `need` одной ступени, пришла ровно одна следующей».
+ */
+function sealTally(s: SaveState, st: AccountStash): { by: Record<string, number>; uids: Set<string>; total: number } {
+  const by = carriedSealsAll(s.inventory, st.tabs as unknown as (Item | null)[][] | undefined);
+  const uids = new Set<string>();
+  for (const it of s.inventory) if (it.kind === 'seal') uids.add(it.uid);
+  for (const tab of (st.tabs ?? []) as unknown as (Item | null)[][]) for (const it of tab) if (it?.kind === 'seal') uids.add(it.uid);
+  return { by, uids, total: Object.values(by).reduce((a, b) => a + b, 0) };
+}
+
+/** Сколько печатей этой СТУПЕНИ в переписи (вид решает бросок кузнеца, поэтому считаем ступенями). */
+function sealsOfTier(by: Record<string, number>, tierId: string): number {
+  let n = 0;
+  for (const [key, k] of Object.entries(by)) if (parseSealKey(key)?.tierId === tierId) n += k;
+  return n;
+}
+
 /** Канонический сундук: журнал и ключи — как их нормализует чтение из базы (ноль в счёте жалости = нет записи). */
 function canonStash(st: AccountStash): AccountStash {
   return { ...st, forgeJournal: normalizeJournal(st.forgeJournal), craftNonces: normalizeCraftNonces(st.craftNonces) };
@@ -470,6 +504,7 @@ export function census(w: FuzzWorld): Census {
   const heroJson: [string, string] = [heroCanon(w.heroes[0]), heroCanon(w.heroes[1])];
   const stashJson = JSON.stringify(canonStash(w.stash));
   const mats: Record<string, number> = {};
+  const seals: Record<string, number> = {};
   const items = new Map<string, Held>();
   const uidList: string[] = [];
   const uidWhere = new Map<string, string[]>();
@@ -484,6 +519,19 @@ export function census(w: FuzzWorld): Census {
     value += liquidation(w, it, key);
     if (it.kind === 'material') {
       if (it.materialId) mats[it.materialId] = (mats[it.materialId] ?? 0) + (it.count ?? 1);
+      return;
+    }
+    // ⭐⭐ Ф5-6′ (23.10): ПЕЧАТЬ — СТЕК, И СЧИТАЕТСЯ ШТУКАМИ, как сырьё, а не личностями-вещами.
+    //
+    // ⚠ Почему не как вещь: стек меняет ДЛИНУ, а не личность, и по uid его судьбу не сверить — приход в
+    // существующий стек, списание половины на смерти и обмен у кузнеца выглядели бы «вещь изменилась»
+    // (замер: 20 сидов из 20 падали на `I4:item-mutated`), и каждому шагу пришлось бы перечислять uid-ы
+    // стеков. Зато штуками проверяется ровно то, что важно: печати не появляются и не исчезают мимо спеки.
+    if (it.kind === 'seal') {
+      if (it.sealId && it.sealTier) {
+        const key = `${it.sealId}@${it.sealTier}`;
+        seals[key] = (seals[key] ?? 0) + (it.count ?? 1);
+      }
       return;
     }
     items.set(it.uid, { item: it, where, key });
@@ -504,7 +552,7 @@ export function census(w: FuzzWorld): Census {
   }
   return {
     json: `${heroJson[0]}\n${heroJson[1]}\n${stashJson}`, heroJson, stashJson,
-    gold: [w.heroes[0].gold, w.heroes[1].gold], mats, items, uidList, uidWhere, value,
+    gold: [w.heroes[0].gold, w.heroes[1].gold], mats, seals, items, uidList, uidWhere, value,
     journal: normalizeJournal(w.stash.forgeJournal), nonces: JSON.stringify(normalizeCraftNonces(w.stash.craftNonces)),
   };
 }
@@ -522,6 +570,14 @@ export interface Spec {
     spend?: MaterialCost; maxSpend?: Record<string, number>; gain?: Record<string, { min: number; max: number }>;
     minGain?: Record<string, number>; loss?: boolean; free?: boolean;
   };
+  /**
+   * ⭐ Ф5-6′: печати вправе меняться. Поля НЕТ — печати обязаны остаться ТЕМИ ЖЕ до штуки (строгое умолчание:
+   * шаг, который молча двинул запас печатей, падает сразу). `free` — любое изменение (приход, обмен у кузнеца).
+   *
+   * ⚠ Убыль разрешена и без этого поля там, где уходит сумка целиком (`bagLoss`) или герой (`heroGone`):
+   * смерть режет стек печатей как стек сырья, и перечислять это каждому шагу смерти незачем.
+   */
+  seals?: { free?: boolean };
   /** Ровно эти вещи уходят. */
   consumes?: string[];
   /** Могут уйти вещи из сумки героя (смерть). */
@@ -946,7 +1002,10 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
             if (noPrice) return `зачарование: ${noPrice}`;
             const after = invItem(s, uid);
             if (after?.rarity !== rarity) return `редкость после зачарования ${after?.rarity}`;
-            return onlyChanged(before!, after, ['rarity', 'affixes', 'name']);
+            // `nameRoll` — ЧАСТЬ ИМЕНИ, а не отдельное свойство: это рецепт, по которому имя
+            // пересобирается на другом языке (см. `types/items.ts` → NameRoll). Зачарование меняет
+            // имя, значит меняет и его рецепт — иначе имя и рецепт разойдутся.
+            return onlyChanged(before!, after, ['rarity', 'affixes', 'name', 'nameRoll']);
           },
         }),
       };
@@ -1414,6 +1473,140 @@ function planFor(w: FuzzWorld, op: Op, r: Rng, h: 0 | 1): Plan {
           return placed > 0 ? { ok: true } : { ok: false, reason: 'сумка полна' };
         },
         spec: () => ({ mats: { free: true }, get injected() { return injected; } }),
+      };
+    }
+    // ⭐⭐ Ф5-6′ (23.10): ПЕЧАТИ С ТЕЛ. Своего дропа у фаззера нет (он не ходит по этажам), а без прихода
+    // перековку и перекат нечем кормить. Иногда ключ МУСОРНЫЙ (вида нет, ступени нет, разделителя нет) —
+    // впрыск обязан его молча отбросить, а не родить предмет без вида.
+    case 'sealLoot': {
+      const live = liveSealDefs(reg);
+      const tiers = sealTiers(reg);
+      const gains: Record<string, number> = {};
+      for (let k = r.int(1, 3); k > 0; k--) {
+        if (live.length && tiers.length && r.chance(0.9)) {
+          const key = sealKey(r.pick(live).id, r.pick(tiers).id);
+          gains[key] = (gains[key] ?? 0) + r.int(1, 5);
+        } else {
+          gains[r.pick(['нет-вида@t1', 'swarming@нет-ступени', '@', 'swarming'])] = r.int(1, 3);
+        }
+      }
+      return {
+        desc: `печати с тел ${JSON.stringify(gains)}`, kind: 'inject',
+        run: () => {
+          const left = giveSealsTo(reg, s.inventory, gains, dimsOf(reg), () => `sl-${++w.n}`);
+          const placed = Object.entries(gains).reduce((n, [key, v]) => n + v - (left[key] ?? 0), 0);
+          // ⚠⚠ ВМЕСТЕ С ПЕЧАТЬЮ ПРИХОДИТ И РЕКОРД ГЛУБИНЫ. Печать падает только в подземелье, а ступень падает
+          // не раньше своей глубины (`tiers[].minDepth`) — значит герой ТАМ БЫЛ. Без этого ворота ступени
+          // (`reforge.gateByRecord`) режут ЛЮБУЮ перековку у свежего героя: замер показал 0 успехов на 430 заявок,
+          // то есть профиль мерил бы один и тот же отказ.
+          const diffId = reg.get('difficulties').find((d) => d.enabled !== false)?.id;
+          if (diffId && placed > 0) {
+            const deepest = Object.keys(gains).reduce((m, key) => {
+              const tier = sealTiers(reg).find((x) => x.id === parseSealKey(key)?.tierId);
+              return tier ? Math.max(m, tier.minDepth) : m;
+            }, 0);
+            const prog = s.difficultyProgress ?? (s.difficultyProgress = {});
+            prog[diffId] = Math.max(prog[diffId] ?? 0, deepest);
+          }
+          return placed > 0 ? { ok: true } : { ok: false, reason: 'печати не влезли или вид мёртв' };
+        },
+        // ⚠ `injected: 0` — ПРАВИЛО, а не упрощение: печать не продаётся и не разбирается, её цена в гросбухе
+        // ровно ноль (`shopSellPrice` и `salvageWorth` дают 0). Появись у неё цена — этот ноль упадёт первым.
+        spec: () => ({ seals: { free: true }, creates: { n: -2, check: (it) => (it.kind === 'seal' ? null : `впрыск печатей создал ${it.kind}`) }, injected: 0 }),
+      };
+    }
+    // ⭐⭐ Ф5-6′: ПЕРЕКОВКА 3→1 у кузнеца. Заявка чаще честная (`need` штук одной ступени, как собрало бы окно),
+    // иногда с нехваткой, смесью ступеней или выдуманным ключом — все эти пути обязаны кончаться ОТКАЗОМ.
+    case 'sealForge': {
+      const rules = sealReforgeRules(reg);
+      const before = sealTally(s, w.stash);
+      const keys = Object.keys(before.by).filter((k) => (before.by[k] ?? 0) > 0);
+      const picks: Record<string, number> = {};
+      if (keys.length && r.chance(0.85)) {
+        const want = parseSealKey(r.pick(keys))?.tierId;
+        let left = rules.need;
+        for (const key of keys.filter((k) => parseSealKey(k)?.tierId === want)) {
+          if (left <= 0) break;
+          const take = Math.min(left, before.by[key] ?? 0);
+          if (take > 0) { picks[key] = take; left -= take }
+        }
+        // Нехватка и смесь ступеней — ровно те заявки, на которых ядро обязано отказать, не тронув сумку.
+        if (left > 0 && r.chance(0.5) && keys.length) picks[r.pick(keys)] = (picks[r.pick(keys)] ?? 0) + left;
+      } else {
+        picks[keys.length && r.chance(0.5) ? r.pick(keys) : 'нет-вида@t1'] = r.int(1, rules.need + 2);
+      }
+      const maxGold = payConsent(r, () => sealReforgeRules(w.view).goldCost);
+      // ⚠ Ступень берём ИЗ САМОЙ ЗАЯВКИ, а не из ветки, которая её собирала: мусорная ветка ступени не знает, а
+      // смесь ступеней обязана кончиться отказом — тогда проверять арифметике нечего, и `undefined` здесь честен.
+      const tierIds = new Set(Object.keys(picks).map((k) => parseSealKey(k)?.tierId));
+      const tierId = tierIds.size === 1 ? [...tierIds][0] : undefined;
+      const next = tierId ? sealNextTier(reg, tierId)?.id : undefined;
+      return {
+        desc: `перековка ${JSON.stringify(picks)} (нужно ${rules.need}, режим ${rules.mode}), согласие ${maxGold}`,
+        kind: 'town',
+        cmd: { cmd: 'sealReforge', seals: picks, ...(maxGold !== undefined ? { maxGold } : {}) },
+        run: () => asRes(sealReforge(reg, s, w.stash, picks, townRng, maxGold)),
+        spec: (res) => {
+          const after = sealTally(s, w.stash);
+          return {
+            seals: { free: true },
+            gold: { h, delta: res.ok ? -rules.goldCost : 0, maxPay: maxGold },
+            consumes: [...before.uids].filter((u) => !after.uids.has(u)),
+            transforms: [...before.uids],
+            creates: { n: -2, check: (it) => (it.kind === 'seal' ? null : `перековка создала ${it.kind}`) },
+            extra: () => {
+              if (!res.ok) return null;
+              if (after.total !== before.total - rules.need + 1) return `перековка: печатей ${before.total} → ${after.total}, а должно ${before.total - rules.need + 1}`;
+              if (!tierId || !next) return 'перековка прошла без ступени или без следующей';
+              const spent = sealsOfTier(before.by, tierId) - sealsOfTier(after.by, tierId);
+              const got = sealsOfTier(after.by, next) - sealsOfTier(before.by, next);
+              if (spent !== rules.need) return `списано ступени ${tierId}: ${spent}, а просили ${rules.need}`;
+              if (got !== 1) return `пришло ступени ${next}: ${got}, а должна одна`;
+              return null;
+            },
+          };
+        },
+      };
+    }
+    // ⭐⭐ Ф5-6′: ПЕРЕКАТ ВИДА — одна печать за золото, ступень та же. Главное, что здесь стережётся: перекат
+    // НЕ МЕНЯЕТ ни числа печатей, ни раскладки по ступеням (иначе он стал бы вторым путём наверх мимо перековки).
+    case 'sealRoll': {
+      const before = sealTally(s, w.stash);
+      const keys = Object.keys(before.by).filter((k) => (before.by[k] ?? 0) > 0);
+      const key = keys.length && r.chance(0.9) ? r.pick(keys) : 'нет-вида@t1';
+      // Иногда просим ДВЕ (перекат обязан отказать: это был бы обмен силы) или ноль.
+      const n = r.chance(0.8) ? 1 : r.int(2, 3);
+      const picks: Record<string, number> = r.chance(0.95) ? { [key]: n } : {};
+      const tierId = parseSealKey(key)?.tierId;
+      const cost = sealRerollCost(reg, tierId);
+      const maxGold = payConsent(r, () => sealRerollCost(w.view, tierId));
+      return {
+        desc: `перекат ${JSON.stringify(picks)} за ${cost}, согласие ${maxGold}`,
+        kind: 'town',
+        cmd: { cmd: 'sealReforge', op: 'reroll', seals: picks, ...(maxGold !== undefined ? { maxGold } : {}) },
+        run: () => asRes(sealReroll(reg, s, w.stash, picks, townRng, maxGold)),
+        spec: (res) => {
+          const after = sealTally(s, w.stash);
+          return {
+            seals: { free: true },
+            gold: { h, delta: res.ok ? -cost : 0, maxPay: maxGold },
+            consumes: [...before.uids].filter((u) => !after.uids.has(u)),
+            transforms: [...before.uids],
+            creates: { n: -2, check: (it) => (it.kind === 'seal' ? null : `перекат создал ${it.kind}`) },
+            extra: () => {
+              if (!res.ok) return null;
+              if (after.total !== before.total) return `перекат изменил число печатей: ${before.total} → ${after.total}`;
+              if (!tierId) return 'перекат прошёл без ступени';
+              for (const t of sealTiers(reg)) {
+                const was = sealsOfTier(before.by, t.id);
+                const now = sealsOfTier(after.by, t.id);
+                if (was !== now) return `перекат сдвинул ступень ${t.id}: ${was} → ${now} (это второй путь наверх мимо перековки)`;
+              }
+              if ((after.by[key] ?? 0) !== (before.by[key] ?? 0) - 1) return `перекатанный вид не убыл: ${before.by[key] ?? 0} → ${after.by[key] ?? 0}`;
+              return null;
+            },
+          };
+        },
       };
     }
     case 'gold': {
@@ -2247,6 +2440,16 @@ export function stepInvariants(w: FuzzWorld, p: Plan, res: Res, b: Census, a: Ce
     for (const [id, n] of Object.entries(m.minGain)) {
       const got = (a.mats[id] ?? 0) - (b.mats[id] ?? 0);
       if (!(got >= n)) v('consent', 'min-yield', `разбор дал ${id} ${got} при согласии ${n}`);
+    }
+  }
+  // ⭐ Ф5-6′: ПЕЧАТИ — только названными шагами. Приход (`free`) и убыль с сумкой/героем разрешены, прочее — нет.
+  if (!spec.seals?.free) {
+    const loss = spec.bagLoss !== undefined || spec.heroGone !== undefined;
+    for (const key of new Set([...Object.keys(b.seals), ...Object.keys(a.seals)])) {
+      const was = b.seals[key] ?? 0;
+      const now = a.seals[key] ?? 0;
+      if (now > was) v('I4', 'seals-born', `печатей «${key}» ${was} → ${now} — шаг их не создаёт`);
+      else if (now < was && !loss) v('I4', 'seals-gone', `печатей «${key}» ${was} → ${now} — шаг их не расходует`);
     }
   }
   // I4: вещи — ушли только названные, появились только разрешённые, прочие не изменились.

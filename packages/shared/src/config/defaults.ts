@@ -1,4 +1,5 @@
 import balance from './data/balance.json' with { type: 'json' };
+import localesData from './data/locales.json' with { type: 'json' };
 import classes from './data/classes.json' with { type: 'json' };
 import itemsBase from './data/items-base.json' with { type: 'json' };
 import affixes from './data/affixes.json' with { type: 'json' };
@@ -8,6 +9,7 @@ import monsterAffixes from './data/monster-affixes.json' with { type: 'json' };
 import monsterItemAffixes from './data/monster-item-affixes.json' with { type: 'json' };
 import monsterBehaviors from './data/monster-behaviors.json' with { type: 'json' };
 import monsterGear from './data/monster-gear.json' with { type: 'json' };
+import monsterGearTiers from './data/monster-gear-tiers.json' with { type: 'json' };
 import depthTiers from './data/depth-tiers.json' with { type: 'json' };
 import monsterDerive from './data/monster-derive.json' with { type: 'json' };
 import monsterRoles from './data/monster-roles.json' with { type: 'json' };
@@ -19,7 +21,8 @@ import difficulties from './data/difficulties.json' with { type: 'json' };
 import biomes from './data/biomes.json' with { type: 'json' };
 import floors from './data/floors.json' with { type: 'json' };
 import runModifiers from './data/run-modifiers.json' with { type: 'json' };
-import runTemplates from './data/run-templates.json' with { type: 'json' };
+import runModStats from './data/run-mod-stats.json' with { type: 'json' };
+import seals from './data/seals.json' with { type: 'json' };
 import itemTiers from './data/item-tiers.json' with { type: 'json' };
 import craftMaterials from './data/craft-materials.json' with { type: 'json' };
 import weaponAnatomy from './data/weapon-anatomy.json' with { type: 'json' };
@@ -61,6 +64,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'monster-item-affixes': monsterItemAffixes,
   'monster-behaviors': monsterBehaviors,
   'monster-gear': monsterGear,
+  'monster-gear-tiers': monsterGearTiers,
   'depth-tiers': depthTiers,
   'monster-derive': monsterDerive,
   'monster-roles': monsterRoles,
@@ -72,7 +76,8 @@ export const defaultConfigData: Record<string, unknown> = {
   biomes,
   floors,
   'run-modifiers': runModifiers,
-  'run-templates': runTemplates,
+  'run-mod-stats': runModStats,
+  seals,
   'item-tiers': itemTiers,
   'craft-materials': craftMaterials,
   'weapon-anatomy': weaponAnatomy,
@@ -101,4 +106,6 @@ export const defaultConfigData: Record<string, unknown> = {
   environment,
   objects,
   art,
+  /** ⭐ 26.10: переводы — таблица реестра, но вне ревизий конфига (см. `CONFIG_TEXT_ONLY_KEYS`). */
+  locales: localesData,
 };

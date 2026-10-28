@@ -9,3 +9,4 @@ export * from './economy/index.js';
 export * from './dungeon/index.js';
 export * from './sim/index.js';
 export * from './validation/save.js';
+export * from './i18n/index.js';

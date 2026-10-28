@@ -1,8 +1,10 @@
-import type { Item, ItemOrigin, RolledAffix, Rarity, BaseRoll, RolledStat } from '../types/items.js';
+import type { Item, ItemOrigin, NameRoll, RolledAffix, Rarity, BaseRoll, RolledStat } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { Rng } from './rng.js';
 import { uuidv7 } from './uuid.js';
+import { Localizer, SOURCE_LANG, cfgKey } from '../i18n/index.js';
+import { type NameFragment, composeItemName } from './itemName.js';
 
 type ItemsBase = ConfigShapes['items.base'];
 type Affixes = ConfigShapes['affixes'];
@@ -247,39 +249,68 @@ function scaleReqs(reqs: Item['requirements'], mult: number, maxTotal: number = 
   return out;
 }
 
-/** Согласует прилагательное-тир по роду названия базы (Крепкий → Крепкое/Крепкая/Крепкие). */
-function declineTier(adj: string, gender: string | undefined): string {
-  if (!adj || gender === 'm' || !gender) return adj;
-  const stem = adj.replace(/(ый|ий|ой)$/, '');
-  if (stem === adj) return adj; // не прилагательное — как есть
-  if (gender === 'f') return stem + 'ая';
-  if (gender === 'n') return stem + 'ое';
-  if (gender === 'p') return stem + (/[кгхжшчщ]$/.test(stem) ? 'ие' : 'ые');
-  return adj;
+/**
+ * ⭐ ИМЕНА СОБИРАЕТ ОДИН ШОВ — `composeItemName` (`formulas/itemName.ts`). Здесь остались только
+ * ПЕРЕХОДНИКИ: они раскладывают данные по слотам шаблона и зовут шов.
+ *
+ * ⚠ Было четыре независимых сборщика с русским порядком слов и русской арифметикой окончаний внутри
+ * (`declineTier` жила здесь и расходилась с `craftType.agree` на «падающий» в среднем роде). Теперь
+ * порядок слов — шаблон языка, формы — таблица переводов, арифметика — один запас `ruAgree` на русский.
+ *
+ * `loc` необязателен: без него берётся разрешитель языка-источника без таблицы переводов, то есть
+ * ровно прежнее поведение. Клиент и редактор передают свой — и получают имя на своём языке.
+ */
+const srcLoc = (): Localizer => new Localizer(undefined, SOURCE_LANG);
+
+/** Фрагмент имени: ключ перевода + русский текст. Ключ строится ТЕМ ЖЕ `cfgKey`, что у извлекателя. */
+const frag = (key: string, source: string): NameFragment => ({ key, source });
+
+/**
+ * Голова имени — имя БАЗЫ вещи.
+ *
+ * ⚠ У скованной вещи голова другая: `craft.ts` подменяет имя базы собранным именем ТИПА
+ * («полуторный меч»), и ключ базы там показывал бы не туда — перевод молча подменил бы «Полуторный
+ * меч» на «Меч». Поэтому голову передают явно, а у собранного имени типа ключа нет вовсе: оно
+ * переводится своим путём, шаблонами `weapon-types`.
+ */
+const baseHead = (base: ItemsBase[number]): NameFragment => frag(cfgKey('items-base', [base.id], 'name'), base.name);
+
+function tieredName(tier: { id: string; name: string } | undefined, head: NameFragment, agreement?: string, loc?: Localizer): string {
+  return composeItemName(loc ?? srcLoc(), {
+    shape: 'tiered',
+    base: head,
+    agreement,
+    tier: tier?.name ? frag(cfgKey('item-tiers', [tier.id], 'name'), tier.name) : undefined,
+  });
 }
 
-function tieredName(prefix: string, baseName: string, gender?: string): string {
-  return prefix ? `${declineTier(prefix, gender)} ${baseName}` : baseName;
+/** Имя magic-предмета (D2): слово-префикс + база + слово-суффикс. Префикс согласуется с базой. */
+function magicName(head: NameFragment, agreement: string | undefined, rolled: RolledAffix[], wordById: Map<string, string>, loc?: Localizer): string {
+  const pre = rolled.find((a) => a.kind === 'prefix')?.affixId ?? '';
+  const suf = rolled.find((a) => a.kind === 'suffix')?.affixId ?? '';
+  const preW = wordById.get(pre) ?? '', sufW = wordById.get(suf) ?? '';
+  return composeItemName(loc ?? srcLoc(), {
+    shape: 'magic',
+    base: head,
+    agreement,
+    prefix: preW ? frag(cfgKey('affixes', [pre], 'word'), preW) : undefined,
+    suffix: sufW ? frag(cfgKey('affixes', [suf], 'word'), sufW) : undefined,
+  });
 }
 
-/** Имя magic-предмета (D2): слово-префикс + база + слово-суффикс. Префикс склоняется по роду базы. */
-function magicName(baseName: string, gender: string | undefined, rolled: RolledAffix[], wordById: Map<string, string>): string {
-  const preW = wordById.get(rolled.find((a) => a.kind === 'prefix')?.affixId ?? '') ?? '';
-  const sufW = wordById.get(rolled.find((a) => a.kind === 'suffix')?.affixId ?? '') ?? '';
-  let name = baseName;
-  if (preW) name = `${declineTier(preW, gender)} ${name}`;   // слово-прилагательное префикса
-  if (sufW) name = `${name} ${sufW}`;                        // слово-суффикс (родительный, без склонения)
-  return name;
-}
-/** Имя раре/уника: имя базы + титул. Титул-прилагательное согласуется по роду базы (declineTier),
- *  титул родительного падежа («Тёмных братьев», «Пепел древних») инвариантен. Пусто → только база. */
-function titledName(baseName: string, gender: string | undefined, title: string): string {
-  return title ? `${baseName} ${declineTier(title, gender)}` : baseName;
+/** Имя уника: имя базы + титул. Титул-прилагательное согласуется, титул родительного падежа — нет. */
+function titledName(head: NameFragment, agreement: string | undefined, titleKey: string, title: string, loc?: Localizer): string {
+  return composeItemName(loc ?? srcLoc(), {
+    shape: 'titled',
+    base: head,
+    agreement,
+    title: title ? frag(titleKey, title) : undefined,
+  });
 }
 type RareTheme = 'fire' | 'cold' | 'lightning' | 'poison' | 'physical';
 type RareGroup = 'leech' | 'crit' | 'onkill' | 'defense' | 'life' | 'mana' | 'might' | 'finesse' | 'haste' | 'ward';
-interface RareNoun { t: string; themes?: RareTheme[] }
-interface RareEpithet { t: string; groups?: RareGroup[] }
+interface RareNoun { id: string; t: string; themes?: RareTheme[] }
+interface RareEpithet { id: string; t: string; groups?: RareGroup[] }
 /** Стат УРОНА → тема основы (стихия из урона/резиста, физика из урона). Крит и резист-как-свойство — ниже. */
 const STAT_THEME: Record<string, RareTheme> = {
   addFire: 'fire', resFire: 'fire',
@@ -330,16 +361,26 @@ const pickWord = <T extends { t: string }>(pool: T[], fallback: T[], all: T[], r
 /** Имя рарного предмета «говорящее»: ОСНОВА по типу урона (стихия/физика), ЭПИТЕТ по главному
  *  вторичному свойству — «Искра жажды» (молния + вампиризм). Всё выводится из роллнутых аффиксов.
  *  Нет основ в пуле → fallback (тир-имя). Резист тоже задаёт стихию основы. */
-function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: RareNoun[]; epithets: RareEpithet[] } | undefined, rolled: RolledAffix[], rng: Rng, fallback: string): string {
+function rareItemName(head: NameFragment, agreement: string | undefined, pool: { nouns: RareNoun[]; epithets: RareEpithet[] } | undefined, rolled: RolledAffix[], rng: Rng, fallback: string, loc?: Localizer): { name: string; roll?: NameRoll } {
   const nouns = pool?.nouns ?? [], eps = pool?.epithets ?? [];
-  if (nouns.length === 0) return fallback;
+  if (nouns.length === 0) return { name: fallback };
   const { theme, fromResist } = primaryTheme(rolled);
   const neutralN = nouns.filter((w) => !w.themes || w.themes.length === 0);
-  const noun = pickWord(theme ? nouns.filter((w) => w.themes?.includes(theme)) : [], neutralN, nouns, rng)!.t;
+  const noun = pickWord(theme ? nouns.filter((w) => w.themes?.includes(theme)) : [], neutralN, nouns, rng)!;
   const grp = secondaryGroup(rolled, fromResist);
   const neutralE = eps.filter((w) => !w.groups || w.groups.length === 0);
   const ep = eps.length ? pickWord(grp ? eps.filter((w) => w.groups?.includes(grp)) : [], neutralE, eps, rng) : undefined;
-  return titledName(baseName, gender, ep ? `${noun} ${ep.t}` : noun);
+  const name = composeItemName(loc ?? srcLoc(), {
+    shape: 'rare',
+    base: head,
+    agreement,
+    noun: frag(cfgKey('rare-names', ['nouns', noun.id], 't'), noun.t),
+    epithet: ep ? frag(cfgKey('rare-names', ['epithets', ep.id], 't'), ep.t) : undefined,
+  });
+  // ⭐ БРОСОК ЗАПОМИНАЕТСЯ: основа и эпитет выбраны случайно и из вещи не выводятся, а всё остальное
+  // (база, ступень, аффиксы, уник) в предмете уже есть. Без этих двух id клиент не смог бы
+  // ПЕРЕСОБРАТЬ имя на своём языке — так же устроен живой API Guild Wars 2: он отдаёт части имени.
+  return { name, roll: { noun: noun.id, epithet: ep?.id } };
 }
 
 /** Поля экземпляра, зависящие от вида базы (сужение по kind), включая слот. */
@@ -390,7 +431,7 @@ const nextUid = uuidv7;
  */
 function buildItem(
   base: ItemsBase[number],
-  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape; origin?: ItemOrigin },
+  o: { rarity: Rarity; name: string; nameRoll?: NameRoll; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape; origin?: ItemOrigin },
 ): Item {
   const item: Item = {
     uid: nextUid(),
@@ -408,6 +449,7 @@ function buildItem(
     gridH: base.gridH,
     pos: null,
   };
+  if (o.nameRoll?.noun) item.nameRoll = o.nameRoll;
   if (o.baseRoll) item.baseRoll = o.baseRoll;
   if (o.shape?.spread !== undefined && o.shape.spread !== 1) item.spreadMult = o.shape.spread;
   // Откуда вещь — пишет тот, кто её родил (§12.4): счётчик мификов журнала верит только этому полю.
@@ -508,13 +550,13 @@ export function retierItem(
   base: ItemsBase[number],
   item: Item,
   tier: ItemTiers[number],
-  opts: { reqDiscount?: number; maxReqTotal?: number; spread?: RollSpread } = {},
+  opts: { reqDiscount?: number; maxReqTotal?: number; spread?: RollSpread; loc?: Localizer } = {},
 ): Item {
   const reqMult = tier.reqMult * (1 - (opts.reqDiscount ?? 0));
   return {
     ...item,
     tier: tier.id,
-    name: item.rarity === 'normal' ? tieredName(tier.name, base.name, base.gender) : item.name,
+    name: item.rarity === 'normal' ? tieredName(tier, baseHead(base), base.gender, opts.loc) : item.name,
     requirements: scaleReqs(base.requirements, reqMult, opts.maxReqTotal),
     // Бросок переживает подъём: та же доля q на новом тире — вещь остаётся на своём месте вилки.
     // Форма клинка (`spreadMult`) — тоже: мин и макс нового тира разводятся вокруг той же середины.
@@ -548,13 +590,13 @@ export function bakedExtras(baseStats: StatModifier[], itemStats: StatModifier[]
  * у дропа — никаких исключений), имя согласуется по роду. Без аффиксов. `tiers` не
  * передан → базовый тир (×1.0, без префикса).
  */
-export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers, origin?: ItemOrigin): Item {
+export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers, origin?: ItemOrigin, loc?: Localizer): Item {
   const ilvl = baseItemLevel(base, tiers);
   // Расходники не тирятся (нет префикса «Убогое зелье» и масштаба урона/брони).
   const tier = base.kind === 'consumable' ? undefined : pickTierClamped(tiers, ilvl, base.minTier, base.maxTier);
   return buildItem(base, {
     rarity: 'normal',
-    name: tieredName(tier?.name ?? '', base.name, base.gender),
+    name: tieredName(tier, baseHead(base), base.gender, loc),
     itemLevel: ilvl,
     statMult: tier?.statMult ?? 1,
     reqMult: tier?.reqMult ?? 1,
@@ -735,7 +777,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin; noUnique?: boolean; maxTier?: string },
+  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread; origin?: ItemOrigin; noUnique?: boolean; maxTier?: string; loc?: Localizer },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -763,7 +805,8 @@ export function generateItem(
       const tier = pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, lowerTierId(opts.tiers, base.maxTier, opts.maxTier));
       return buildItem(base, {
         rarity: 'unique',
-        name: titledName(base.name, base.gender, unique.name), // имя базы + титул уника
+        // имя базы + титул уника; ключ титула — сам уник, он же лежит в `affixes[].affixId`
+        name: titledName(baseHead(base), base.gender, cfgKey('uniques', [unique.id], 'name'), unique.name, opts.loc),
         itemLevel: ilvl,
         statMult: tier?.statMult ?? 1,
         reqMult: tier?.reqMult ?? 1,
@@ -801,14 +844,17 @@ export function generateItem(
     ilvl, rng);
 
   // Имя (D2): normal — тир-прилагательное; magic — слова аффиксов вокруг базы; rare — база + «основа эпитет».
-  const tierName = tieredName(tier?.name ?? '', base.name, base.gender);
+  const head = baseHead(base);
+  const tierName = tieredName(tier, head, base.gender, opts.loc);
   let displayName = tierName;
-  if (effRarity === 'magic') { const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word]))); displayName = mn === base.name ? tierName : mn; }
-  else if (effRarity === 'rare') displayName = rareItemName(base.name, base.gender, opts.rareNames, rolled, rng, tierName);
+  let nameRoll: NameRoll | undefined;
+  if (effRarity === 'magic') { const mn = magicName(head, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word])), opts.loc); displayName = mn === base.name ? tierName : mn; }
+  else if (effRarity === 'rare') { const r = rareItemName(head, base.gender, opts.rareNames, rolled, rng, tierName, opts.loc); displayName = r.name; nameRoll = r.roll; }
 
   return buildItem(base, {
     rarity: effRarity,
     name: displayName,
+    nameRoll,
     itemLevel: ilvl,
     statMult: tier?.statMult ?? 1,
     reqMult: tier?.reqMult ?? 1,
@@ -837,11 +883,11 @@ export function buildCraftShell(
   base: ItemsBase[number],
   tier: ItemTiers[number],
   maxReqTotal?: number,
-  roll?: { baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape; reqDiscount?: number },
+  roll?: { baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape; reqDiscount?: number; loc?: Localizer },
 ): Item {
   return buildItem(base, {
     rarity: 'normal',
-    name: tieredName(tier.name, base.name, base.gender),
+    name: tieredName(tier, baseHead(base), base.gender, roll?.loc),
     itemLevel: tier.minItemLevel,
     statMult: tier.statMult,
     reqMult: tier.reqMult * (1 - (roll?.reqDiscount ?? 0)),
@@ -855,6 +901,14 @@ export function buildCraftShell(
   });
 }
 
+/**
+ * ГОЛОВА ИМЕНИ ДЛЯ ВНЕШНИХ ЗОВУЩИХ (`craft.ts`). `source` — текст, который реально стоит в имени: у
+ * найденной вещи это имя базы, у скованной — собранное имя ТИПА, и тогда ключа у головы нет вовсе.
+ */
+export function nameHead(base: ItemsBase[number], source?: string): NameFragment {
+  return source === undefined || source === base.name ? baseHead(base) : frag('', source);
+}
+
 /** Цель фильтра аффиксов по базе — та же, по которой катает дроп. */
 export function affixTargetOfBase(base: ItemsBase[number]): AffixTarget {
   return affixTargetOf(base);
@@ -866,20 +920,22 @@ export function affixTargetOfBase(base: ItemsBase[number]): AffixTarget {
  * зовётся иначе, чем такая же найденная.
  */
 export function nameByRarity(
-  base: ItemsBase[number],
+  head: NameFragment,
+  agreement: string | undefined,
   tierName: string,
   rarity: Rarity,
   rolled: RolledAffix[],
   affixes: Affixes,
   rareNames: { nouns: RareNoun[]; epithets: RareEpithet[] } | undefined,
   rng: Rng,
-): string {
+  loc?: Localizer,
+): { name: string; roll?: NameRoll } {
   if (rarity === 'magic') {
-    const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word])));
-    return mn === base.name ? tierName : mn;
+    const mn = magicName(head, agreement, rolled, new Map(affixes.map((a) => [a.id, a.word])), loc);
+    return { name: mn === head.source ? tierName : mn };
   }
-  if (rarity === 'rare') return rareItemName(base.name, base.gender, rareNames, rolled, rng, tierName);
-  return tierName;
+  if (rarity === 'rare') return rareItemName(head, agreement, rareNames, rolled, rng, tierName, loc);
+  return { name: tierName };
 }
 
 /** Взвешенный индекс по массиву весов (роллит `rng.next()`); -1 при нулевой сумме. */

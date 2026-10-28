@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RUN_NODES_MAX, RUN_VISITED_MAX } from '../dungeon/run/nodeState.js';
 
 /**
  * zod-схема SaveState для валидации на сервере (базовый анти-чит). Вложенные
@@ -28,6 +29,10 @@ const item = z.object({
   uid: z.string(),
   baseId: z.string(),
   name: z.string(),
+  // ⭐ РЕЦЕПТ РАРНОГО ИМЕНИ (`NameRoll`): основа и эпитет выбраны случайно при рождении вещи и из неё
+  // не выводятся. Схема СРЕЗАЕТ незаявленные ключи (об этом ниже два шрама), а тут срез означал бы,
+  // что после перезахода имя рарной вещи больше нечем собрать на другом языке — молча и навсегда.
+  nameRoll: z.object({ noun: z.string().optional(), epithet: z.string().optional() }).optional(),
   // ⚠ Слот ЕСТЬ НЕ У ВСЕХ: его нет у расходников и у материалов — схема их отвергала.
   slot: z.string().optional(),
   kind: z.string().optional(),
@@ -35,6 +40,10 @@ const item = z.object({
   // превратился бы в одну безымянную штуку при первой же валидации сейва.
   count: z.number().int().min(1).optional(),
   materialId: z.string().optional(),
+  // ⭐⭐ Ф5-1: ТО ЖЕ О ПЕЧАТИ. Без двух строк ниже печать в сумке при первой же валидации сейва
+  // превратилась бы в бессмысленный стек без вида и ступени — то есть топливо отрезка пропадало бы МОЛЧА, на ровном месте.
+  sealId: z.string().optional(),
+  sealTier: z.string().optional(),
   attackType: z.enum(['melee', 'ranged']).optional(),
   damageKind: z.enum(['physical', 'magical']).optional(),
   damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).optional(),
@@ -141,35 +150,69 @@ export const saveStateSchema = z.object({
     cd: z.record(z.string().max(128), z.number().finite().min(0).max(86_400)).optional(),
   }).optional(),
   maxDepth: z.number().int().min(0),
-  difficultyProgress: z.record(z.string(), z.number()).default({}),
+  // ⭐ 14.10 (Г3, правка 7): РЕКОРД ГЛУБИНЫ ТИРА — ЦЕЛОЕ ≥ 0, и это ПЕРВАЯ линия. Здесь стоял просто `z.number()`:
+  // дробь, минус и `1e9` схему проходили, а из рекорда считаются и список меток алтаря, и стартовая глубина забега
+  // (`openWaypoints`/`waypointStart`). Потолка схема НЕ ставит намеренно — спуск бесконечен, и любой потолок стал бы
+  // запретом играть глубже; предохранитель от порченого числа — вторая линия, в `depthRecordOf`
+  // (`WAYPOINT_DEPTH_LIMIT`). ⚠ Эта линия работает ТОЛЬКО там, где схему зовут (кадр `save`, сим, сторожа): сейв,
+  // прочитанный из Postgres, через неё не идёт вовсе — см. `openQuestions` правки 7.
+  difficultyProgress: z.record(z.string(), z.number().int().min(0)).default({}),
   lastDifficulty: z.string().default('normal'),
   // Активный забег v2 (сервер-авторитетно; граф регенерится из config.seed). Отсутствует — забега нет.
+  // ⭐ Ф6: показанные один раз объяснения. Границы здесь — против роста сейва: подсказок десятки, а не тысячи.
+  seen: z.array(z.string().max(48)).max(64).optional(),
   run: z
     .object({
-      templateId: z.string(),
+      // ⚠⚠ Ф1 (16.10): `templateId` СНЯТ (и у забега, и у его конфига) — шаблонов забега больше нет. В старых
+      // сейвах поле лежит: схема его молча отбрасывает, читателя у него нет — как у `length`/`returnEvery` ниже.
+      // ⭐⭐ Ф4 (16.10): ОТРЕЗОК — модификаторы алтаря действуют до следующей метки. Поля нет — идём на
+      // умолчаниях; старый сейв без него читается как «отрезок не оплачен», миграции не нужно.
+      // ⭐⭐ Ф5-3: отрезок несёт СВЯЗКУ ПЕЧАТЕЙ («вид@ступень» → штук), а не список id. Старые сейвы Ф4
+      // несли `modifiers` — схема отбрасывает их молча: отрезок без печатей = «идём как есть», и миграция не нужна.
+      // ⚠⚠ ГРАНИЦЫ СВЯЗКИ — ТЕ ЖЕ, ЧТО У КАДРА (правка по ревизии 17.10): сейв — такой же недоверенный вход,
+      // как провод, только медленнее. Без потолков строка `{"a@b": 1e9}` из порченого сейва обошла бы счёт гнёзд
+      // (его считает только оплата) и ездила бы в каждом `saveUpdate`.
+      // ⭐ Решение владельца 17.10: кто начал забег (его `charId`) — только он настраивает отрезок на алтаре.
+      starter: z.string().max(64).optional(),
+      segment: z.object({
+        runId: z.string().max(64).optional(),
+        from: z.number().int().min(1),
+        to: z.number().int().min(1),
+        seals: z.record(z.string().min(3).max(130), z.number().int().min(1).max(9)).refine(
+          (r) => Object.keys(r).length <= 32, 'связка отрезка длиннее потолка',
+        ).default({}),
+      }).optional(),
       config: z.object({
-        templateId: z.string(),
         biomeId: z.string(),
         tier: z.string(),
         seed: z.number(),
         // R9-01: личность забега — ключ свода записей в базе (пишет только сервер).
         id: z.string().optional(),
-        length: z.number().optional(),
+        // ⚠⚠ 13.10 (Г2, Р3): `length` и `returnEvery` сняты — у забега нет длины (спуск бесконечен, слои строятся
+        // окном по глубине), а каденция привала живёт одним числом баланса (`dungeonAccess.waypointStep`). У старых
+        // забегов поля в сейве лежат: схема их молча отбрасывает — читателя у них всё равно нет.
         widthMax: z.number().optional(),
         branching: z.number().optional(),
-        returnEvery: z.number().optional(),
-        bossEvery: z.number().optional(),
+        // ⚠⚠ 15.10 (Г8-2): `bossEvery` СНЯТ (боссы — лестницей полосы, `balance.dungeonAccess.bossLadder`).
+        // У старых забегов поле в сейве лежит: схема молча отбрасывает, читателя нет — как `length`/`returnEvery` выше.
+        bosses: z.boolean().optional(),
         nodeTypeWeights: z.record(z.string(), z.number()).optional(),
         power: z.number().optional(),
         modifiers: z.array(z.string()).default([]),
       }),
       currentNodeId: z.string(),
-      visited: z.array(z.string()).default([]),
+      // ⭐⭐ 13.10 (Г2, Р5): ПОТОЛОК — ОКНО самых глубоких (`RUN_VISITED_MAX`, 64). Список был без потолка, а спуск стал
+      // бесконечным: запись за этаж, навсегда, в каждой записи сейва. Окно держит `noteVisited` (сервер), здесь — контракт:
+      // сейв длиннее потолка сервер писать не вправе. Длинный сейв от ПРЕЖНЕГО сервера сюда не попадает — живой вход его
+      // этой схемой не разбирает (`RoomManager.sanitize`), а первая же запись забега обрежет список окном.
+      visited: z.array(z.string()).max(RUN_VISITED_MAX).default([]),
       // R4-01: что взято на текущем узле (открытые сундуки, убитые монстры, рычаги) — без неё продолжение фармило узел.
       node: runNodeStateSchema.optional(),
       // R4-04: и на каждом пройденном узле — отмотанный назад указатель не давал пройденный узел свежим.
-      nodes: z.array(runNodeStateSchema).optional(),
-      // R8-04: наибольшая мощь героя в этом забеге — новый узел заселяется не слабее (пишет только сервер).
+      // ⭐⭐ Г2 (Р5): тот же потолок окном (`RUN_NODES_MAX`) — переполнение вытесняет самую мелкую запись, а не отказывает новой.
+      nodes: z.array(runNodeStateSchema).max(RUN_NODES_MAX).optional(),
+      // R8-04: наибольшая мощь героя в этом забеге (пишет только сервер). ⚠ 13.10 (Г1): «новый узел заселяется не слабее» —
+      // история: заселение мощь не читает; число не даёт занизить записанную мощь ВХОДА в узел (`RunNodeState.el`, см. types.ts).
       peak: z.number().optional(),
       // V1: погиб в коопе на этом узле и с тех пор не жил — штраф за эту смерть уже в сейве (пишет только сервер).
       deadAt: z.string().optional(),

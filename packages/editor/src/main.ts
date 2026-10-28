@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, runMaxDepth, dressingWarnings, decorWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
+import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, dressingWarnings, decorWarnings, waypointWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, fieldPathLabels, renderEnum } from './form.js';
 import { DECOR_FIELD_LABELS, DECOR_PATH_LABELS, SET_ART_LABELS } from './decorLabels.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
@@ -18,6 +18,8 @@ import { renderRoadmapPage } from './roadmap.js';
 import { renderReleasesPage } from './releases.js';
 import { renderCraftPage, type CraftIo } from './craft.js';
 import { renderSweepPage } from './sweep.js';
+import { renderCycleMapPage } from './cycleMap.js';
+import { renderI18nPage } from './i18n.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
@@ -44,6 +46,7 @@ const LABELS: Record<ConfigKey, string> = {
   'monster-item-affixes': 'Монстры: аффиксы шмота',
   'monster-behaviors': 'Монстры: поведение ИИ',
   'monster-gear': 'Монстры: экипировка',
+  'monster-gear-tiers': 'Монстры: ступени снаряжения',
   'depth-tiers': 'Монстры: тиры глубины',
   'monster-derive': 'Монстры: деривация статов',
   'monster-roles': 'Роли монстров',
@@ -55,7 +58,8 @@ const LABELS: Record<ConfigKey, string> = {
   biomes: 'Биомы',
   floors: 'Этажи',
   'run-modifiers': 'Модификаторы забега',
-  'run-templates': 'Шаблоны забега',
+  'run-mod-stats': 'Статы модификаторов (что игра применяет)',
+  seals: 'Печати отрезка (угроза + награда)',
   'item-tiers': 'Предметы: тиры',
   'craft-materials': 'Предметы: материалы крафта',
   'weapon-anatomy': 'Ковка: анатомия классов',
@@ -84,6 +88,7 @@ const LABELS: Record<ConfigKey, string> = {
   environment: 'Окружение (фейд)',
   objects: 'Объекты',
   art: '3D: каталог Unity (только чтение)',
+  locales: 'Языки и переводы',
 };
 
 /**
@@ -105,8 +110,8 @@ const NAV_GROUPS: NavGroup[] = [
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'craft-materials', 'salvage-rules', 'rarities', 'affixes', 'uniques', 'rare-names'] },
   { title: 'Ковка', keys: ['weapon-anatomy', 'weapon-parts', 'weapon-types'] },
-  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
-  { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
+  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'monster-gear-tiers', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
+  { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-modifiers', 'run-mod-stats', 'seals'] },
   { title: 'Скиллы', keys: ['skill-tree', 'skill-inserts', 'skill-insert-types', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
   { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures', 'art'] },
@@ -115,10 +120,10 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', 'craft-materials': 'Материалы', 'weapon-anatomy': 'Анатомия', 'weapon-parts': 'Детали', 'weapon-types': 'Типы', 'salvage-rules': 'Разбор', chests: 'Сундуки', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
+  'item-tiers': 'Тиры', 'craft-materials': 'Материалы', 'weapon-anatomy': 'Анатомия', 'weapon-parts': 'Детали', 'weapon-types': 'Типы', 'salvage-rules': 'Разбор', chests: 'Сундуки', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'monster-gear-tiers': 'Ступени снаряжения', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'skill-inserts': 'Вставки', 'skill-insert-types': 'Типы вставок', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
-  'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',
+  'run-modifiers': 'Модификаторы забега', 'run-mod-stats': 'Статы модификаторов', seals: 'Печати', 'room-prefabs': 'Комнаты',
   'rare-names': 'Имена rare',
 };
 /**
@@ -128,7 +133,8 @@ const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
  * авто-попадают в «Прочее», чтобы ничего не потерялось.
  */
 const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
-  { title: 'Прогрессия и мощь', keys: ['xpTable', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
+  // ⭐ Г6: `xpShare` (штраф за разницу уровней и дележ на пати) — к кривой опыта: это про прокачку, а не про монстров.
+  { title: 'Прогрессия и мощь', keys: ['xpTable', 'xpShare', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
   { title: 'Бой и физика', keys: ['melee', 'dodge', 'knockdown', 'weaponAttrScaling', 'twoHandedPowerMult', 'twoHandReqMult', 'versatile', 'maxTotalRequirement', 'affinityDamageBonus', 'moveSpeedBase', 'moveInertia', 'moveDir', 'camera', 'collision', 'weight'] },
   { title: 'Скилы и вставки', keys: ['skillSocketRanks'] },
   { title: 'Монстры', keys: ['monsterXpGrowth', 'uniqueXpMult', 'monsterScaling'] },
@@ -137,7 +143,8 @@ const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Экономика', keys: ['forgePrices', 'shop', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint', 'townRestockSec'] },
   { title: 'Ковка', keys: ['craft'] },
   { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },
-  { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'combatLogoutSec', 'deathPenalty', 'lighting'] },
+  // ⭐ Ф5-1: 'seals' — ступени и стек печатей (сами виды — в таблице «Печати» раздела «Мир»)
+  { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'seals', 'coop', 'reconnectGraceSec', 'combatLogoutSec', 'deathPenalty', 'lighting'] },
 ];
 /** Полный список подветок с авто-«Прочее» из ключей схемы, не попавших ни в одну группу. */
 const balanceGroupsFull = (() => {
@@ -178,7 +185,7 @@ const channel = new ConfigChannel(data, live, {
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' | 'loot' | 'craft' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' | 'loot' | 'craft' | 'cyclemap' | 'i18n' = 'config';
 // Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
 // ⭐ 08.10 (Д3): «Выпуски» — релизы контента и каналы dev / beta / live (`releases.ts`).
 // ⭐ 16.10 (Артбук): «🎨 Артбук» — облик мира для художника: локации, монстры, персонажи, модели (`artbook/artbook.ts`).
@@ -192,6 +199,11 @@ let balanceGroup: string = balanceGroupsFull[0]!.title;
 const tierIds = (): string[] => ((data['item-tiers'] as { id: string }[]) ?? []).map((t) => t.id);
 fieldEnumSources.minTier = tierIds;
 fieldEnumSources.maxTier = tierIds;
+// ⭐ 12.10: у монстров СВОЯ лестница ступеней (`monster-gear-tiers`) — и своя пара полей, иначе
+// одноимённые minTier/maxTier подсунули бы снаряжению монстра ступени ИГРОКА.
+const monTierIds = (): string[] => ((data['monster-gear-tiers'] as { id: string }[]) ?? []).map((t) => t.id);
+fieldEnumSources.minGearTier = monTierIds;
+fieldEnumSources.maxGearTier = monTierIds;
 // 3D-модель предмета (modelId): выпадашка ФИЛЬТРУЕТСЯ по виду/слоту предмета (parent). '' = база слота / процедурка.
 //  • armor  → имена submesh-ВАРИАНТОВ персонаж-атласов (kind='character'), классифицированные в parent.slot
 //    (item.modelId = имя submesh; вариант-по-имени в setAtlas). Плюс легаси per-slot part-меши того же слота.
@@ -807,6 +819,14 @@ function renderGame(host: HTMLElement): void {
   runBtn.addEventListener('click', () => { view = 'rungen'; render(); });
   nav.appendChild(runBtn);
 
+  // ⭐⭐ Г8-3 (15.10): вкладка «Круг забега» — настройка таблицы круга (места порталов, лестница боссов, ранги)
+  // и карта этажей теми же функциями, что в игре. Стоит рядом с «Забеги v2»: это одна механика.
+  const cycleBtn = document.createElement('button');
+  cycleBtn.textContent = '🔄 Круг забега';
+  cycleBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'cyclemap' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  cycleBtn.addEventListener('click', () => { view = 'cyclemap'; render(); });
+  nav.appendChild(cycleBtn);
+
   // Отдельная вкладка-инструмент: таблицы дропа (что, где и сколько выпадает).
   const lootBtn = document.createElement('button');
   lootBtn.textContent = '🎁 Дроп';
@@ -855,6 +875,14 @@ function renderGame(host: HTMLElement): void {
   craftBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'craft' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
   craftBtn.addEventListener('click', () => { view = 'craft'; render(); });
   nav.appendChild(craftBtn);
+
+  // ⭐⭐ 27.10 (требование владельца): вкладка «Языки» — имя вещи СРАЗУ на всех языках + таблица строк.
+  // Отдельной страницей, а не авто-формой по схеме: правя имя секиры, надо видеть саму секиру и результат.
+  const i18nBtn = document.createElement('button');
+  i18nBtn.textContent = '🌐 Языки';
+  i18nBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'i18n' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  i18nBtn.addEventListener('click', () => { view = 'i18n'; render(); });
+  nav.appendChild(i18nBtn);
 
   // (Поз-редактор переехал в верхнюю секцию «3D-эдитор».)
 
@@ -925,6 +953,10 @@ function renderGame(host: HTMLElement): void {
   else if (view === 'skillbuild') renderSkillBuildPage(page, data);
   else if (view === 'sweep') renderSweepPage(page, data);
   else if (view === 'craft') renderCraftPage(page, data, toolIo());
+  // ⭐ Г8-3: правки страницы идут В РАБОЧУЮ КОПИЮ (`data`), поэтому после них — тот же путь, что у форм:
+  // пометить правку и перерисовать шапку (кнопка «Применить» должна ожить).
+  else if (view === 'cyclemap') renderCycleMapPage(page, data, undefined, toolIo());
+  else if (view === 'i18n') renderI18nPage(page, data, undefined, toolIo());
   else renderPage(page);
 
   layout.append(nav, page);
@@ -1232,13 +1264,18 @@ function apply(): void {
   lockGate(() => applyKeys([current]));
 }
 
-/** Секции, правка которых может запереть тир сложности навсегда (R8-13): пороги тиров и длина забега. */
-const LOCK_KEYS = ['difficulties', 'run-templates'];
+/**
+ * Секции, правка которых может запереть тир сложности навсегда (R8-13) — теперь только пороги и выключатели самих тиров.
+ * ⚠⚠ 13.10 (Г2, Р6): «Шаблоны забега» из списка УБРАНЫ — длины у забега нет, глубиной тир запереть нельзя
+ * (спуск бесконечен), и проверка шаблоны больше не читает: держать их здесь значило бы спрашивать подтверждение
+ * за правку, которая на замки не влияет (отчёт при этом был бы про другую секцию).
+ */
+const LOCK_KEYS = ['difficulties'];
 
 /**
- * ⭐ R8-13: сохранение «Сложностей» и «Шаблонов забега» — только через подтверждение, если после правки тир не откроется
- * никогда (`difficultyLockIssues`). Раньше порог «Кошмара» (20) стоял глубже самого длинного забега (15) — тир был заперт для
- * всех, и ни редактор, ни игра об этом не говорили. Прочие секции сохраняются как раньше.
+ * ⭐ R8-13: сохранение «Сложностей» — только через подтверждение, если после правки тир не откроется никогда
+ * (`difficultyLockIssues`). ИСТОРИЯ: порог «Кошмара» (20) стоял глубже самого длинного забега (15), тир был заперт для
+ * всех, и ни редактор, ни игра об этом не говорили; сегодня такой замок невозможен (Р6). Прочие секции — как раньше.
  */
 function lockGate(save: () => void): void {
   const issues = LOCK_KEYS.includes(current) ? difficultyLockIssues() : [];
@@ -1380,7 +1417,8 @@ interface ConfigIssue { section: string; id: string; msg: string; severity: 'err
  *    submeshMaterials→materials; тир сложности, который не откроется никогда (R8-13, `difficultyLockIssues`).
  *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир); ⭐ 08.10: ширина ниши
  *    статуй оформления биома ≠ ширине модели статуи (`dressingWarnings`); ⭐ 12.10: объект роли decor (сервер его не ставит), паспорт декора
- *    Unity без биома или без контекстов (`decorWarnings`); ⭐ 12.10 (Ф2): высокий проп у ближней стены, правила биома без пропов (ссылки
+ *    Unity без биома или без контекстов (`decorWarnings`); ⭐⭐ 14.10 (Г3, В7): биом без этажа-привала — спуск в нём пойдёт без единой
+ *    метки (`waypointWarnings`); ⭐ 12.10 (Ф2): высокий проп у ближней стены, правила биома без пропов (ссылки
  *    оформления, пустой слот), проп, который слоты молча пропускают.
  */
 async function validateConfig(): Promise<ConfigIssue[]> {
@@ -1426,28 +1464,38 @@ async function validateConfig(): Promise<ConfigIssue[]> {
     issues.push({ section: w.section, id: w.id, msg: w.msg, severity: 'warn' });
   }
 
+  // 7) ⭐⭐ Г8-4 (15.10): БИОМ БЕЗ ЭТАЖА-ПРИВАЛА ИЛИ БЕЗ БОССОВОЙ АРЕНЫ [warn]. Узлы круга встанут в любом
+  //    случае (их место решает таблица), но без нужного этажа привал окажется на обычном этаже, а боссовый узел —
+  //    без боссовой комнаты, то есть без самого босса. Выключить такой этаж тумблером — одна галка, поэтому
+  //    предупреждение; правило и сторож — `shared/src/dungeon/run/waypointData.ts`.
+  type WpBiome = Parameters<typeof waypointWarnings>[0][number];
+  type WpFloor = Parameters<typeof waypointWarnings>[1][number];
+  for (const w of waypointWarnings(arr('biomes') as unknown as WpBiome[], arr('floors') as unknown as WpFloor[])) {
+    issues.push({ section: w.section, id: w.id, msg: w.msg, severity: 'warn' });
+  }
+
   // ошибки — вперёд, потом предупреждения
   return issues.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
 }
 
 /**
- * ⭐ R8-13: включённые тиры сложности, которые НЕ ОТКРОЮТСЯ НИКОГДА при текущих «Сложностях» и «Шаблонах забега» редактора.
- * Прогресс тира — глубина узла забега, а она не глубже самого длинного включённого шаблона + финал (`runMaxDepth`); порог
- * выше или выключенный предыдущий тир — замок для всех. Та же функция, что у сторожа данных (`difficultyReach.test.ts`).
- * Данные сперва через схему (умолчания `enabled`/`finale`); негодные — не наш отчёт, их остановит проверка схемой.
+ * ⭐ R8-13: включённые тиры сложности, которые НЕ ОТКРОЮТСЯ НИКОГДА при текущих «Сложностях» редактора. Прогресс тира —
+ * глубина узла забега; выключенный (или сам запертый) предыдущий тир прогресса не даёт — замок для всех.
+ * Та же функция, что у сторожа данных (`difficultyReach.test.ts`).
+ *
+ * ⚠⚠ 13.10 (Г2, Р6): «ШАБЛОНЫ ЗАБЕГА» ЗДЕСЬ БОЛЬШЕ НИ ПРИ ЧЁМ — потолка глубины нет. Спуск бесконечен (окно слоёв,
+ * адресуемое глубиной), любой `unlockFloor` достижим, и причина «порог глубже самого глубокого узла» снята вместе с
+ * `runMaxDepth` и аргументом `maxDepth`. Данные сперва через схему (умолчания `enabled`); негодные — не наш отчёт, их
+ * остановит схема.
  */
 function difficultyLockIssues(): ConfigIssue[] {
   const diffs = configSchemas.difficulties.safeParse(data.difficulties);
-  const tpls = configSchemas['run-templates'].safeParse(data['run-templates']);
-  if (!diffs.success || !tpls.success) return [];
-  const depth = runMaxDepth(tpls.data);
+  if (!diffs.success) return [];
   const name = (id: string): string => diffs.data.find((d) => d.id === id)?.name ?? id;
-  return lockedDifficulties(diffs.data, depth).map((l) => ({
+  return lockedDifficulties(diffs.data).map((l) => ({
     section: 'difficulties',
     id: l.id,
-    msg: l.cause === 'depth'
-      ? `нужен этаж ${l.unlockFloor} на «${name(l.prevId)}», а самый длинный включённый шаблон забега доходит до ${depth} — не откроется никогда`
-      : `предыдущий тир «${name(l.prevId)}» выключен или сам не открывается — прогресс для этого тира не набрать`,
+    msg: `предыдущий тир «${name(l.prevId)}» выключен или сам не открывается — прогресс для этого тира не набрать`,
     severity: 'error',
   }));
 }

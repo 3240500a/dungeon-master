@@ -93,7 +93,16 @@
     38120108,
     39265155,
     40430277,
-    41615536
+    41615536,
+    42821002,
+    44046736,
+    45292791,
+    46559212,
+    47846035,
+    49153286,
+    50480983,
+    51829134,
+    53197737
    ],
    "attributePointsPerLevel": 5,
    "skillPointsPerLevel": 1,
@@ -127,6 +136,15 @@
    },
    "monsterXpGrowth": 0.2,
    "uniqueXpMult": 3,
+   "xpShare": {
+    "safeBase": 3,
+    "safePerLevel": 0.0625,
+    "refBonus": 5,
+    "diffPow": 2.5,
+    "multPow": 1.5,
+    "floor": 0.01,
+    "partyBonusPerMember": 0.5
+   },
    "monsterScaling": {
     "hpPerLevel": 10,
     "damagePerLevel": 1,
@@ -147,6 +165,7 @@
    "combatLogoutSec": 10,
    "loot": {
     "dropChance": 0.12,
+    "rewardPower": 1.35,
     "goldChance": 0.5,
     "chestsPerFloor": {
      "min": 1,
@@ -242,6 +261,78 @@
     "cols": 10,
     "rows": 6,
     "materialStack": 200
+   },
+   "seals": {
+    "enabled": true,
+    "dangerCapPerSeal": 0.6,
+    "tiers": [
+     {
+      "id": "t1",
+      "name": "I",
+      "mul": 1,
+      "minDepth": 1,
+      "weight": 6
+     },
+     {
+      "id": "t2",
+      "name": "II",
+      "mul": 2.2,
+      "minDepth": 8,
+      "weight": 3
+     },
+     {
+      "id": "t3",
+      "name": "III",
+      "mul": 4,
+      "minDepth": 16,
+      "weight": 1
+     }
+    ],
+    "reforge": {
+     "enabled": true,
+     "need": 3,
+     "mode": "sameTier",
+     "goldCost": 0,
+     "gateByRecord": true
+    },
+    "reroll": {
+     "enabled": true,
+     "goldCost": 400,
+     "differs": true
+    },
+    "drop": {
+     "byRarity": {
+      "magic": 0.02,
+      "rare": 0.09,
+      "unique": 0.3
+     },
+     "chestChance": 0.14,
+     "bossByRank": {
+      "mini": 1,
+      "strong": 2,
+      "act": 3
+     },
+     "dangerBonus": 0.6
+    },
+    "stackMax": 20,
+    "slots": [
+     {
+      "fromRecord": 0,
+      "count": 1
+     },
+     {
+      "fromRecord": 20,
+      "count": 2
+     },
+     {
+      "fromRecord": 40,
+      "count": 3
+     },
+     {
+      "fromRecord": 80,
+      "count": 4
+     }
+    ]
    },
    "stash": {
     "tabs": 2,
@@ -589,11 +680,71 @@
     "passiveDivisor": 8,
     "passiveMax": 10
    },
+   "coop": {
+    "hpPerExtraPlayer": 0.5
+   },
    "dungeonAccess": {
-    "townReturnEvery": 5,
-    "townReturnJitter": 2,
-    "stashEvery": 3,
-    "stashJitter": 1
+    "portalsAt": [
+     3,
+     6,
+     9,
+     12,
+     15,
+     18,
+     20
+    ],
+    "lookahead": 2,
+    "contentCycle": 20,
+    "bossLadder": [
+     {
+      "at": 5,
+      "rank": "mini"
+     },
+     {
+      "at": 14,
+      "rank": "strong"
+     },
+     {
+      "at": 19,
+      "rank": "act"
+     }
+    ],
+    "bossRanks": {
+     "mini": {
+      "levelMult": 1,
+      "hpMult": 1,
+      "floorScale": 1
+     },
+     "strong": {
+      "levelMult": 2,
+      "hpMult": 1.4,
+      "floorScale": 1.1
+     },
+     "act": {
+      "levelMult": 3,
+      "hpMult": 2.2,
+      "floorScale": 1.35
+     }
+    },
+    "width": {
+     "min": 1,
+     "max": 3
+    },
+    "branching": 0.55,
+    "nodeTypeWeights": {
+     "combat": 6,
+     "elite": 2,
+     "treasure": 1
+    },
+    "allowedModifiers": [
+     "pack-swarm",
+     "hardened-foes",
+     "savage-blows",
+     "greedy-vault",
+     "gilded-fortune",
+     "relic-vitality",
+     "relic-greed"
+    ]
    }
   },
   "classes": [
@@ -648,7 +799,7 @@
    {
     "id": "mage",
     "name": "Заклинатель",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
      "strength": 10,
      "dexterity": 10,
@@ -689,7 +840,7 @@
    {
     "id": "archer",
     "name": "Ловчая",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
      "strength": 10,
      "dexterity": 17,
@@ -730,7 +881,7 @@
    {
     "id": "zastupnik",
     "name": "Заступник",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
      "strength": 15,
      "dexterity": 10,
@@ -771,7 +922,7 @@
    {
     "id": "vyuga",
     "name": "Вьюга",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
      "strength": 15,
      "dexterity": 12,
@@ -812,7 +963,7 @@
    {
     "id": "arbalest",
     "name": "Вольный стрелок",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
      "strength": 12,
      "dexterity": 15,
@@ -853,7 +1004,7 @@
    {
     "id": "vorozheya",
     "name": "Ворожея",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
      "strength": 10,
      "dexterity": 12,
@@ -33343,10 +33494,9 @@
    {
     "id": "easy",
     "name": "Лёгкая",
-    "enabled": true,
-    "offsetMode": "percent",
-    "offset": -0.1,
-    "floorStep": 1,
+    "enabled": false,
+    "startLevel": 1,
+    "floorStep": 0.8,
     "goldMult": 0.9,
     "magicFind": 0.9,
     "unlockFloor": 0
@@ -33355,19 +33505,17 @@
     "id": "normal",
     "name": "Средняя",
     "enabled": true,
-    "offsetMode": "flat",
-    "offset": 0,
+    "startLevel": 1,
     "floorStep": 1,
     "goldMult": 1,
     "magicFind": 1,
-    "unlockFloor": 5
+    "unlockFloor": 0
    },
    {
     "id": "hard",
     "name": "Сложная",
-    "enabled": true,
-    "offsetMode": "flat",
-    "offset": 5,
+    "enabled": false,
+    "startLevel": 6,
     "floorStep": 1.5,
     "goldMult": 1.25,
     "magicFind": 1.25,
@@ -33376,9 +33524,8 @@
    {
     "id": "nightmare",
     "name": "Кошмар",
-    "enabled": true,
-    "offsetMode": "flat",
-    "offset": 12,
+    "enabled": false,
+    "startLevel": 13,
     "floorStep": 2,
     "goldMult": 1.6,
     "magicFind": 1.6,
@@ -44363,6 +44510,7 @@
      "subtitle": "вольная сборка: такого сочетания свод не числит",
      "noun": [
       {
+       "id": "two-handed",
        "when": {
         "hands": [
          "2"
@@ -44372,6 +44520,7 @@
        "gender": "m"
       },
       {
+       "id": "gladius",
        "when": {
         "strike.type": [
          "hisp",
@@ -44384,6 +44533,7 @@
        "gender": "m"
       },
       {
+       "id": "hand-and-half",
        "when": {
         "grip.hold": [
          "hand-half",
@@ -44394,6 +44544,7 @@
        "gender": "m"
       },
       {
+       "id": "plain",
        "when": {},
        "text": "меч",
        "gender": "m"
@@ -52754,17 +52905,17 @@
    }
   },
   {
-   "level": 89,
+   "level": 98,
    "xp": 10000000,
    "out": {
     "into": 0,
-    "need": 1185259,
+    "need": 1368603,
     "frac": 0,
     "max": false
    }
   },
   {
-   "level": 90,
+   "level": 99,
    "xp": 1000000000,
    "out": {
     "into": 0,
@@ -52774,7 +52925,7 @@
    }
   },
   {
-   "level": 94,
+   "level": 103,
    "xp": 5,
    "out": {
     "into": 0,
@@ -53211,7 +53362,7 @@
    "hpText": "140 / 536",
    "manaText": "30 / 214 (−53)",
    "stamText": "55 / 171",
-   "info": "Ур. 22  ·  этаж 4 · Кошмар · вызов ур.27  ·  Золото 1234  ·  Очки: атр 7 / скилл 2"
+   "info": "Ур. 22  ·  этаж 4 · Кошмар · монстры ур.27 · до метки 2 эт.  ·  Золото 1234  ·  Очки: атр 7 / скилл 2"
   },
   {
    "hp": "26.100937545676643%",
@@ -53223,7 +53374,7 @@
    "hpText": "140 / 536",
    "manaText": "30 / 214 (−53)",
    "stamText": "55 / 171",
-   "info": "Ур. 22  ·  этаж 3 · Средняя · вызов ур.32  ·  Золото 1234  ·  Очки: атр 7 / скилл 2"
+   "info": "Ур. 22  ·  этаж 3 · Средняя · монстры ур.3 · метка здесь  ·  Золото 1234  ·  Очки: атр 7 / скилл 2"
   },
   {
    "hp": "26.100937545676643%",
@@ -53235,7 +53386,7 @@
    "hpText": "140 / 536",
    "manaText": "30 / 214 (−53)",
    "stamText": "55 / 171",
-   "info": "Ур. 22  ·  этаж 4 · Кошмар · вызов ур.27  ·  Золото 1234  ·  Очки: атр 7 / скилл 2"
+   "info": "Ур. 22  ·  этаж 4 · Кошмар · монстры ур.27 · до метки 2 эт.  ·  Золото 1234  ·  Очки: атр 7 / скилл 2"
   },
   {
    "hp": "61.855670103092784%",
@@ -53247,7 +53398,7 @@
    "hpText": "60 / 97",
    "manaText": "200 / 391 (−98)",
    "stamText": "10 / 97",
-   "info": "Ур. 15  ·  этаж 1 · Средняя · вызов ур.15  ·  Золото 77  ·  Очки: атр 0 / скилл 0"
+   "info": "Ур. 15  ·  этаж 1 · Средняя · монстры ур.15 · до метки 2 эт.  ·  Золото 77  ·  Очки: атр 0 / скилл 0"
   },
   {
    "hp": "100%",
@@ -53271,7 +53422,7 @@
    "hpText": "3 / 30",
    "manaText": "5 / 33",
    "stamText": "0 / 86",
-   "info": "Ур. 1  ·  этаж 2 · Средняя · вызов ур.3  ·  Золото 0  ·  Очки: атр 0 / скилл 0"
+   "info": "Ур. 1  ·  этаж 2 · Средняя · монстры ур.2 · до метки 1 эт.  ·  Золото 0  ·  Очки: атр 0 / скилл 0"
   },
   {
    "hp": "100%",
@@ -53283,7 +53434,7 @@
    "hpText": "172 / 172",
    "manaText": "126 / 126",
    "stamText": "265 / 265",
-   "info": "Ур. 30  ·  этаж 9 · Средняя · вызов ур.70  ·  Золото 0  ·  Очки: атр 0 / скилл 0"
+   "info": "Ур. 30  ·  этаж 9 · Средняя · монстры ур.70 · метка здесь  ·  Золото 0  ·  Очки: атр 0 / скилл 0"
   },
   {
    "hp": "100%",

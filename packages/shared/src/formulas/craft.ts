@@ -6,7 +6,7 @@ import type { MaterialCost } from '../economy/materials.js';
 import { createRng, type Rng } from './rng.js';
 import { ESSENCE_ID } from './salvage.js';
 import { isSafeKey } from '../session/wireLimits.js';
-import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, pickTierClamped, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
+import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, nameHead, pickTierClamped, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
 import { axisOf, balanceAxisOf, bladeStats, strikeAxisOf } from './bladeStats.js';
 import {
   CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType,
@@ -875,11 +875,14 @@ export function enchantItem(reg: ConfigRegistry, item: Item, rarity: Rarity, rng
   const type = item.parts ? typeOfItem(reg, item) : undefined;
   const named = type ? { ...base, name: type.name, gender: type.gender } : base;
   const tierName = tier ? (type ? craftedName(tier, type) : buildCraftShell(base, tier).name) : named.name;
+  const renamed = nameByRarity(nameHead(base, named.name), named.gender, tierName, rarity, rolled, affixes, reg.get('rare-names'), rng);
   return {
     ...item,
     rarity,
     affixes: rolled,
-    name: nameByRarity(named, tierName, rarity, rolled, affixes, reg.get('rare-names'), rng),
+    name: renamed.name,
+    // бросок рарного имени переживает зачарование — иначе имя нечем пересобрать на другом языке
+    ...(renamed.roll?.noun ? { nameRoll: renamed.roll } : {}),
   };
 }
 
