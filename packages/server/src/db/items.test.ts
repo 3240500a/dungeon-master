@@ -496,7 +496,7 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('раунд 2: журнал ве�
     const other = `${tag}-a`, self = `${tag}-b`;
     await reg.heartbeat(other, 'ws://a', { players: 0, rooms: 0, cpuSeconds: 0, rssBytes: 0, loopP99: 0, tickHz: 0, draining: false });
     try {
-      const run = { templateId: 't', config: { templateId: 't', biomeId: 'b', tier: 'normal', seed: 1, modifiers: [] }, currentNodeId: 'start', visited: [] } as unknown as SaveState['run'];
+      const run = { config: { biomeId: 'b', tier: 'normal', seed: 1, modifiers: [] }, currentNodeId: 'start', visited: [] } as unknown as SaveState['run'];
       const live = await freshChar(), idle = await freshChar();
       for (const c of [live, idle]) { c.save.run = run; await db.putCharacter(c.charId, c.userId, c.save, 1); }
       expect(await reg.claimForJoin(live.charId, other)).toBe(other);

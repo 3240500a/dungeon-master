@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { GameConn } from './conn.js';
-import { ConfigRegistry, newCharacterSave, gainXp, xpForLevel, type ServerFrame, type SaveState, type RunPlan, type RunNode } from '@dm/shared';
+import { ConfigRegistry, newCharacterSave, gainXp, xpForLevel, isWaypoint as isWaypointAt, type ServerFrame, type SaveState, type RunPlan, type RunNode } from '@dm/shared';
 import { limits } from './rateLimit.js';
 
 // Тесты файла ждут менеджер оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
@@ -279,7 +279,12 @@ describe('⭐ R9-01: старая копия «якоря» не собирае�
     const a1 = at(wa).pid, b1 = at(wb).pid;
     await fromTown(r1, [a1, b1]);
     calm(r1);
-    while (nodeNow(r1).depth < 2) { descendNext(r1, [a1, b1]); calm(r1); }
+    // ⭐⭐ 13.10 (Г2): ПРИВАЛ (каждые `waypointStep` этажей) — УЗЕЛ-ГОРОД: ни сундуков, ни монстров, записывать на нём
+    // нечего. Поэтому «якорь» A паркуется на такой глубине, чтобы СЛЕДУЮЩИЙ узел (где B берёт сундук и босса) был
+    // обычным: иначе сторож ловил бы пустой привал и падал на отсутствующем сундуке.
+    // ⭐ Г8-3: «следующий узел не привал» — спрашиваем чистой функцией по МЕСТАМ полосы, а не делением на шаг.
+    const access = cfg.get('balance').dungeonAccess;
+    while (nodeNow(r1).depth < 2 || isWaypointAt(nodeNow(r1).depth + 1, access.portalsAt, access.contentCycle)) { descendNext(r1, [a1, b1]); calm(r1); }
     const d = r1.runNodeId!;
     toTown(r1, [a1, b1]);
     wa.close();                                                   // «якорь» выходит из города: его копия припаркована на d

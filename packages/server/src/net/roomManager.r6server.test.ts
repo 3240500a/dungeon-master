@@ -221,7 +221,7 @@ describe('⭐ R6-05: кадр ввода — не разбирается до в
     const { MAX_FRAME_BYTES } = await import('./conn.js');
     expect(MAX_FRAME_BYTES).toBeLessThanOrEqual(16 * 1024);
     const id = (i: number): string => `мод-${i}-`.padEnd(64, 'ы');   // кириллица — два байта на знак
-    const descend = { t: 'descend', difficultyId: 'н'.repeat(32), targetNodeId: 'n'.repeat(64), runConfig: { biomeId: id(99), templateId: id(98), modifiers: Array.from({ length: 32 }, (_, i) => id(i)) } };
+    const descend = { t: 'descend', difficultyId: 'н'.repeat(32), targetNodeId: 'n'.repeat(64), runConfig: { biomeId: id(99), modifiers: Array.from({ length: 32 }, (_, i) => id(i)) } };
     const raw = JSON.stringify(descend);
     expect(Buffer.byteLength(raw) * 2).toBeLessThan(MAX_FRAME_BYTES);
     const ws = connFrom('198.51.100.7');

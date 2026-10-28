@@ -1,0 +1,142 @@
+[
+  {
+    "id": "m0",
+    "enabled": true,
+    "name": "Убогое",
+    "fromLevel": 1,
+    "statMult": 1.0
+  },
+  {
+    "id": "m1",
+    "enabled": true,
+    "name": "Старое",
+    "fromLevel": 11,
+    "statMult": 1.3
+  },
+  {
+    "id": "m2",
+    "enabled": true,
+    "name": "Крепкое",
+    "fromLevel": 21,
+    "statMult": 1.64
+  },
+  {
+    "id": "m3",
+    "enabled": true,
+    "name": "Отличное",
+    "fromLevel": 31,
+    "statMult": 2.06
+  },
+  {
+    "id": "m4",
+    "enabled": true,
+    "name": "Мастерское",
+    "fromLevel": 41,
+    "statMult": 2.6
+  },
+  {
+    "id": "m5",
+    "enabled": true,
+    "name": "Элитное",
+    "fromLevel": 51,
+    "statMult": 3.28
+  },
+  {
+    "id": "m6",
+    "enabled": true,
+    "name": "Мифическое",
+    "fromLevel": 61,
+    "statMult": 4.13
+  },
+  {
+    "id": "m7",
+    "enabled": true,
+    "name": "Жуткое",
+    "fromLevel": 71,
+    "statMult": 5.2
+  },
+  {
+    "id": "m8",
+    "enabled": true,
+    "name": "Проклятое",
+    "fromLevel": 81,
+    "statMult": 6.55
+  },
+  {
+    "id": "m9",
+    "enabled": true,
+    "name": "Гиблое",
+    "fromLevel": 91,
+    "statMult": 8.26
+  },
+  {
+    "id": "m10",
+    "enabled": true,
+    "name": "Тленное",
+    "fromLevel": 101,
+    "statMult": 10.41
+  },
+  {
+    "id": "m11",
+    "enabled": true,
+    "name": "Злое",
+    "fromLevel": 111,
+    "statMult": 13.11
+  },
+  {
+    "id": "m12",
+    "enabled": true,
+    "name": "Лютое",
+    "fromLevel": 121,
+    "statMult": 16.52
+  },
+  {
+    "id": "m13",
+    "enabled": true,
+    "name": "Чёрное",
+    "fromLevel": 131,
+    "statMult": 20.82
+  },
+  {
+    "id": "m14",
+    "enabled": true,
+    "name": "Мёртвое",
+    "fromLevel": 141,
+    "statMult": 26.23
+  },
+  {
+    "id": "m15",
+    "enabled": true,
+    "name": "Пагубное",
+    "fromLevel": 151,
+    "statMult": 33.05
+  },
+  {
+    "id": "m16",
+    "enabled": true,
+    "name": "Роковое",
+    "fromLevel": 161,
+    "statMult": 41.64
+  },
+  {
+    "id": "m17",
+    "enabled": true,
+    "name": "Бездонное",
+    "fromLevel": 171,
+    "statMult": 52.47
+  },
+  {
+    "id": "m18",
+    "enabled": true,
+    "name": "Губительное",
+    "fromLevel": 181,
+    "statMult": 66.11
+  },
+  {
+    "id": "m19",
+    "enabled": true,
+    "name": "Предвечное",
+    "fromLevel": 191,
+    "statMult": 83.29
+  }
+]

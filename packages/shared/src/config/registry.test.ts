@@ -73,7 +73,6 @@ describe('ConfigRegistry', () => {
       { what: 'id вставки', key: 'skill-inserts', cap: WIRE_ID_MAX, at: (d, n) => { d[0].id = id(n); } },
       { what: 'id детали оружия', key: 'weapon-parts', cap: WIRE_ID_MAX, at: (d, n) => { d[0].id = id(n); } },
       { what: 'id биома', key: 'biomes', cap: WIRE_ID_MAX, at: (d, n) => { d[0].id = id(n); } },
-      { what: 'id шаблона забега', key: 'run-templates', cap: WIRE_ID_MAX, at: (d, n) => { d[0].id = id(n); } },
       { what: 'id модификатора', key: 'run-modifiers', cap: WIRE_ID_MAX, at: (d, n) => { d[0].id = id(n); } },
       { what: 'модификаторов забега', key: 'run-modifiers', cap: WIRE_RUN_MODIFIERS_MAX, at: (d, n) => { const r = d[0]; d.length = 0; for (let i = 0; i < n; i++) d.push({ ...r, id: `m${i}` }); } },
       { what: 'id основного квеста', key: 'quests.main', cap: WIRE_ID_MAX, at: (d, n) => { d[0].id = id(n); } },
@@ -120,7 +119,7 @@ describe('ConfigRegistry', () => {
     it('провод пропускает значения РОВНО на потолке', () => {
       expect(parseClientFrame(JSON.stringify({ t: 'descend', difficultyId: id(WIRE_DIFFICULTY_ID_MAX) }))).not.toBeNull();
       const mods = Array.from({ length: WIRE_RUN_MODIFIERS_MAX }, () => id(WIRE_ID_MAX));
-      expect(parseClientFrame(JSON.stringify({ t: 'descend', runConfig: { biomeId: id(WIRE_ID_MAX), templateId: id(WIRE_ID_MAX), modifiers: mods } }))).not.toBeNull();
+      expect(parseClientFrame(JSON.stringify({ t: 'descend', runConfig: { biomeId: id(WIRE_ID_MAX), modifiers: mods } }))).not.toBeNull();
       expect(validateInput({ move: { x: 0, y: 0 }, facing: 0, attack: false, interact: false, cast: id(WIRE_ID_MAX), useBelt: WIRE_BELT_SLOTS - 1 })).not.toBeNull();
       const pick = { id: id(WIRE_ID_MAX), step: 1 };
       const craft = { cmd: 'craft', nonce: 'nonce-0001', input: { weaponClass: 'sword', hands: 1, parts: { strike: pick, grip: pick, bind: pick, head: pick }, finish: WIRE_FINISH_ROWS - 1 } };

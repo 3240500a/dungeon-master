@@ -5,6 +5,7 @@ import {
   type ServerFrame, type SaveState, type RunPlan, type RunNode,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
+import { standDifficulties } from './difficultyStand.js';
 
 // Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
 // таймера (~15,6 мс). Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот потолок не прячет — они падают
@@ -68,6 +69,7 @@ beforeAll(async () => {
   ({ Room: RoomCtor, forgetTownStocks, runLedgerKey } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
+  standDifficulties(cfg);   // ⚠ тиры — свой стенд, см. difficultyStand.ts
 });
 const rooms: Room[] = [];
 afterEach(() => {
@@ -99,6 +101,7 @@ type Ply = { pos: Pt; hp: number; maxHp: number; mana: number; alive: boolean; t
 /** Внутренности комнаты, до которых тесту приходится дотягиваться (это тест). */
 type RoomIn = {
   area: string; movedAt: number; runPlan: RunPlan | null; runNodeId: string | null;
+  enterNode(nodeId: string, resumed?: boolean): void;
   vote: unknown;
   decor: { kind: string; x: number; y: number }[];
   disconnected: Map<string, { fled: boolean; fledDescend: boolean; safe?: boolean }>;
@@ -161,6 +164,34 @@ function descendNext(room: Room, pids: string[]): string {
   return to;
 }
 
+/** Сундуки этажа — у `world` их нет в типе этого файла, а сторожам свода они нужны. */
+const chestsOf = (room: Room): { id: number; pos: Pt; opened: boolean }[] =>
+  (inner(room).session.world as unknown as { chests: { id: number; pos: Pt; opened: boolean }[] }).chests;
+
+/**
+ * ⚠⚠ 13.10 (Г2): ФИНАЛА У ГЕНЕРАТОРА БОЛЬШЕ НЕТ — спуск бесконечный, и узлов без рёбер он не ставит вовсе.
+ * Прежний `while (nodeNow(room).edges.length > 0) descendNext(...)` после этого не завершался НИКОГДА:
+ * воркер vitest умирал по OOM, и 14 тестов файла молча не шли (сводка пакета при этом писала «passed»).
+ * Поэтому спускаемся на ЗАДАННОЕ число этажей.
+ *
+ * ⭐⭐ 14.10 (Г3, В5): И УЗЕЛ БОЛЬШЕ НЕ ДЕЛАЕТСЯ ТЕРМИНАЛЬНЫМ. Прежде помощник обнулял рёбра узла, чтобы попасть в
+ * ветку «выходов нет → портал → `finishRun`»; ветка снята, забег кончает ЯВНАЯ просьба `Room.finish` (кадр `finish`)
+ * у портала или точки входа (`canLeave`). Сторожа это не ослабляет: он судит те же последствия завершения
+ * (забег снят у копии в грейсе, свод ушёл в базу), только зовёт их той дверью, которой пользуется игрок.
+ *
+ * `floors` — сколько этажей пройти сперва (сторожу важно, что напарник УШЁЛ дальше), `want` — доспуститься
+ * до узла, годного сторожу: ⚠ сундук на узле НЕ ГАРАНТИЯ (этаж может не суметь его расставить), а сид
+ * забега у каждой комнаты свой, поэтому «взять `chests[0]` на первом же узле» — плавающее падение.
+ */
+function diveTo(room: Room, pids: string[], opts: { floors?: number; want?: (room: Room) => boolean } = {}): string {
+  for (let i = 0; i < (opts.floors ?? 0); i++) descendNext(room, pids);
+  if (opts.want) {
+    for (let i = 0; i < 24 && !opts.want(room); i++) descendNext(room, pids);
+    expect(opts.want(room), 'за 24 этажа узел, годный сторожу, не нашёлся').toBe(true);
+  }
+  return nodeNow(room).id;
+}
+
 describe('⭐ R9-07: унесённый спуском отключившийся на новом узле — не «сбежавший из боя»', () => {
   /** Пати A+B спустилась; у A 1 HP, рядом монстр гонится за ним, A стоит у выхода 0 (там «за» спуск ему засчитали бы). */
   async function carried(code: string): Promise<{ room: Room; b: string; A: SaveState }> {
@@ -201,13 +232,12 @@ describe('⭐ R9-07: унесённый спуском отключившийс�
     expect(inner(room).disconnected.get(A.charId), 'ждёт — как вышедший из города').toMatchObject({ safe: true });
   });
 
-  it('напарник доходит до финала и завершает забег — унесённому забег снимается без штрафа', async () => {
+  it('напарник уходит глубже и завершает забег — унесённому забег снимается без штрафа', async () => {
     const { room, b, A } = await carried('R9SB');
-    while (nodeNow(room).edges.length > 0) descendNext(room, [b]);
-    const portal = inner(room).decor.find((d) => d.kind === 'portal')!;
-    inner(room).session.world.players[b]!.pos = { x: portal.x, y: portal.y };
+    diveTo(room, [b], { floors: 1 });   // Г2: напарник ушёл на этаж глубже — и там завершает забег
+    toSpawn(room, b);                   // ⭐ Г3 (В5): «Завершить» зовут оттуда же, откуда уходят в город (`canLeave`)
     ready(room);
-    room.descend(b);
+    room.finish(b);
     expect(inner(room).area).toBe('town');
     await settle();
     expect(db.data.get(A.charId)!.gold, 'штрафа нет').toBe(10_000);
@@ -381,19 +411,39 @@ describe('⭐ R9-08: окно спуска из города — тир, шаб�
     return h;
   }
 
-  it('новый забег: окно принявшего — «кошмар», «глубокая экспедиция», биом и модификаторы; начался ровно он', () => {
+  it('новый забег: окно принявшего — тир, забег, биом и модификаторы; начался ровно он', () => {
     const room = newRoom('R9SH');
     const a = join(room, veteran()), b = join(room, hero(1));
     ready(room);
-    room.descend(a.pid, 'nightmare', undefined, { templateId: 'deep-expedition' });
+    room.descend(a.pid, 'nightmare', undefined, {});
     const f = b.ws.last('voteStart')!;
-    expect(f).toMatchObject({ kind: 'descend', difficultyId: 'nightmare', templateId: 'deep-expedition', modifiers: [] });
+    expect(f).toMatchObject({ kind: 'descend', difficultyId: 'nightmare', modifiers: [] });
     expect(typeof f.biomeId, 'биом — решённый сервером').toBe('string');
     expect(f.resume, 'новый забег, а не продолжение').toBeUndefined();
     room.castVote(b.pid, true);
     expect(inner(room).area).toBe('dungeon');
     const run = inner(room).session.world.players[b.pid]!.save.run!.config;
-    expect({ tier: run.tier, templateId: run.templateId, biomeId: run.biomeId }).toEqual({ tier: 'nightmare', templateId: 'deep-expedition', biomeId: f.biomeId });
+    expect({ tier: run.tier, biomeId: run.biomeId }).toEqual({ tier: 'nightmare', biomeId: f.biomeId });
+  });
+
+  /**
+   * ⭐⭐ Г8-4 → Ф1 (16.10): СНЯТЫЙ КОНТЕНТ ЗАЖИМАЕТСЯ, А НЕ ОТВЕРГАЕТСЯ. Владелец убрал шаблоны забега, и в Ф1 их
+   * не стало вовсе; но их id ещё лежат в ПРИПАРКОВАННЫХ ЗАБЕГАХ сейвов и в кадрах старых клиентов. Отказ был бы
+   * худшим исходом: игрок с таким сейвом не смог бы спуститься вовсе. Правило осталось прежним и проверяется на
+   * том, что от выбора алтаря уцелело, — на БИОМЕ: несуществующий зажимается к включённому, спуск состоится.
+   */
+  it('⭐⭐ Ф1: кадр с выдуманным биомом не отвергается — зажимается к включённому', () => {
+    const room = newRoom('R9SH2');
+    const a = join(room, veteran()), b = join(room, hero(1));
+    ready(room);
+    const on = cfg.get('biomes').filter((x) => x.enabled !== false).map((x) => x.id);
+    expect(on.includes('no-such-biome'), 'такого биома нет').toBe(false);
+    room.descend(a.pid, 'nightmare', undefined, { biomeId: 'no-such-biome' });
+    const f = b.ws.last('voteStart')!;
+    expect(on.includes(f.biomeId as string), 'окно называет ВКЛЮЧЁННЫЙ биом, а не выдуманный').toBe(true);
+    room.castVote(b.pid, true);
+    expect(inner(room).area, 'и спуск состоялся — отказа нет').toBe('dungeon');
+    expect(on.includes(inner(room).session.world.players[b.pid]!.save.run!.config.biomeId), 'в сейв лёг тоже он').toBe(true);
   });
 
   it('припаркованный забег: окно — «продолжение» с именем хозяина и глубиной, тир — тир его забега, а не выбор зовущего', async () => {
@@ -462,11 +512,12 @@ describe('⭐ R9-08: окно спуска из города — тир, шаб�
 });
 
 /**
- * ⭐ R9-01: СВОД ЗАПИСЕЙ ЗАБЕГА УХОДИТ В БАЗУ ДО ТОГО, КАК КОПИИ СНИМУТСЯ. Финал выбрасывает копии подключённых сразу: сундук,
- * открытый на финале за секунду до портала, жил только в них — и старая копия ушедшего раньше собирала финал свежим.
+ * ⭐ R9-01: СВОД ЗАПИСЕЙ ЗАБЕГА УХОДИТ В БАЗУ ДО ТОГО, КАК КОПИИ СНИМУТСЯ. Завершение забега выбрасывает копии подключённых
+ * сразу: сундук, открытый за секунду до «Завершить», жил только в них — и старая копия ушедшего раньше собирала узел свежим.
+ * ⭐ Г3 (В5): завершает теперь явная просьба `Room.finish`, а не узел без выходов; правило под охраной — то же.
  */
-describe('⭐ R9-01: комната пишет свод записей забега в базу — и финал не уносит взятое на нём', () => {
-  it('открыл сундук финала и сразу ушёл порталом — сундук в своде базы под ключом забега', async () => {
+describe('⭐ R9-01: комната пишет свод записей забега в базу — и завершение не уносит взятое на последнем узле', () => {
+  it('открыл сундук и сразу завершил забег — сундук в своде базы под ключом забега', async () => {
     const room = newRoom('R9SM');
     const hb = hero(30);
     const b = join(room, hb).pid;
@@ -475,21 +526,19 @@ describe('⭐ R9-01: комната пишет свод записей забе�
     noMonsters(room);
     const cfgRun = structuredClone(inner(room).session.world.players[b]!.save.run!.config);
     expect(typeof cfgRun.id, 'у нового забега — личность').toBe('string');
-    while (nodeNow(room).edges.length > 0) descendNext(room, [b]);
-    const finale = inner(room).runNodeId!;
+    const finale = diveTo(room, [b], { want: (r) => chestsOf(r).length > 0 });
     const w = inner(room).session.world as unknown as { chests: { id: number; pos: Pt; opened: boolean }[]; players: Record<string, Ply> };
     const chest = w.chests[0]!;
     w.players[b]!.pos = { ...chest.pos };
     room.openChest(b, chest.id);
     expect(chest.opened).toBe(true);
-    const portal = inner(room).decor.find((d) => d.kind === 'portal')!;
-    w.players[b]!.pos = { x: portal.x, y: portal.y };
+    toSpawn(room, b);
     ready(room);
-    room.descend(b);
-    expect(inner(room).area, 'финал пройден — в городе').toBe('town');
+    room.finish(b);
+    expect(inner(room).area, 'забег завершён — в городе').toBe('town');
     expect(inner(room).session.world.players[b]!.save.run, 'копия снята').toBeUndefined();
     await settle();
-    expect(db.ledger.get(runLedgerKey(cfgRun))?.get(finale)?.chests, 'взятое на финале — в своде забега').toContain(chest.id);
+    expect(db.ledger.get(runLedgerKey(cfgRun))?.get(finale)?.chests, 'взятое на последнем узле — в своде забега').toContain(chest.id);
   });
 
   it('«якорь» всё это время стоял в городской комнате: продолжение там читает свод из базы — узел, взятый без него, взят', async () => {
@@ -517,7 +566,12 @@ describe('⭐ R9-01: комната пишет свод записей забе�
     await drained();
     expect(inner(r2).runNodeId).toBe(d);
     noMonsters(r2);
-    const deep = descendNext(r2, [b2]);
+    let deep = descendNext(r2, [b2]);
+    // ⚠ Сундук на узле НЕ ГАРАНТИЯ (см. `diveTo`): этаж может не суметь его расставить, а сид забега у каждой комнаты свой,
+    // поэтому `chests[0]` на первом же узле — плавающее падение (замер: примерно 1 % сидов).
+    let dives = 1;
+    for (let i = 0; i < 24 && chestsOf(r2).length === 0; i++) { deep = descendNext(r2, [b2]); dives++; }
+    expect(chestsOf(r2).length, 'за 24 этажа узла с сундуком не нашлось').toBeGreaterThan(0);
     const w2 = inner(r2).session.world as unknown as { chests: { id: number; pos: Pt; opened: boolean }[]; players: Record<string, Ply> };
     const chest = w2.chests[0]!;
     w2.players[b2]!.pos = { ...chest.pos };
@@ -536,7 +590,10 @@ describe('⭐ R9-01: комната пишет свод записей забе�
     await drained();
     expect(inner(r1).runNodeId).toBe(d);
     noMonsters(r1);
-    expect(descendNext(r1, [a, b3])).toBe(deep);
+    // Столько же шагов, сколько сделал B: первое ребро и тот же сид забега ведут комнаты одним путём.
+    let same = '';
+    for (let i = 0; i < dives; i++) same = descendNext(r1, [a, b3]);
+    expect(same, 'комната «якоря» дошла до того же узла').toBe(deep);
     const w1 = inner(r1).session.world as unknown as { chests: { id: number; opened: boolean }[] };
     expect(w1.chests.find((c) => c.id === chest.id)?.opened, 'сундук, открытый без «якоря», открыт и в его комнате').toBe(true);
   });
@@ -570,7 +627,7 @@ describe('⭐ R9-01: комната пишет свод записей забе�
   });
 
   it('ключ свода — личность забега; у забега без неё (старый сейв) — отпечаток того, из чего пересобирается граф', () => {
-    const base = { templateId: 't', biomeId: 'b', tier: 'normal', seed: 7, modifiers: ['m2', 'm1'] };
+    const base = { biomeId: 'b', tier: 'normal', seed: 7, modifiers: ['m2', 'm1'] };
     expect(runLedgerKey({ ...base, id: 'abc' })).toBe('id:abc');
     expect(runLedgerKey(base)).toBe(runLedgerKey({ ...base, modifiers: ['m1', 'm2'] }));
     expect(runLedgerKey(base)).not.toBe(runLedgerKey({ ...base, seed: 8 }));

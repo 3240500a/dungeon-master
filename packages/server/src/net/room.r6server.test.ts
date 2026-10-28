@@ -14,7 +14,9 @@ vi.setConfig({ testTimeout: 20_000 });
 /**
  * Раунд 6 (сервер): то, что правка сервера обязана довезти через настоящую `Room` — сбежавший отключением не уходит живым
  * на следующий узел (R6-01), место в пати держит только тот, кто может вернуться на то же место (R6-14), мощь узла — по
- * сильнейшему герою забега, а не по первому вошедшему (R6-27). Сокет — фейковый, база — маленькая честная (версии сейва).
+ * сильнейшему герою забега, а не по первому вошедшему (R6-27).
+ * ⭐⭐ 13.10 (Г1): мощь узла осталась мерой ВХОДА (ворота прогресса сложности), но уровень монстров от неё не зависит —
+ * его решает глубина (`floorMonsterLevel`); сторож R6-27 ниже проверяет и то, и это. Сокет — фейковый, база — маленькая честная (версии сейва).
  */
 const db = vi.hoisted(() => ({
   /** charId → версия сейва в «базе». Нет записи — 1 (так персонажа отдаёт вход в тестах). */
@@ -77,6 +79,7 @@ type RoomIn = {
   disconnected: Map<string, { fled: boolean }>;
   nodeState: { el: number } | null;
   session: { world: { spawn: Pt; exits?: Pt[]; monsters: Mon[]; players: Record<string, { pos: Pt; hp: number; alive: boolean; combatTimer: number; save: SaveState }> } };
+  enterNode(nodeId: string): void;
 };
 const inner = (room: Room): RoomIn => room as unknown as RoomIn;
 const settle = async (): Promise<void> => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -112,12 +115,12 @@ function downFromTown(room: Room, pids: string[]): void {
   for (const pid of pids.slice(1)) room.castVote(pid, true);
   expect(inner(room).area).toBe('dungeon');
 }
-/** Встать к выходу ребра на узел `to` (на финале — к порталу). */
+/** Встать к выходу ребра на узел `to` (без `to` — к выходу первого ребра). */
 function toExit(room: Room, pid: string, to?: string): void {
   const r = inner(room);
   const node = nodeNow(room);
   const i = Math.max(0, to ? node.edges.findIndex((e) => e.to === to) : 0);
-  const at = node.edges.length === 0 ? r.decor.find((d) => d.kind === 'portal')! : r.session.world.exits![i]!;
+  const at = r.session.world.exits![i]!;
   r.session.world.players[pid]!.pos = { x: at.x, y: at.y };
 }
 /** Герой при 1 HP вдали от выходов, на него идёт монстр — «в опасности» (R5-11). */
@@ -201,7 +204,7 @@ describe('⭐ R6-01: сбежавший из боя отключением не 
     expect(db.data.get(sa!.charId)!.run, 'забег цел').toBeTruthy();
   });
 
-  it('контроль: финал и город хоронят сбежавшего, как и прежде (R4-14)', async () => {
+  it('контроль: «Завершить» и город хоронят сбежавшего, как и прежде (R4-14)', async () => {
     for (const how of ['finish', 'town'] as const) {
       const { room, pids: [a, b], saves: [sa] } = roomWith([1, 1]);
       downFromTown(room, [a!, b!]);
@@ -211,15 +214,14 @@ describe('⭐ R6-01: сбежавший из боя отключением не 
       await settle();
       bodyAlive(room, sa!.charId);
       if (how === 'finish') {
-        for (let g = 0; g < 40 && nodeNow(room).edges.length; g++) {
-          inner(room).movedAt = 0;
-          const to = nodeNow(room).edges[0]!.to;
-          toExit(room, b!, to);
-          room.descend(b!, undefined, to);
-        }
+        // ⭐⭐ 14.10 (Г3, В5): правило «завершение забега хоронит сбежавшего так же, как уход в город» (R4-14) жило в
+        // ветке `node.edges.length === 0` (`Room.descend` → `finishRun`), а узлов без выходов генератор не ставит с
+        // Г2 — сторож охранял мёртвый код. Теперь забег кончает ЯВНАЯ просьба `Room.finish`: тот же `finishRun` и тот
+        // же `buryFled` внутри, но дверь живая. ⚠ И судим на ТОМ ЖЕ узле, где загнан A (прежде сторож сперва спускался
+        // на этаж, а спуск хоронит сбежавшего сам, R6-01, — то есть завершение могло не проверяться вовсе).
         inner(room).movedAt = 0;
-        toExit(room, b!);
-        room.descend(b!);
+        inner(room).session.world.players[b!]!.pos = { ...inner(room).session.world.spawn };
+        room.finish(b!);
       } else {
         inner(room).movedAt = 0;
         inner(room).session.world.players[b!]!.pos = { ...inner(room).session.world.spawn };
@@ -260,14 +262,20 @@ describe('⭐ R6-14: место в пати держит только тот, к
 });
 
 describe('⭐ R6-27: мощь узла — по сильнейшему герою забега, а не по хозяину комнаты', () => {
-  it('хозяин — альт 1-го уровня, с ним основной 60-го: узел заселён по основному; и когда основной ждёт реконнекта', async () => {
+  it('хозяин — альт 1-го уровня, с ним основной 60-го: мощь узла записана по основному; и когда основной ждёт реконнекта', async () => {
     const power = cfg.get('balance').power;
     const { room, pids: [alt, main], saves: [, sMain] } = roomWith([1, 60]);
     const elMain = effectiveLevel(sMain!, power).total;
     downFromTown(room, [alt!, main!]);
     const levels = (): number[] => inner(room).session.world.monsters.map((m) => m.def.level);
     expect(inner(room).nodeState?.el, 'мощь первого узла — основного').toBe(elMain);
-    expect(Math.min(...levels()), 'монстры — под основного, а не под альта').toBeGreaterThan(elMain - 10);
+    // ⭐⭐ 13.10 (Г1): мощь узла больше НЕ решает уровень монстров — его решает ГЛУБИНА, и правило R6-27 живёт теперь
+    // ровно в `nodeState.el` (на нём ворота прогресса сложности). Поэтому сторожим оба факта: мощь узла — основного
+    // (ассерты выше и ниже), а уровни монстров — глубины и ТОЛЬКО глубины, сколько бы ни было мощи у основного.
+    const depth = inner(room).depth;
+    expect(Math.min(...levels()), 'уровень монстра = глубина узла, а не мощь основного').toBe(depth);
+    // Верхний край — надбавки редкости (+2/+3) и босс-комната (+3): мощь 60-го уровня не даёт монстрам ничего.
+    expect(Math.max(...levels()), 'мощь основного монстров не поднимает').toBeLessThanOrEqual(depth + 6);
     await settle();
     // Основной ушёл спокойно (у портала) — его копия этого же забега ждёт реконнекта; альт спускается один.
     const w = inner(room).session.world;

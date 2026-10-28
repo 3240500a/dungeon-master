@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { GameConn } from './conn.js';
 import {
   ConfigRegistry, newCharacterSave, generateItem, itemFromBaseId, createRng, playerSnapshot, packInventory, findFree, stashDims,
-  isWalkableWorld, hasLineOfSight, isDifficultyUnlocked, runRecords, Cell, TILE,
+  isWalkableWorld, hasLineOfSight, isDifficultyUnlocked, runRecords, waypointStart, nextWaypointAfter, runNodeDepth, Cell, TILE,
   type ServerFrame, type SaveState, type Item, type RunConfig, type RunPlan, type RunNodeState, type PlayerInput, type Grid, type AccountStash,
 } from '@dm/shared';
 import { fuzzRng, mixSeed, shrinkOps, type FuzzRng } from './coopLifecycle.fuzzKit.js';
@@ -635,7 +635,7 @@ type Op =
   | { k: 'kill'; h: number; body: boolean }
   | { k: 'potion'; h: number; belt: boolean; r: number }
   | { k: 'attack'; h: number; r: number; weaken: boolean }
-  | { k: 'descend'; h: number; r: number; others: Others; near: boolean; pause?: boolean; diff?: number }
+  | { k: 'descend'; h: number; r: number; others: Others; near: boolean; pause?: boolean; diff?: number; depth?: number }
   | { k: 'town'; h: number; others: Others; near: boolean; pause?: boolean }
   | { k: 'arena'; h: number; others: Others; pause?: boolean }
   | { k: 'vote'; h: number; yes: boolean }
@@ -650,6 +650,8 @@ type Op =
   | { k: 'fault'; f: FaultKind; h: number | null; ops?: number; ms?: number; fail?: boolean }
   | { k: 'retry' }
   | { k: 'recruit' }
+  /** Г4: ветеран — герой с рекордом глубины тира в строке базы (см. `case 'veteran'`). */
+  | { k: 'veteran'; h: number; tier: number; depth: number }
   // ── кластер ──
   | { k: 'crash'; n: number }
   /** Процесс умрёт на `calls`-м своём запросе к базе или реестру (кроме сердцебиения) — посреди входа, записи, «Завершить», продолжения забега. */
@@ -711,6 +713,8 @@ interface PreState {
 interface Penalty { charId: string; removed: string[]; gold: number; src: string; op: number; save: SaveState; ev: number; run: string | null; where: string | null; seq: number }
 interface W {
   seed: number; heroes: Hero[]; rng: FuzzRng; aux: FuzzRng; crew: FuzzRng; env: FuzzRng;
+  /** Г4: свой поток у ветеранов (`veteran`) — основной поток операций на неё не тратится (как у фаззера одной ноды). */
+  vet: FuzzRng;
   /** ⭐ R16 C-09: свой поток и у «статус перед Завершить» (`abandon.ask`) — последовательность операций та же. */
   ask: FuzzRng;
   /**
@@ -1980,21 +1984,32 @@ async function exec(w: W, op: Op): Promise<void> {
       if (!at) return;
       const room = at.room;
       let near: Pt | undefined;
-      if (room.area === 'town') send(w, h, op.diff !== undefined ? { t: 'descend', difficultyId: tierIds()[op.diff % tierIds().length] } : { t: 'descend' });
+      // ⭐⭐ Г4: КАДР ИЗ ГОРОДА НЕСЁТ СТАРТОВУЮ МЕТКУ (`op.depth` → `startDepth`). Без неё фаззер кластера не ходил
+      // глубже 1-го этажа ВООБЩЕ (замер: `g4:start-depth-deep` = 0), и перенесённый сюда инвариант глубины был бы
+      // мёртвым кодом — ровно то, от чего предупреждает правило «каждый новый инвариант обязан быть достижимым».
+      // 1e9 в пуле — замер зажима, а не ожидание отказа: старт обязан свестись к разрешённому по сейвам пати.
+      if (room.area === 'town') {
+        send(w, h, {
+          t: 'descend',
+          ...(op.diff !== undefined ? { difficultyId: tierIds()[op.diff % tierIds().length] } : {}),
+          ...(op.depth !== undefined ? { startDepth: op.depth } : {}),
+        });
+      }
       else if (room.area === 'dungeon') {
         const node = room.runPlan?.nodes.find((n) => n.id === room.runNodeId);
-        if (!node) return;
-        if (node.edges.length === 0) {
-          near = portals(room)[0];
-          if (near && at.p.alive) place(at.p, near);
-          send(w, h, { t: 'descend' });
-        } else {
-          const i = Math.floor(op.r * node.edges.length) % node.edges.length;
-          const ex = room.session.world.exits?.[i];
-          if (ex && at.p.alive) place(at.p, ex);
-          near = ex;
-          send(w, h, { t: 'descend', targetNodeId: node.edges[i]!.to });
-        }
+        // ⚠ 14.10 (Г3, правка 7): ВЕТКА «УЗЕЛ БЕЗ ВЫХОДОВ → `descend` У ПОРТАЛА» СНЕСЕНА — недостижимое
+        // вождение: с Г2 спуск бесконечен, узлов без рёбер генератор не ставит ни на какой глубине, а забег
+        // завершает явный кадр `finish` (Г3/В5). Ассертов тут не было — снос ничего не ослабляет.
+        // ⭐⭐ Г4 (14.10): ИНВАРИАНТЫ ГЛУБИНЫ ТЕПЕРЬ ЖИВУТ И ЗДЕСЬ (`8-start-depth-unearned`,
+        // `8-progress-leap` — см. `instrument`). Здесь стояло «была бы недостижимым кодом» — и было верно,
+        // пока рекорды тира в прогоне всегда были 0; теперь их ставит операция `veteran`, и достижимость
+        // доказана замером покрытия (`g4:*` в `[fuzz] покрытие`).
+        if (!node?.edges.length) return;
+        const i = Math.floor(op.r * node.edges.length) % node.edges.length;
+        const ex = room.session.world.exits?.[i];
+        if (ex && at.p.alive) place(at.p, ex);
+        near = ex;
+        send(w, h, { t: 'descend', targetNodeId: node.edges[i]!.to });
       } else return;
       await drain();
       othersVote(w, room, h, op.others, op.near ? near : undefined);
@@ -2168,6 +2183,30 @@ async function exec(w: W, op: Op): Promise<void> {
       void inProc(inc, () => room.persist(pid)).catch(() => undefined);
       await drain(3);
       db.bump = null;
+      return;
+    }
+    case 'veteran': {
+      // ⭐⭐ Г4: ВЕТЕРАН — ГЕРОЙ С РЕКОРДОМ ГЛУБИНЫ В СТРОКЕ БАЗЫ. Без него оба инварианта глубины были бы здесь мёртвым
+      // кодом: рекорды в прогоне всегда 0, старт всегда 1 — и метка, которой «не заработали», не возникла бы ни разу
+      // (то же, что было записано в ветке `descend`). Операция такая же, как у фаззера одной ноды: правит ТОЛЬКО строку
+      // базы и ТОЛЬКО у героя, которого эта нода ничем не держит, — его правда и есть строка, и сдвинуть её вправе
+      // другая нода. Иначе модель («правда — копия в памяти») разошлась бы с базой не по вине сервера.
+      const h = heroOf(w, op.h);
+      const held = !!liveAt(w, h) || w.pending.some((p) => p.charId === h.charId)
+        || alive(w).some((i) => i.rm.live.has(h.charId) || i.rm.unsaved.has(h.charId) || i.rm.inflight.has(h.charId)
+          || i.rm.graceByChar.has(h.charId) || i.rm.charOps.has(h.charId))
+        || allRooms(w).some((r) => r.disconnected.has(h.charId) || r.lingering.has(h.charId))
+        || pendingCopy(w, h.charId);
+      const r = db.rows.get(h.charId);
+      if (held || !r) return;
+      const tier = tierIds()[op.tier % tierIds().length]!;
+      const save = JSON.parse(r.json) as SaveState;
+      save.difficultyProgress = { ...(save.difficultyProgress ?? {}), [tier]: Math.max(save.difficultyProgress?.[tier] ?? 0, op.depth) };
+      r.json = JSON.stringify(save); r.version++;
+      // 8: наиграно там — достигнуто (иначе `8-progress-unreached` поймал бы саму операцию, а не сервер).
+      h.depthMax.set(tier, Math.max(h.depthMax.get(tier) ?? 0, op.depth));
+      h.progMax.set(tier, Math.max(h.progMax.get(tier) ?? 0, op.depth));
+      tally('g4:veteran');
       return;
     }
     case 'recruit': {
@@ -2705,15 +2744,73 @@ function instrument(w: W, inc: Inc, rmMod: typeof import('./roomManager.js'), ro
   wrap(proto, 'flushLedger', (self, _a, call) => (teardown ? (self as { ledgerWriting: Promise<void> }).ledgerWriting : call()));
   wrap(proto, 'startRun', (self, _a, call) => {
     const room = self as RoomIn;
-    if (mine(room)) {
+    const ours = mine(room);
+    const heroes0 = ours
+      ? [...room.clients.keys()].map((pid) => room.session.world.players[pid]?.save).filter((s): s is SaveState => !!s)
+      : [];
+    if (ours) {
       const ds = cfg.get('difficulties');
       const i = ds.findIndex((d) => d.id === room.difficultyId);
-      const heroes = [...room.clients.keys()].map((pid) => room.session.world.players[pid]?.save).filter((s): s is SaveState => !!s);
-      if (!heroes.some((s) => isDifficultyUnlocked(ds, i, s.difficultyProgress ?? {}))) {
+      if (!heroes0.some((s) => isDifficultyUnlocked(ds, i, s.difficultyProgress ?? {}))) {
         violate(w, '8-tier-locked-start', `комната ${room.code} начала забег в тире «${room.difficultyId}», закрытом всем подключённым; операция ${opText()}`);
       }
     }
-    return call();
+    const tier = room.difficultyId;
+    // ⚠⚠ СНИМОК РЕКОРДОВ ДО ВЫЗОВА. `heroes0` — живые сейвы, а `startRun` сам зовёт `enterNode`, который ПИШЕТ рекорд:
+    // считай разрешение после вызова — и оно бралось бы из УЖЕ ВЫРОСШЕГО числа, то есть старт сам себя разрешал (замер: вход
+    // на глубине 1 с пустым рекордом даёт запись 1 ДО замера). Копия самого словаря, а не ссылка на него.
+    const prog0 = heroes0.map((s) => ({ charId: s.charId, prog: { ...(s.difficultyProgress ?? {}) } }));
+    const r = call();
+    // ⭐⭐ Г4 (перенос инварианта Г3 из `coopLifecycle.fuzz`): ГЛУБИНА СТАРТА НЕ ГЛУБЖЕ ЗАРАБОТАННОГО ВСЕЙ ПАТИ
+    // (`8-start-depth-unearned`). ЗАЧЕМ ИМЕННО ЗДЕСЬ, А НЕ ТОЛЬКО У ФАЗЗЕРА ОДНОЙ НОДЫ: в кластере живут ДВЕ НОДЫ и
+    // реестр, и ровно здесь карри и продолжение ЧУЖОГО забега ходят между нодами (вход по коду через гейтвей, «Соло»,
+    // продолжение из города со сводом из базы) — то есть та самая дверь, которую Г3 чинила. Мерится ПОСЛЕ вызова, по
+    // ФАКТИЧЕСКОМУ узлу комнаты, а не по аргументу: аргумент проверял бы сам себя. Разрешение — тем же швом, что у
+    // сервера (`waypointStart`), без ограничения сверху (`MAX_SAFE_INTEGER`, а НЕ `Infinity`: у `waypointStart`
+    // нечисло значит «границы нет» → вход 1, и инвариант врал бы).
+    if (ours && cur === w) {
+      // ⭐⭐ Г8-3: МЕСТА ПОРТАЛОВ И ДЛИНА КРУГА — ОБА ИЗ КОНФИГА. Цикл здесь стоял нулём (прежняя арифметика
+      // «каждые N этажей»), и фаззер считал разрешённый старт НЕ ТЕМ правилом, что сервер: замер — рекорд 20
+      // давал старт 20 (место 20 круга — портал), а инвариант разрешал 18 и кричал на ЧЕСТНЫЙ старт.
+      const access = cfg.get('balance').dungeonAccess;
+      const step = access.portalsAt;
+      const allow = waypointStart(prog0.map((h) => h.prog), tier, step, access.contentCycle, Number.MAX_SAFE_INTEGER);
+      const got = runNodeDepth(room.runNodeId ?? undefined);
+      if (allow > 1) tally('g4:start-depth-earned');
+      if (got > 1) tally('g4:start-depth-deep');
+      if (got > allow) {
+        violate(w, '8-start-depth-unearned', `комната ${room.code}/${inc.node} начала забег тира «${tier}» с глубины ${got}, а по рекордам пати разрешено ${allow} (шаг ${step}; ${prog0.map((h) => `${h.charId} ${JSON.stringify(h.prog)}`).join('; ') || 'никого'}); операция ${opText()}`);
+      }
+    }
+    return r;
+  });
+  // ⭐⭐ Г4 (перенос инварианта Г3): ПРОГРЕСС ЗА ОДИН ВХОД — НЕ БОЛЬШЕ ШАГА МЕТКИ (`8-progress-leap`). Мерится вокруг
+  // `enterNode`, а не между проверками инвариантов: одна операция иногда даёт два входа (продолжение + спуск), и
+  // проверка «за операцию» врала бы на честном прогоне. Это тот же шов, которым пишут прогресс И вход по коду, И
+  // продолжение чужого забега, — одна метка на оба обхода зажима.
+  wrap(proto, 'enterNode', (self, _a, call) => {
+    const room = self as RoomIn;
+    const tier = room.difficultyId;
+    const was = mine(room)
+      ? [...room.clients.keys()].map((pid) => room.session.world.players[pid]?.save).filter((s): s is SaveState => !!s)
+        .map((s) => ({ s, d: s.difficultyProgress?.[tier] ?? 0 }))
+      : [];
+    const r = call();
+    if (cur === w) {
+      // ⭐⭐ Г8-3: ПОТОЛОК ПРИБАВКИ — СЛЕДУЮЩАЯ МЕТКА, а не число шага: места порталов стоят неровно (…18, 20, 23…),
+      // и фиксированное число то недооценивало бы прибавку, то переоценивало. Правило словами то же — «за вход
+      // открывается не больше ОДНОЙ метки», — и считается тем же швом, что у сервера (`nextWaypointAfter`).
+      const access = cfg.get('balance').dungeonAccess;
+      for (const { s, d } of was) {
+        const now = s.difficultyProgress?.[tier] ?? 0;
+        const cap = nextWaypointAfter(d, access.portalsAt, access.contentCycle);
+        if (now > d) tally(now > cap ? 'g4:progress-leap' : 'g4:progress-step');
+        if (now > cap) {
+          violate(w, '8-progress-leap', `${s.charId}: прогресс «${tier}» за ОДИН вход вырос ${d} → ${now} (потолок прибавки — метка ${cap}; комната ${room.code}/${inc.node}, узел ${String(room.runNodeId)}); операция ${opText()}`, heroBy(w, s.charId));
+        }
+      }
+    }
+    return r;
   });
 }
 
@@ -3073,6 +3170,11 @@ function genOp(w: W, rng: FuzzRng): Op {
       };
     }
   }
+  // ⭐⭐ Г4: ветеран — из своего потока (`vet`): основной поток операций на эту операцию не тратится.
+  if (off.length && w.vet.chance(0.12)) {
+    const tier = w.vet.chance(0.7) ? tierIds().indexOf('normal') : w.vet.int(tierIds().length);
+    return { k: 'veteran', h: w.vet.pick(off).i, tier: Math.max(0, tier), depth: w.vet.pick([5, 10, 12, 20, 60]) };
+  }
   if (hs.length < HEROES_MAX && w.crew.chance(0.02)) return { k: 'recruit' };
   // ⭐ R15-08: поздний ответ реестра на продление и взятие забега — из своего потока (`lateReg`), пока забеги держат комнаты: отпуск забега
   // комнатой ляжет в базу раньше.
@@ -3117,7 +3219,10 @@ function genOp(w: W, rng: FuzzRng): Op {
     [9 * L, () => {
       const op: Op = { k: 'descend', h: pickFrom(live), r: rng.next(), others: rng.pick(['yes', 'yes', 'yes', 'none', 'no'] as const), near: rng.chance(0.5), pause: rng.chance(0.7) };
       const d = diff();
-      return d === undefined ? op : { ...op, diff: d };
+      // ⭐⭐ Г4: стартовая метка — часть операции (сжатие её видит и повторяет), из потока ветеранов (`vet`).
+      // 3/18 — в пределах рекордов, которые ставит `veteran` (5/10/12/20/60), 1e9 — заведомо глубже любого.
+      const dep = w.vet.chance(0.4) ? w.vet.pick([3, 18, 60, 1e9]) : undefined;
+      return { ...op, ...(d === undefined ? {} : { diff: d }), ...(dep === undefined ? {} : { depth: dep }) };
     }],
     [dun.length || arena.length ? 5 : 0, () => ({ k: 'town', h: pickFrom([...dun, ...arena]), others: rng.pick(['yes', 'yes', 'none', 'no'] as const), near: rng.chance(0.7), pause: rng.chance(0.7) })],
     [town.length ? 1.5 : 0, () => ({ k: 'arena', h: pickFrom(town), others: rng.pick(['yes', 'yes', 'none'] as const), pause: rng.chance(0.7) })],
@@ -3397,7 +3502,7 @@ async function run(seed: number, script: Op[] | null, nOps: number, stopAt: ((v:
   globalThis.setInterval = carry(fakeInterval as unknown as typeof setTimeout, false) as unknown as typeof setInterval;
   const w: W = {
     seed, heroes: [], rng: fuzzRng(mixSeed(seed, 0x0b5)), aux: fuzzRng(mixSeed(seed, 0xa11)), crew: fuzzRng(mixSeed(seed, 0xc4e)), env: fuzzRng(mixSeed(seed, 0xc1a5)),
-    ask: fuzzRng(mixSeed(seed, 0xc09)), asked: null, lateReg: fuzzRng(mixSeed(seed, 0x1508)), pause: fuzzRng(mixSeed(seed, 0x1602)), midPause: fuzzRng(mixSeed(seed, 0x1701)), thawF: fuzzRng(mixSeed(seed, 0x1803)), ledgerF: fuzzRng(mixSeed(seed, 0x1802)), slowF: fuzzRng(mixSeed(seed, 0x2001)),
+    vet: fuzzRng(mixSeed(seed, 0x6407)), ask: fuzzRng(mixSeed(seed, 0xc09)), asked: null, lateReg: fuzzRng(mixSeed(seed, 0x1508)), pause: fuzzRng(mixSeed(seed, 0x1602)), midPause: fuzzRng(mixSeed(seed, 0x1701)), thawF: fuzzRng(mixSeed(seed, 0x1803)), ledgerF: fuzzRng(mixSeed(seed, 0x1802)), slowF: fuzzRng(mixSeed(seed, 0x2001)),
     obstruct: fuzzRng(mixSeed(seed, 0x1904)), bump: fuzzRng(mixSeed(seed, 0x1905)), soloF: fuzzRng(mixSeed(seed, 0xd150)), want: fuzzRng(mixSeed(seed, 0xd1a1)), soloHints: new WeakMap(), lateInFlight: 0, runReleasedAt: new Map(), regSeq: 0, releasedSeq: new Map(), releaseFailedAt: new Map(), claimSaw: new Map(), claimFailedAt: new Map(), owedLanded: new Map(), abandonDone: new Set(),
     penaltyCount: new Map(), ticking: new Set(), born: new WeakSet(), lobbies: [], pending: [], violations: [], seen: new Set(),
     penalties: [], sinks: new Set(), carryGone: new Set(), carryRoom: new Map(), lastLoc: new Map(), sunkBy: new Map(), sold: new Set(), selling: [], sinkLater: new Map(), durableSeen: new Set(), fromGround: new Set(), ev: 0, opEv0: 0, recs: new Map(), roomSeen: new WeakMap(), ids: new WeakMap(), idSeq: 0,

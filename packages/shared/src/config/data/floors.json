@@ -6,7 +6,6 @@
     "desc": "Обычный боевой этаж — прямоугольные погребальные залы.",
     "role": "combat",
     "biomeId": "crypt",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 50,
@@ -37,8 +36,12 @@
     },
     "packDensity": 1,
     "minDepth": 1,
-    "maxDepth": 5,
-    "weight": 3
+    "maxDepth": 99,
+    "placeWeight": {
+      "first": 6,
+      "last": 1
+    },
+    "weight": 6
   },
   {
     "id": "crypt-catacombs",
@@ -47,7 +50,6 @@
     "desc": "Боевой этаж поглубже — тесный лабиринт склепов.",
     "role": "combat",
     "biomeId": "crypt",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 70,
@@ -77,22 +79,69 @@
       "treasureRooms": 0
     },
     "packDensity": 1,
-    "minDepth": 5,
-    "maxDepth": 15,
+    "minDepth": 1,
+    "maxDepth": 99,
+    "placeWeight": {
+      "first": 3,
+      "last": 3
+    },
     "weight": 3
   },
   {
-    "id": "crypt-elite",
-    "name": "Чертог стражей",
+    "id": "crypt-depths",
+    "name": "Нижние ярусы",
     "enabled": true,
-    "desc": "Этаж с усиленными пачками — несколько комнат заняты чемпионами.",
-    "role": "elite",
+    "desc": "Последние ярусы круга: широкие залы и длинные связки — дорога к актовому боссу.",
+    "role": "combat",
     "biomeId": "crypt",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
-      "cols": 56,
-      "rows": 42,
+      "cols": 76,
+      "rows": 54,
+      "corridorWidth": 2,
+      "corridorWidthMax": 4,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.5,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0,
+      "largeRoomArea": 80
+    },
+    "features": {
+      "portal": false,
+      "shop": false,
+      "bossRoom": false,
+      "uniqueRooms": 0,
+      "treasureRooms": 0
+    },
+    "packDensity": 1,
+    "minDepth": 1,
+    "maxDepth": 99,
+    "placeWeight": {
+      "first": 1,
+      "last": 6
+    },
+    "weight": 6
+  },
+  {
+    "id": "crypt-ossuary",
+    "name": "Оссуарий",
+    "enabled": true,
+    "desc": "Обычный боевой этаж — тесные костницы и переходы между ними.",
+    "role": "combat",
+    "biomeId": "crypt",
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 62,
+      "rows": 46,
       "corridorWidth": 2,
       "corridorWidthMax": 4,
       "splitDepth": 4,
@@ -118,21 +167,105 @@
       "treasureRooms": 0
     },
     "packDensity": 1,
+    "minDepth": 1,
+    "maxDepth": 99,
+    "placeWeight": {
+      "first": 4,
+      "last": 2
+    },
+    "weight": 4
+  },
+  {
+    "id": "crypt-galleries",
+    "name": "Галереи праха",
+    "enabled": true,
+    "desc": "Обычный боевой этаж — длинные галереи с нишами, этаж крупный.",
+    "role": "combat",
+    "biomeId": "crypt",
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 80,
+      "rows": 58,
+      "corridorWidth": 2,
+      "corridorWidthMax": 4,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.5,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0,
+      "largeRoomArea": 80
+    },
+    "features": {
+      "portal": false,
+      "shop": false,
+      "bossRoom": false,
+      "uniqueRooms": 0,
+      "treasureRooms": 0
+    },
+    "packDensity": 1,
+    "minDepth": 1,
+    "maxDepth": 99,
+    "placeWeight": {
+      "first": 1,
+      "last": 4
+    },
+    "weight": 4
+  },
+  {
+    "id": "crypt-elite",
+    "name": "Чертог стражей",
+    "enabled": true,
+    "desc": "Этаж с усиленными пачками — три комнаты заняты чемпионами.",
+    "role": "elite",
+    "biomeId": "crypt",
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 56,
+      "rows": 42,
+      "corridorWidth": 2,
+      "corridorWidthMax": 4,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0,
+      "largeRoomArea": 80
+    },
+    "features": {
+      "portal": false,
+      "shop": false,
+      "bossRoom": false,
+      "uniqueRooms": 3,
+      "treasureRooms": 0
+    },
+    "packDensity": 1,
     "minDepth": 3,
     "maxDepth": 99,
     "weight": 1
   },
   {
     "id": "crypt-boss",
-    "name": "Гробница владыки",
+    "name": "Склеп стража",
     "enabled": true,
-    "desc": "Босс-этаж — запертая арена с боссом.",
+    "desc": "Боссовый этаж мелкого ранга — один зал с охраной и подходами.",
     "role": "boss",
     "biomeId": "crypt",
-    "templates": [
-      "dungeon-standard",
-      "deep-expedition"
-    ],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 58,
@@ -164,7 +297,90 @@
     "packDensity": 1,
     "minDepth": 4,
     "maxDepth": 99,
-    "weight": 1
+    "weight": 1,
+    "bossRank": "mini"
+  },
+  {
+    "id": "crypt-boss-strong",
+    "name": "Чертог владыки",
+    "enabled": true,
+    "desc": "Боссовый этаж крепкого ранга — зал шире, подходы длиннее.",
+    "role": "boss",
+    "biomeId": "crypt",
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 58,
+      "rows": 44,
+      "corridorWidth": 2,
+      "corridorWidthMax": 4,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0,
+      "largeRoomArea": 80
+    },
+    "features": {
+      "portal": false,
+      "shop": false,
+      "bossRoom": true,
+      "uniqueRooms": 1,
+      "treasureRooms": 0
+    },
+    "packDensity": 1,
+    "minDepth": 4,
+    "maxDepth": 99,
+    "weight": 1,
+    "bossRank": "strong"
+  },
+  {
+    "id": "crypt-boss-act",
+    "name": "Усыпальница",
+    "enabled": true,
+    "desc": "Боссовый этаж актового ранга — усыпальница с залами-приделами.",
+    "role": "boss",
+    "biomeId": "crypt",
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 58,
+      "rows": 44,
+      "corridorWidth": 2,
+      "corridorWidthMax": 4,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0,
+      "largeRoomArea": 80
+    },
+    "features": {
+      "portal": false,
+      "shop": false,
+      "bossRoom": true,
+      "uniqueRooms": 2,
+      "treasureRooms": 0
+    },
+    "packDensity": 1,
+    "minDepth": 4,
+    "maxDepth": 99,
+    "weight": 1,
+    "bossRank": "act"
   },
   {
     "id": "crypt-vault",
@@ -173,10 +389,6 @@
     "desc": "Ответвление (не обязательно): сундук под охраной сильного пака.",
     "role": "treasure",
     "biomeId": "crypt",
-    "templates": [
-      "dungeon-standard",
-      "deep-expedition"
-    ],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 48,
@@ -217,7 +429,6 @@
     "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "crypt",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 40,
@@ -258,7 +469,6 @@
     "desc": "Органические пещеры, прогрызенные зверьём.",
     "role": "combat",
     "biomeId": "caves",
-    "templates": [],
     "algoParams": {
       "algorithm": "cellular",
       "cols": 64,
@@ -291,7 +501,6 @@
     "desc": "Пещеры с усиленными зверьём — несколько логовищ заняты чемпионами.",
     "role": "elite",
     "biomeId": "caves",
-    "templates": [],
     "algoParams": {
       "algorithm": "cellular",
       "cols": 64,
@@ -324,7 +533,6 @@
     "desc": "Босс-этаж пещер — обширная каверна-арена альфа-чудовища.",
     "role": "boss",
     "biomeId": "caves",
-    "templates": [],
     "algoParams": {
       "algorithm": "cellular",
       "cols": 60,
@@ -357,7 +565,6 @@
     "desc": "Ответвление (не обязательно): сундук в логове под охраной сильного пака.",
     "role": "treasure",
     "biomeId": "caves",
-    "templates": [],
     "algoParams": {
       "algorithm": "cellular",
       "cols": 52,
@@ -390,7 +597,6 @@
     "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "caves",
-    "templates": [],
     "algoParams": {
       "algorithm": "rooms",
       "cols": 40,
@@ -428,7 +634,6 @@
     "desc": "Бесконечные коридоры магических архивов.",
     "role": "combat",
     "biomeId": "dungeon",
-    "templates": [],
     "algoParams": {
       "algorithm": "maze",
       "cols": 57,
@@ -459,7 +664,6 @@
     "desc": "Коридоры под охраной усиленных конструктов — несколько залов заняты чемпионами.",
     "role": "elite",
     "biomeId": "dungeon",
-    "templates": [],
     "algoParams": {
       "algorithm": "maze",
       "cols": 57,
@@ -490,7 +694,6 @@
     "desc": "Босс-этаж — узел коридоров с искажённым магом в дальней камере.",
     "role": "boss",
     "biomeId": "dungeon",
-    "templates": [],
     "algoParams": {
       "algorithm": "maze",
       "cols": 58,
@@ -521,7 +724,6 @@
     "desc": "Ответвление (не обязательно): сундук с реликвией под охраной.",
     "role": "treasure",
     "biomeId": "dungeon",
-    "templates": [],
     "algoParams": {
       "algorithm": "maze",
       "cols": 52,
@@ -552,7 +754,6 @@
     "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "dungeon",
-    "templates": [],
     "algoParams": {
       "algorithm": "rooms",
       "cols": 40,
@@ -590,7 +791,6 @@
     "desc": "Искажённая рукотворная архитектура нижних планов.",
     "role": "combat",
     "biomeId": "labyrinth",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 60,
@@ -629,7 +829,6 @@
     "desc": "Залы Разлома с усиленными одержимыми — несколько комнат заняты чемпионами.",
     "role": "elite",
     "biomeId": "labyrinth",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 60,
@@ -668,7 +867,6 @@
     "desc": "Босс-этаж — запертая арена демонического владыки у портала.",
     "role": "boss",
     "biomeId": "labyrinth",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 58,
@@ -707,7 +905,6 @@
     "desc": "Ответвление (не обязательно): сундук под охраной адских тварей.",
     "role": "treasure",
     "biomeId": "labyrinth",
-    "templates": [],
     "algoParams": {
       "algorithm": "bsp",
       "cols": 48,
@@ -746,7 +943,6 @@
     "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "labyrinth",
-    "templates": [],
     "algoParams": {
       "algorithm": "rooms",
       "cols": 40,

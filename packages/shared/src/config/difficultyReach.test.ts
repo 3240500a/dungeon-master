@@ -1,53 +1,107 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from './registry.js';
-import { generateRunPlan, defaultRunConfig, runMaxDepth } from '../dungeon/run/generateRunPlan.js';
+import { generateRunPlan, defaultRunConfig } from '../dungeon/run/generateRunPlan.js';
 import { lockedDifficulties } from '../formulas/power.js';
 
 /**
- * ⭐ R8-13: КАЖДЫЙ ВКЛЮЧЁННЫЙ ТИР СЛОЖНОСТИ ОБЯЗАН ОТКРЫВАТЬСЯ.
+ * ⭐ R8-13 → ⭐⭐ 13.10 (Г2): КАЖДЫЙ ВКЛЮЧЁННЫЙ ТИР СЛОЖНОСТИ ОБЯЗАН ОТКРЫВАТЬСЯ — теперь потому, что ПОТОЛКА
+ * ГЛУБИНЫ БОЛЬШЕ НЕТ.
  *
- * Прогресс сложности — глубина узла забега, в который вошли (`Room.enterNode`), и больше ничего. Узел не глубже
- * «длина шаблона + финал», поэтому порог `unlockFloor` выше самого глубокого узла — замок НАВСЕГДА, для честного
- * игрока и для читера одинаково. Так и было: «Кошмар» просил 20-й этаж «Сложной», а самый длинный включённый
- * шаблон (`deep-expedition`, 10–14 слоёв) доходит до 15-го — алтарь всем писал «🔒 Пройди этаж 20…», и тир со своими
- * ×1.6 к золоту и находкам не открывался никому.
+ * Прогресс сложности — глубина узла забега, в который вошли (`Room.enterNode`), и больше ничего.
  *
- * Глубину меряем НАСТОЯЩИМ генератором, а не формулой: сторож обязан видеть то же, что сервер.
+ * ИСТОРИЯ (как правило, а не как действующее): до Г2 узел был не глубже «длина шаблона + финал», и порог
+ * `unlockFloor` выше самого глубокого узла был замком НАВСЕГДА — для честного игрока и для читера одинаково. Так и
+ * было: «Кошмар» просил 20-й этаж «Сложной», а самый длинный включённый шаблон (`deep-expedition`, 10–14 слоёв)
+ * доходил до 15-го — алтарь всем писал «🔒 Пройди этаж 20…», и тир со своими ×1.6 к золоту и находкам не
+ * открывался никому. Сторож ловил это сравнением с настоящим генератором.
+ *
+ * ТЕПЕРЬ сравнивать не с чем: спуск бесконечен (`generateRunPlan` строит ОКНО слоёв, адресуемое глубиной), длины и
+ * финала у забега нет вовсе. Поэтому сторож сменил предмет: он обязан доказывать, что генератор ДЕЙСТВИТЕЛЬНО
+ * выдаёт узел на любой глубине, — иначе «потолка нет» станет словами, и запертый тир вернётся молча.
+ *
+ * ⚠⚠ 13.10 (Г2, Р6): ПОТОЛОК СНЯТ ОКОНЧАТЕЛЬНО — `runMaxDepth` удалена, у `lockedDifficulties` нет ни аргумента
+ * `maxDepth`, ни причины `'depth'`. Сравнивать «порог против дна мира» стало НЕЧЕМ, поэтому весь вес сторожа лёг на
+ * прямую постройку узла на произвольной глубине: без неё «потолка нет» держалось бы на отсутствии кода, а не на работе
+ * генератора.
+ *
+ * ⚠ МУТАЦИИ, КОТОРЫЕ ЭТОТ ФАЙЛ ОБЯЗАН ВАЛИТЬ (каждая проверена руками 13.10):
+ *  • любой потолок глубины в генераторе (`Math.min(d, 15)`, `d <= L`, возврат пустого окна за порогом) — валит
+ *    «узел на ПРОИЗВОЛЬНОЙ глубине (500 и 5000)» и «ни один тир не заперт ГЛУБИНОЙ» (узел на 10 000).
+ *    ⚠ 14.10: «порог ЛЮБОГО тира из данных достижим» в этом списке стоял ЗРЯ — его примеры (10 и 12) ниже любого
+ *    такого потолка, и зажим их не двинет (подробнее — в подписи того теста);
+ *  • возврат сравнения с потолком в `lockedDifficulties` (новая причина «порог глубже дна мира») — валит
+ *    «ни один тир не заперт глубиной»;
+ *  • снятие причины `'prev'` — валит ту же проверку с обратной стороны: она требует РОВНО `['probe-after', 'prev']`.
  */
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
 
-/** Самый глубокий узел, который генератор даёт по включённым шаблонам (сиды 1..200 — длину тянет первый бросок). */
-function deepestGenerated(): number {
-  let deepest = 0;
-  for (const t of reg.get('run-templates').filter((x) => x.enabled !== false)) {
-    for (let seed = 1; seed <= 200; seed++) {
-      const plan = generateRunPlan(reg, defaultRunConfig(reg, t.id, seed));
-      for (const n of plan.nodes) deepest = Math.max(deepest, n.depth);
+describe('сложности открываются глубиной, а потолка глубины больше нет', () => {
+  it('⭐⭐ генератор выдаёт узел на ПРОИЗВОЛЬНОЙ глубине (500 и 5000) — и он не тупик', () => {
+    for (const t of [{ id: 'спуск' }]) {   // ⚠ Ф1: забег один — форма живёт в балансе
+      for (const depth of [500, 5000]) {
+        const plan = generateRunPlan(reg, defaultRunConfig(reg, 7), undefined, { from: depth, to: depth });
+        const n = plan.nodes.find((x) => x.id === `n${depth}_0`);
+        expect(n, `${t.id}: узел на глубине ${depth}`).toBeTruthy();
+        expect(n!.depth).toBe(depth);
+        expect(n!.floorSpec.floorId, `${t.id}: этаж подобран на ${depth}`).toBeTruthy();
+        expect(n!.floorSpec.exitCount, `${t.id}: выход с ${depth}-го есть`).toBeGreaterThan(0);
+        expect(plan.startId).toBe(`n${depth}_0`);
+      }
     }
-  }
-  return deepest;
-}
-
-describe('сложности открываются глубиной, которую даёт генератор забега', () => {
-  const deepest = deepestGenerated();
-
-  it('сторож вообще что-то мерит — иначе прошёл бы вхолостую', () => {
-    expect(deepest, 'самый глубокий узел').toBeGreaterThan(1);
-    expect(reg.get('difficulties').filter((d) => d.enabled !== false && d.unlockFloor > 0).length).toBeGreaterThan(0);
   });
 
-  it('⭐ порог каждого включённого тира не глубже самого глубокого узла забега', () => {
-    const locked = reg.get('difficulties')
-      .filter((d) => d.enabled !== false && d.unlockFloor > deepest)
-      .map((d) => `${d.id}: этаж ${d.unlockFloor}, а забег доходит до ${deepest}`);
-    expect(locked, 'тир не откроется никогда').toEqual([]);
+  /**
+   * ⚠ ВОРОТА БЕРУТСЯ ИЗ ДАННЫХ ЦЕЛИКОМ, А НЕ ТОЛЬКО У ВКЛЮЧЁННЫХ ТИРОВ. Включён сегодня ровно один тир («Средняя»,
+   * порог 0), и прежний фильтр `enabled !== false` оставлял цикл БЕЗ ЕДИНОГО ПРИМЕРА — а подпись «сторож не вхолостую»
+   * стояла над `expect(diffs.length + включённых).toBeGreaterThan(0)`, которое истинно при любых данных (включённый тир
+   * есть всегда). Порог — датум самого тира, а не его выключателя: редактор включает тир одним кликом, и порог обязан
+   * быть достижим ДО того. В живых данных это «Сложная» 10 и «Кошмар» 12 — два настоящих примера.
+   *
+   * ⚠⚠ 14.10, ЧТОБЫ НЕ ЖДАТЬ ОТ ЭТОГО ТЕСТА ЛИШНЕГО: ЗУБОВ НА ПОТОЛОК ГЛУБИНЫ У НЕГО НЕТ. Его примеры — 10 и 12,
+   * а значит потолок вида `Math.min(to, 15)` он ПРОПУСТИТ ПО ПОСТРОЕНИЮ: оба порога ниже такого потолка, и зажим их не
+   * двинет. Такой потолок валят СОСЕДНИЕ тесты файла — «генератор выдаёт узел на ПРОИЗВОЛЬНОЙ глубине (500 и 5000)» и
+   * «ни один тир не заперт ГЛУБИНОЙ» (узел на 10 000); список мутаций — в шапке файла. Предмет ЭТОГО
+   * теста — достижимость порогов, КОТОРЫЕ ЛЕЖАТ В ДАННЫХ: он валится, когда порог подняли туда, куда генератор не
+   * доходит, и когда ворота из данных пропали вовсе.
+   */
+  it('⭐ порог ЛЮБОГО тира из данных достижим (потолок глубины стерегут соседние тесты)', () => {
+    const diffs = reg.get('difficulties').filter((d) => d.unlockFloor > 0);
+    const tpl = { id: 'спуск', tier: (reg.get('difficulties').find((d) => d.enabled !== false) ?? reg.get('difficulties')[0]!).id };
+    // Сторож не вхолостую — и это проверяется ТЕМ, ЧТО ОБЕЩАНО: воротами в данных. Нет ни одних — проверять нечего, и
+    // тест обязан сказать это вслух (вернуть ворота или снять тест), а не пройти пустым циклом.
+    expect(diffs.map((d) => d.id), 'в данных не осталось ни одного порога — этому тесту стало нечего проверять').not.toEqual([]);
+    for (const d of diffs) {
+      const plan = generateRunPlan(reg, defaultRunConfig(reg, 3), undefined, { from: d.unlockFloor, to: d.unlockFloor });
+      expect(plan.nodes.length, `${d.id}: этаж ${d.unlockFloor} (порог тира) не собрался`).toBeGreaterThan(0);
+      expect(plan.nodes[0]!.depth).toBe(d.unlockFloor);
+      expect(plan.nodes[0]!.floorSpec.exitCount, `${d.id}: с этажа ${d.unlockFloor} есть выход`).toBeGreaterThan(0);
+    }
   });
 
-  it('формула глубины (`runMaxDepth`) = то, что даёт генератор, — на неё опирается проверка редактора', () => {
-    expect(runMaxDepth(reg.get('run-templates'))).toBe(deepest);
+  it('⭐ ни один тир не заперт ГЛУБИНОЙ: любой порог достижим, причины `depth` нет вовсе', () => {
+    // Построенный случай: тир с порогом, который до Г2 был бы «замком навсегда» (дно мира было 15).
+    const base = reg.get('difficulties')[0]!;
+    const deepFloor = 10_000;
+    const probe = [
+      { ...base, id: 'probe-base', enabled: true, unlockFloor: 0 },
+      { ...base, id: 'probe-deep', enabled: true, unlockFloor: deepFloor },
+    ];
+    expect(lockedDifficulties(probe), 'порог 10 000 тир не запирает').toEqual([]);
+    // ⭐ И ЭТО НЕ СЛОВА: узел на том самом пороге ДЕЙСТВИТЕЛЬНО строится. Иначе «потолка нет» держалось бы на том, что
+    // сравнивать стало не с чем (аргумент снят), — а не на том, что генератор туда доходит.
+    const tpl = { id: 'спуск', tier: (reg.get('difficulties').find((d) => d.enabled !== false) ?? reg.get('difficulties')[0]!).id };
+    const deep = generateRunPlan(reg, defaultRunConfig(reg, 5), undefined, { from: deepFloor, to: deepFloor });
+    expect(deep.nodes[0]?.depth, `этаж ${deepFloor} собрался`).toBe(deepFloor);
+    expect(deep.nodes[0]?.floorSpec.exitCount, `с этажа ${deepFloor} есть выход`).toBeGreaterThan(0);
+    // А вторая причина — жива: выключенный предыдущий тир прогресса не даёт.
+    const off = [
+      { ...base, id: 'probe-off', enabled: false, unlockFloor: 0 },
+      { ...base, id: 'probe-after', enabled: true, unlockFloor: 5 },
+    ];
+    expect(lockedDifficulties(off).map((l) => [l.id, l.cause])).toEqual([['probe-after', 'prev']]);
   });
 
   it('проверка редактора (`lockedDifficulties`) на данных игры чиста', () => {
-    expect(lockedDifficulties(reg.get('difficulties'), runMaxDepth(reg.get('run-templates')))).toEqual([]);
+    expect(lockedDifficulties(reg.get('difficulties'))).toEqual([]);
   });
 });

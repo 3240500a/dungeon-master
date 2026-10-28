@@ -5,7 +5,8 @@
  * индикаторы досоздаёт в DOM. Читает `app.state` (авторитетный с сервера через online3d).
  */
 import type { App } from '../core/app.js';
-import { effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, debuffLabel, xpProgress, type DebuffKind } from '@dm/shared';
+import { floorMonsterLevel, activeToggleInfos, debuffIcon, debuffLabel, xpProgress, type DebuffKind } from '@dm/shared';
+import { waypointHint } from '../modules/run/runLabels.js';
 
 export interface Hud3d { update(): void; }
 
@@ -78,15 +79,19 @@ export function mountHud3d(app: App): Hud3d {
         : `${Math.round(st.mana)} / ${Math.round(d.maxMana)}`;
       if (stamText) stamText.textContent = `${Math.round(st.stamina)} / ${Math.round(d.maxStamina)}`;
 
-      // Инфо-строка: уровень · область (город / этаж·сложность·вызов) · золото · очки.
+      // Инфо-строка: уровень · область (город / этаж·сложность·уровень монстров) · золото · очки.
       // Город/подземелье — по area (город = depth 0; забег начинается сразу с этажа 1, без «старта»).
       let loc = 'город';
       if (st.area === 'dungeon') {
         const diffs = app.config.get('difficulties');
         const diff = diffs.find((x) => x.id === st.difficultyId) ?? diffs.find((x) => x.id === 'normal') ?? diffs[0]!;
-        // R8-10: уровень, по которому сервер заселил узел; нет его (старый сервер) — своя мера по надетому и запасу.
-        const cl = st.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(st.save, app.config.get('balance').power, carriedGear(st.save), app.config.get('item-tiers')).total, diff), diff, st.depth);
-        loc = `этаж ${st.depth} · ${diff.name} · вызов ур.${cl}`;
+        // ⭐ 13.10 (Г1): это УРОВЕНЬ МОНСТРОВ этажа, и считает его одна глубина. Поле с сервера — источник истины по узлу;
+        // нет его (старый сервер) — та же формула по своей глубине, и мощь героя для фолбэка больше не нужна вовсе.
+        const cl = st.challengeLevel ?? floorMonsterLevel(diff, st.depth);
+        // ⭐ Г3 (В6): «до метки N эт.» — общий шов с 2D-HUD (`modules/run/runLabels.waypointHint`).
+        const access = app.config.get('balance').dungeonAccess;
+        const wp = waypointHint(st.depth, access.portalsAt, access.contentCycle);
+        loc = `этаж ${st.depth} · ${diff.name} · монстры ур.${cl} · ${wp}`;
       }
       if (info) info.textContent = `Ур. ${st.save.level}  ·  ${loc}  ·  Золото ${st.save.gold}  ·  Очки: атр ${st.save.unspentAttributePoints} / скилл ${st.save.unspentSkillPoints}`;
 

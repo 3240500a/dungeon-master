@@ -77,10 +77,10 @@ describe('⭐ R7-11: объекты города не рождаются там,
 
   it('ни на одном узле забега; rest-узел — портал в город, а сундук — в городе', () => {
     let rests = 0;
-    for (const tpl of reg.get('run-templates').filter((t) => t.enabled !== false)) {
+    for (const tpl of [{ id: 'спуск' }]) {   // ⚠ Ф1: забег один
       for (const biome of reg.get('biomes').filter((b) => b.enabled !== false)) {
         for (const seed of [1, 2]) {
-          const plan = generateRunPlan(reg, { ...defaultRunConfig(reg, tpl.id, seed), biomeId: biome.id });
+          const plan = generateRunPlan(reg, { ...defaultRunConfig(reg, seed), biomeId: biome.id });
           for (const n of plan.nodes) {
             const L = generateFloor(n.floorSpec);
             const at = `${tpl.id}/${biome.id}/${seed}/${n.id} (${n.type}, ${n.floorSpec.floorId})`;

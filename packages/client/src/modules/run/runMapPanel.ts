@@ -1,19 +1,28 @@
-import type { RunNode } from '@dm/shared';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
-import { COLORS, mk } from '../../ui/kit.js';
+import { button, COLORS, mk } from '../../ui/kit.js';
 import { RUN_NODE_COLOR, runNodeLabel } from './runLabels.js';
+import { LEGEND_TYPES, runMapView } from './runMapLayout.js';
 
 /**
  * Панель «Карта забега» (v2, клавиша M). Рисует граф RunPlan из авторитетного кадра `runPlan`
  * (app.run): узлы по слоям (depth = столбец, lane = строка), рёбра-связи, текущий узел подсвечен,
  * достижимые следующие узлы (рёбра из текущего) выделены — «видно вперёд» как в Slay the Spire.
- * Только информация: спуск делается физически у выхода (голосование), не кликом по карте.
+ * Спуск делается физически у выхода (голосование), не кликом по карте.
+ *
+ * ⭐⭐ 14.10 (Г5): САМА РАСКЛАДКА ЗДЕСЬ БОЛЬШЕ НЕ ЖИВЁТ — она в чистом `runMapLayout.ts`, который зовут И эта панель,
+ * И генератор эталона для порта Unity. Прежде генератор держал КОПИЮ раскладки, а от расхождения сторожил список строк
+ * исходника: числа, которые сверяет Unity, имели два источника. Панель теперь только рисует.
+ *
+ * ⭐ Г5: НОМЕРА ЭТАЖЕЙ НАД СТОЛБЦАМИ (и метка-привал среди них). В конечном забеге номер был не нужен, в бесконечном
+ * спуске окно сидит на произвольной глубине — без номера карта не отвечает на свой единственный вопрос.
+ *
+ * ⭐⭐ 14.10 (Г3, В5): ЗДЕСЬ ЖЕ — «ЗАВЕРШИТЬ ЗАБЕГ», ЕДИНСТВЕННАЯ ДВЕРЬ К `finishRun`. До Г2 забег завершался сам на
+ * финале (узел без выходов), с Г2 таких узлов нет — и завершить забег стало НЕЛЬЗЯ: уход в город его лишь паркует.
+ * Кнопка — панелью, а не интерактивом у портала, потому что интерактив выбирается по БЛИЖАЙШЕМУ (`updateInteractions`):
+ * второе действие в той же точке, что «Вернуться в город», было бы недостижимо. Сервер судит место сам
+ * (`Room.finish` → `canLeave`: портал узла, точка входа или мёртвый) и отвечает `error{code:'far'}`.
  */
 const SVG = 'http://www.w3.org/2000/svg';
-const COL_W = 96;
-const ROW_H = 66;
-const PAD = 28;
-const R = 16;
 
 function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>): SVGElementTagNameMap[K] {
   const el = document.createElementNS(SVG, tag);
@@ -27,75 +36,56 @@ export const runMapPanel: PanelFactory = (app) => {
     title: 'Карта забега',
     render(body) {
       const run = app.run;
-      if (!run) {
-        body.append(mk('div', `font-size:13px;color:${COLORS.dim};min-width:280px`, 'Забег не активен — карта появится в подземелье.'));
+      const access = app.config.get('balance').dungeonAccess;
+      const view = runMapView(run?.plan, run?.currentNodeId, access.portalsAt, access.contentCycle);
+      if (view.empty !== undefined) {
+        body.append(mk('div', `font-size:13px;color:${COLORS.dim};min-width:280px`, view.empty));
         return;
       }
-      const { plan, currentNodeId } = run;
       const head = mk('div', 'margin-bottom:10px;font-size:12px');
-      head.innerHTML =
-        `Шаблон <b style="color:${COLORS.gold}">${plan.templateId}</b> · биом <b>${plan.biomeId}</b> · тир <b>${plan.tier}</b>` +
-        ` <span style="color:${COLORS.dim}">· ${plan.nodes.length} узлов</span>`;
+      // Шапку собирает раскладка (её сверяет порт Unity) — здесь только разметка: жирное имя шаблона и приглушённый хвост.
+      const [main, tail] = ((): [string, string] => {
+        const at = view.head.indexOf(' · этажи ');
+        return at < 0 ? [view.head, ''] : [view.head.slice(0, at), view.head.slice(at)];
+      })();
+      head.append(mk('span', `color:${COLORS.gold}`, main), mk('span', `color:${COLORS.dim}`, `${tail} (дальше — за развилкой)`));
       body.append(head);
 
-      // Раскладка: столбец = depth, строка = порядок узла внутри слоя (центрируем колонку).
-      const byDepth = new Map<number, RunNode[]>();
-      for (const n of plan.nodes) { const a = byDepth.get(n.depth) ?? []; a.push(n); byDepth.set(n.depth, a); }
-      for (const a of byDepth.values()) a.sort((p, q) => p.lane - q.lane);
-      const maxDepth = Math.max(...plan.nodes.map((n) => n.depth));
-      const maxCol = Math.max(...[...byDepth.values()].map((a) => a.length));
-      const width = PAD * 2 + maxDepth * COL_W;
-      const height = PAD * 2 + (maxCol - 1) * ROW_H;
-      const midY = PAD + (maxCol - 1) * ROW_H / 2;
-
-      const pos = new Map<string, { x: number; y: number }>();
-      for (const [depth, arr] of byDepth) {
-        arr.forEach((n, i) => {
-          const x = PAD + depth * COL_W;
-          const y = midY + (i - (arr.length - 1) / 2) * ROW_H;
-          pos.set(n.id, { x, y });
-        });
-      }
-
-      const cur = plan.nodes.find((n) => n.id === currentNodeId);
-      const nextIds = new Set(cur?.edges.map((e) => e.to) ?? []);
-
       const scroller = mk('div', `overflow:auto;max-width:78vw;max-height:70vh;border:1px solid ${COLORS.border};border-radius:8px;background:${COLORS.panel2}`);
-      const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}` });
+      const svg = svgEl('svg', { width: view.width, height: view.height, viewBox: `0 0 ${view.width} ${view.height}` });
       svg.style.display = 'block';
 
+      // ⭐ Г5: полоса номеров этажей. Столбец пати — золотом, столбец метки — с «⌂» (портал в город): игрок видит,
+      // через сколько этажей выход, не открывая HUD.
+      for (const c of view.cols) {
+        const t = svgEl('text', {
+          x: c.x, y: 14, 'text-anchor': 'middle', 'font-size': 11, 'font-family': 'system-ui',
+          fill: c.current ? COLORS.gold : COLORS.dim, 'font-weight': c.current ? 'bold' : 'normal',
+        });
+        t.textContent = c.waypoint ? `${c.label} ⌂` : c.label;
+        svg.append(t);
+      }
+
       // Рёбра (сначала, под узлами). Достижимые из текущего — ярче.
-      for (const n of plan.nodes) {
-        const a = pos.get(n.id); if (!a) continue;
-        for (const e of n.edges) {
-          const b = pos.get(e.to); if (!b) continue;
-          const hot = n.id === currentNodeId;
-          svg.append(svgEl('line', {
-            x1: a.x, y1: a.y, x2: b.x, y2: b.y,
-            stroke: hot ? COLORS.gold : '#4a4640', 'stroke-width': hot ? 2.5 : 1.5, 'stroke-opacity': hot ? 0.9 : 0.5,
-          }));
-        }
+      for (const e of view.edges) {
+        const a = view.nodes.find((n) => n.id === e.from);
+        const b = view.nodes.find((n) => n.id === e.to);
+        if (!a || !b) continue;
+        svg.append(svgEl('line', {
+          x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+          stroke: e.stroke, 'stroke-width': e.width, 'stroke-opacity': e.opacity,
+        }));
       }
       // Узлы.
-      for (const n of plan.nodes) {
-        const p = pos.get(n.id); if (!p) continue;
-        const isCur = n.id === currentNodeId;
-        const isNext = nextIds.has(n.id);
-        const col = hex(RUN_NODE_COLOR[n.type] ?? 0x8a8f9a);
+      for (const n of view.nodes) {
         const g = svgEl('g', {});
-        if (isCur) g.append(svgEl('circle', { cx: p.x, cy: p.y, r: R + 6, fill: 'none', stroke: COLORS.gold, 'stroke-width': 3 }));
-        g.append(svgEl('circle', {
-          cx: p.x, cy: p.y, r: R, fill: col,
-          stroke: isNext ? COLORS.gold : '#1a1a1a', 'stroke-width': isNext ? 2.5 : 1.5,
-          'fill-opacity': isCur || isNext ? 1 : 0.82,
-        }));
-        const label = svgEl('text', {
-          x: p.x, y: p.y + R + 13, 'text-anchor': 'middle', 'font-size': 10, fill: isCur ? COLORS.gold : '#c4bca8', 'font-family': 'system-ui',
-        });
-        label.textContent = runNodeLabel(n.type);
+        if (n.ring) g.append(svgEl('circle', { cx: n.x, cy: n.y, r: n.ring.r, fill: 'none', stroke: n.ring.stroke, 'stroke-width': n.ring.width }));
+        g.append(svgEl('circle', { cx: n.x, cy: n.y, r: view.r, fill: n.fill, stroke: n.stroke, 'stroke-width': n.strokeWidth, 'fill-opacity': n.fillOpacity }));
+        const label = svgEl('text', { x: n.x, y: n.labelY, 'text-anchor': 'middle', 'font-size': 10, fill: n.labelColor, 'font-family': 'system-ui' });
+        label.textContent = n.label;
         g.append(label);
-        if (n.modifiers.length) {
-          const badge = svgEl('text', { x: p.x, y: p.y + 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#1a1a1a', 'font-weight': 'bold' });
+        if (n.star) {
+          const badge = svgEl('text', { x: n.x, y: n.y + 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#1a1a1a', 'font-weight': 'bold' });
           badge.textContent = '★';
           g.append(badge);
         }
@@ -105,13 +95,30 @@ export const runMapPanel: PanelFactory = (app) => {
       body.append(scroller);
 
       const legend = mk('div', `margin-top:8px;font-size:11px;color:${COLORS.dim};display:flex;flex-wrap:wrap;gap:8px`);
-      for (const t of ['combat', 'elite', 'boss', 'treasure', 'rest', 'finale'] as const) {
+      for (const t of LEGEND_TYPES) {
         const item = mk('span', 'display:inline-flex;align-items:center;gap:4px');
         const dot = mk('span', `width:10px;height:10px;border-radius:50%;background:${hex(RUN_NODE_COLOR[t])};display:inline-block`);
         item.append(dot, mk('span', '', runNodeLabel(t)));
         legend.append(item);
       }
+      legend.append(mk('span', `color:${COLORS.dim}`, `⌂ — привал с порталом в город (места ${access.portalsAt.join(', ')} круга из ${access.contentCycle})`));
       body.append(legend);
+
+      // ⭐ 14.10 (Г3, правка 7): В ГОРОДЕ КНОПКИ НЕТ — ТАМ ОНА НЕ РАБОТАЕТ. План забега остаётся в странице после ухода
+      // в город (`core/app.ts` обнуляет `run` только в `forgetSession`), поэтому карта в городе открывается и рисуется, а
+      // `Room.finish` вне подземелья отказывает: кнопка жалась впустую. Отказ сервера теперь внятный (кадр `error`, код
+      // `far` — он правда для ВСЕХ клиентов, включая Unity), но правильный порядок — не предлагать человеку того, чего
+      // нельзя: в городе забег закрывает «Забросить» в лобби, и строка ниже про это говорит.
+      const fin = mk('div', `margin-top:12px;padding-top:10px;border-top:1px solid ${COLORS.border};display:flex;flex-direction:column;gap:5px`);
+      if (app.state?.area === 'dungeon') {
+        fin.append(button('Завершить забег (голосование)', () => { app.net.send({ t: 'finish' }); }, 'danger'));
+        fin.append(mk('div', `font-size:11px;color:${COLORS.dim};font-style:italic;max-width:420px`,
+          'Жать у портала привала или у точки входа. Уход в город порталом забег ПАРКУЕТ — его можно продолжить с того же узла; «Завершить» снимает забег у всей пати, и следующий спуск начнётся с выбранной на алтаре метки.'));
+      } else {
+        fin.append(mk('div', `font-size:11px;color:${COLORS.dim};font-style:italic;max-width:420px`,
+          'Забег ПРИПАРКОВАН: спуск из города продолжит его с этого узла. Завершить его здесь нельзя — в городе это «Забросить» в лобби; «Завершить забег» появится в подземелье, у портала привала или у точки входа.'));
+      }
+      body.append(fin);
     },
   };
   return panel;

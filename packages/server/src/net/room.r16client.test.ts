@@ -67,6 +67,7 @@ type RoomIn = {
   area: string; movedAt: number; runPlan: RunPlan | null; runNodeId: string | null;
   decor: { kind: string; x: number; y: number }[];
   session: { world: { exits?: Pt[]; monsters: { alive: boolean }[]; players: Record<string, { pos: Pt }> } };
+  enterNode(nodeId: string): void;
 };
 const inner = (room: Room): RoomIn => room as unknown as RoomIn;
 const ready = (room: Room): void => { inner(room).movedAt = 0; };
@@ -97,7 +98,7 @@ function toExit(room: Room, pid: string, to: string): void {
 }
 
 describe('⭐ R16-04: кадр голосования в подземелье — куда ведёт', () => {
-  it('развилка: окно напарника получает тип узла ребра выхода зовущего; финал: `finish` — голосование за завершение забега', () => {
+  it('развилка: окно напарника получает тип узла ребра выхода зовущего; «Завершить»: `finish` — голосование за завершение забега', () => {
     let forks = 0, finals = 0;
     for (let attempt = 0; attempt < 8 && !(forks && finals); attempt++) {
       const room = new RoomCtor(`R16C04-${attempt}`, cfg, { onEmpty() {}, onGrace() {}, onUngrace() {}, onFarewell() {} });
@@ -105,12 +106,14 @@ describe('⭐ R16-04: кадр голосования в подземелье �
       room.stop();                                           // мир стоит: монстры не вмешиваются в голосования
       const a = join(room, hero()), b = join(room, hero());
       ready(room);
-      room.descend(a.pid, 'easy', undefined, { templateId: 'deep-expedition' });
+      room.descend(a.pid, 'easy', undefined);
       room.castVote(b.pid, true);
       expect(inner(room).area).toBe('dungeon');
-      for (let guard = 0; guard < 40 && nodeNow(room).edges.length > 0; guard++) {
+      // ⭐⭐ 13.10 (Г2): спуск бесконечен — идём фиксированное число этажей, а не «пока есть рёбра».
+      for (let guard = 0; guard < 8; guard++) {
         noMonsters(room);
         const cur = nodeNow(room);
+        expect(cur.edges.length, `с этажа ${cur.depth} есть куда идти`).toBeGreaterThan(0);
         // На развилке — НЕ первое ребро: кадр обязан нести цель выхода, у которого стоит зовущий, а не «куда-нибудь».
         const edge = cur.edges.length >= 2 ? cur.edges[1]! : cur.edges[0]!;
         toExit(room, a.pid, edge.to);
@@ -118,19 +121,24 @@ describe('⭐ R16-04: кадр голосования в подземелье �
         room.descend(a.pid, undefined, edge.to);
         const f = b.ws.last('voteStart')!;
         expect(f, 'спуск по ребру — не завершение').not.toHaveProperty('finish');
-        expect(f).toMatchObject({ kind: 'descend', by: a.pid, targetNodeId: edge.to, targetNodeType: nodeOf(room, edge.to).type });
+        expect(f).toMatchObject({ kind: 'descend', by: a.pid, targetNodeId: edge.to });
         if (cur.edges.length >= 2) forks++;
         room.castVote(b.pid, true);
         expect(inner(room).runNodeId, 'прошёл показанный спуск').toBe(edge.to);
+        // ⭐⭐ Г2: цель может лежать ЗА КРАЕМ окна плана (рёбра последнего слоя смотрят наружу), и в плане комнаты её
+        // тогда ещё нет — сервер строит её слой отдельно (`Room.descend`). Поэтому подпись сверяем с тем, КУДА пришли:
+        // так сторож заодно ловит «окно назвало не тот узел» (прежде он читал цель из плана и на краю падал вовсе).
+        expect(f.targetNodeType, 'окно назвало тип узла, в который и пришли').toBe(nodeNow(room).type);
       }
-      expect(nodeNow(room).edges, 'дошли до финала').toHaveLength(0);
+      // ⭐⭐ 14.10 (Г3, В5): кадр `finish` — от ЯВНОЙ просьбы «Завершить» (`Room.finish`), а не от рукотворного узла
+      // без выходов: такого узла генератор не ставит с Г2, и прежний сторож судил недостижимую ветку.
       noMonsters(room);
-      const portal = inner(room).decor.find((d) => d.kind === 'portal')!;
-      inner(room).session.world.players[a.pid]!.pos = { x: portal.x, y: portal.y };
+      const w16 = inner(room).session.world as unknown as { spawn: { x: number; y: number }; players: Record<string, { pos: { x: number; y: number } }> };
+      w16.players[a.pid]!.pos = { ...w16.spawn };   // у точки входа — оттуда «Завершить» принимают (`canLeave`)
       ready(room);
-      room.descend(a.pid);
+      room.finish(a.pid);
       const f = b.ws.last('voteStart')!;
-      expect(f, 'было: кадр финала — как обычный спуск, окно «Спуск на след. этаж?»').toMatchObject({ kind: 'descend', by: a.pid, finish: true });
+      expect(f, 'было: кадр завершения — как обычный спуск, окно «Спуск на след. этаж?»').toMatchObject({ kind: 'descend', by: a.pid, finish: true });
       expect(f.targetNodeId).toBeUndefined();
       finals++;
       room.castVote(b.pid, true);

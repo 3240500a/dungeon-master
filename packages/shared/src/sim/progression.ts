@@ -1,6 +1,6 @@
 import { ConfigRegistry } from '../config/registry.js';
 import { levelForXp } from '../formulas/xp.js';
-import { effectiveLevel, type Difficulty } from '../formulas/power.js';
+import { isWaypoint, effectiveLevel, type Difficulty } from '../formulas/power.js';
 import type { Rng } from '../formulas/rng.js';
 import { newBotSave, classProfileAttr, allocateAttributes } from './playerBot.js';
 import { allocateSkillsAndPassives, visitShop } from './economy.js';
@@ -52,8 +52,11 @@ export function simulateProgression(
 
   let hours = 0, deaths = 0, floor = 1, stagnation = 0;
   let wallFloor: number | null = null;
-  const jitter = () => rng.int(-access.townReturnJitter, access.townReturnJitter);
-  let nextTownFloor = access.townReturnEvery + jitter();
+  // ⭐⭐ 13.10 (Г2, Р4) + ⭐ Г8-3 (15.10): ГОРОД В СИМЕ — ТА ЖЕ МЕТКА, ЧТО В ИГРЕ. Привал стоит на МЕСТАХ ПОЛОСЫ
+  // (`balance.dungeonAccess.portalsAt` = 3/6/9/12/15/18/20 из 20), и сим ходит ровно тем же швом (`isWaypoint`), а не
+  // своим числом: прежние `townReturnEvery`/`townReturnJitter` были вторым, похожим, но своим — и сим считал экономику
+  // по каденции, которой в подземелье не было. Джиттера нет: метка — чистая функция глубины.
+  const townAt = (floor: number): boolean => isWaypoint(floor, access.portalsAt, access.contentCycle);
 
   const curve: ProgressionPoint[] = [];
   const record = () => curve.push({
@@ -72,7 +75,6 @@ export function simulateProgression(
       bot.gold = Math.floor(bot.gold * (1 - balance.deathPenalty.goldPercent));
       hours += 0.02; // возврат в город/восстановление
       floor = 1;
-      nextTownFloor = access.townReturnEvery + jitter();
       stagnation = 0;
     } else if (res.minHpFrac > DIVE_HP_THRESHOLD) {
       floor += 1; // уверенно прошёл — ныряем глубже
@@ -84,12 +86,12 @@ export function simulateProgression(
       stagnation = 0;
     }
 
-    // Городской этаж: магазин + пассивы на накопленное золото.
-    if (floor >= nextTownFloor) {
+    // Городской этаж: магазин + пассивы на накопленное золото. ⭐ Г8-3: заход в город — РОВНО на метке (`townAt`),
+    // тем же швом, что у игры; прежний счётчик «следующий городской этаж» был вторым, своим правилом каденции.
+    if (townAt(floor)) {
       visitShop(reg, bot, bot.level, rng, build);
       allocateSkillsAndPassives(reg, bot, build, rng);
       hours += 0.01;
-      nextTownFloor = floor + access.townReturnEvery + jitter();
     }
 
     if (leveled) record();

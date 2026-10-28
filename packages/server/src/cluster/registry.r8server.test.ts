@@ -39,7 +39,7 @@ async function heroWithRun(): Promise<string> {
   const charId = uuidv7();
   const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, `R8-${++seq}`, charId) as SaveState;
   await db.createCharacter(charId, userId, save);
-  save.run = { templateId: 't', config: { templateId: 't', biomeId: 'b', tier: 'normal', seed: 1, modifiers: [] }, currentNodeId: 'start', visited: [] } as unknown as SaveState['run'];
+  save.run = { config: { biomeId: 'b', tier: 'normal', seed: 1, modifiers: [] }, currentNodeId: 'start', visited: [] } as unknown as SaveState['run'];
   expect(await db.putCharacter(charId, userId, save, 1)).toBe(2);
   return charId;
 }

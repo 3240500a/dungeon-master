@@ -45,10 +45,30 @@ vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(
 type Room = import('./room.js').Room;
 let RoomCtor: typeof import('./room.js').Room;
 let cfg: ConfigRegistry;
+/** Биом, чьи этажи печёт алгоритм `maze` («Эфирные Архивы»): стены в клетку — на них и ловится «из-за стены». */
+const MAZE_BIOME = 'dungeon';
+/**
+ * ⭐ ФИКСТУРА R10-01: реестр, в котором биом лабиринтов ВКЛЮЧЁН.
+ *
+ * ЗАЧЕМ. Сторож R10-01 про ГЕОМЕТРИЮ: «выход/портал/вход слушают только своё, со своей стороны стены». Доказать это можно
+ * лишь на этаже со стенами в клетку — то есть на `maze`-этажах биома `dungeon`. А поставка включает (`enabled`) далеко не
+ * все биомы: владелец открывает готовое по одному, и у раннего доступа биом ровно один. Комната при этом честно режет
+ * выключенный контент (`altarOf` — анти-чит: клиент не подсунет выключенный биом) и молча берёт `biomes[0]` — крипту без
+ * лабиринтов, где клетки «за стеной» нет вовсе и сторож проходит ВПУСТУЮ.
+ *
+ * Поэтому биом нужен сторожу не как поставка, а как ФИКСТУРА: он включён в ЛОКАЛЬНОЙ копии реестра (прецедент —
+ * `fuzzReg` / `fuzzRegConstructs` в `shared/src/session/fuzz/rulesFuzz.ts`). Данные (`config/data/biomes.json`) не трогаем:
+ * что включено в игре — решение владельца, и от него этот сторож теперь не зависит ни в ту, ни в другую сторону.
+ * Остальные тесты файла ходят на общем `cfg` — поставка им и нужна.
+ */
+let mazeCfg: ConfigRegistry;
 beforeAll(async () => {
   ({ Room: RoomCtor } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
+  mazeCfg = new ConfigRegistry();
+  mazeCfg.loadAll();
+  mazeCfg.reload({ biomes: mazeCfg.get('biomes').map((b) => (b.id === MAZE_BIOME ? { ...b, enabled: true } : b)) });
 });
 const rooms: Room[] = [];
 afterEach(() => {
@@ -100,15 +120,19 @@ function hero(level: number, gold = 10_000): { save: SaveState; userId: string }
   const charId = `char-r10s-${++seq}`;
   const uid = `user-${charId}`;
   for (const l of [limits.townCmd, limits.forgeCmd, limits.cmdResync]) l.reset(uid);
-  const s = newCharacterSave(cfg, cfg.get('classes')[0]!.id, `H${seq}`, charId);
+  // Класс — первый ВКЛЮЧЁННЫЙ: герои файла реально играют (спускаются, покупают, расходятся по мощи), а поставка держит
+  // включённым лишь готовое — порядок записей в `classes.json` этому сторожу знать незачем.
+  const cls = cfg.get('classes').find((c) => c.enabled !== false) ?? cfg.get('classes')[0]!;
+  const s = newCharacterSave(cfg, cls.id, `H${seq}`, charId);
   s.level = level;
   s.gold = gold;
   db.saves.set(charId, 1);
   db.data.set(charId, structuredClone(s));
   return { save: s, userId: uid };
 }
-function newRoom(code: string): Room {
-  const room = new RoomCtor(code, cfg, { onEmpty() {}, onGrace() {}, onUngrace() {}, onFarewell() {} });
+/** Комната на общем реестре; `reg` — для сторожей, которым нужен свой вариант конфига (R10-01: включённый биом лабиринтов). */
+function newRoom(code: string, reg: ConfigRegistry = cfg): Room {
+  const room = new RoomCtor(code, reg, { onEmpty() {}, onGrace() {}, onUngrace() {}, onFarewell() {} });
   rooms.push(room);
   return room;
 }
@@ -167,13 +191,18 @@ function besideSameSide(w: W, at: Pt): Pt | null {
   }
   return null;
 }
-/** Солo-комната на лабиринте архива (биом «dungeon»: стены в клетку), короткая вылазка. */
+/**
+ * Солo-комната на лабиринте архива (биом `MAZE_BIOME`: стены в клетку), короткая вылазка. Реестр — фикстура `mazeCfg`:
+ * биом обязан быть включён, иначе комната подменит его криптой и сторож проверит не то (см. `mazeCfg` выше).
+ */
 function mazeRun(n: number): { room: Room; ws: FakeWs; pid: string } {
-  const room = newRoom(`R10M${n}`);
+  const room = newRoom(`R10M${n}`, mazeCfg);
   const { ws, pid } = join(room, hero(5));
   ready(room);
-  room.descend(pid, 'easy', undefined, { biomeId: 'dungeon', templateId: 'crypt-short' });
+  room.descend(pid, 'easy', undefined, { biomeId: MAZE_BIOME});
   expect(inner(room).area).toBe('dungeon');
+  // Биом забега — именно лабиринтный: подмена на `biomes[0]` молчалива, а без `maze`-этажей сторож беззуб.
+  expect(nodeNow(room).biomeId, 'забег — на лабиринтном биоме (фикстура, а не поставка)').toBe(MAZE_BIOME);
   noMonsters(room);
   return { room, ws, pid };
 }
@@ -215,31 +244,39 @@ describe('⭐ R10-01: выход, портал и вход — только со
     throw new Error('за 60 этажей не нашлось выхода за стеной');
   });
 
-  it('портал финала-лабиринта из-за стены — «подойдите к порталу», забег не завершён; у портала — завершён', () => {
+  it('портал узла-лабиринта из-за стены — «подойдите к порталу», забег не завершён; у портала — завершён', () => {
     for (let attempt = 0; attempt < 200; attempt++) {
       const { room, ws, pid } = mazeRun(100 + attempt);
-      const fin = inner(room).runPlan!.nodes.find((x) => x.edges.length === 0)!;
+      // ⭐⭐ 14.10 (Г3, В5): ПРАВИЛО ЖИВОЕ, А УЗЕЛ — ОБЫЧНЫЙ. Прежде сторож обнулял рёбра узла, чтобы попасть в ветку
+      // «выходов нет → портал → завершить забег»; ветки больше нет — забег кончает просьба `Room.finish`. Далёкий
+      // портал нужен по-прежнему: `canLeave` пустит и от ТОЧКИ ВХОДА, поэтому второе его условие (портал ДЕКОРА, и
+      // только со своей стороны стены — R10-01) отличимо лишь там, где портал дальше входа. Включаем портал живой
+      // фичей этажа (`features.portal` → портал на месте лестницы, `applyFeatures`), рёбра узла целы.
+      const fin = nodeNow(room);
       if ((fin.floorSpec as { algoParams?: { algorithm?: string } }).algoParams?.algorithm !== 'maze') { room.stop(); continue; }
+      fin.floorSpec = { ...fin.floorSpec, features: { ...fin.floorSpec.features, portal: true } };
       ready(room);
-      inner(room).enterNode(fin.id);   // пати дошла до финала (честно — спусками; здесь — сразу, ради портала)
+      inner(room).enterNode(fin.id);   // этаж пересобрался с порталом узла на месте лестницы
       noMonsters(room);
       const w = inner(room).session.world;
       const portal = inner(room).decor.find((d) => d.kind === 'portal');
       const far = portal && behindWall(w, portal);
-      if (!portal || !far) { room.stop(); continue; }
+      // ⚠ Точка «за стеной» обязана быть ДАЛЕКО И ОТ ВХОДА: рядом с ним `canLeave` пустил бы по ПЕРВОМУ условию, и
+      // сторож судил бы не стену, а «стоит у спавна».
+      if (!portal || !far || Math.hypot(far.x - w.spawn.x, far.y - w.spawn.y) <= 128) { room.stop(); continue; }
       place(room, pid, far);
       ready(room);
-      room.descend(pid);
+      room.finish(pid);
       expect(inner(room).area, 'из-за стены забег не завершается').toBe('dungeon');
       expect(inner(room).runPlan, 'забег цел').not.toBeNull();
       expect(farErrors(ws), 'зовущему — «подойдите к порталу»').toBe(1);
       place(room, pid, portal);
       ready(room);
-      room.descend(pid);
+      room.finish(pid);
       expect(inner(room).area, 'у портала — завершён').toBe('town');
       return;
     }
-    throw new Error('за 200 забегов не нашлось финала-лабиринта с порталом за стеной');
+    throw new Error('за 200 забегов не нашлось лабиринта с порталом узла за стеной');
   });
 
   it('«в город» от точки входа из-за стены — отказ; у точки входа — уход', () => {

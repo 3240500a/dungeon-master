@@ -5,6 +5,7 @@ import {
   type ServerFrame, type SaveState, type RunPlan, type RunNode, type Item,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
+import { standDifficulties } from './difficultyStand.js';
 
 // Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
 // таймера (~15,6 мс). Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот потолок не прячет — они падают
@@ -64,6 +65,7 @@ beforeAll(async () => {
   ({ Room: RoomCtor } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
+  standDifficulties(cfg);
 });
 const rooms: Room[] = [];
 /** Шаг комнаты «через `ms`»: и настенные часы, и часы процесса (⭐ R15-06: сроки комнаты — по ним). */
@@ -303,7 +305,7 @@ describe('⭐ R8-02: продолжение забега не открывает
     hh.save.difficultyProgress = { easy: 5 };
     const h = join(room, hh);
     ready(room);
-    room.descend(h.pid, 'normal', undefined, { templateId: 'deep-expedition' });
+    room.descend(h.pid, 'normal', undefined);
     expect(inner(room).runConfig?.tier).toBe('normal');
     while (nodeNow(room).depth < 10) {
       const to = nodeNow(room).edges[0]!.to;
@@ -342,8 +344,15 @@ describe('⭐ R8-02: продолжение забега не открывает
     expect(inner(room).validDifficulty(g.pid, 'hard')).not.toBe('hard');
   });
 
-  it('контроль: спустились с глубокого узла на НОВЫЙ вместе — его глубина гостю засчитана', async () => {
-    const { room, h, deep } = deepParked();
+  /**
+   * ⭐⭐ 14.10 (Г3, правка 7): КОНТРОЛЬ ПЕРЕСЧИТАН — НОВЫЙ УЗЕЛ ДАЁТ ПРОГРЕСС, НО ШАГОМ МЕТКИ.
+   * Предмет сторожа тот же и цел: повторный вход (тест выше) не даёт гостю НИЧЕГО, а НОВЫЙ — даёт. Изменилось
+   * СКОЛЬКО: раньше гостю ложилась ВСЯ глубина узла (11), теперы — не больше шага метки за вход
+   * (`balance.dungeonAccess.waypointStep` = 3, `Room.enterNode`). Именно эта разница и закрывает карри порядком действий
+   * (вход по коду на глубокий этаж и продолжение чужого забега): сторож этого — `room.g3carry.test.ts`.
+   */
+  it('контроль: спустились с глубокого узла на НОВЫЙ вместе — гостю засчитан ШАГ МЕТКИ, а не глубина', async () => {
+    const { room, h, H, deep } = deepParked();
     const hg = hero(1);
     hg.save.difficultyProgress = {};
     const g = join(room, hg);
@@ -358,7 +367,12 @@ describe('⭐ R8-02: продолжение забега не открывает
     room.descend(h.pid, undefined, to);
     room.castVote(g.pid, true);
     expect(inner(room).runNodeId).toBe(to);
-    expect(hg.save.difficultyProgress.normal, 'новый узел — в прогресс').toBe(deep + 1);
+    // ⭐ Г8-3: прибавка за вход — до СЛЕДУЮЩЕЙ метки; от нуля это первое место порталов полосы.
+    const step = cfg.get('balance').dungeonAccess.portalsAt[0]!;
+    expect(hg.save.difficultyProgress.normal, 'новый узел — в прогресс, но шагом метки').toBe(step);
+    expect(step, '…и это заметно мельче глубины узла').toBeLessThan(deep + 1);
+    expect(h.ws, 'хозяин на месте').toBeTruthy();
+    expect(H.difficultyProgress.normal, 'а хозяину, кто дошёл ногами, — вся глубина').toBe(deep + 1);
   });
 });
 
@@ -440,7 +454,7 @@ describe('⭐ R8-04: мощь узла помнит снаряжение, над
     gearUp(M.save);
     const geared = effectiveLevel(M.save, power).total;
     // У альта свой припаркованный забег — вход по коду его не трогает (`joinRun`), и в грейсе он не «этого забега».
-    T.save.run = { templateId: 'crypt-short', config: { templateId: 'crypt-short', biomeId: 'crypt', tier: 'easy', seed: 4242, modifiers: [] }, currentNodeId: 'n1_0', visited: ['n1_0'] } as SaveState['run'];
+    T.save.run = { config: { biomeId: 'crypt', tier: 'easy', seed: 4242, modifiers: [] }, currentNodeId: 'n1_0', visited: ['n1_0'] } as SaveState['run'];
     const room = newRoom('R8S9');
     const m = join(room, M);
     const t = join(room, T);

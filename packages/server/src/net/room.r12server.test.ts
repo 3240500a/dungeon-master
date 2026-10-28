@@ -419,11 +419,10 @@ describe('⭐ R12-11: пока продолжение забега ждёт ба
   it('вклад материалов в окне продолжения — отказ «повторите»; смерть в подземелье потом не откатывается', async () => {
     const s = hero();
     s.gold = 1000;
-    const tpl = cfg.get('run-templates').find((t) => t.enabled !== false)!;
     const biome = cfg.get('biomes').find((b) => b.enabled !== false)!;
-    const config = { templateId: tpl.id, biomeId: biome.id, tier: 'normal', seed: 4242, modifiers: [], id: randomUUID() };
+    const config = { biomeId: biome.id, tier: 'normal', seed: 4242, modifiers: [], id: randomUUID() };
     const plan = generateRunPlan(cfg, config as never);
-    s.run = { templateId: tpl.id, config, currentNodeId: plan.startId, visited: [plan.startId] } as never;
+    s.run = { config, currentNodeId: plan.startId, visited: [plan.startId] } as never;
     const stack = materialItem(cfg.get('craft-materials')[0]!, 5, `${randomUUID()}_0`);
     stack.pos = null;
     s.inventory.push(stack);

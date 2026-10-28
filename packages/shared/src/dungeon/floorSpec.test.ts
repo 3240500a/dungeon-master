@@ -18,10 +18,44 @@ function floors(...parts: Record<string, unknown>[]) {
 }
 
 describe('подбор этажа по РОЛИ + биому + глубине + членству', () => {
-  it('crypt combat: мелко → crypt-halls, глубоко → crypt-catacombs (окно глубины на сид-данных)', () => {
+  /**
+   * ⭐⭐ Ф2 (16.10, решение владельца): ОБЫЧНЫЕ ЭТАЖИ ОТВЯЗАНЫ ОТ ГЛУБИНЫ. Окно `minDepth..maxDepth` у боевых
+   * этажей крипты открыто настежь (1..99), а смесь задаёт ВЕС ПО МЕСТУ КРУГА (`placeWeight`): мелкие чаще в начале
+   * круга, крупные — к концу. Прежний сторож судил ровно обратное («мелко → залы, глубоко → катакомбы»), и после
+   * правки его утверждение стало неверным по построению — поэтому он переписан на новый механизм, а не ослаблен.
+   */
+  it('⭐⭐ Ф2: смесь боевых этажей ЕДЕТ ПО КРУГУ — мелкие в начале, крупные в конце (вес по месту)', () => {
     const f = reg().get('floors');
-    expect(pickFloorForRole('combat', 'crypt', f, 3, 'dungeon-standard', 1)?.id).toBe('crypt-halls');
-    expect(pickFloorForRole('combat', 'crypt', f, 12, 'dungeon-standard', 1)?.id).toBe('crypt-catacombs');
+    const CYCLE = 20;
+    const mix = (place: number): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (let seed = 1; seed <= 400; seed++) {
+        const id = pickFloorForRole('combat', 'crypt', f, place, seed * 7919, { place, cycle: CYCLE })?.id;
+        if (id) out[id] = (out[id] ?? 0) + 1;
+      }
+      return out;
+    };
+    const first = mix(1), last = mix(CYCLE);
+    const rows = [...new Set([...Object.keys(first), ...Object.keys(last)])].sort();
+    console.log('Ф2 СМЕСЬ БОЕВЫХ ЭТАЖЕЙ (400 сидов)');
+    for (const id of rows) console.log(`  ${id.padEnd(18)} место 1: ${String(first[id] ?? 0).padStart(3)}   место ${CYCLE}: ${String(last[id] ?? 0).padStart(3)}`);
+    // На первом месте круга мелкий этаж обязан побеждать крупный, на последнем — наоборот.
+    expect((first['crypt-halls'] ?? 0) > (first['crypt-depths'] ?? 0), 'место 1: мелкий чаще крупного').toBe(true);
+    expect((last['crypt-depths'] ?? 0) > (last['crypt-halls'] ?? 0), `место ${CYCLE}: крупный чаще мелкого`).toBe(true);
+    // И ни один размер не выпадает из смеси совсем — иначе «несколько размеров» существуют только на бумаге.
+    expect(rows.length, 'размеров в смеси').toBeGreaterThanOrEqual(5);
+    for (const id of rows) expect((first[id] ?? 0) + (last[id] ?? 0), `${id} встречается`).toBeGreaterThan(0);
+  });
+
+  it('⭐ Ф2: боссовый этаж берётся ПО РАНГУ лестницы круга, без ранга — любой боссовый', () => {
+    const f = reg().get('floors');
+    for (const rank of ['mini', 'strong', 'act'] as const) {
+      const got = pickFloorForRole('boss', 'crypt', f, 5, 1, { bossRank: rank });
+      expect(got?.bossRank, `ранг ${rank}`).toBe(rank);
+    }
+    expect(pickFloorForRole('boss', 'crypt', f, 5, 1)?.role, 'без ранга — всё равно боссовый').toBe('boss');
+    // Ранга, которого нет в данных, быть не должно, но если появится — узел обязан получить этаж, а не undefined.
+    expect(pickFloorForRole('boss', 'crypt', f, 5, 1, { bossRank: 'strong' })?.role).toBe('boss');
   });
 
   it('роль без этажа → undefined; членство шаблона учитывается', () => {
@@ -29,9 +63,11 @@ describe('подбор этажа по РОЛИ + биому + глубине + 
       { id: 'x-combat', name: 'x', biomeId: 'x', role: 'combat', algoParams: { algorithm: 'rooms' } },
       { id: 'x-boss', name: 'xb', biomeId: 'x', role: 'boss', templates: ['t1'], algoParams: { algorithm: 'rooms' } },
     );
-    expect(pickFloorForRole('boss', 'y', f, 3, 't1', 1)).toBeUndefined(); // нет этажей биома y
-    expect(pickFloorForRole('boss', 'x', f, 3, 't1', 1)?.id).toBe('x-boss'); // boss член t1
-    expect(pickFloorForRole('boss', 'x', f, 3, 't2', 1)).toBeUndefined(); // boss НЕ член t2
+    expect(pickFloorForRole('boss', 'y', f, 3, 1)).toBeUndefined(); // нет этажей биома y
+    expect(pickFloorForRole('boss', 'x', f, 3, 1)?.id).toBe('x-boss');
+    // ⭐⭐ Г8-4: ЧЛЕНСТВО В ШАБЛОНЕ БОЛЬШЕ НЕ ПРЯЧЕТ ЭТАЖ. Прежде этот же вызов «из другого шаблона» возвращал
+    // undefined — и на этом молча пропадали боссы крипты в «Короткой вылазке». Теперь роль решают биом и глубина.
+    expect(pickFloorForRole('boss', 'x', f, 3, 2)?.id).toBe('x-boss');
   });
 
   it('availableRoles учитывает биом + членство', () => {
@@ -40,8 +76,8 @@ describe('подбор этажа по РОЛИ + биому + глубине + 
       { id: 'x-boss', name: 'xb', biomeId: 'x', role: 'boss', templates: ['t1'], algoParams: { algorithm: 'rooms' } },
       { id: 'x-rest', name: 'xr', biomeId: 'x', role: 'rest', algoParams: { algorithm: 'rooms' } },
     );
-    expect([...availableRoles('x', f, 't2')].sort()).toEqual(['combat', 'rest']); // boss не член t2
-    expect([...availableRoles('x', f, 't1')].sort()).toEqual(['boss', 'combat', 'rest']);
+    // ⭐⭐ Г8-4: роли биома считаются БЕЗ шаблона — он больше не может спрятать боссовый этаж.
+    expect([...availableRoles('x', f)].sort()).toEqual(['boss', 'combat', 'rest']);
   });
 
   it('enabled:false исключает этаж из подбора', () => {
@@ -50,7 +86,7 @@ describe('подбор этажа по РОЛИ + биому + глубине + 
       { id: 'x-b', name: 'b', biomeId: 'x', role: 'combat', weight: 1, algoParams: { algorithm: 'rooms' } },
     );
     // выключенный x-a не выбирается никогда — только x-b
-    for (let s = 1; s <= 20; s++) expect(pickFloorForRole('combat', 'x', f, 3, 't', s)?.id).toBe('x-b');
+    for (let s = 1; s <= 20; s++) expect(pickFloorForRole('combat', 'x', f, 3, s)?.id).toBe('x-b');
   });
 
   it('resolveFloorSpec: boss-этаж → locked, rest → town; фичи проброшены; геометрия проходима', () => {
@@ -80,7 +116,7 @@ describe('⭐ 08.10: биом без процедурных колонн и ст
     const crypt = r.get('biomes').find((b) => b.id === 'crypt')!;
     const other = r.get('biomes').find((b) => b.id !== 'crypt')!;
     const f = r.get('floors');
-    const s = resolveFloorSpec(crypt, pickFloorForRole('combat', 'crypt', f, 3, 'dungeon-standard', 1), 3, 77);
+    const s = resolveFloorSpec(crypt, pickFloorForRole('combat', 'crypt', f, 3, 1), 3, 77);
     expect(s.pillars).toBe(false);
     expect(s.torches).toBe(false);
     const o = resolveFloorSpec(other, undefined, 3, 77);

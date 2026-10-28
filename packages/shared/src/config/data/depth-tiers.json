@@ -7,8 +7,8 @@
     "weights": { "weak": 45, "medium": 72, "strong": 20, "boss": 5 } },
   { "id": "d4", "name": "Тир 4", "fromFloor": 11, "toFloor": 15,
     "weights": { "weak": 24, "medium": 58, "strong": 50, "boss": 14 } },
-  { "id": "d5", "name": "Тир 5", "fromFloor": 16, "toFloor": 22,
+  { "id": "d5", "name": "Тир 5", "fromFloor": 16, "toFloor": 19,
     "weights": { "weak": 11, "medium": 34, "strong": 74, "boss": 34 } },
-  { "id": "d6", "name": "Тир 6 (бездна)", "fromFloor": 23, "toFloor": 999,
+  { "id": "d6", "name": "Тир 6 (бездна)", "fromFloor": 20, "toFloor": 20,
     "weights": { "weak": 4, "medium": 16, "strong": 66, "boss": 64 } }
 ]

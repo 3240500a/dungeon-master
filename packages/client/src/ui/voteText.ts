@@ -30,8 +30,13 @@ export function voteQuestion(f: VoteStartFrame, cfg: ConfigRegistry, progress?: 
     esc(list.find((x) => x.id === id)?.name ?? id ?? '—');
   const diffs = cfg.get('difficulties');
   const tier = nameOf(diffs, f.difficultyId);
-  const head = f.resume ? `Продолжить забег ${esc(f.resume.host)} с этажа ${f.resume.depth}?` : 'Новый забег?';
-  const run = `${nameOf(cfg.get('run-templates'), f.templateId)} · ${nameOf(cfg.get('biomes'), f.biomeId)}`;
+  // ⭐⭐ 14.10 (Г3, В2/В6): ГЛУБИНА СТАРТА — В ВОПРОСЕ. Сервер уже зажал её по рекордам всей пати (`waypointStart`),
+  // то есть это ровно то, что начнётся. Без неё пати голосовала бы за «новый забег», а попадала на 18-й этаж (или,
+  // наоборот, выбравший 60-й — на 1-й, потому что у напарника рекорд мельче) и узнавала об этом уже внизу.
+  const head = f.resume ? `Продолжить забег ${esc(f.resume.host)} с этажа ${f.resume.depth}?`
+    : f.startDepth !== undefined && f.startDepth > 1 ? `Новый забег с этажа ${f.startDepth}?` : 'Новый забег?';
+  // ⚠ Ф1 (16.10): имени шаблона в вопросе больше нет — шаблонов нет вовсе; забег называет биом и тир.
+  const run = nameOf(cfg.get('biomes'), f.biomeId);
   const mods = f.modifiers?.length ? `<br>Модификаторы: ${f.modifiers.map((m) => nameOf(cfg.get('run-modifiers'), m)).join(', ')}` : '';
   const idx = diffs.findIndex((d) => d.id === f.difficultyId);
   const locked = progress && idx >= 0 && !isDifficultyUnlocked(diffs, idx, progress)

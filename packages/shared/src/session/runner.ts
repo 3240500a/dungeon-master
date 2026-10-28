@@ -8,6 +8,7 @@ import type { PlayerEntity } from '../world/state.js';
 import { generateFloorFor } from '../dungeon/floorInputs.js';
 import { resolveMonsterPool } from '../dungeon/floorSpec.js';
 import { spawnPacksEl } from '../dungeon/floor.js';
+import { runModBuffs, liveModStats } from '../dungeon/run/runModEffects.js';
 import { townLayout } from '../dungeon/town.js';
 import { generateRunPlan } from '../dungeon/run/generateRunPlan.js';
 import type { RunConfig, RunNode, RunPlan } from '../dungeon/run/types.js';
@@ -106,13 +107,11 @@ function runSeedOf(base: number, idx: number): number {
   return ((base ^ ((idx + 1) * 0x9e3779b1)) >>> 0) || 1;
 }
 
-/** RunConfig сима: первый включённый биом/шаблон + тир; сид — из settings (не Date.now, как на сервере). */
+/** RunConfig сима: первый включённый биом + тир; сид — из settings (не Date.now, как на сервере). */
 function buildRunConfig(reg: ConfigRegistry, difficultyId: string, seed: number): RunConfig {
   const biomes = reg.get('biomes').filter((b) => b.enabled !== false);
-  const tpls = reg.get('run-templates').filter((t) => t.enabled !== false);
   const biome = biomes[0] ?? reg.get('biomes')[0]!;
-  const tpl = tpls[0] ?? reg.get('run-templates')[0];
-  return { templateId: tpl?.id ?? 'default', biomeId: biome.id, tier: difficultyId, seed, modifiers: [] };
+  return { biomeId: biome.id, tier: difficultyId, seed, modifiers: [] };
 }
 
 /** Открывает все двери этажа (бот не дёргает рычаги до Ф3) — этаж полностью проходим. */
@@ -377,14 +376,30 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   };
 
   let runPlan: RunPlan | null = null;
+  let runCfg: RunConfig | null = null;
   let node: RunNode | null = null;
   let runIdx = 0;
-  const nodeById = (id: string): RunNode | null => runPlan!.nodes.find((n) => n.id === id) ?? null;
+  const lookahead = Math.max(1, reg.get('balance').dungeonAccess.lookahead);
+  /**
+   * Узел по id — С ДОСТРОЙКОЙ ОКНА. ⭐⭐ 13.10 (Г2): граф забега бесконечен, плана «целиком» не существует —
+   * `generateRunPlan` отдаёт окно слоёв, и рёбра последнего из них смотрят за его край. Ушли за край — слой узла
+   * строится от его глубины (цена та же: у каждого слоя свой сид, Р1), ровно как это делает сервер
+   * (`Room.enterNode`). Без этого сим упирался бы в край окна и начинал новый забег каждые `lookahead` этажей.
+   */
+  const nodeById = (id: string): RunNode | null => {
+    const hit = runPlan?.nodes.find((n) => n.id === id);
+    if (hit) return hit;
+    const d = Number(/^n(\d+)_\d+$/.exec(id)?.[1] ?? 0);
+    if (!d || !runCfg) return null;
+    runPlan = generateRunPlan(reg, runCfg, undefined, { from: d, to: d + lookahead });
+    return runPlan.nodes.find((n) => n.id === id) ?? null;
+  };
 
   while (!stop()) {
     if (!node) {
       // Новый забег: свежий граф из сида, старт с города (магазин/очки), затем стартовый узел.
-      runPlan = generateRunPlan(reg, buildRunConfig(reg, settings.difficultyId, runSeedOf(settings.seed, runIdx++)));
+      runCfg = buildRunConfig(reg, settings.difficultyId, runSeedOf(settings.seed, runIdx++));
+      runPlan = generateRunPlan(reg, runCfg);
       node = nodeById(runPlan.startId);
       if (!node) break;
       doTown();
@@ -412,9 +427,10 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     const { layout, obstacles } = generateFloorFor(reg, node.floorSpec, biome);
     openDoors(layout);
     const pool = resolveMonsterPool(biome, node.depth);
-    const el = effectiveLevel(save, powerCfg, undefined, tiers).total;
     const frng = createRng((node.floorSpec.seed >>> 0) || 1);
-    const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
+    // ⭐ 13.10 (Г1): заселение — по ГЛУБИНЕ узла; мощь героя в уровень монстра не входит (как у `Room.enterNode`).
+    const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, pool, node.floorSpec.packDensity, node.floorSpec.floorId, 1, node.bossRank,
+      runModBuffs(reg.get('run-modifiers'), node.floorSpec.modifiers, liveModStats(reg)));
     session.enterFloor(node.depth, {
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles, chests: layout.chests,
       runNodeId: node.id, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: node.biomeId,
@@ -457,7 +473,8 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     const cleared = session.monstersAlive === 0;
     if (cleared || reachedExit >= 0) floorsCompleted++;
     // Спуск: по достигнутому выходу (ребро того же индекса); иначе зачистил → первое ребро;
-    // финал (0 рёбер) или таймаут без выхода → null (новый забег/город).
+    // таймаут без выхода → null (новый забег/город). ⚠ 13.10 (Г2): «финала (0 рёбер)» больше не бывает — рёбра есть
+    // у каждого узла, и спуск кончается смертью бота или сроком прогона, как в игре (Р7).
     const edge = reachedExit >= 0 ? node.edges[reachedExit] ?? node.edges[0] : cleared ? node.edges[0] : undefined;
     node = edge ? nodeById(edge.to) : null;
   }

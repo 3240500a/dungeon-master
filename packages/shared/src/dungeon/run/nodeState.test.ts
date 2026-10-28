@@ -6,8 +6,8 @@ import { Cell, makeGrid, cellToWorld } from '../../world/grid.js';
 import { GameSession } from '../../session/session.js';
 import { floorInit } from '../../session/serialize.js';
 import {
-  NODE_STATE_MAX, RUN_NODES_MAX, copyNodeState, mergeNodeState, nodeStateFor, normalizeNodeState, noteNodeId, sameRun,
-  runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord,
+  NODE_STATE_MAX, RUN_NODES_MAX, RUN_VISITED_MAX, copyNodeState, mergeNodeState, nodeStateFor, normalizeNodeState, noteNodeId, sameRun,
+  runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord, noteVisited, runNodeDepth,
 } from './nodeState.js';
 import type { RunConfig, RunNodeState, RunState } from './types.js';
 
@@ -16,15 +16,15 @@ import type { RunConfig, RunNodeState, RunState } from './types.js';
  * запись — единственное, что не даёт ему встать свежим (сундуки, боссы, уники по кругу). Сервер (`Room`) проверен своим
  * прогоном (`room.run.test.ts`, «раунд 4»); здесь — форма, объединение и то, как ядро собирает узел по записи.
  */
-const cfgA: RunConfig = { templateId: 'dungeon-standard', biomeId: 'crypt', tier: 'normal', seed: 12345, modifiers: ['a', 'b'] };
+const cfgA: RunConfig = { biomeId: 'crypt', tier: 'normal', seed: 12345, modifiers: ['a', 'b'] };
 const st = (over: Partial<RunNodeState> = {}): RunNodeState => ({ id: 'n1_0', el: 7, chests: [1], killed: [0, 4], levers: [], ...over });
 const run = (node: unknown, over: Partial<RunState> = {}): RunState =>
-  ({ templateId: cfgA.templateId, config: cfgA, currentNodeId: 'n1_0', visited: ['start', 'n1_0'], node, ...over }) as RunState;
+  ({ config: cfgA, currentNodeId: 'n1_0', visited: ['start', 'n1_0'], node, ...over }) as RunState;
 
 describe('R4-01: запись узла — форма и объединение', () => {
   it('тот же забег — по сиду, шаблону, биому, тиру и набору модификаторов (порядок не важен)', () => {
     expect(sameRun(cfgA, { ...cfgA, modifiers: ['b', 'a'] })).toBe(true);
-    for (const other of [{ seed: 1 }, { templateId: 'x' }, { biomeId: 'x' }, { tier: 'hell' }, { modifiers: ['a'] }]) {
+    for (const other of [{ seed: 1 }, { biomeId: 'x' }, { tier: 'hell' }, { modifiers: ['a'] }]) {
       expect(sameRun(cfgA, { ...cfgA, ...other }), JSON.stringify(other)).toBe(false);
     }
   });
@@ -126,6 +126,90 @@ describe('R4-04: записи КАЖДОГО пройденного узла', (
     expect(r.nodes!.map((x) => x.id)).toEqual(['n1_0', 'n3_0']);
     putRunRecord(r, st({ id: 'n2_0', chests: [8] }));
     expect(r.node!.chests, 'узел указателя — объединением').toEqual([1, 8]);
+  });
+});
+
+/**
+ * ⭐⭐ 13.10 (Г2, Р5): СЕЙВ НЕ РАСТЁТ — ОБА СПИСКА ЗАБЕГА ЕСТЬ ОКНО САМЫХ ГЛУБОКИХ ЗАПИСЕЙ.
+ *
+ * Было две разные беды с одного корня «забег кончался на 15-м этаже»:
+ *  • `visited` — без потолка вовсе: в бесконечном спуске запись за этаж, навсегда, в каждой записи сейва в Postgres;
+ *  • `nodes` — потолок 512 ОТКАЗОМ: на 513-м этаже новые записи просто не принимались, то есть сундуки, босс и уники
+ *    снова начали бы фармиться продолжением (ровно баг R4-01, против которого записи и заведены).
+ *
+ * ⚠ МУТАЦИИ, КОТОРЫЕ ЭТОТ БЛОК ОБЯЗАН ВАЛИТЬ:
+ *  • вернуть отказ вместо вытеснения (`if (size >= MAX) continue`) — валит «глубокая запись принимается»;
+ *  • вытеснять по порядку, а не по глубине (`slice(0, MAX)`) — валит «в окне остаются САМЫЕ ГЛУБОКИЕ»;
+ *  • снять защиту `keep` — валит «запись узла указателя не вытесняется»;
+ *  • снять потолок `visited` — валит «список встаёт на полку».
+ */
+describe('⭐⭐ Г2 (Р5): окно записей — самые глубокие, вытеснением', () => {
+  it('глубина узла — из его имени; мусор и чужое имя — −1 (вытесняется первым)', () => {
+    expect([runNodeDepth('n1_0'), runNodeDepth('n500_2'), runNodeDepth('n10000_0')]).toEqual([1, 500, 10_000]);
+    expect([runNodeDepth(undefined), runNodeDepth('start'), runNodeDepth('n5_'), runNodeDepth('nx_0')]).toEqual([-1, -1, -1, -1]);
+  });
+
+  it('`visited` — окно самых глубоких: без повторов, вошедший узел остаётся, длина встаёт на полку', () => {
+    expect(noteVisited(['n1_0'], 'n2_0')).toEqual(['n1_0', 'n2_0']);
+    expect(noteVisited(['n1_0', 'n2_0'], 'n2_0'), 'повтора нет').toEqual(['n1_0', 'n2_0']);
+    expect(noteVisited(['n1_0', 'n1_0', 7, null, ''] as unknown[], 'n1_0'), 'мусор отброшен').toEqual(['n1_0']);
+    // Спуск на 400 этажей: список не растёт, в нём — хвост самых глубоких.
+    let v: string[] = [];
+    for (let d = 1; d <= 400; d++) v = noteVisited(v, `n${d}_0`);
+    expect(v, 'полка').toHaveLength(RUN_VISITED_MAX);
+    expect(v[0]).toBe(`n${400 - RUN_VISITED_MAX + 1}_0`);
+    expect(v.at(-1)).toBe('n400_0');
+    // И мелкая запись уходит даже если входим в узел не самый глубокий (догоняющий напарник).
+    const mixed = noteVisited([...v], 'n5_0');
+    expect(mixed, 'полка держится').toHaveLength(RUN_VISITED_MAX);
+    expect(mixed, 'узел, в который вошли, остаётся всегда').toContain('n5_0');
+    expect(mixed, 'самый мелкий из прежних вытеснен').not.toContain(`n${400 - RUN_VISITED_MAX + 1}_0`);
+  });
+
+  it('⭐ `nodes`: ГЛУБОКАЯ запись принимается и на переполнении, вытесняя самую мелкую (прежде — отказ)', () => {
+    const r = run(undefined, { currentNodeId: 'n9999_0', nodes: Array.from({ length: RUN_NODES_MAX }, (_, i) => st({ id: `n${i + 1}_0` })) });
+    putRunRecord(r, st({ id: 'n9000_0', chests: [3] }));
+    expect(r.nodes, 'полка').toHaveLength(RUN_NODES_MAX);
+    expect(r.nodes!.map((x) => x.id), 'новая глубокая запись в сейве').toContain('n9000_0');
+    expect(r.nodes!.map((x) => x.id), 'самая мелкая вытеснена').not.toContain('n1_0');
+  });
+
+  it('⭐ окно записей сейва и свода — САМЫЕ ГЛУБОКИЕ, и запись узла указателя из него не выпадает', () => {
+    const nodes = Array.from({ length: RUN_NODES_MAX + 100 }, (_, i) => st({ id: `n${i + 1}_0` }));
+    const recs = runRecords(run(st({ id: 'n3_0' }), { currentNodeId: 'n3_0', nodes }), cfgA);
+    expect(recs, 'полка').toHaveLength(RUN_NODES_MAX);
+    const depths = recs.map((x) => runNodeDepth(x.id)).sort((a, b) => a - b);
+    expect(depths.at(-1), 'самая глубокая на месте').toBe(RUN_NODES_MAX + 100);
+    expect(recs.map((x) => x.id), 'узел указателя не вытеснен, хоть и мелкий').toContain('n3_0');
+
+    // Свод комнаты — то же правило, и запись узла, на котором стоит комната, держится по ссылке: вытеснить её нельзя.
+    const ledger = new Map<string, RunNodeState>();
+    foldRunRecords(ledger, [st({ id: 'n2_0' })], 'n2_0');
+    const cur = ledger.get('n2_0')!;
+    foldRunRecords(ledger, Array.from({ length: RUN_NODES_MAX + 50 }, (_, i) => st({ id: `n${i + 100}_0` })), 'n2_0');
+    expect(ledger.size, 'полка').toBe(RUN_NODES_MAX);
+    expect(ledger.get('n2_0'), 'тот же объект, что держит комната').toBe(cur);
+    expect(ledger.has(`n${RUN_NODES_MAX + 149}_0`), 'самая глубокая принята').toBe(true);
+
+    // Раскладка по сейву — тем же окном (узел указателя лежит отдельно, в `node`).
+    const r2 = run(undefined, { currentNodeId: 'n2_0' });
+    putRunRecords(r2, ledger.values());
+    expect(r2.node?.id).toBe('n2_0');
+    expect(r2.nodes!.length).toBeLessThanOrEqual(RUN_NODES_MAX);
+    expect(Math.max(...r2.nodes!.map((x) => runNodeDepth(x.id)))).toBe(RUN_NODES_MAX + 149);
+  });
+
+  it('схема сейва стережёт ОБА потолка: сервер длиннее писать не вправе', () => {
+    const reg = new ConfigRegistry();
+    reg.loadAll();
+    const save = newCharacterSave(reg, reg.get('classes')[0]!.id, 'Hero', 'c1');
+    let v: string[] = [];
+    for (let d = 1; d <= 600; d++) v = noteVisited(v, `n${d}_0`);
+    save.run = run(st({ id: 'n600_0' }), { currentNodeId: 'n600_0', visited: v }) as never;
+    expect(saveStateSchema.safeParse(JSON.parse(JSON.stringify(save))).success, 'сейв спуска на 600 этажей проходит').toBe(true);
+    // А сейв, собранный МИМО окна (как его писал прежний сервер), схема отвергает — это и есть сторож потолка.
+    const over = { ...save, run: { ...(save.run as unknown as RunState), visited: Array.from({ length: RUN_VISITED_MAX + 1 }, (_, i) => `n${i + 1}_0`) } };
+    expect(saveStateSchema.safeParse(JSON.parse(JSON.stringify(over))).success, 'список длиннее окна — не наш сейв').toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 import {
   ConfigRegistry, generateRunPlan, generateFloorFor, footprintRect, resolveMonsterPool, spawnPacksEl, createRng, runModifierLive,
-  Cell, TILE, type RunConfig, type RunPlan, type RunNode, type RunModifier, type RunTemplate, type Biome,
+  Cell, TILE, type RunConfig, type RunPlan, type RunNode, type RunModifier, type Biome,
   type DungeonLayout, type MonsterSpawn, type DecorSpec,
 } from '@dm/shared';
 
@@ -13,26 +13,30 @@ import {
 
 // ── Состояние страницы (переживает перерисовки) ──────────────────────────────
 interface Tuning {
-  templateId: string;
   biomeId: string;
   tier: string;
   seed: number;
-  length: number;
-  /** Переопределять длину? Выкл = брать из шаблона забега. */
-  lengthEnabled: boolean;
+  /**
+   * ⭐⭐ 13.10 (Г2): ОКНО СЛОЁВ вместо длины забега. Длины у забега больше нет (спуск бесконечен, слои адресуются
+   * глубиной), и генератор отдаёт окно: `depthFrom` — с какой глубины смотрим, `depthSpan` — сколько слоёв вперёд.
+   * Это не настройка забега, а настройка ПРОСМОТРА: в игре окно ставит сервер (`balance.dungeonAccess.lookahead`).
+   */
+  depthFrom: number;
+  depthSpan: number;
   widthMax: number;
   /** Переопределять макс. ширину? Выкл = из шаблона. */
   widthMaxEnabled: boolean;
   branching: number;
   /** Переопределять ветвление? Выкл = брать из шаблона забега. */
   branchingEnabled: boolean;
-  returnEvery: number;
-  /** Переопределять «возврат каждые» (города-rest)? Выкл = из шаблона. */
-  returnEveryEnabled: boolean;
-  bossEvery: number;
   /** Переопределять «босс каждые»? Выкл = из шаблона. */
-  bossEveryEnabled: boolean;
-  /** Мощь персонажа = эфф. уровень (уровень + гир + пассивы) — влияет на уровни монстров. */
+  /**
+   * Мощь персонажа = эфф. уровень (уровень + гир + пассивы) — едет в `RunConfig.power`.
+   * ⚠⚠ 13.10 (Г1): НИКТО ЕГО НЕ ЧИТАЕТ — ни `generateRunPlan`, ни заселение (уровень монстра решает глубина),
+   * ни `sameRun` (отпечаток забега — сид/шаблон/биом/тир/модификаторы). Поэтому ручки у алтаря больше нет:
+   * ползунок, который не меняет ни одного числа превью, — ловушка. Поле оставлено: оно в схеме сейва
+   * (удаление = миграция, см. `dungeon/run/types.ts`).
+   */
   power: number;
   modifiers: Set<string>;
 }
@@ -51,10 +55,7 @@ const TYPE_STYLE: Record<string, { fill: string; label: string; glyph: string }>
   elite: { fill: '#a8642a', label: 'Элита', glyph: '★' },
   boss: { fill: '#7a2a5a', label: 'Босс', glyph: '☠' },
   treasure: { fill: '#8a7a2a', label: 'Клад', glyph: '◆' },
-  event: { fill: '#2a5a7a', label: 'Событие', glyph: '?' },
-  shop: { fill: '#2a6a5a', label: 'Лавка', glyph: '$' },
   rest: { fill: '#2a6a2a', label: 'Город', glyph: '⛺' },
-  finale: { fill: '#a83a3a', label: 'Финал', glyph: '♛' },
 };
 const FACTION_COLOR: Record<string, string> = {
   undead: '#b6b6d8', beast: '#c08a45', demon: '#d85a5a', monster: '#7fa0d0',
@@ -146,18 +147,20 @@ function modEffectText(m: RunModifier): string {
   return m.effects.map((e) => `${e.stat} ${e.op === 'mul' ? '×' : '+'}${e.value}`).join(', ') || m.desc;
 }
 
-function tuningFromTemplate(reg: ConfigRegistry, templateId: string, seed: number, prevBiome?: string, prevPower?: number): Tuning {
-  const t = (reg.get('run-templates') as RunTemplate[]).find((x) => x.id === templateId) ?? (reg.get('run-templates') as RunTemplate[])[0]!;
+/**
+ * Умолчания страницы. ⚠ Ф1 (16.10): берутся из ФОРМЫ ЗАБЕГА баланса (`dungeonAccess`), а не из шаблона — шаблонов
+ * больше нет, и ручки «ветвление»/«макс. ширина» здесь переопределяют настройку игры только для ПРЕДПРОСМОТРА.
+ */
+function tuningFromTemplate(reg: ConfigRegistry, seed: number, prevBiome?: string, prevPower?: number): Tuning {
+  const access = reg.get('balance').dungeonAccess;
+  const tiers = reg.get('difficulties') as { id: string; name: string; enabled?: boolean }[];
   const biomes = reg.get('biomes') as Biome[];
   return {
-    templateId: t.id,
     biomeId: prevBiome && biomes.some((b) => b.id === prevBiome) ? prevBiome : biomes[0]!.id,
-    tier: t.tier, seed,
-    length: Math.round((t.length.min + t.length.max) / 2), lengthEnabled: false,
-    widthMax: t.width.max, widthMaxEnabled: false,
-    branching: t.branching, branchingEnabled: false,
-    returnEvery: t.returnEvery, returnEveryEnabled: false,
-    bossEvery: t.bossEvery, bossEveryEnabled: false,
+    tier: (tiers.find((d) => d.enabled !== false) ?? tiers[0]!).id, seed,
+    depthFrom: 1, depthSpan: Math.max(1, (access.lookahead ?? 2) + 1),
+    widthMax: access.width.max, widthMaxEnabled: false,
+    branching: access.branching, branchingEnabled: false,
     power: prevPower ?? 20,
     modifiers: new Set<string>(),
   };
@@ -165,14 +168,11 @@ function tuningFromTemplate(reg: ConfigRegistry, templateId: string, seed: numbe
 
 function buildConfig(t: Tuning): RunConfig {
   return {
-    templateId: t.templateId, biomeId: t.biomeId, tier: t.tier, seed: t.seed,
+    biomeId: t.biomeId, tier: t.tier, seed: t.seed,
     // Каждый структурный параметр передаём ТОЛЬКО если его галка включена; иначе — undefined →
     // генератор берёт значение из ШАБЛОНА забега (превью 1:1 совпадает с игрой, которая шлёт лишь шаблон).
-    ...(t.lengthEnabled ? { length: t.length } : {}),
     ...(t.widthMaxEnabled ? { widthMax: t.widthMax } : {}),
     ...(t.branchingEnabled ? { branching: t.branching } : {}),
-    ...(t.returnEveryEnabled ? { returnEvery: t.returnEvery } : {}),
-    ...(t.bossEveryEnabled ? { bossEvery: t.bossEvery } : {}),
     power: t.power, modifiers: [...t.modifiers],
   };
 }
@@ -441,16 +441,15 @@ function legend(): HTMLElement {
 export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown>): void {
   page.innerHTML = '';
   const reg = regFromData(data);
-  const templates = reg.get('run-templates') as RunTemplate[];
   const biomes = reg.get('biomes') as Biome[];
   const diffs = reg.get('difficulties') as { id: string; name: string }[];
   const mods = reg.get('run-modifiers') as RunModifier[];
 
-  if (!templates.length || !biomes.length) {
-    page.innerHTML = '<div style="color:#ff8080">Нет конфигов biomes/run-templates.</div>';
+  if (!biomes.length) {
+    page.innerHTML = '<div style="color:#ff8080">Нет конфига biomes.</div>';
     return;
   }
-  if (!tuning) tuning = tuningFromTemplate(reg, templates[0]!.id, 12345);
+  if (!tuning) tuning = tuningFromTemplate(reg, 12345);
   const t = tuning;
 
   const wrap = document.createElement('div');
@@ -463,25 +462,27 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
   h.textContent = '⚒ Алтарь забега'; h.style.cssText = 'font-weight:700;margin-bottom:8px;color:#e8e8f0';
   altar.append(h);
 
-  altar.append(row('Шаблон', selectInput(templates.filter((x) => x.enabled !== false).map((x) => [x.id, x.name] as [string, string]), t.templateId,
-    (v) => { tuning = tuningFromTemplate(reg, v, t.seed, t.biomeId, t.power); renderRunGenPage(page, data); })));
   altar.append(row('Биом', selectInput(biomes.filter((b) => b.enabled !== false).map((b) => [b.id, b.name] as [string, string]), t.biomeId,
     (v) => { t.biomeId = v; })));
   altar.append(row('Тир', selectInput(diffs.map((d) => [d.id, d.name] as [string, string]), t.tier, (v) => { t.tier = v; })));
-  altar.append(rangeRowToggle('Этажей (слоёв)', t.lengthEnabled, (on) => { t.lengthEnabled = on; }, t.length, 3, 20, 1, (v) => String(v), (v) => { t.length = v; }));
+  // ⭐⭐ 13.10 (Г2): «Этажей (слоёв)» и «Возврат каждые» СНЯТЫ. Длины у забега нет (спуск бесконечен), а привал —
+  // одно число баланса на всю игру (`dungeonAccess.waypointStep`, правится на странице «Баланс»): ручка забега
+  // обещала бы то, чего забег не решает. Вместо длины — ОКНО просмотра: с какой глубины и сколько слоёв показать.
+  altar.append(row('Глубина (с какой)', numInput(t.depthFrom, (v) => { t.depthFrom = Math.max(1, Math.round(v) || 1); })));
+  altar.append(row('Слоёв в окне', numInput(t.depthSpan, (v) => { t.depthSpan = Math.max(1, Math.min(64, Math.round(v) || 1)); })));
   altar.append(rangeRowToggle('Ветвление', t.branchingEnabled, (on) => { t.branchingEnabled = on; }, t.branching, 0, 1, 0.05, (v) => v.toFixed(2), (v) => { t.branching = v; }));
-  altar.append(rangeRow('Мощь (эфф. ур.)', t.power, 1, 80, 1, (v) => String(v), (v) => { t.power = v; if (selectedNodeId && plan) showFloor(selectedNodeId); }));
   altar.append(numRowToggle('Макс. ширина', t.widthMaxEnabled, (on) => { t.widthMaxEnabled = on; }, t.widthMax, 1, (v) => { t.widthMax = v; }));
-  altar.append(numRowToggle('Возврат каждые', t.returnEveryEnabled, (on) => { t.returnEveryEnabled = on; }, t.returnEvery, 0, (v) => { t.returnEvery = v; }));
-  altar.append(numRowToggle('Босс каждые', t.bossEveryEnabled, (on) => { t.bossEveryEnabled = on; }, t.bossEvery, 0, (v) => { t.bossEvery = v; }));
+  // ⭐⭐ 15.10 (Г8-4, решение владельца): РУЧКИ «БОССЫ» У ЗАБЕГА БОЛЬШЕ НЕТ. «Надо сделать так, чтобы боссы
+  // появлялись на этажах боссов, а вейпоинты на этажах вейпоинтов согласно нашей новой таблице» — значит ни
+  // шаблон, ни превью не вправе их отменять. Места боссов правятся на вкладке «🔄 Круг забега» (лестница круга).
   altar.append(row('Сид', numInput(t.seed, (v) => { t.seed = v; })));
 
   const sep = document.createElement('div');
   sep.style.cssText = 'border-top:1px solid #2c2c3a;margin:10px 0 6px;padding-top:6px;color:#8a8a9a;font-size:12px';
   sep.textContent = 'Модификаторы забега';
   altar.append(sep);
-  const tpl = templates.find((x) => x.id === t.templateId);
-  const allowed = tpl && tpl.allowedModifiers.length ? tpl.allowedModifiers : null;
+  const allowedIds = reg.get('balance').dungeonAccess.allowedModifiers;
+  const allowed = allowedIds.length ? allowedIds : null;
   const runMods = mods.filter((m) => m.scope === 'run' && m.enabled !== false && (!allowed || allowed.includes(m.id)));
   for (const m of runMods) {
     const lbl = document.createElement('label');
@@ -538,12 +539,12 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     }
     catch (e) { preview.innerHTML = `<div style="color:#ff8080">Ошибка генерации: ${(e as Error).message}</div>`; return; }
 
-    // Монстры этажа по эфф. уровню (мощь) — детерминированно от сида этажа. Town (город) — без монстров.
+    // Монстры этажа — по ГЛУБИНЕ узла (⭐ 13.10, Г1), детерминированно от сида этажа. Town (город) — без монстров.
     const isTown = node.floorSpec.kind === 'town';
     const pool = resolveMonsterPool(biome, node.depth);
     let monsters: MonsterSpawn[] = [];
     if (!isTown) {
-      try { monsters = spawnPacksEl(reg, L, node.depth, plan.tier, createRng((node.floorSpec.seed ^ 0x51ed270b) >>> 0 || 1), t.power, pool, node.floorSpec.packDensity, node.floorSpec.floorId); }
+      try { monsters = spawnPacksEl(reg, L, node.depth, plan.tier, createRng((node.floorSpec.seed ^ 0x51ed270b) >>> 0 || 1), pool, node.floorSpec.packDensity, node.floorSpec.floorId); }
       catch { monsters = []; }
     }
     // Выход → целевой узел (развилка: exits[i] соответствует edges[i]).
@@ -593,7 +594,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     ].filter(Boolean);
     const meta = document.createElement('div');
     meta.style.cssText = 'font-size:12px;color:#8a8a9a;margin-bottom:8px';
-    meta.innerHTML = `Фичи: ${featList.length ? featList.join(' · ') : '—'} · плотность ×${node.floorSpec.packDensity}<br>Мощь игрока: ${t.power} · Модификаторы: ${modNames.length ? modNames.join(', ') : '—'} · Сид этажа: ${node.floorSpec.seed}` +
+    meta.innerHTML = `Фичи: ${featList.length ? featList.join(' · ') : '—'} · плотность ×${node.floorSpec.packDensity}<br>Модификаторы: ${modNames.length ? modNames.join(', ') : '—'} · Сид этажа: ${node.floorSpec.seed}` +
       (L.slotLog ? `<br>Слоты пропов: ${slotSummary(L)}` : '');   // ⭐ 12.10 (Ф2)
     preview.appendChild(meta);
 
@@ -671,7 +672,8 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
   const doGenerate = (): void => {
     try {
       const reg2 = regFromData(data);
-      plan = generateRunPlan(reg2, buildConfig(t));
+      // Окно слоёв (Г2): превью смотрит ту же глубину, что покажет сервер, но его границы задаёт тюнинг страницы.
+      plan = generateRunPlan(reg2, buildConfig(t), undefined, { from: t.depthFrom, to: t.depthFrom + t.depthSpan - 1 });
       selectedNodeId = plan.startId;
       renderGraph(graphHost, plan, mods, (id) => showFloor(id));
       showFloor(plan.startId);

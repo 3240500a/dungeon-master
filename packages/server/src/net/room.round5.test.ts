@@ -95,14 +95,18 @@ type MonIn = { alive: boolean; pos: Pt; aiState: 'idle' | 'chase'; windup: unkno
 type PlayerIn = { pos: Pt; hp: number; alive: boolean; toggles: string[]; combatTimer: number; debuffs: Record<string, unknown> };
 type WorldIn = { spawn: Pt; exits?: Pt[]; monsters: MonIn[]; players: Record<string, PlayerIn> };
 const worldOf = (room: Room): WorldIn => (room as unknown as { session: { world: WorldIn } }).session.world;
-const decorOf = (room: Room): { kind: string; x: number; y: number }[] => (room as unknown as { decor: { kind: string; x: number; y: number }[] }).decor;
 const idle = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
-/** Встать к выходу ребра на узел `to` (без `to` — первого ребра), на финале — к порталу. */
+/** Встать к выходу ребра на узел `to` (без `to` — первого ребра). */
 function toExit(room: Room, ws: FakeWs, pid: string, to?: string): void {
   const node = nodeNow(ws);
   const i = Math.max(0, to ? node.edges.findIndex((e) => e.to === to) : 0);
-  const at = node.edges.length === 0 ? decorOf(room).find((d) => d.kind === 'portal')! : worldOf(room).exits![i]!;
+  const at = worldOf(room).exits![i]!;
   worldOf(room).players[pid]!.pos = { x: at.x, y: at.y };
+}
+/** Встать к точке входа узла — оттуда разрешены и уход в город, и «Завершить» (`Room.canLeave`). */
+function toSpawn(room: Room, pid: string): void {
+  const w = worldOf(room);
+  w.players[pid]!.pos = { ...w.spawn };
 }
 /** Пати из двух: A хозяин, B сосед (1000 золота); забег начат, B голосует «за» каждый переход. */
 async function party(tag: string) {
@@ -183,53 +187,60 @@ function chase(room: Room, pid: string): MonIn {
 const graceOf = (room: Room): Map<string, { fled: boolean }> => (room as unknown as { disconnected: Map<string, { fled: boolean }> }).disconnected;
 
 /**
- * ⭐ R5-04: «ЗАВЕРШИТЬ ЗАБЕГ» НА ФИНАЛЕ — ТОЖЕ УХОД В ГОРОД. R4-14 закрыл голос «в город» издалека (только у портала или
- * мёртвым), а голос за завершение финала засчитывался откуда угодно: напарник у портала финала жмёт «Завершить», а герой
+ * ⭐ R5-04: «ЗАВЕРШИТЬ ЗАБЕГ» — ТОЖЕ УХОД В ГОРОД. R4-14 закрыл голос «в город» издалека (только у портала или
+ * мёртвым), а голос за завершение забега засчитывался откуда угодно: напарник у портала жмёт «Завершить», а герой
  * в трёх тысячах пикселей, посреди боя, с 1 HP голосует «за» — и уходит в город с золотом и добычей, забег закрыт.
  */
 describe('Room — раунд 5: голос за уход с этажа (R5-04)', () => {
-  async function atFinale(tag: string) {
+  /**
+   * Пати на обычном узле глубже старта — с него зовут «Завершить забег».
+   * ⭐⭐ 14.10 (Г3, В5): ПРЕЖДЕ ЗДЕСЬ СОБИРАЛСЯ РУКОТВОРНЫЙ УЗЕЛ БЕЗ ВЫХОДОВ — правило, которое судят оба теста ниже,
+   * жило в ветке `node.edges.length === 0` (`Room.descend` → `finishRun`), а генератор таких узлов не ставит с Г2:
+   * ветка была недостижима, то есть сторож охранял мёртвый код. Ветка снята, забег кончает ЯВНАЯ просьба
+   * `Room.finish`, и правило под охраной осталось то же: «за» завершение засчитывается ровно там, где засчитывается
+   * «за» уход в город (`voteBlock` → `canLeave`: точка входа узла, портал декора или мёртвый).
+   */
+  async function atFinish(tag: string) {
     const pt = await party(tag);
-    for (let g = 0; g < 40 && nodeNow(pt.a.ws).edges.length; g++) pt.down();
-    expect(nodeNow(pt.a.ws).edges.length, 'дошли до финала').toBe(0);
+    pt.down();                                                 // глубже старта — завершают не со входа забега
+    ready(pt.a.room);
     return pt;
   }
 
-  it('⭐ финал: «за» завершение издалека и в бою — отказ «far», забег и золото целы; у портала — завершается', async () => {
-    const { a, b } = await atFinale('r504');
+  it('⭐ «Завершить»: «за» издалека и в бою — отказ «far», забег и золото целы; у точки входа — завершается', async () => {
+    const { a, b } = await atFinish('r504');
     const w = worldOf(a.room);
     const pb = w.players[b.pid]!;
     pb.pos = { x: w.spawn.x + 3000, y: w.spawn.y + 3000 };
     pb.hp = 1;
     chase(a.room, b.pid);
     ready(a.room);
-    toExit(a.room, a.ws, a.pid);                               // A у портала финала
-    a.room.descend(a.pid);
+    toSpawn(a.room, a.pid);                                    // A у точки входа — оттуда «Завершить» и зовут
+    a.room.finish(a.pid);
     expect(a.ws.last('voteStart')?.kind).toBe('descend');
+    expect(a.ws.last('voteStart')?.finish, 'окно говорит, что это ЗАВЕРШЕНИЕ, а не спуск (R16-04)').toBe(true);
     b.ws.frames.length = 0;
     a.room.castVote(b.pid, true);
     expect(b.ws.last('error')?.code, 'издалека «за» не засчитано').toBe('far');
     expect(areaOf(a.room), 'забег не завершён').toBe('dungeon');
     expect(b.save.gold).toBe(1000);
     expect(b.save.run, 'забег B цел').toBeTruthy();
-    const portal = decorOf(a.room).find((d) => d.kind === 'portal')!;
-    pb.pos = { x: portal.x, y: portal.y };
+    toSpawn(a.room, b.pid);
     a.room.castVote(b.pid, true);
-    expect(areaOf(a.room), 'у портала — завершено').toBe('town');
+    expect(areaOf(a.room), 'у точки входа — завершено').toBe('town');
   });
 
-  it('⭐ финал: «за», поданное у портала, снимается, если герой ушёл обратно в бой; мёртвый голосует откуда угодно', async () => {
-    const { a, b } = await atFinale('r504b');
+  it('⭐ «Завершить»: «за», поданное у входа, снимается, если герой ушёл обратно в бой; мёртвый голосует откуда угодно', async () => {
+    const { a, b } = await atFinish('r504b');
     const c = addPeer(a.room, 'user-r504b-c');
     const w = worldOf(a.room);
-    const portal = decorOf(a.room).find((d) => d.kind === 'portal')!;
-    for (const pid of [a.pid, b.pid, c.pid]) w.players[pid]!.pos = { x: portal.x, y: portal.y };
+    for (const pid of [a.pid, b.pid, c.pid]) w.players[pid]!.pos = { ...w.spawn };
     ready(a.room);
-    a.room.descend(a.pid);
+    a.room.finish(a.pid);
     a.room.castVote(b.pid, true);
     w.players[b.pid]!.pos = { x: w.spawn.x + 3000, y: w.spawn.y };   // …и ушёл
     a.room.castVote(c.pid, true);
-    expect(areaOf(a.room), 'B уже не у портала — завершения нет').toBe('dungeon');
+    expect(areaOf(a.room), 'B уже не у входа — завершения нет').toBe('dungeon');
     expect(b.ws.last('error')?.code).toBe('far');
     w.players[b.pid]!.alive = false; w.players[b.pid]!.hp = 0;       // погиб — ему уходить можно
     a.room.castVote(b.pid, true);

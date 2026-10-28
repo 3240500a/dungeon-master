@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { xpProgress, effectiveLevel, carriedGear, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
+import { xpProgress, floorMonsterLevel, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
+import { waypointHint } from '../modules/run/runLabels.js';
 import { App } from '../core/app.js';
 import { ActionBar } from '../ui/actionBar.js';
 import { BeltBar } from '../ui/beltBar.js';
@@ -158,9 +159,14 @@ export class UIScene extends Phaser.Scene {
     if (state.depth > 0) {
       const diffs = this.app.config.get('difficulties');
       const diff = diffs.find((dd) => dd.id === state.difficultyId) ?? diffs.find((dd) => dd.id === 'normal') ?? diffs[0]!;
-      // R8-10: уровень, по которому сервер заселил узел; нет его (старый сервер) — своя мера по надетому и запасу.
-      const cl = state.challengeLevel ?? challengeAtFloor(startChallenge(effectiveLevel(state.save, this.app.config.get('balance').power, carriedGear(state.save), this.app.config.get('item-tiers')).total, diff), diff, state.depth);
-      loc = `Этаж ${state.depth} · ${diff.name} · вызов ур.${cl}`;
+      // ⭐ 13.10 (Г1): это УРОВЕНЬ МОНСТРОВ этажа, и считает его одна глубина (шов общий с 3D-HUD — числа не разъедутся).
+      // Поле с сервера — источник истины по узлу; нет его (старый сервер) — та же формула по своей глубине.
+      const cl = state.challengeLevel ?? floorMonsterLevel(diff, state.depth);
+      // ⭐ Г3 (В6): и «до метки N эт.» — тем же швом, что у 3D-HUD (`modules/run/runLabels.waypointHint`): каденция
+      // привала — чистая функция глубины, поэтому счёт игрока и место привала сойтись обязаны.
+      const access = this.app.config.get('balance').dungeonAccess;
+      const wp = waypointHint(state.depth, access.portalsAt, access.contentCycle);
+      loc = `Этаж ${state.depth} · ${diff.name} · монстры ур.${cl} · ${wp}`;
     }
     this.label.setText(
       `Ур. ${state.save.level}   ${loc}   Золото: ${state.save.gold}   Очки: атр ${state.save.unspentAttributePoints} / скилл ${state.save.unspentSkillPoints}`,

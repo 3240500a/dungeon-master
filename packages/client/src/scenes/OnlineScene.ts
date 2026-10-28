@@ -196,17 +196,16 @@ export class OnlineScene extends Phaser.Scene {
 
     // Декор (факелы — анимированные со светом; портал/лавка узла забега — интерактивные). Сундука аккаунта в подземелье
     // нет (R7-11): сервер открывает его только в городе, и генератор его на этаж не ставит.
-    // Финальный узел (нет выходов) → портал завершает забег; иначе (rest) → возврат в город.
-    const isFinale = floor.area === 'dungeon' && (floor.exits?.length ?? 0) === 0;
+    // ⚠⚠ 14.10 (Г3, В5): портал узла — ВСЕГДА уход в город (он забег ПАРКУЕТ). Подпись «Завершить забег» включалась по
+    // «нет выходов» (финал), а таких узлов генератор не ставит с Г2 — она не рисовалась никогда. Завершение забега —
+    // кнопка панели «Карта забега» (M), просьба `finish` (сервер принимает у портала или точки входа, `canLeave`).
     for (const d of floor.decor) {
       if (d.kind === 'torch') { this.torches.push(new Torch(this, d.x, d.y)); continue; }
       const img = this.add.image(d.x, d.y, `decor-${d.kind}`).setDepth(d.kind === 'arena' ? -8 : 1);
       if (d.kind === 'arena') img.setAlpha(0.4);
       this.worldObjs.push(img);
       if (d.kind === 'shop') this.interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => this.app.bus.emit('ui:open', { panel: 'shop' }) });
-      else if (d.kind === 'portal') this.interactables.push(isFinale
-        ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => this.app.net.send({ t: 'descend' }) }
-        : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => this.app.net.send({ t: 'return' }) });
+      else if (d.kind === 'portal') this.interactables.push({ x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => this.app.net.send({ t: 'return' }) });
     }
 
     // Игрок-вид (создаём один раз).
@@ -243,6 +242,10 @@ export class OnlineScene extends Phaser.Scene {
       const back = this.add.image(floor.spawn.x, floor.spawn.y, 'portal').setDepth(1).setAlpha(0.85);
       this.worldObjs.push(back);
       this.interactables.push({ x: floor.spawn.x, y: floor.spawn.y, radius: 40, label: 'Вернуться в город (голосование)', run: () => this.app.net.send({ t: 'return' }) });
+      // ⭐⭐ Ф4 (16.10): алтарь на этаже-метке — точка от сервера (`floor.altar`).
+      if (floor.altar) {
+        this.interactables.push({ x: floor.altar.x, y: floor.altar.y, radius: 42, label: 'Алтарь — настроить отрезок', run: () => this.app.bus.emit('ui:open', { panel: 'altar' }) });
+      }
       // Запертые двери (спрайты поверх пола) + рычаги (интерактив «[E] Рычаг», открывает свою дверь).
       for (const door of floor.doors) {
         const parts: Phaser.GameObjects.GameObject[] = [];
@@ -259,7 +262,10 @@ export class OnlineScene extends Phaser.Scene {
         this.interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => this.app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });
       }
       this.app.state!.depth = floor.depth;
-      this.app.state!.challengeLevel = floor.challengeLevel ?? null;   // R8-10: «вызов ур.» — как узел заселил сервер
+      // R8-10 / ⭐⭐ 13.10 (Г1): «монстры ур.» — уровень, по которому сервер заселил этаж, а его решает одна ГЛУБИНА
+      // (`floorMonsterLevel`): мощь героя в строку не входит, и «вызова ур.» больше нет — поле едет с сервера лишь потому,
+      // что источник истины по этажу — он.
+      this.app.state!.challengeLevel = floor.challengeLevel ?? null;
       if (floor.difficultyId) this.app.state!.difficultyId = floor.difficultyId;
     } else {
       this.app.run = null; // город — забега нет (мог остаться от завершённого/бросенного)
@@ -299,7 +305,7 @@ export class OnlineScene extends Phaser.Scene {
     const portal = this.add.image(pp.x, pp.y, 'portal').setDepth(2);
     this.worldObjs.push(portal);
     // Портал открывает выбор сложности; уже он шлёт `descend` с выбранным тиром.
-    this.interactables.push({ x: pp.x, y: pp.y, radius: 44, label: 'В подземелье (выбор сложности)', run: () => this.app.bus.emit('ui:open', { panel: 'difficulty' }) });
+    this.interactables.push({ x: pp.x, y: pp.y, radius: 44, label: 'Портал — куда лететь', run: () => this.app.bus.emit('ui:open', { panel: 'difficulty' }) });
   }
 
   /** Спуск через i-й выход: маппит выход на i-е ребро текущего узла (targetNodeId). Читается лениво — на момент клика граф уже актуален. */

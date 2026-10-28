@@ -17,8 +17,8 @@ const node = (id: string, type: RunNodeType, to: string[]): RunNode => ({
   id, type, depth: 0, lane: 0, biomeId: 'crypt', floorSpec: {} as RunNode['floorSpec'], modifiers: [], edges: to.map((t) => ({ to: t })),
 });
 const PLAN: RunPlan = {
-  templateId: 't', biomeId: 'crypt', tier: 'normal', seed: 1, startId: 'start', runModifiers: [],
-  nodes: [node('start', 'start', ['n1_0', 'n1_1']), node('n1_0', 'shop', ['n2_0']), node('n1_1', 'boss', ['n2_0']), node('n2_0', 'combat', [])],
+  biomeId: 'crypt', tier: 'normal', seed: 1, startId: 'start', runModifiers: [],
+  nodes: [node('start', 'start', ['n1_0', 'n1_1']), node('n1_0', 'treasure', ['n2_0']), node('n1_1', 'boss', ['n2_0']), node('n2_0', 'combat', [])],
 };
 const floor = (runNodeId: string, exits: number): FloorInit => ({
   area: 'dungeon', runNodeId, exits: Array.from({ length: exits }, (_, i) => ({ x: 100 + i * 50, y: 200 })),
@@ -32,7 +32,7 @@ describe('⭐ C-10: подпись выхода на развилке — из �
     const exits = f.exits!.map((ex, i) => exitInteract(ex, f, i, () => plan, (k) => went.push(k)));
     expect(exits.map((e) => e.label)).toEqual(['Спуститься глубже (голосование)', 'Спуститься глубже (голосование)']);
     plan = PLAN;   // кадр `runPlan` — App кладёт его в `app.run`, интерактивы не перестраивает никто
-    expect(exits.map((e) => e.label), 'было: подпись застывала до смены этажа').toEqual(['Спуститься: Лавка (голосование)', 'Спуститься: Босс (голосование)']);
+    expect(exits.map((e) => e.label), 'было: подпись застывала до смены этажа').toEqual(['Спуститься: Сокровищница (голосование)', 'Спуститься: Босс (голосование)']);
     expect(exits.map((e) => [e.x, e.y, e.radius])).toEqual([[100, 200, 34], [150, 200, 34]]);
     exits[1]!.run();
     expect(went, 'выход ведёт по своему ребру (номер выхода)').toEqual([1]);

@@ -336,8 +336,7 @@ describe('правка 14.10 (вечер): Мастерская v2 и набор
     return d;
   };
 
-  it('правка 7 — последняя ревизия; заметки дописаны после прежних, коммиты на месте', () => {
-    expect(SEED_REV).toBe(7);
+  it('правка 7 на месте: заметки дописаны после прежних, коммиты на месте', () => {
     const before = rev6Copy();
     const d = rev6Copy();
     migrateRoadmap(d);
@@ -351,5 +350,112 @@ describe('правка 14.10 (вечер): Мастерская v2 и набор
     const once = JSON.stringify(d);
     SEED_PATCHES.find((p) => p.rev === 7)!.apply(d);
     expect(JSON.stringify(d), 'повтор правки 7 — без изменений').toBe(once);
+  });
+});
+
+describe('⭐⭐ правка 15.10: глубина и вейпоинты (Г1–Г8)', () => {
+  const upTo = (rev: number): RoadmapDoc => {
+    const d = BASE_SEED();
+    for (const p of SEED_PATCHES) if (p.rev <= rev) p.apply(d);
+    d.seedRev = rev;
+    return d;
+  };
+
+  it('правка 8: заметки глубины дописаны после прежних и повтор ничего не меняет', () => {
+    const before = upTo(7);
+    const d = upTo(7);
+    migrateRoadmap(d);
+    for (const id of ['m3-12', 'm3-19']) {
+      const was = item(before, id)?.note;
+      const now = item(d, id)!.note!;
+      if (was) expect(now.startsWith(was + '\n'), `${id}: старая заметка целиком и первой`).toBe(true);
+      expect(item(d, id)!.done, `${id}: галка прежняя`).toBe(item(before, id)!.done);
+    }
+    // Числа схемы — в заметке: цикл 20, места порталов и боссов, опыт формой PoE.
+    expect(item(d, 'm3-12')!.note).toMatch(/ЦИКЛОМ 20 этажей/);
+    expect(item(d, 'm3-12')!.note).toMatch(/3\/6\/9\/12\/15\/18/);
+    expect(item(d, 'm3-12')!.note).toMatch(/11\/21\/31/);
+    expect(item(d, 'm3-19')!.note).toMatch(/PoE/);
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 8)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 8 — без изменений').toBe(once);
+  });
+});
+
+describe('⭐⭐ правка 15.10 (вечер): Г8-3 — поправка круга, размер боссового этажа, карта алтаря, вкладка редактора', () => {
+  const upTo = (rev: number): RoadmapDoc => {
+    const d = BASE_SEED();
+    for (const p of SEED_PATCHES) if (p.rev <= rev) p.apply(d);
+    d.seedRev = rev;
+    return d;
+  };
+
+  it('правка 9: заметки Г8-3 дописаны после заметок Г8 и повтор ничего не меняет', () => {
+    const before = upTo(8);
+    const d = upTo(8);
+    migrateRoadmap(d);
+    for (const id of ['m3-12', 'm3-20']) {
+      const was = item(before, id)?.note;
+      const now = item(d, id)!.note!;
+      if (was) expect(now.startsWith(was + '\n'), `${id}: старая заметка целиком и первой`).toBe(true);
+      expect(item(d, id)!.done, `${id}: галка прежняя`).toBe(item(before, id)!.done);
+    }
+    // ⭐⭐ ЧИСЛА ПОПРАВКИ — В ЗАМЕТКЕ, иначе роадмап продолжал бы обещать прежнюю схему (боссы 5/14/20).
+    const note = item(d, 'm3-12')!.note!;
+    expect(note, 'актовый босс на 19-м, портал на 20-м').toMatch(/актовый босс на 19-м месте, портал на 20-м/);
+    expect(note, 'порталы — списком мест').toMatch(/3\/6\/9\/12\/15\/18\/20/);
+    expect(note, 'прибавка рекорда — следующая метка, с замером').toMatch(/за 20 входов рекорд 58/);
+    expect(note, 'размер боссового этажа с замером').toMatch(/58×44 → 78×59/);
+    expect(note, 'цепь меток на алтаре').toMatch(/ЦЕПЬ МЕТОК СВЕРХУ ВНИЗ/);
+    expect(note, 'и что метки вне цепи не теряются').toMatch(/106, в цепи 48/);
+    expect(item(d, 'm3-20')!.note, 'вкладка редактора названа').toMatch(/Круг забега/);
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 9)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 9 — без изменений').toBe(once);
+  });
+
+  it('⭐⭐ правка 10: шаблоны сняты, и в заметке названа ПОЙМАННАЯ дыра, а не только решение', () => {
+    const before = upTo(9);
+    const d = upTo(9);
+    migrateRoadmap(d);
+    for (const id of ['m3-12', 'm3-20']) {
+      const was = item(before, id)?.note;
+      const now = item(d, id)!.note!;
+      if (was) expect(now.startsWith(was + '\n'), `${id}: старая заметка целиком и первой`).toBe(true);
+      expect(item(d, id)!.done, `${id}: галка прежняя`).toBe(item(before, id)!.done);
+    }
+    const note = item(d, 'm3-12')!.note!;
+    expect(note, 'шаблоны названы снятыми').toMatch(/ШАБЛОНЫ ЗАБЕГА УБРАНЫ/);
+    expect(note, 'и сказано, что решает таблица').toMatch(/ТОЛЬКО по таблице круга/);
+    // ⚠ Главное: заметка обязана называть ПОСЛЕДСТВИЕ, а не только решение — иначе роадмап выглядел бы как
+    // косметика, хотя это чинило пропажу боссов.
+    expect(note, 'названа пойманная дыра').toMatch(/боссы лестницы пропадали целиком/);
+    expect(item(d, 'm3-20')!.note, 'и ручка боссов в превью убрана').toMatch(/Боссы \(0\/1\)/);
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 10)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 10 — без изменений').toBe(once);
+  });
+
+  it('⭐⭐ правка 11 — последняя ревизия: покрытие контента, и в заметке названы ВСЕ ТРИ дыры', () => {
+    expect(SEED_REV, 'последняя правка роадмапа').toBe(11);
+    const before = upTo(10);
+    const d = upTo(10);
+    migrateRoadmap(d);
+    for (const id of ['m3-12', 'm3-20']) {
+      const was = item(before, id)?.note;
+      const now = item(d, id)!.note!;
+      if (was) expect(now.startsWith(was + '\n'), `${id}: старая заметка целиком и первой`).toBe(true);
+      expect(item(d, id)!.done, `${id}: галка прежняя`).toBe(item(before, id)!.done);
+    }
+    const note = item(d, 'm3-12')!.note!;
+    expect(note, 'дыра окон названа').toMatch(/16–20/);
+    expect(note, 'веса без механики названы').toMatch(/только в городе/);
+    expect(note, 'декоративные окна названы').toMatch(/Окна\s+глубины были декоративными/);
+    // ⚠ И причина молчания — тоже: без неё заметка выглядит как список правок, а не как разбор.
+    expect(note, 'сказано, ПОЧЕМУ дыры молчали').toMatch(/никогда не отвечает «нет»/);
+    expect(item(d, 'm3-20')!.note, 'лавка в подземелье оставлена владельцу').toMatch(/решение за владельцем/);
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 11)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 11 — без изменений').toBe(once);
   });
 });

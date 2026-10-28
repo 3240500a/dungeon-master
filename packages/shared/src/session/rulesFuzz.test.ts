@@ -119,6 +119,20 @@ const blastBeforeRewards = (w: World): void => {
   patch(w, 'overloadOnDeath', (o) => (...a) => { if (done.has(a[0])) return undefined; done.add(a[0]); return o(...a); });
   patch(w, 'killRewards', (o) => (...a) => { S.overloadOnDeath!.call(w.s, a[0]); return o(...a); });
 };
+/**
+ * ⚠⚠ Г6 (14.10): ДОЛЯ ОПЫТА — И МЁРТВЫМ ТОЖЕ (как было бы без фильтра живости). Зуб к правилу «награды — живому»
+ * (V-RF-04/R5-06): левелап лечит до полного, поэтому доля трупу поднимает его с полным здоровьем при `alive = false`.
+ * С правильным порядком (награды до взрыва) одна эта подмена ничего не ломает — труп появляется ПОСЛЕ выдачи;
+ * вместе с `blastBeforeRewards` она и даёт «левелап трупа», который сторожит перепрогон.
+ */
+const xpToDeadToo = (w: World): void => {
+  const S = w.s as unknown as { world: { players: Record<string, { alive: boolean }> } };
+  patch(w, 'awardKillXp', (o) => (...a) => {
+    const live = Object.values(S.world.players).map((p) => p.alive);
+    for (const p of Object.values(S.world.players)) p.alive = true;   // на миг выдачи все «живы» — доля идёт и трупам
+    try { return o(...a); } finally { Object.values(S.world.players).forEach((p, i) => { p.alive = live[i]!; }); }
+  });
+};
 const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuzz.js').FuzzHooks>; weights?: Partial<Record<OpKind, number>>; len?: number }[] = [
   {
     name: 'шаг длиннее скорости', want: /^I1:speed:/,
@@ -313,6 +327,14 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
   },
 ];
 
+/**
+ * ⚠ ЗАМЕР 13.10 (чтобы не переоткрывать ложную тревогу): «инварианты смерти стережёт только профиль `DM_FUZZ_PROFILE=constructs`,
+ * а `npm test` его не ставит» — НЕВЕРНО. Мутация ядра «лут мёртвому» (`canInteract` без `p.alive`) в ШТАТНОМ прогоне
+ * этого файла (без переменных окружения) ловится сторожем R21-06 «взрыв конструкта»: `I5:pickup-dead:pickup`, сид 19,
+ * мёртвый p0 поднял дроп 33. Профили — инструмент ГЛУБИНЫ (больше сидов на узкий мир), а не условие того, что инвариант
+ * вообще стережётся: дедикатные `describe` ниже (C-10, R21-06, R15-10, D4, Z) несут свои миры и идут всегда.
+ * Мерять покрытие надо ЦЕЛЫМ файлом, а не фильтром `-t 'цепочек по'` — на нём и вышла ложная тревога.
+ */
 describe('⭐ B2: у сторожа правил есть зубы — подложенный баг ловится своим инвариантом', () => {
   for (const b of BUGS) {
     it(b.name, () => {
@@ -422,31 +444,49 @@ describe('⚠ R21-06: фаззер правил — взрыв конструк�
     for (const k of ['blast', 'hit-blast', 'blast-behind-wall', 'blast-kill'] as const) expect(cover[k] ?? 0, `«${k}» за прогон`).toBeGreaterThan(0);
   }, 180_000);
 
-  // ⚠ R21-06 (профиль `constructs` без шага `dot`, сид 14; сжато фаззером): маг 1-го уровня на пороге добил конструкта, взрыв убил его, а
-  // левелап (полное здоровье) пришёл уже трупу — награда решалась до взрыва, выдавалась после. Теперь награды — до взрыва, живому.
-  it('перепрогон R21-06: взрыв убил добившего — левелап не поднимает труп', () => {
-    const ops = [
-      { k: 'pickup', h: 2, s: 738955479 }, { k: 'descend', h: 0, s: 2133699619 }, { k: 'tick', h: 0, s: 144734269 }, { k: 'tick', h: 2, s: 1580993977 },
-      { k: 'tick', h: 1, s: 227675006 }, { k: 'tick', h: 1, s: 1222957311 }, { k: 'chest', h: 1, s: 741161182 }, { k: 'tick', h: 0, s: 1445148552 },
-      { k: 'reconnect', h: 1, s: 1813028185 }, { k: 'tick', h: 0, s: 501132757 }, { k: 'tick', h: 1, s: 1525389358 }, { k: 'tick', h: 2, s: 758920298 },
-    ] as Op[];
-    const out = runOps(14, ops, { resetUids: hooks.resetUids, world: { constructs: true } });
+  // ⚠ R21-06 (профиль `constructs`, сид 2): заступник на пороге уровня добил конструкта, взрыв убил его, а левелап
+  // (полное здоровье) приходил уже трупу — награда решалась до взрыва, выдавалась после. Теперь награды — до взрыва.
+  //
+  // ⚠⚠ 14.10 (Г6): ЦЕПОЧКА И ЗУБЫ ПЕРЕПИСАНЫ, И ЭТО НЕ ПОДГОНКА, А СЛЕДСТВИЕ НОВОГО ПРАВИЛА. Г6 раздаёт опыт доле
+  // КАЖДОГО ЖИВОГО участника, и фильтр живости закрыл ту же дыру ВТОРЫМ швом: даже при прежнем порядке (взрыв до
+  // наград) труп опыта не получает, значит и левелапа трупа не бывает. ЗАМЕР перебором 200 сидов профиля: прежняя
+  // цепочка (сид 12, 3 шага) до взрыва по добившему больше не доходит (`blast-kill` 0 — опыт теперь делится, и
+  // второй герой меняет свой уровень), а подмена ОДНОГО порядка (`blastBeforeRewards`) ни на одном из шести сидов с
+  // честным путём (2, 14, 18, 21, 24, 33) нарушения уже НЕ даёт. Поэтому:
+  //  • путь сторожится на ЖИВОЙ цепочке из сида (`genOps(2, 80)`), а не на сжатой: сжатие минимизирует под ПОДМЕНУ и
+  //    выбрасывает шаги, без которых чистый путь (взрыв убивает добившего) не состоится — замер на сиде 21;
+  //  • зубы — ДВЕ подмены вместе: прежний порядок И выдача доли трупам (`xpToDeadToo`). Любая одна больше не ломает
+  //    правило, обе вместе возвращают ровно прежнюю беду — `I6:xp-dead` (труп получил опыт) и за ней `dead-hp`.
+  it('перепрогон R21-06: взрыв убил добившего — ни опыта, ни левелапа трупу', () => {
+    const W = { ...PROFILES.constructs!.world, pinnedWorld: true };
+    const ops = genOps(2, 80, PROFILES.constructs!.weights);
+    // ⚠ `pinnedWorld`: мир приколочен — ступень снаряжения монстров, состав пачек, закон уровня по глубине (13.10)
+    // и закон опыта (14.10, Г6) записанные: иначе цепочка уходит с своего пути и сторож проходит впустую (`fuzzRegPinned`).
+    const out = runOps(2, ops, { ...hooks, world: W });
     expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
-    // Цепочка всё ещё ведёт по этому пути: с прежним порядком (взрыв до наград) она же ловит «левелап трупа».
-    const old = runOps(14, ops, { resetUids: hooks.resetUids, world: { constructs: true }, install: blastBeforeRewards });
-    expect(old.found ? violationKey(old.found) : null, 'прежний порядок — левелап трупа').toBe('I6:dead-hp:tick');
+    expect(out.cover['blast-kill'] ?? 0, 'взрыв убивал героя').toBeGreaterThan(0);
+    expect(out.cover['ev-levelup'] ?? 0, 'и левелап в той же цепочке был').toBeGreaterThan(0);
+    // Прежний порядок ОДИН больше не ломает правило: доля не идёт мёртвому, и поднимать трупа нечем (Г6).
+    const order = runOps(2, ops, { ...hooks, world: W, install: blastBeforeRewards });
+    expect(order.found ? violationKey(order.found) : null, 'один прежний порядок — уже не беда').toBeNull();
+    // А обе подмены вместе — ровно прежняя беда: труп получил опыт (и за этим шёл левелап трупа).
+    const both = (w: World): void => { blastBeforeRewards(w); xpToDeadToo(w); };
+    const old = runOps(2, ops, { ...hooks, world: W, install: both });
+    expect(old.found ? violationKey(old.found) : null, 'прежний порядок + доля трупам').toBe('I6:xp-dead:dot');
+    expect(old.found?.v.msg ?? '', 'и это именно опыт мёртвому').toContain('получил опыт');
   });
 
   // ⚠ R21-06 (большой прогон профиля `constructs`, сид 1028; сжато фаззером). МОДЕЛЬ ФАЗЗЕРА: у ворожеи горела печать «Стремительность», она
   // пала — тик мёртвому не ведёт ни откатов, ни баффов, и печать застыла на трупе (возрождение её снимет), а часы героя у наблюдателя шли:
   // «под баффом 15.90 с из 15.90 с». Павший — как ушедший: часы стоят (`buffClock`).
+  //
+  // ⚠ 13.10 (Г1): ЦЕПОЧКА СЖАТА ЗАНОВО (была 10 шагов, стала 1 — третий шаг прежней). СИД ТОТ ЖЕ: печать в этом профиле редка —
+  // сканом 1250 сидов (`genOps(seed, 80)`, профиль `constructs`) `buff-rise-ins` нашёлся РОВНО В ОДНОМ, в 1028-м (смерть героя —
+  // в 875 из 1250), так что искать было нечего: с новой глубиной прежняя цепочка просто перестала доводить до смерти под печатью
+  // (`ev-player-died` 0), а один её шаг доводит. Покрытие нового шага: `buff-rise-ins` 1, `ev-player-died` 1 за 120 тиков.
   it('перепрогон R21-06: бафф, застывший на трупе, — не время под баффом', () => {
-    const ops = [
-      { k: 'dot', h: 2, s: 1578322620 }, { k: 'tick', h: 0, s: 1092932095 }, { k: 'tick', h: 0, s: 1008869910 }, { k: 'dot', h: 2, s: 988207533 },
-      { k: 'tick', h: 0, s: 641964205 }, { k: 'tick', h: 0, s: 2061792626 }, { k: 'chest', h: 0, s: 1828621563 }, { k: 'tick', h: 1, s: 792659452 },
-      { k: 'tick', h: 2, s: 815217069 }, { k: 'dot', h: 0, s: 238735985 },
-    ] as Op[];
-    const out = runOps(1028, ops, { resetUids: hooks.resetUids, world: PROFILES.constructs!.world });
+    const ops = [{ k: 'tick', h: 0, s: 1008869910 }] as Op[];
+    const out = runOps(1028, ops, { resetUids: hooks.resetUids, world: { ...PROFILES.constructs!.world, pinnedWorld: true } });
     expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
     expect(out.cover['buff-rise-ins'] ?? 0, 'печать срабатывала').toBeGreaterThan(0);
     expect(out.cover['ev-player-died'] ?? 0, 'и герой с ней пал').toBeGreaterThan(0);
@@ -544,8 +584,17 @@ describe('⭐ Z: фаззер правил — бьющий погиб поср�
     // ⭐ 08.10: монстры обходят преграды декора по маске навигации (`navMaskFor`) — мир сида тот же, а прежний шаг (h 2, s 1420080491) после
     // своих тиков к этому пути больше не ведёт (монстры арены идут иначе). Он остаётся сторожем «без нарушений», путь держит новый шаг того же
     // сида — найден перебором `s` (тот же мир, одна доставка, бьющий погиб внутри неё).
-    for (const [ops, path] of [[[{ k: 'tick', h: 2, s: 1420080491 }], false], [[{ k: 'tick', h: 0, s: 1422820465 }], true]] as [Op[], boolean][]) {
-      const out = runOps(45010073, ops, { resetUids: hooks.resetUids, world: PROFILES.pvp!.world });
+    //
+    // ⚠ 13.10 (Г1): ПРИЁМ ПОВТОРЁН. Глубину входа стенд теперь выбирает по уровню пати (`fuzzDepthFor`), монстры арены этого сида стали
+    // 35-го уровня вместо 1…8, и шаг 08.10 (h 0, s 1422820465) к пути перестал вести: `hit-after-own-death` 0 — сторож проходил ВПУСТУЮ.
+    // Мир сида ТОТ ЖЕ (p0 маг 33 ур. посохом, p1 маг 18 пикой, p2 ворожея 33 ур. дуалом, арена PvP глуб. 33), и путь снова нашёлся
+    // перебором `s` при том же сиде: 129 сидов шага до первого попадания (всего попаданий 3 за 600 — 465361341, 1228148358, 1136724543).
+    // Взят первый: `hit-after-own-death` 1, `hit-pvp` 5, `ev-player-died` 1 за 13 тиков — одна доставка, бьющий погиб внутри неё.
+    // Оба прежних шага остаются сторожами «без нарушений» (ни один путь не потерян, просто перестал быть путём).
+    for (const [ops, path] of [
+      [[{ k: 'tick', h: 2, s: 1420080491 }], false], [[{ k: 'tick', h: 0, s: 1422820465 }], false], [[{ k: 'tick', h: 0, s: 465361341 }], true],
+    ] as [Op[], boolean][]) {
+      const out = runOps(45010073, ops, { resetUids: hooks.resetUids, world: { ...PROFILES.pvp!.world, pinnedWorld: true } });
       expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
       // Цепочка всё ещё ведёт по этому пути: бьющий погиб внутри своей доставки, и она ударила после его смерти.
       if (path) expect(out.cover['hit-after-own-death'] ?? 0, 'удар доставки, в которой бьющий погиб').toBeGreaterThan(0);
@@ -754,9 +803,9 @@ describe('B2: нарушения правил, найденные фаззеро
     }
     const pool = r2.get('biomes')[0]!.monsterPool;
     const lay = (d: unknown[]) => ({ grid, rooms: [room], decor: d }) as unknown as Parameters<typeof spawnPacksEl>[1];
-    const withPillars = spawnPacksEl(r2, lay(decor), 1, 'normal', createRng(9), 10, pool, 2);
-    const bare = spawnPacksEl(r2, lay([]), 1, 'normal', createRng(9), 10, pool, 2);
-    const inert = spawnPacksEl(reg, lay(decor), 1, 'normal', createRng(9), 10, pool, 2);   // тот же декор, но объекта-преграды нет
+    const withPillars = spawnPacksEl(r2, lay(decor), 1, 'normal', createRng(9), pool, 2);
+    const bare = spawnPacksEl(r2, lay([]), 1, 'normal', createRng(9), pool, 2);
+    const inert = spawnPacksEl(reg, lay(decor), 1, 'normal', createRng(9), pool, 2);   // тот же декор, но объекта-преграды нет
     expect(withPillars.length).toBeGreaterThan(0);
     for (const m of withPillars) {
       const c = { cx: Math.floor(m.x / TILE), cy: Math.floor(m.y / TILE) };

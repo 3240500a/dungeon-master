@@ -262,7 +262,7 @@ const MUTATIONS: readonly (readonly [number, string, Mut])[] = [
     if (!os.length) return null;
     const o = r.pick(os);
     const [k] = r.pick(o.pairs);
-    const v = k === 't' ? r.pick<Tree>(['join', 'cmd', 'input', 'ping', 'leave', 'abandon', 'runStatus', 'descend']) : anyValue(r);
+    const v = k === 't' ? r.pick<Tree>(['join', 'cmd', 'input', 'ping', 'leave', 'abandon', 'runStatus', 'descend', 'finish']) : anyValue(r);
     if (r.chance(0.5)) o.pairs.push([k, v]); else o.pairs.unshift([k, v]);
     return `dupkey ${JSON.stringify(k)}`;
   }],
@@ -271,8 +271,12 @@ const MUTATIONS: readonly (readonly [number, string, Mut])[] = [
     if (!o) return null;
     const p = o.pairs.find(([k]) => k === 't');
     const v: Tree = r.chance(0.7)
+      // ⭐ 14.10 (Г3, правка 7): `finish` — НОВЫЙ ВХОДЯЩИЙ КАДР («Завершить забег», ЕДИНСТВЕННАЯ дверь к
+      // `finishRun`): без него подмена типа ни разу не целилась в самое сильнодействующее действие забега (снятие
+      // забега у ВСЕЙ пати, включая копию ждущего реконнекта). Рядом — его близкие подделки (регистр, пробел).
       ? r.pick<Tree>(['INPUT', 'input ', ' input', 'Input', 'cmd\u0000', 'join\u202e', '__proto__', 'constructor', 'toString', 'pong',
-        'snapshot', 'joined', 'error', '', 'pingg', 'descend', 'leave', 'runStatus', 'abandon', 'vote', 'lever', 'chest', 'arena', 'return'])
+        'snapshot', 'joined', 'error', '', 'pingg', 'descend', 'leave', 'runStatus', 'abandon', 'vote', 'lever', 'chest', 'arena', 'return',
+        'finish', 'FINISH', 'finish '])
       : anyValue(r);
     if (p) p[1] = v; else o.pairs.unshift(['t', v]);
     return `t=${enc(v).slice(0, 24)}`;

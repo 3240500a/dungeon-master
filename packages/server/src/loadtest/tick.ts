@@ -35,7 +35,7 @@ reg.loadAll();
 /** Тот же путь, что `Room.enterNode`: граф забега → узел → этаж → декор → пул монстров → заселение. */
 function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInput>; monsters: number; cols: number; rows: number } {
   const biome = reg.get('biomes').filter((b) => b.enabled !== false)[0] ?? reg.get('biomes')[0]!;
-  const runCfg: RunConfig = { templateId: TEMPLATE, biomeId: biome.id, tier: 'normal', seed: 12345, modifiers: [] };
+  const runCfg: RunConfig = { biomeId: biome.id, tier: 'normal', seed: 12345, modifiers: [] };
   const plan = generateRunPlan(reg, runCfg);
   const node = plan.nodes[Math.min(NODE_IDX, plan.nodes.length - 1)]!;
   // ⭐ 12.10 (G12): входы этажа — те же, что у `Room.enterNode` (`generateFloorFor`: декор и паспорта, плотность, сундуки, ⭐ 08.10 оформление)
@@ -55,9 +55,8 @@ function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInpu
     inputs[`p${i}`] = { move: { x: 0.6, y: 0.4 }, facing: 0.7, attack: true, cast: null, interact: false };
   }
 
-  const el = effectiveLevel(session.world.players['p0']!.save, reg.get('balance').power, undefined, reg.get('item-tiers')).total;
   const rng = createRng((node.floorSpec.seed >>> 0) || 1);
-  const monsters = spawnPacksEl(reg, layout, node.depth, 'normal', rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
+  const monsters = spawnPacksEl(reg, layout, node.depth, 'normal', rng, pool, node.floorSpec.packDensity, node.floorSpec.floorId);   // Г1: мощь бота заселение не читает
   session.enterFloor(node.depth, {
     grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles,
     doors: layout.doors, levers: layout.levers, biomeId: biome.id,

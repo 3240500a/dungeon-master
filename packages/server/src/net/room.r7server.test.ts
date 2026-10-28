@@ -5,6 +5,7 @@ import {
   type ServerFrame, type SaveState, type RunPlan, type RunNode, type Item,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
+import { standDifficulties } from './difficultyStand.js';
 
 // Тесты файла ждут комнату оборотами цикла (`settle` — setTimeout(0)), а на Windows каждый такой оборот — шаг системного
 // таймера (~15,6 мс). Под нагрузкой полного прогона умолчание 5 с — лотерея; гонки этот потолок не прячет — они падают
@@ -12,8 +13,9 @@ import { limits } from './rateLimit.js';
 vi.setConfig({ testTimeout: 20_000 });
 
 /**
- * Раунд 7 (сервер): то, что правка сервера обязана довезти через настоящую `Room` — мощь узла не сбрасывается снятым в
- * сумку снаряжением и не занижается узлом, заселённым под слабого (R7-02); ушедший спокойно не платит штраф за забег, который
+ * Раунд 7 (сервер): то, что правка сервера обязана довезти через настоящую `Room` — ЗАПИСАННАЯ мощь узла
+ * (`nodeState.el`) не сбрасывается снятым в сумку снаряжением и не занижается узлом, записанным под слабого
+ * (R7-02; ⚠ 13.10/Г1: УРОВНИ МОНСТРОВ здесь ни при чём — их решает глубина, а `el` ведёт ворота прогресса сложности); ушедший спокойно не платит штраф за забег, который
  * пати увела в город (R7-03); сложность — только открытая зовущему (R7-06); «сбежал из боя» — только от настоящей угрозы
  * (R7-08); прилавок, сменивший поколение, не продаёт старое (R7-18). Сокет — фейковый, база — маленькая честная (версии).
  */
@@ -51,6 +53,7 @@ beforeAll(async () => {
   ({ Room: RoomCtor } = await import('./room.js'));
   cfg = new ConfigRegistry();
   cfg.loadAll();
+  standDifficulties(cfg);   // ⚠ тиры — свой стенд, см. difficultyStand.ts
 });
 const rooms: Room[] = [];
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); for (const r of rooms.splice(0)) r.stop(); });
@@ -128,7 +131,7 @@ function toExit(room: Room, pid: string, to?: string): void {
   const r = inner(room);
   const node = nodeNow(room);
   const i = Math.max(0, to ? node.edges.findIndex((e) => e.to === to) : 0);
-  const at = node.edges.length === 0 ? r.decor.find((d) => d.kind === 'portal')! : r.session.world.exits![i]!;
+  const at = r.session.world.exits![i]!;   // ⭐ Г3 (В5): узлов без выходов больше не бывает — ветка «к порталу» снята
   r.session.world.players[pid]!.pos = { x: at.x, y: at.y };
 }
 const toSpawn = (room: Room, pid: string): void => { const w = inner(room).session.world; w.players[pid]!.pos = { ...w.spawn }; };
@@ -154,7 +157,7 @@ function gearUp(s: SaveState): void {
 }
 
 describe('⭐ R7-02: мощь узла — не то, что герой снял на время спуска', () => {
-  it('снял всё в сумку в городе и спустился — узел заселён по снаряжению, которое он несёт', async () => {
+  it('снял всё в сумку в городе и спустился — мощь узла записана по снаряжению, которое он несёт', async () => {
     const power = cfg.get('balance').power;
     const room = newRoom();
     const h = hero(30);
@@ -248,11 +251,11 @@ describe('⭐ R7-02: мощь узла — не то, что герой снял
     const mainEl = effectiveLevel(mainSave, power).total;
     const credited = (mainSave.difficultyProgress[tier] ?? 0) >= depth;
     expect(inner(room).nodeState!.el >= mainEl || !credited,
-      `узел заселён под альта (el ${elAlt}, основной ${mainEl}) — прогресс сложности основному за него не пишется`).toBe(true);
+      `узел ЗАПИСАН под альта (el ${elAlt}, основной ${mainEl}) — прогресс сложности основному за него не пишется`).toBe(true);
     expect(mainSave.difficultyProgress[tier] ?? 0).toBe(before);
   });
 
-  it('контроль: основной был на узле, когда его заселяли, — прогресс ему пишется как прежде', () => {
+  it('контроль: основной был на узле, когда его ЗАПИСЫВАЛИ, — прогресс ему пишется как прежде', () => {
     const room = newRoom();
     const alt = hero(1), main = hero(60);
     const a = join(room, alt), m = join(room, main);

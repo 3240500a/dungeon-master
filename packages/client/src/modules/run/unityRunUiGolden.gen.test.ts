@@ -4,11 +4,16 @@
  * `balance.camera`, затухание стен между камерой и героем.
  *
  * Unity — основной клиент, веб — источник истины по правилам. Настоящими функциями веба считаются: `voteQuestion`, `DeathWindow`,
- * `cameraCfg`/`camElevation`/`placeCamera`/`camZoom`/`camDir`, `effectiveLevel`/`carriedGear`/`startChallenge`/`altarModifiers`/
+ * `cameraCfg`/`camElevation`/`placeCamera`/`camZoom`/`camDir`, `effectiveLevel`/`carriedGear`/`floorMonsterLevel`/`altarModifiers`/
  * `isDifficultyUnlocked`, подписи и цвета узлов (`runLabels`), планы `generateRunPlan`. Раскладка карты (`runMapPanel.ts`), модель алтаря
  * (`difficultyPanel.ts`), наблюдение (`online3d.ts`) и затухание стен (`env3d.ts`: лицо стены и формула шейдера) живут в замыканиях и DOM/
  * WebGL — здесь они повторены копией, и каждая копия СТОРОЖИТСЯ строкой исходника (`SRC`): правило поменяли — тест падает, пока копию,
  * эталон и порт Unity не обновят осознанно.
+ *
+ * ⚠ ЗАМКИ ТИРОВ — НА СИНТЕТИЧЕСКОМ КОНФИГЕ (`synAltarCfg` + сейвы `synLocked`/`synOpen`), а не на живых данных: в
+ * `difficulties.json` сейчас включён ОДИН тир с порогом 0, поэтому в боевом конфиге запертых карточек не рождается вовсе
+ * и эталон молча терял и их, и подписи «🔒 Пройди этаж N на «тир» (сейчас M)». Покрытие держат ассерты раздела
+ * «покрытие» ниже — живые данные могут включать и выключать тиры, замки от этого больше не зависят.
  *
  * Эталон: `__golden__/unity_run_ui.json` → Unity `Assets/DM/UI/Tests/unity_run_ui_golden.json` (`tools/unity-check/golden_sync.py`),
  * проверка — `RunUiCheck`. Перезапись: `npx vitest run -u packages/client/src/modules/run/unityRunUiGolden.gen.test.ts`.
@@ -19,12 +24,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ConfigRegistry, Cell, defaultRunConfig, generateRunPlan, effectiveLevel, carriedGear, startChallenge, isDifficultyUnlocked,
-  altarModifiers, RUN_MOD_LIVE_STATS, type RunPlan, type SaveState,
+  ConfigRegistry, Cell, defaultRunConfig, generateRunPlan, effectiveLevel, carriedGear, floorMonsterLevel, isDifficultyUnlocked,
+  altarModifiers, openWaypoints, WAYPOINT_ENTRY_DEPTH, RUN_MOD_LIVE_STATS, type RunPlan, type SaveState,
 } from '@dm/shared';
 import { voteQuestion, type VoteStartFrame } from '../../ui/voteText.js';
 import { DeathWindow, type DeathDock, type DeathView, type DiedFrame } from '../../ui/deathWindow.js';
-import { RUN_NODE_COLOR, runNodeLabel } from './runLabels.js';
+import { RUN_NODE_COLOR, runNodeLabel, bossLadderText } from './runLabels.js';
+import { LEGEND_TYPES, MAP_GEOM, runMapView } from './runMapLayout.js';
+// ⭐⭐ Г8-3: раскладку ЦЕПИ МЕТОК на алтаре эталон ЗОВЁТ, а не копирует (как раскладку карты забега с Г5).
+import { altarChainView, BOSS_RANK_MARK } from '../town/altarMapLayout.js';
 import { cameraCfg, camElevation, placeCamera, camZoom, camDir } from '../../render3d/cameraRig.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -32,57 +40,22 @@ const read = (rel: string): string => readFileSync(join(HERE, rel), 'utf8');
 const ONLINE3D = read('../../render3d/online3d.ts');
 const ENV3D = read('../../render3d/env3d.ts');
 const RUNMAP = read('./runMapPanel.ts');
-const ALTAR = read('../town/difficultyPanel.ts');
 
 /** Строки исходников, повторённые ниже копией. Нет строки — правило веба поменялось: обновить копию, эталон и порт Unity. */
 const SRC: [string, string][] = [
-  // карта забега (runMapPanel.ts)
-  [RUNMAP, 'const COL_W = 96;'], [RUNMAP, 'const ROW_H = 66;'], [RUNMAP, 'const PAD = 28;'], [RUNMAP, 'const R = 16;'],
-  [RUNMAP, "'Забег не активен — карта появится в подземелье.'"],
-  [RUNMAP, '`Шаблон <b style="color:${COLORS.gold}">${plan.templateId}</b> · биом <b>${plan.biomeId}</b> · тир <b>${plan.tier}</b>` +'],
-  [RUNMAP, '` <span style="color:${COLORS.dim}">· ${plan.nodes.length} узлов</span>`;'],
-  [RUNMAP, 'for (const a of byDepth.values()) a.sort((p, q) => p.lane - q.lane);'],
-  [RUNMAP, 'const maxDepth = Math.max(...plan.nodes.map((n) => n.depth));'],
-  [RUNMAP, 'const maxCol = Math.max(...[...byDepth.values()].map((a) => a.length));'],
-  [RUNMAP, 'const width = PAD * 2 + maxDepth * COL_W;'], [RUNMAP, 'const height = PAD * 2 + (maxCol - 1) * ROW_H;'],
-  [RUNMAP, 'const midY = PAD + (maxCol - 1) * ROW_H / 2;'], [RUNMAP, 'const x = PAD + depth * COL_W;'],
-  [RUNMAP, 'const y = midY + (i - (arr.length - 1) / 2) * ROW_H;'],
-  [RUNMAP, 'const nextIds = new Set(cur?.edges.map((e) => e.to) ?? []);'],
-  [RUNMAP, 'const hot = n.id === currentNodeId;'],
-  [RUNMAP, "stroke: hot ? COLORS.gold : '#4a4640', 'stroke-width': hot ? 2.5 : 1.5, 'stroke-opacity': hot ? 0.9 : 0.5,"],
-  [RUNMAP, 'const col = hex(RUN_NODE_COLOR[n.type] ?? 0x8a8f9a);'],
-  [RUNMAP, "if (isCur) g.append(svgEl('circle', { cx: p.x, cy: p.y, r: R + 6, fill: 'none', stroke: COLORS.gold, 'stroke-width': 3 }));"],
-  [RUNMAP, "stroke: isNext ? COLORS.gold : '#1a1a1a', 'stroke-width': isNext ? 2.5 : 1.5,"],
-  [RUNMAP, "'fill-opacity': isCur || isNext ? 1 : 0.82,"],
-  [RUNMAP, "x: p.x, y: p.y + R + 13, 'text-anchor': 'middle', 'font-size': 10, fill: isCur ? COLORS.gold : '#c4bca8', 'font-family': 'system-ui',"],
-  [RUNMAP, 'label.textContent = runNodeLabel(n.type);'], [RUNMAP, 'if (n.modifiers.length) {'], [RUNMAP, "badge.textContent = '★';"],
-  [RUNMAP, "for (const t of ['combat', 'elite', 'boss', 'treasure', 'rest', 'finale'] as const) {"],
+  // ⭐⭐ Г5: РАСКЛАДКУ КАРТЫ СТОРОЖИТЬ СТРОКАМИ БОЛЬШЕ НЕ НАДО — она в чистом `runMapLayout.ts`, и эталон ниже
+  // зовёт ЕЁ ЖЕ (`runMapView`), а не копию. Остались строки, которые живут в самой панели (DOM): подпись «забега
+  // нет», кнопка конца забега с её пояснением и список легенды.
+  // ⚠ Строка «забега нет» сторожа не требует: с Г5 она живёт в раскладке (MAP_EMPTY в runMapLayout.ts), и эталон получает её оттуда же вызовом.
+  [RUNMAP, "fin.append(button('Завершить забег (голосование)', () => { app.net.send({ t: 'finish' }); }, 'danger'));"],
+  [RUNMAP, "'Жать у портала привала или у точки входа. Уход в город порталом забег ПАРКУЕТ — его можно продолжить с того же узла; «Завершить» снимает забег у всей пати, и следующий спуск начнётся с выбранной на алтаре метки.'));"],
+  [RUNMAP, "const view = runMapView(run?.plan, run?.currentNodeId, access.portalsAt, access.contentCycle);"],
   // алтарь (difficultyPanel.ts)
-  [ALTAR, "const pw = effectiveLevel(state.save, app.config.get('balance').power, carriedGear(state.save), app.config.get('item-tiers'));"],
-  [ALTAR, "const biomes = app.config.get('biomes').filter((b) => b.enabled !== false);"],
-  [ALTAR, "const templates = app.config.get('run-templates').filter((t) => t.enabled !== false);"],
-  [ALTAR, 'if (biomes.length && !biomes.some((b) => b.id === selBiome)) selBiome = biomes[0]!.id;'],
-  [ALTAR, 'if (templates.length && !templates.some((t) => t.id === selTpl)) selTpl = templates[0]!.id;'],
-  [ALTAR, '`Мощь персонажа: <b style="color:${COLORS.gold}">${pw.total}</b> ` +'],
-  [ALTAR, '`<span style="color:${COLORS.dim}">(ур. ${pw.level} + гир +${pw.gearBonus} + мастерства +${pw.passiveBonus})</span>`;'],
-  [ALTAR, "pvpRow.append(button('⚔ PvP-арена (дуэль на алтаре)', () => {"], [ALTAR, "app.net.send({ t: 'arena' });"],
-  [ALTAR, "'Круглый зал: спавн в разных концах, урон по друг другу, гибель без потерь.'"],
-  [ALTAR, "body.append(sectionLabel('Биом (павшая империя)'));"],
-  [ALTAR, 'for (const b of biomes) row.append(chip(b.name, b.id === selBiome, () => { selBiome = b.id; redraw(); }, b.tagline || b.desc || undefined));'],
-  [ALTAR, 'if (cur?.tagline || cur?.desc) body.append(mk(\'div\', `font-size:11px;color:${COLORS.dim};margin-top:4px;font-style:italic`, cur.tagline || cur.desc));'],
-  [ALTAR, "body.append(sectionLabel('Шаблон забега'));"],
-  [ALTAR, "const title = `слоёв ${t.length.min}–${t.length.max} · ширина до ${t.width.max} · босс каждые ${t.bossEvery || '—'}`;"],
-  [ALTAR, 'const mods = altarModifiers(runMods, tpl?.allowedModifiers);'],
-  [ALTAR, 'for (const id of [...selMods]) if (!mods.some((m) => m.id === id)) selMods.delete(id);'],
-  [ALTAR, "body.append(sectionLabel('Модификаторы'));"], [ALTAR, "'Благо — только в паре с опасностью: лишние блага алтарь отбросит.'"],
-  [ALTAR, 'row.append(chip(m.name, selMods.has(m.id), () => { if (selMods.has(m.id)) selMods.delete(m.id); else selMods.add(m.id); redraw(); }, m.desc || undefined));'],
-  [ALTAR, "body.append(sectionLabel('Сложность (тир) — жмите «Войти»'));"], [ALTAR, 'if (diff.enabled === false) return;'],
-  [ALTAR, 'const unlocked = isDifficultyUnlocked(diffs, i, state.save.difficultyProgress);'], [ALTAR, 'const startCL = startChallenge(pw.total, diff);'],
-  [ALTAR, '`золото ×${diff.goldMult} · редкость ×${diff.magicFind}`));'], [ALTAR, '`Монстры на 1-м этаже ≈ ур. ${startCL}, глубже — сложнее.`));'],
-  [ALTAR, "app.net.send({ t: 'descend', difficultyId: diff.id, runConfig: { biomeId: selBiome, templateId: selTpl, modifiers: [...selMods] } });"],
-  [ALTAR, "}, i >= 2 ? 'danger' : 'primary'));"], [ALTAR, "const have = state.save.difficultyProgress[prev?.id ?? ''] ?? 0;"],
-  [ALTAR, '`🔒 Пройди этаж ${diff.unlockFloor} на «${prev?.name ?? \'—\'}» (сейчас ${have})`));'],
-  [ALTAR, "const panel: Panel = { title: 'Алтарь забега', render(body) { bodyRef = body; draw(body); } };"],
+  // ⭐⭐ Г8-4: СЕКЦИИ «Шаблон забега» БОЛЬШЕ НЕТ — забег один, выбирать нечего. Сторожим ИМЕННО ОТСУТСТВИЕ:
+  // вернётся выбор — вернётся и возможность молча отменить боссов круга, с которой всё и началось.
+  // ⭐⭐ 14.10 (Г3, В6): выбор стартовой МЕТКИ — те же чистые функции, что у сервера (`openWaypoints`), и уровень монстров метки `floorMonsterLevel`
+  // ⭐⭐ Г8-3: вместо списка чипов — ЦЕПЬ МЕТОК сверху вниз. Раскладку сторожить строками не надо (она в чистом
+  // `altarMapLayout.ts`, и эталон зовёт её же); сторожатся строки, которые живут в самой панели (DOM/SVG).
   // голосование и смерть: проводка 3D (online3d.ts)
   [ONLINE3D, 'function showVote(f: VoteStartFrame): void { if (voteBox) return; const q = voteQuestion(f, app.config, app.state?.save.difficultyProgress);'],
   [ONLINE3D, "app.net.on('voteUpdate', (f) => { const t = voteBox?.querySelector('.tally'); if (t) t.textContent = `${f.yes}/${f.total}`; });"],
@@ -141,7 +114,6 @@ const bolds = (html: string): string[] => [...html.matchAll(/<b(?: [^>]*)?>(.*?)
 // ── 1. вопрос голосования (ui/voteText.ts) ──────────────────────────────────
 const realVoteCfg: Cfg = {
   difficulties: reg.get('difficulties').map((d) => ({ id: d.id, name: d.name, unlockFloor: d.unlockFloor, enabled: d.enabled })),
-  'run-templates': reg.get('run-templates').map((t) => ({ id: t.id, name: t.name })),
   biomes: reg.get('biomes').map((b) => ({ id: b.id, name: b.name })),
   'run-modifiers': reg.get('run-modifiers').map((m) => ({ id: m.id, name: m.name })),
 };
@@ -150,7 +122,6 @@ const synVoteCfg: Cfg = {
     { id: 'easy', name: 'Лёгкая', unlockFloor: 0 }, { id: 'normal', name: 'Средняя <i>', unlockFloor: 5 },
     { id: 'hard', name: 'A & B "q" \'s\'', unlockFloor: 10 }, { id: 'nm', unlockFloor: 12 }, { id: 'zero', name: '', unlockFloor: 3 },
   ],
-  'run-templates': [{ id: 't1', name: 'Глубокая <экспедиция>' }],
   biomes: [{ id: 'b1', name: 'Склеп' }],
   'run-modifiers': [{ id: 'm1', name: 'Стеклянные кости' }, { id: 'm2', name: '<b>Рой</b>' }],
 };
@@ -166,15 +137,15 @@ VOTES.push({ cfg: 'real', frame: vf({ targetNodeId: 'n7' }), progress: null });
 const realDiffs = reg.get('difficulties');
 const progSets: (Record<string, number> | null)[] = [null, {}, { easy: 5 }, { easy: 99, normal: 9 }, { easy: 99, normal: 99, hard: 99 }];
 for (const d of realDiffs) for (const p of progSets) {
-  VOTES.push({ cfg: 'real', frame: vf({ difficultyId: d.id, templateId: 'deep-expedition', biomeId: 'crypt', modifiers: [] } as Partial<VoteStartFrame>), progress: p });
+  VOTES.push({ cfg: 'real', frame: vf({ difficultyId: d.id, biomeId: 'crypt', modifiers: [] } as Partial<VoteStartFrame>), progress: p });
 }
-VOTES.push({ cfg: 'real', frame: vf({ difficultyId: 'hard', templateId: 'crypt-short', biomeId: 'caves', modifiers: ['pack-swarm', 'relic-greed', 'nope'] } as Partial<VoteStartFrame>), progress: { easy: 5 } });
-VOTES.push({ cfg: 'real', frame: vf({ difficultyId: 'normal', templateId: 'dungeon-standard', biomeId: 'labyrinth', modifiers: [], resume: { host: 'Стенд', depth: 4 } } as Partial<VoteStartFrame>), progress: {} });
-VOTES.push({ cfg: 'real', frame: vf({ difficultyId: 'ghost-tier', templateId: 'ghost-tpl', modifiers: [] } as Partial<VoteStartFrame>), progress: {} });
-VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'normal', templateId: 't1', biomeId: 'b1', modifiers: ['m1', 'm2'], resume: { host: '<b>Ник</b> & "Ко"', depth: 12 } } as Partial<VoteStartFrame>), progress: {} });
-VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'hard', templateId: 't1', biomeId: 'b1' } as Partial<VoteStartFrame>), progress: { normal: 3 } });
-VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'nm', templateId: 't1', biomeId: 'b1', modifiers: ['m2'] } as Partial<VoteStartFrame>), progress: { hard: 12 } });
-VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'zero', templateId: 't1', biomeId: 'b1', modifiers: [] } as Partial<VoteStartFrame>), progress: {} });
+VOTES.push({ cfg: 'real', frame: vf({ difficultyId: 'hard', biomeId: 'caves', modifiers: ['pack-swarm', 'relic-greed', 'nope'] } as Partial<VoteStartFrame>), progress: { easy: 5 } });
+VOTES.push({ cfg: 'real', frame: vf({ difficultyId: 'normal', biomeId: 'labyrinth', modifiers: [], resume: { host: 'Стенд', depth: 4 } } as Partial<VoteStartFrame>), progress: {} });
+VOTES.push({ cfg: 'real', frame: vf({ difficultyId: 'ghost-tier', modifiers: [] } as Partial<VoteStartFrame>), progress: {} });
+VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'normal', biomeId: 'b1', modifiers: ['m1', 'm2'], resume: { host: '<b>Ник</b> & "Ко"', depth: 12 } } as Partial<VoteStartFrame>), progress: {} });
+VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'hard', biomeId: 'b1' } as Partial<VoteStartFrame>), progress: { normal: 3 } });
+VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'nm', biomeId: 'b1', modifiers: ['m2'] } as Partial<VoteStartFrame>), progress: { hard: 12 } });
+VOTES.push({ cfg: 'syn', frame: vf({ difficultyId: 'zero', biomeId: 'b1', modifiers: [] } as Partial<VoteStartFrame>), progress: {} });
 
 // ── 2. окно смерти (ui/deathWindow.ts, класс DeathWindow — как его водит online3d) ─────────────
 const LABELS = { wait: 'Ожидайте: пати спустится — там возродитесь.', spectate: 'Смотреть' };
@@ -205,217 +176,36 @@ function runDeath(steps: Step[]): unknown[] {
   });
 }
 
-// ── 3. алтарь (town/difficultyPanel.ts) — копия модели окна, сторожится `SRC` ─────────────────
-type AltarSel = { biome?: string; tpl?: string; mods: Set<string> };
-/** Что рисует `draw` алтаря при этом выборе (выбор правится так же, как в окне: умолчания и чистка модификаторов). */
-function altarModel(cfg: ConfigRegistry, save: SaveState, sel: AltarSel, live: ReadonlySet<string>): unknown {
-  const diffs = cfg.get('difficulties');
-  const pw = effectiveLevel(save, cfg.get('balance').power, carriedGear(save), cfg.get('item-tiers'));
-  const biomes = cfg.get('biomes').filter((b) => b.enabled !== false);
-  const templates = cfg.get('run-templates').filter((t) => t.enabled !== false);
-  const runMods = cfg.get('run-modifiers');
-  if (biomes.length && !biomes.some((b) => b.id === sel.biome)) sel.biome = biomes[0]!.id;
-  if (templates.length && !templates.some((t) => t.id === sel.tpl)) sel.tpl = templates[0]!.id;
-  const cur = biomes.find((b) => b.id === sel.biome);
-  const tpl = templates.find((t) => t.id === sel.tpl);
-  const mods = altarModifiers(runMods, tpl?.allowedModifiers, live);
-  for (const id of [...sel.mods]) if (!mods.some((m) => m.id === id)) sel.mods.delete(id);
-  const tiers: unknown[] = [];
-  diffs.forEach((diff, i) => {
-    if (diff.enabled === false) return;
-    const unlocked = isDifficultyUnlocked(diffs, i, save.difficultyProgress);
-    const startCL = startChallenge(pw.total, diff);
-    const prev = diffs[i - 1];
-    const have = save.difficultyProgress[prev?.id ?? ''] ?? 0;
-    tiers.push({
-      id: diff.id, name: diff.name, unlocked,
-      meta: `золото ×${diff.goldMult} · редкость ×${diff.magicFind}`,
-      line: `Монстры на 1-м этаже ≈ ур. ${startCL}, глубже — сложнее.`,
-      variant: unlocked ? (i >= 2 ? 'danger' : 'primary') : null,
-      descend: unlocked ? JSON.parse(JSON.stringify({ t: 'descend', difficultyId: diff.id, runConfig: { biomeId: sel.biome, templateId: sel.tpl, modifiers: [...sel.mods] } })) : null,
-      lock: unlocked ? null : `🔒 Пройди этаж ${diff.unlockFloor} на «${prev?.name ?? '—'}» (сейчас ${have})`,
-    });
-  });
-  return {
-    power: pw,
-    head: `Мощь персонажа: ${pw.total} (ур. ${pw.level} + гир +${pw.gearBonus} + мастерства +${pw.passiveBonus})`,
-    biomes: biomes.map((b) => ({ id: b.id, name: b.name, active: b.id === sel.biome, title: b.tagline || b.desc || null })),
-    biomeNote: cur?.tagline || cur?.desc || null,
-    templates: templates.map((t) => ({ id: t.id, name: t.name, active: t.id === sel.tpl, title: `слоёв ${t.length.min}–${t.length.max} · ширина до ${t.width.max} · босс каждые ${t.bossEvery || '—'}` })),
-    mods: mods.map((m) => ({ id: m.id, name: m.name, active: sel.mods.has(m.id), title: m.desc || null })),
-    tiers,
-    sel: { biome: sel.biome ?? null, tpl: sel.tpl ?? null, mods: [...sel.mods] },
-  };
-}
+// ── 3. алтарь: СНЯТ ИЗ ЭТАЛОНА (Ф3, 16.10) ───────────────────────────────────
+// ⭐⭐ Решение владельца 16.10: «веб клиент 2д и 3д уже не актуальны, нам все делаем только в юнити… эталоны тоже».
+// Окно маршрута («Портал» города) переписано ПРЯМО В UNITY и сторожится там же — `Assets/DM/UI/Tests/PortalCheck.cs`
+// против ОБЩИХ данных и формул (`packages/shared`), а не против копии веб-панели. Снятая отсюда копия модели и
+// последовательности действий больше не нужны: веб-панель `difficultyPanel.ts` остаётся как есть и не развивается.
+// ⚠ Остальные разделы эталона (голосование, окно смерти, карта забега, камера, затухание стен, наблюдение) живут
+// по-прежнему — они сторожат ОБЩИЕ правила, а не внешний вид окна.
 
-/** Вещь сейва для мощи (поля, которые читают `effectiveLevel` и `unmetWorn`). */
-let uidN = 0;
-const item = (o: Record<string, unknown>): Record<string, unknown> => ({
-  uid: `u${++uidN}`, baseId: 'b', name: `Вещь ${uidN}`, rarity: 'normal', itemLevel: 1, requirements: {}, affixes: [], baseStats: [], gridW: 1, gridH: 1, ...o,
-});
-const DMG = [{ stat: 'minDamage', kind: 'flat', value: 3 }, { stat: 'maxDamage', kind: 'flat', value: 6 }];
-const ARM = [{ stat: 'armor', kind: 'flat', value: 4 }];
-const save = (o: Record<string, unknown>): SaveState => ({
-  level: 1, gold: 0, attributes: { strength: 10, dexterity: 10, intelligence: 10, vitality: 10 }, unspentAttributePoints: 0,
-  equipment: {}, inventory: [], belt: [], masteries: {}, difficultyProgress: {}, ...o,
-} as unknown as SaveState);
-const SAVES: Record<string, SaveState> = {
-  fresh: save({ equipment: { weapon: item({ slot: 'weapon', baseStats: DMG }), chest: item({ slot: 'chest', baseStats: ARM }) } }),
-  mid: save({
-    level: 20, difficultyProgress: { easy: 5, normal: 9 }, masteries: { a: 12, b: 9, c: 3 },
-    equipment: {
-      weapon: item({ slot: 'weapon', rarity: 'rare', itemLevel: 18, tier: 't4', baseStats: DMG }),
-      helm: item({ slot: 'helm', rarity: 'magic', itemLevel: 5, tier: 't4', baseStats: ARM }),
-      ring1: item({ slot: 'ring1', rarity: 'unique', itemLevel: 5, tier: 't5', baseStats: [{ stat: 'strength', kind: 'flat', value: 5 }] }),
-      chest: null,
-    },
-  }),
-  spare: save({
-    level: 30, attributes: { strength: 20, dexterity: 15, intelligence: 10, vitality: 10 }, unspentAttributePoints: 5,
-    respecPeak: { strength: 40, dexterity: 0, intelligence: 0, vitality: 0 }, masteries: { a: 90 }, difficultyProgress: { easy: 12, normal: 12, hard: 12 },
-    equipment: { weapon: item({ slot: 'weapon', rarity: 'magic', itemLevel: 10, baseStats: DMG }), offhand: item({ slot: 'offhand', kind: 'shield', rarity: 'normal', itemLevel: 30, baseStats: ARM }) },
-    inventory: [
-      item({ slot: 'weapon', hands: 2, rarity: 'unique', itemLevel: 30, baseStats: DMG, requirements: { strength: 44 } }),
-      item({ slot: 'weapon', hands: 1, rarity: 'rare', itemLevel: 30, baseStats: DMG }),
-      item({ slot: 'weapon', hands: 1, rarity: 'rare', itemLevel: 25, baseStats: DMG }),
-      item({ slot: 'weapon', hands: 2, versatile: true, rarity: 'unique', itemLevel: 40, baseStats: DMG }),
-      item({ slot: 'boots', rarity: 'unique', itemLevel: 30, baseStats: ARM, broken: true }),
-      item({ slot: 'gloves', rarity: 'rare', itemLevel: 30, baseStats: ARM, requirements: { dexterity: 30 } }),
-      item({ slot: 'amulet', rarity: 'rare', itemLevel: 30, baseStats: [{ stat: 'dexterity', kind: 'flat', value: 12 }] }),
-      item({ name: 'Зелье', kind: 'consumable' }),
-    ],
-    belt: [item({ slot: 'belt', rarity: 'magic', itemLevel: 28, baseStats: ARM }), null],
-  }),
-  capped: save({
-    level: 3, masteries: { a: 400 },
-    equipment: Object.fromEntries(['weapon', 'offhand', 'helm', 'chest', 'gloves', 'boots', 'belt', 'ring1', 'ring2', 'amulet']
-      .map((s) => [s, item({ slot: s, rarity: 'unique', itemLevel: 60, baseStats: s === 'weapon' ? DMG : ARM })])),
-  }),
-  versatile: save({
-    level: 20,
-    equipment: { weapon: item({ slot: 'weapon', hands: 2, versatile: true, rarity: 'unique', itemLevel: 20, baseStats: DMG }), offhand: item({ slot: 'offhand', kind: 'shield', rarity: 'rare', itemLevel: 20, baseStats: ARM }) },
-    inventory: [item({ slot: 'weapon', hands: 1, rarity: 'normal', itemLevel: 20, baseStats: DMG })],
-  }),
-  dual: save({
-    level: 12, attributes: { strength: 10, dexterity: 10, intelligence: 10, vitality: 10 },
-    equipment: { weapon: item({ slot: 'weapon', rarity: 'rare', itemLevel: 12, baseStats: DMG }), offhand: item({ slot: 'weapon', hands: 1, rarity: 'rare', itemLevel: 12, baseStats: DMG }) },
-    inventory: [item({ slot: 'weapon', hands: 2, rarity: 'rare', itemLevel: 12, baseStats: DMG, requirements: { strength: 15 } })],
-  }),
-};
-const realAltarCfg = reg;
-const synAltarCfg = stub({
-  difficulties: [
-    { id: 'd0', name: 'Первый', offsetMode: 'percent', offset: -0.25, floorStep: 1, goldMult: 0.9, magicFind: 0.85, unlockFloor: 0 },
-    { id: 'd1', name: 'Выключенный', enabled: false, offsetMode: 'flat', offset: 2, floorStep: 1, goldMult: 1, magicFind: 1, unlockFloor: 3 },
-    { id: 'd2', name: 'После выключенного', offsetMode: 'flat', offset: 3.5, floorStep: 1, goldMult: 1.333, magicFind: 1.1, unlockFloor: 4 },
-    { id: 'd3', name: 'Без порога', offsetMode: 'flat', offset: -50, floorStep: 1, goldMult: 2, magicFind: 2.5, unlockFloor: 0 },
-    { id: 'd4', name: 'Половина', offsetMode: 'percent', offset: 0.5, floorStep: 1, goldMult: 1e-7, magicFind: 0.30000000000000004, unlockFloor: 7 },
-  ],
-  biomes: [
-    { id: 'off', name: 'Выкл', enabled: false, tagline: 'x', desc: 'y' },
-    { id: 'b1', name: 'Первый биом', tagline: '', desc: 'Описание без слогана' },
-    { id: 'b2', name: 'Второй', tagline: 'Слоган', desc: 'Описание' },
-    { id: 'b3', name: 'Пустой', tagline: '', desc: '' },
-  ],
-  'run-templates': [
-    { id: 'toff', name: 'Выкл', enabled: false, length: { min: 1, max: 2 }, width: { min: 1, max: 1 }, bossEvery: 1, allowedModifiers: [] },
-    { id: 'tA', name: 'Все модификаторы', length: { min: 3, max: 5 }, width: { min: 1, max: 2 }, bossEvery: 0, allowedModifiers: [] },
-    { id: 'tB', name: 'Только два', length: { min: 8, max: 11 }, width: { min: 2, max: 3 }, bossEvery: 5, allowedModifiers: ['live-danger', 'live-boon'] },
-  ],
-  'run-modifiers': [
-    { id: 'live-danger', name: 'Опасность', scope: 'run', tags: ['danger'], effects: [{ stat: 'monsterHp', op: 'mul', value: 1.2 }], desc: 'Монстры крепче' },
-    { id: 'live-boon', name: 'Благо', scope: 'run', tags: ['boon'], effects: [{ stat: 'gold', op: 'mul', value: 1.2 }] },
-    { id: 'live-off', name: 'Выключенный', enabled: false, scope: 'run', tags: ['boon'], effects: [{ stat: 'gold', op: 'mul', value: 1.2 }] },
-    { id: 'node-mod', name: 'Узловой', scope: 'node', tags: ['danger'], effects: [{ stat: 'monsterHp', op: 'mul', value: 1.2 }] },
-    { id: 'dead', name: 'Не действует', scope: 'run', tags: ['danger'], effects: [{ stat: 'packSize', op: 'mul', value: 1.3 }] },
-    { id: 'empty', name: 'Без эффектов', scope: 'run', tags: ['danger'], effects: [] },
-    { id: 'mixed', name: 'Наполовину', scope: 'run', tags: ['reward'], effects: [{ stat: 'gold', op: 'mul', value: 1.1 }, { stat: 'packSize', op: 'mul', value: 1.1 }] },
-  ],
-  balance: { power: { gearRarityWeight: { normal: 1, magic: 2, rare: 3 }, gearDivisor: 3, gearMax: 5, passiveDivisor: 5, passiveMax: 2 } },
-  'item-tiers': reg.get('item-tiers'),
-});
-const SYN_LIVE = new Set(['monsterHp', 'gold']);
-type AltarAction = { a: 'open' } | { a: 'biome' | 'tpl' | 'mod'; id: string };
-const ALTAR_SEQS: { name: string; cfg: 'real' | 'syn'; save: string; live: string[] | null; actions: AltarAction[] }[] = [
-  { name: 'боевой конфиг, свежий герой', cfg: 'real', save: 'fresh', live: null, actions: [{ a: 'open' }, { a: 'biome', id: 'caves' }, { a: 'tpl', id: 'deep-expedition' }] },
-  { name: 'боевой конфиг, середина', cfg: 'real', save: 'mid', live: null, actions: [{ a: 'open' }, { a: 'biome', id: 'labyrinth' }] },
-  { name: 'боевой конфиг, запас в сумке и поясе', cfg: 'real', save: 'spare', live: null, actions: [{ a: 'open' }] },
-  { name: 'боевой конфиг, потолок гира и мастерства', cfg: 'real', save: 'capped', live: null, actions: [{ a: 'open' }] },
-  { name: 'боевой конфиг, два одноручника', cfg: 'real', save: 'dual', live: null, actions: [{ a: 'open' }] },
-  { name: 'боевой конфиг, полуторный со щитом', cfg: 'real', save: 'versatile', live: null, actions: [{ a: 'open' }] },
-  { name: 'боевой конфиг, все модификаторы «действуют»', cfg: 'real', save: 'mid', live: ['packSize', 'monsterHp', 'monsterDamage', 'gold', 'magicFind', 'playerMaxHp', 'dropBias'],
-    actions: [{ a: 'open' }, { a: 'mod', id: 'pack-swarm' }, { a: 'mod', id: 'greedy-vault' }, { a: 'mod', id: 'relic-vitality' }, { a: 'tpl', id: 'crypt-short' }, { a: 'mod', id: 'pack-swarm' }, { a: 'tpl', id: 'deep-expedition' }] },
-  { name: 'синтетика: выключенные, пустой слоган, чистка выбора', cfg: 'syn', save: 'mid', live: [...SYN_LIVE],
-    actions: [{ a: 'open' }, { a: 'mod', id: 'live-danger' }, { a: 'mod', id: 'mixed' }, { a: 'mod', id: 'live-boon' }, { a: 'tpl', id: 'tB' }, { a: 'biome', id: 'b2' }, { a: 'biome', id: 'b3' },
-      { a: 'biome', id: 'off' }, { a: 'tpl', id: 'toff' }, { a: 'mod', id: 'live-danger' }] },
-  { name: 'синтетика: прогресс открывает тиры после выключенного', cfg: 'syn', save: 'spare', live: [], actions: [{ a: 'open' }] },
-];
-function runAltar(seq: (typeof ALTAR_SEQS)[number]): unknown[] {
-  const cfg = seq.cfg === 'real' ? realAltarCfg : synAltarCfg;
-  const live = seq.live ? new Set(seq.live) : RUN_MOD_LIVE_STATS;
-  const sel: AltarSel = { mods: new Set() };
-  return seq.actions.map((act) => {
-    if (act.a === 'biome') sel.biome = act.id;
-    else if (act.a === 'tpl') sel.tpl = act.id;
-    else if (act.a === 'mod') { if (sel.mods.has(act.id)) sel.mods.delete(act.id); else sel.mods.add(act.id); }
-    return altarModel(cfg, SAVES[seq.save]!, sel, live);
-  });
-}
-/** Конфиг алтаря, как его видит Unity (`/api/config`): только читаемые окном таблицы. */
-const altarCfgJson = (cfg: ConfigRegistry): unknown => ({
-  difficulties: cfg.get('difficulties'), biomes: cfg.get('biomes'), 'run-templates': cfg.get('run-templates'), 'run-modifiers': cfg.get('run-modifiers'),
-  balance: { power: cfg.get('balance').power }, 'item-tiers': cfg.get('item-tiers'),
-});
-
-// ── 4. карта забега (runMapPanel.ts) — копия раскладки, сторожится `SRC` ──────────────────────
-const COL_W = 96, ROW_H = 66, PAD = 28, R = 16;
-const GOLD = '#dca94b';
+// ── 4. карта забега — ОБЩАЯ раскладка (`runMapLayout.runMapView`), не копия ───────────────────────
+// ⭐⭐ Г5: эталон порта Unity снимается с той самой функции, которую зовёт панель. Прежде здесь лежала копия
+// раскладки, а от расхождения сторожил список строк `SRC`: числа, которые сверяет Unity, имели два источника.
 const hex = (n: number): string => '#' + n.toString(16).padStart(6, '0');
-function runMap(plan: RunPlan | null, currentNodeId: string | null): unknown {
-  if (!plan) return { empty: 'Забег не активен — карта появится в подземелье.' };
-  const byDepth = new Map<number, RunPlan['nodes']>();
-  for (const n of plan.nodes) { const a = byDepth.get(n.depth) ?? []; a.push(n); byDepth.set(n.depth, a); }
-  for (const a of byDepth.values()) a.sort((p, q) => p.lane - q.lane);
-  const maxDepth = Math.max(...plan.nodes.map((n) => n.depth));
-  const maxCol = Math.max(...[...byDepth.values()].map((a) => a.length));
-  const width = PAD * 2 + maxDepth * COL_W;
-  const height = PAD * 2 + (maxCol - 1) * ROW_H;
-  const midY = PAD + (maxCol - 1) * ROW_H / 2;
-  const pos = new Map<string, { x: number; y: number }>();
-  for (const [depth, arr] of byDepth) arr.forEach((n, i) => pos.set(n.id, { x: PAD + depth * COL_W, y: midY + (i - (arr.length - 1) / 2) * ROW_H }));
-  const cur = plan.nodes.find((n) => n.id === currentNodeId);
-  const nextIds = new Set(cur?.edges.map((e) => e.to) ?? []);
-  const edges: unknown[] = [];
-  for (const n of plan.nodes) {
-    if (!pos.get(n.id)) continue;
-    for (const e of n.edges) {
-      if (!pos.get(e.to)) continue;
-      const hot = n.id === currentNodeId;
-      edges.push({ from: n.id, to: e.to, stroke: hot ? GOLD : '#4a4640', width: hot ? 2.5 : 1.5, opacity: hot ? 0.9 : 0.5 });
-    }
-  }
-  const nodes = plan.nodes.filter((n) => pos.get(n.id)).map((n) => {
-    const p = pos.get(n.id)!;
-    const isCur = n.id === currentNodeId, isNext = nextIds.has(n.id);
-    return {
-      id: n.id, x: p.x, y: p.y, fill: hex(RUN_NODE_COLOR[n.type as keyof typeof RUN_NODE_COLOR] ?? 0x8a8f9a), ring: isCur ? { r: R + 6, stroke: GOLD, width: 3 } : null,
-      stroke: isNext ? GOLD : '#1a1a1a', strokeWidth: isNext ? 2.5 : 1.5, fillOpacity: isCur || isNext ? 1 : 0.82,
-      label: runNodeLabel(n.type), labelY: p.y + R + 13, labelColor: isCur ? GOLD : '#c4bca8', star: n.modifiers.length > 0,
-    };
-  });
-  return { head: `Шаблон ${plan.templateId} · биом ${plan.biomeId} · тир ${plan.tier} · ${plan.nodes.length} узлов`, width, height, r: R, nodes, edges };
-}
 const mnode = (id: string, type: string, depth: number, lane: number, to: string[], mods: string[] = []): RunPlan['nodes'][number] =>
   ({ id, type, depth, lane, biomeId: 'crypt', floorSpec: {}, modifiers: mods, edges: to.map((t) => ({ to: t })) } as unknown as RunPlan['nodes'][number]);
 const SYN_MAP: RunPlan = {
-  templateId: 't<i>', biomeId: 'crypt', tier: 'normal', seed: 1, startId: 's', runModifiers: [],
+  biomeId: 'crypt', tier: 'normal', seed: 1, startId: 's', runModifiers: [],
   nodes: [
     mnode('s', 'start', 0, 0, ['a', 'b', 'c']), mnode('c', 'mystery', 1, 2, ['d']), mnode('a', 'shop', 1, 0, ['d'], ['boon-cache']), mnode('b', 'boss', 1, 1, ['d', 'ghost']),
-    mnode('d', 'combat', 2, 0, ['f']), mnode('f', 'finale', 4, 0, []), mnode('e1', 'elite', 3, 5, []), mnode('e0', 'rest', 3, 5, ['f']),
+    mnode('d', 'combat', 2, 0, ['f']), mnode('f', 'boss', 4, 0, []), mnode('e1', 'elite', 3, 5, []), mnode('e0', 'rest', 3, 5, ['f']),
   ],
 };
 const MAP_PLANS: RunPlan[] = [SYN_MAP];
-for (const t of reg.get('run-templates').filter((x) => x.enabled !== false)) for (const seed of [7, 4242]) MAP_PLANS.push(generateRunPlan(reg, defaultRunConfig(reg, t.id, seed)));
+// ⭐⭐ 13.10 (Г2): планы — ОКНОМ слоёв, и окно задаём явно: умолчание генератора (3 слоя) оставило бы эталону
+// огрызок без развилок и привалов, а глубокое окно заодно стережёт раскладку «столбцы от первого слоя».
+// ⚠ Г8-4 (15.10): шаблон стал ОДИН, и выборка планов упала с 12 до 4 — сверок RunUiCheck стало на 2440 меньше.
+// Это потеря ПОКРЫТИЯ, а не правила: возвращаем размер сидами, а не смиряемся с меньшим эталоном.
+for (const t of [{ id: 'спуск' }]) for (const seed of [7, 4242, 31337, 90210, 777, 12345, 5150, 8080, 606, 1234567, 99, 31415]) {
+  MAP_PLANS.push(generateRunPlan(reg, defaultRunConfig(reg, seed), undefined, { from: 1, to: 9 }));
+  MAP_PLANS.push(generateRunPlan(reg, defaultRunConfig(reg, seed), undefined, { from: 500, to: 504 }));
+}
 
 // ── 5. камера (render3d/cameraRig.ts) ──────────────────────────────────────────
 const CAM_BALANCES: unknown[] = [
@@ -587,24 +377,30 @@ function build(): unknown {
       }),
     },
     death: { labels: LABELS, seqs: DEATH_SEQS.map((s) => ({ name: s.name, steps: s.steps, out: runDeath(s.steps) })) },
-    altar: {
-      title: 'Алтарь забега', arena: '⚔ PvP-арена (дуэль на алтаре)', arenaNote: 'Круглый зал: спавн в разных концах, урон по друг другу, гибель без потерь.',
-      sections: { biome: 'Биом (павшая империя)', template: 'Шаблон забега', mods: 'Модификаторы', modsNote: 'Благо — только в паре с опасностью: лишние блага алтарь отбросит.', tiers: 'Сложность (тир) — жмите «Войти»' },
-      liveStats: [...RUN_MOD_LIVE_STATS],
-      cfgs: { real: altarCfgJson(realAltarCfg), syn: altarCfgJson(synAltarCfg) },
-      saves: SAVES,
-      seqs: ALTAR_SEQS.map((s) => ({ ...s, out: runAltar(s) })),
-    },
     runMap: {
-      colW: COL_W, rowH: ROW_H, pad: PAD, r: R,
+      ...MAP_GEOM,
       // План, как его читает карта: шапка и узлы (id, тип, слой, полоса, модификаторы, рёбра) — остальное карта не читает.
-      plans: MAP_PLANS.map((p) => ({ templateId: p.templateId, biomeId: p.biomeId, tier: p.tier, startId: p.startId,
+      plans: MAP_PLANS.map((p) => ({ biomeId: p.biomeId, tier: p.tier, startId: p.startId,
         nodes: p.nodes.map((n) => ({ id: n.id, type: n.type, depth: n.depth, lane: n.lane, modifiers: n.modifiers, edges: n.edges.map((e) => ({ to: e.to })) })) })),
-      legend: (['combat', 'elite', 'boss', 'treasure', 'rest', 'finale'] as const).map((t) => ({ type: t, label: runNodeLabel(t), color: hex(RUN_NODE_COLOR[t]) })),
+      // ⚠⚠ 14.10 (Г3, В6): «Финал» из легенды СНЯТ — узлов этого типа генератор не ставит с Г2 (подпись в `runLabels` жива).
+      legend: LEGEND_TYPES.map((t) => ({ type: t, label: runNodeLabel(t), color: hex(RUN_NODE_COLOR[t]) })),
+      // ⭐⭐ 14.10 (Г3, В5): «Завершить забег» живёт в этой панели (у портала второе действие недостижимо: [E] берёт ближайшее).
+      finish: {
+        label: 'Завершить забег (голосование)', variant: 'danger', act: 'finish',
+        note: 'Жать у портала привала или у точки входа. Уход в город порталом забег ПАРКУЕТ — его можно продолжить с того же узла; «Завершить» снимает забег у всей пати, и следующий спуск начнётся с выбранной на алтаре метки.',
+      },
+      // ⭐ Г5: КАЖДЫЙ СЛУЧАЙ НЕСЁТ СВОЙ ШАГ КАДЕНЦИИ. Полоса номеров помечает столбцы-привалов этой каденцией, и шапка
+      // ею же считает «до метки N эт.»: шаг — число баланса, и порт обязан брать его из конфига, а не знать наизусть.
       cases: [
-        { plan: null, current: null, out: runMap(null, null) },
+        // ⭐⭐ Г8-2: у случая СВОЙ цикл — метка считается по МЕСТУ В ПОЛОСЕ, и порт обязан брать оба числа из
+        // конфига. Набор `[шаг, цикл]`: живая пара (3, 20), прежнее правило без цикла (3, 0) и мелкий круг (2, 5).
+        // ⭐⭐ Г8-3: `places` — настройка КАК ЕСТЬ: список мест (живая схема) либо число (прежняя короткая форма
+        // «каждое место, кратное N»). Порт Unity читает оба вида одним швом (`Altar.PortalPlacesOf`), и эталон
+        // обязан держать оба: иначе совместимость со старым конфигом/оверрайдом проверять нечем.
+        { plan: null, current: null, places: 3, cycle: 20, out: runMapView(null, null, 3, 20) },
         ...MAP_PLANS.flatMap((p, k) => [p.startId, p.nodes[Math.floor(p.nodes.length / 2)]!.id, p.nodes[p.nodes.length - 1]!.id, 'ghost', null]
-          .map((cur) => ({ plan: k, current: cur, out: runMap(p, cur) }))),
+          .flatMap((cur) => ([[[3, 6, 9, 12, 15, 18, 20], 20], [3, 20], [3, 0], [2, 5]] as const)
+            .map(([places, cycle]) => ({ plan: k, current: cur, places, cycle, out: runMapView(p, cur, places, cycle) })))),
       ],
     },
     camera: CAM_BALANCES.map(camCase),
@@ -618,16 +414,15 @@ describe('unityRunUiGolden — продюсер эталона окон забе
     for (const [src, line] of SRC) expect(src.includes(line), `нет строки исходника: ${line}`).toBe(true);
   });
 
-  it('покрытие: замки тиров, модификаторы алтаря, плашка смерти, развилки карты, Tab по кругу, затухание и целые стены', () => {
+  it('покрытие: плашка смерти, развилки карты, Tab по кругу, затухание и целые стены', () => {
     const g = build() as {
-      altar: { seqs: { out: { tiers: { unlocked: boolean }[]; mods: unknown[] }[] }[] }; death: { seqs: { out: { dock: unknown }[] }[] };
+      death: { seqs: { out: { dock: unknown }[] }[] };
       runMap: { cases: { out: { nodes?: { ring: unknown }[]; edges?: { width: number }[] } }[] }; spectate: { seqs: { out: { used?: boolean }[] }[] };
       wallFade: { samples: { amt: number }[] };
     };
-    const tiers = g.altar.seqs.flatMap((s) => s.out.flatMap((o) => o.tiers));
-    expect(tiers.some((t) => t.unlocked) && tiers.some((t) => !t.unlocked)).toBe(true);
-    expect(g.altar.seqs.some((s) => s.out.some((o) => o.mods.length > 0))).toBe(true);
-    expect(g.altar.seqs[0]!.out[0]!.mods.length, 'боевой конфиг: модификаторов-действующих нет (R8-12)').toBe(0);
+    // ⚠⚠ Ф3 (16.10): ПОКРЫТИЕ ОКНА МАРШРУТА УЕХАЛО В UNITY. Замки тиров, цепь меток, скрытый ряд, боссы на
+    // звеньях и ветвление сторожит `Assets/DM/UI/Tests/PortalCheck.cs` — там живёт само окно. Здесь остаётся
+    // покрытие того, что по-прежнему общее: плашка смерти, развилки карты забега, наблюдение, затухание стен.
     expect(g.death.seqs.some((s) => s.out.some((o) => o.dock && o.dock !== 'нет вызова'))).toBe(true);
     expect(g.runMap.cases.some((c) => c.out.edges?.some((e) => e.width === 2.5))).toBe(true);
     expect(g.spectate.seqs.some((s) => s.out.some((o) => o.used))).toBe(true);

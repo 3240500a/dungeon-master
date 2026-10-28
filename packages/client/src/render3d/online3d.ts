@@ -635,7 +635,6 @@ export async function startOnline3d(): Promise<void> {
     // только тех, кто вошёл в поле зрения (`monsterInfo`). Это и трафик, и античит.
 
     if (floor.area === 'dungeon') {
-      const isFinale = (floor.exits?.length ?? 0) === 0;
       // Выходы на следующий узел (v2 развилка): лестница-меш + интерактив «Спуститься» по своему ребру графа.
       // ⭐ C-10: подпись (see-ahead на развилке) — из плана забега в миг показа: `runPlan` приходит ПОСЛЕ этого этажа.
       const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);
@@ -645,18 +644,27 @@ export async function startOnline3d(): Promise<void> {
         st.position.set(ex.x, 0, ex.y); floorGroup.add(st);
         interactables.push(exitInteract(ex, floor, i, () => app.run?.plan, (k) => descendExit(k)));
       });
-      // Декор узла: лавка / портал (rest → в город, финал → завершить забег). Меши строит env3d. Сундука аккаунта в
+      // Декор узла: лавка / портал привала (в город). Меши строит env3d. Сундука аккаунта в
       // подземелье нет (R7-11): сервер открывает его только в городе, и генератор его на этаж не ставит.
+      // ⚠⚠ 14.10 (Г3, В5): ПОДПИСИ «ЗАВЕРШИТЬ ЗАБЕГ» У ПОРТАЛА БОЛЬШЕ НЕТ. Она включалась по «нет выходов» (финал), а
+      // таких узлов генератор не ставит с Г2 — то есть она не рисовалась НИКОГДА, а завершение забега было игроку
+      // недоступно. Портал теперь всегда уход в город (он забег ПАРКУЕТ), а «Завершить забег» — кнопка панели «Карта
+      // забега» (M): просьба `finish`, которую сервер принимает у портала или точки входа (`Room.canLeave`).
       for (const d of floor.decor) {
         if (d.kind === 'shop') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => app.bus.emit('ui:open', { panel: 'shop' }) });
-        else if (d.kind === 'portal') interactables.push(isFinale
-          ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => app.net.send({ t: 'descend' }) }
-          : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });
+        else if (d.kind === 'portal') interactables.push({ x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });
       }
       // портал возврата в город у точки входа
       const back = new THREE.Mesh(new THREE.TorusGeometry(16, 4, 8, 20), new THREE.MeshStandardMaterial({ color: 0x8a5cff, emissive: 0x4a2aa0, emissiveIntensity: 0.7 }));
       back.rotation.x = Math.PI / 2; back.position.set(floor.spawn.x, 12, floor.spawn.y); floorGroup.add(back);
       interactables.push({ x: floor.spawn.x, y: floor.spawn.y, radius: 40, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });
+      // ⭐⭐ Ф4 (16.10): АЛТАРЬ НА ЭТАЖЕ-МЕТКЕ. Точку даёт СЕРВЕР (`floor.altar`) — он один знает, метка ли это, и
+      // он же проверяет кадр. Нет поля — алтаря на этаже нет, и рисовать его клиент не вправе.
+      if (floor.altar) {
+        const al = new THREE.Mesh(new THREE.CylinderGeometry(10, 13, 20, 8), new THREE.MeshStandardMaterial({ color: 0xdca94b, emissive: 0x6a4a10, emissiveIntensity: 0.5 }));
+        al.position.set(floor.altar.x, 10, floor.altar.y); floorGroup.add(al);
+        interactables.push({ x: floor.altar.x, y: floor.altar.y, radius: 42, label: 'Алтарь — настроить отрезок', run: () => app.bus.emit('ui:open', { panel: 'altar' }) });
+      }
       // двери (свои меши, чтобы убирать по doorOpened) + рычаги
       for (const door of floor.doors) {
         const parts: THREE.Object3D[] = [];
@@ -683,7 +691,10 @@ export async function startOnline3d(): Promise<void> {
         interactables.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', run: () => app.net.send({ t: 'chest', chestId: ch.id }) });
       }
       app.state!.depth = floor.depth;
-      app.state!.challengeLevel = floor.challengeLevel ?? null;   // R8-10: «вызов ур.» — как узел заселил сервер
+      // R8-10 / ⭐⭐ 13.10 (Г1): «монстры ур.» — уровень, по которому сервер заселил этаж, а его решает одна ГЛУБИНА
+      // (`floorMonsterLevel`): мощь героя в строку не входит, и «вызова ур.» больше нет — поле едет с сервера лишь потому,
+      // что источник истины по этажу — он.
+      app.state!.challengeLevel = floor.challengeLevel ?? null;
       if (floor.difficultyId) app.state!.difficultyId = floor.difficultyId;
     } else {
       app.run = null; // город — забега нет (мог остаться от завершённого/бросенного)
@@ -699,7 +710,7 @@ export async function startOnline3d(): Promise<void> {
       const pwx = (cols - 4) * TILE + TILE / 2, pwz = (rows - 4) * TILE + TILE / 2;
       const portal = new THREE.Mesh(new THREE.TorusGeometry(20, 5, 10, 24), new THREE.MeshStandardMaterial({ color: 0x8a5cff, emissive: 0x4a2aa0, emissiveIntensity: 0.8 }));
       portal.rotation.x = Math.PI / 2; portal.position.set(pwx, 16, pwz); floorGroup.add(portal);
-      interactables.push({ x: pwx, y: pwz, radius: 46, label: 'В подземелье (выбор сложности)', run: () => app.bus.emit('ui:open', { panel: 'difficulty' }) });
+      interactables.push({ x: pwx, y: pwz, radius: 46, label: 'Портал — куда лететь', run: () => app.bus.emit('ui:open', { panel: 'difficulty' }) });
       app.state!.depth = 0;
       app.state!.challengeLevel = null;
     }

@@ -45,7 +45,7 @@ vi.mock('../db/db.js', () => {
 });
 vi.mock('../db/telemetry.js', () => ({ upsertPlaySession: () => Promise.resolve(null) }));
 
-type Mon = { alive: boolean; pos: { x: number; y: number }; aiState: string; windup: unknown };
+type Mon = { alive: boolean; pos: { x: number; y: number }; aiState: string; windup: unknown; def: { minDamage: number; maxDamage: number; accuracy: number } };
 type P = { hp: number; maxHp: number; alive: boolean; pos: { x: number; y: number }; save: SaveState };
 type Info = { fled: boolean; safe?: boolean; paid: boolean; save: SaveState };
 type Drop = { id: number; item?: { uid: string } };
@@ -63,7 +63,7 @@ type RoomIn = {
   addPlayer(ws: unknown, userId: string, save: SaveState, version: number): string;
   reconnect(ws: unknown, userId: string, save: SaveState, version: number): string;
   removePlayer(pid: string): Promise<{ saved: boolean }>;
-  returnTown(pid: string): void; castVote(pid: string, yes: boolean): void; descend(pid: string): void;
+  returnTown(pid: string): void; castVote(pid: string, yes: boolean): void; descend(pid: string): void; finish(pid: string): void;
   onPlayerDeath(pid: string, touched: Set<string>): void;
   enterNode(nodeId: string): void;
   handleCmd(pid: string, command: unknown, id: unknown): Promise<void>;
@@ -176,6 +176,16 @@ function hunted(room: RoomIn, pid: string, n = 1): Mon[] {
   P(room, pid).pos = { x: at.x + dx, y: at.y + dy };
   return mons;
 }
+/**
+ * ⚠ 13.10 (Г1): ЗУБЫ ЗАГНАВШИМ — ФИКСТУРОЙ. Уровень монстра теперь = глубина, и на 1-м этаже (куда входит `descend`) это
+ * 1-й уровень: по герою они за 5 с не наносят даже его регена, и сторож «мир идёт с телом» проходил бы впустую, ничего
+ * не проверяя. Тесты (б) — про то, что МИР ИДЁТ, пока подключён живой, а не про баланс, поэтому урон и точность
+ * загнавших поднимаем прямо здесь (как было, когда уровень монстра тянулся за мощью героя). Тест (а), наоборот,
+ * сторожит ЦЕЛОСТЬ тела — ему зубы не даём.
+ */
+function biteHard(mons: Mon[]): void {
+  for (const m of mons) m.def = { ...m.def, minDamage: m.def.minDamage + 40, maxDamage: m.def.maxDamage + 60, accuracy: m.def.accuracy + 10_000 };
+}
 /** Шаги мира; живым подключённым (`keep`) — полное здоровье каждый шаг: бой идёт, пока тело «вне игры». */
 function steps(room: RoomIn, n: number, keep: string[] = []): void {
   for (let t = 0; t < n; t++) { for (const pid of keep) { const p = P(room, pid); if (p.alive) p.hp = p.maxHp; } room.step(); }
@@ -207,7 +217,7 @@ describe('⭐ R14-01: тело ушедшего посреди боя — в м�
 
   it('(б) соло: A (5 HP) в погоне закрыл вкладку последним — тело в мире; альт B вошёл по коду — бой идёт с телом: A вернулся мёртвым или ниже 5 HP', async () => {
     const { room, pa, a } = await solo();
-    hunted(room, pa, 3);
+    biteHard(hunted(room, pa, 3));
     P(room, pa).hp = 5;
     await room.removePlayer(pa);
     expect(room.lingering.size, 'тело ушедшего посреди боя — в мире и в соло').toBe(1);
@@ -226,7 +236,7 @@ describe('⭐ R14-01: тело ушедшего посреди боя — в м�
 
   it('(б) пати: B ушёл спокойно первым, A (5 HP) в погоне — последним; «Продолжить» B — бой идёт с телом A', async () => {
     const { room, pa, pb, a, b } = await coop();
-    hunted(room, pa, 3);
+    biteHard(hunted(room, pa, 3));
     P(room, pa).hp = 5;
     await room.removePlayer(pb);   // у входа, монстров на нём нет
     await room.removePlayer(pa);
@@ -336,26 +346,26 @@ describe('⭐ R14-02: пати без живых подключённых не �
     expect(room.vote).toBeNull();
   });
 
-  it('финал: A мёртв у портала, B ушёл — «завершить» мёртвого A отказано, забег не завершён', async () => {
-    const { room, pa, pb, a } = await coop();
-    room.enterNode(room.runPlan!.finaleId!);
+  it('⭐ Г3 (В5): A мёртв у входа, B ушёл — «Завершить» мёртвого A отказано, забег не завершён', async () => {
+    // ⭐⭐ 14.10 (Г3, В5): правило («завершить» мёртвым, когда живого в пати не осталось, — отказ R14-02) жило в ветке
+    // спуска `node.edges.length === 0`, а узлов без выходов генератор не ставит с Г2: сторож охранял мёртвый код.
+    // Ветка снята, забег кончает просьба `Room.finish` — и отказ там тот же, по `stranded()`. Узел обычный.
+    const { room, pa, pb, a, node } = await coop();
     room.stop();
     const w = room.session.world;
     for (const m of w.monsters) m.alive = false;
-    const portal = room.decor.find((d) => d.kind === 'portal');
-    expect(portal, 'на финале есть портал').toBeTruthy();
-    P(room, pa).pos = { x: portal!.x, y: portal!.y };
+    P(room, pa).pos = { ...w.spawn };   // мёртвый у точки входа: УЙТИ в город он может (R13-02), а закрыть забег за пати — нет
     P(room, pb).pos = { ...w.spawn };
     killA(room, pa);
     await room.removePlayer(pb);
     await settle();
     ready(room);
-    room.descend(pa);
+    room.finish(pa);
     await settle();
     expect(room.area, 'забег не завершён').toBe('dungeon');
     expect(room.runPlan).not.toBeNull();
     expect(P(room, pa).alive).toBe(false);
-    expect(a.run?.currentNodeId).toBe(room.runPlan!.finaleId);
+    expect(a.run?.currentNodeId).toBe(node);
   });
 
   it('контроль: B жив и подключён у выхода — мёртвый A зовёт спуск, B «за»: узел следующий, A ожил', async () => {

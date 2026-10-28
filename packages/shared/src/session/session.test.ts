@@ -1504,6 +1504,17 @@ describe('⚠ R5-05: удар и каст игрока не проходят с�
  * в комнате: опыт, левелапы, «Уничтожить N» и лечение за убийство уходили хозяину — простаивающему у входа или вовсе
  * мёртвому альту, — а игрок статус-билда, вошедший вторым, не получал ничего. Тот же ярлык брал шум брони хозяина.
  */
+/**
+ * ⚠⚠ 14.10 (Г6): ЧТО ЗДЕСЬ СТОРОЖИТСЯ, А ЧТО ПЕРЕСТАЛО. Правило R5-06 — про КРЕДИТ за убийство (`monster-died.by`,
+ * «Уничтожить N», лечение за убийство): добитое ядом или кровотечением принадлежит тому, кто статус повесил, а не
+ * первому в комнате и не хозяину. Оно ЦЕЛО. А вот «сосед не получает НИЧЕГО» перестало быть правдой по решению
+ * владельца: Г6 делит опыт на всех ЖИВЫХ участников, потому что до неё самой выгодной игрой было стоять в углу, пока
+ * тебя тащат по глубине. Доля — `(1 + bonus×(n−1))/n` при `partyBonusPerMember` = 0.5 (решение владельца 15.10),
+ * то есть вдвоём каждому 75 % — числа ниже 375 + 375 из 500, а не 500 + 0. ⚠ Сумма БОЛЬШЕ опыта монстра намеренно:
+ * надбавку за размер пати оплачивает жизнь монстра (+50 % за игрока, `balance.coop`) — вместе они держат опыт в
+ * секунду ровно соло (замер в `formulas/xpShare.test.ts`). Кредит за убийство тот же. Мёртвому и ушедшему доля НЕ
+ * идёт — это сторожится по-прежнему.
+ */
 describe('⚠ R5-06: добитое статусом — тому, кто статус повесил', () => {
   /** Хозяин (вошёл первым) и основной герой-маг с проклятием яда; монстр на 500 опыта у основного. */
   function coop(seed: number) {
@@ -1536,17 +1547,21 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
   const xpTo = (evs: SessionEvent[], id: string): number => evs.filter((e) => e.type === 'xp' && e.playerId === id).reduce((a, e) => a + (e as { amount: number }).amount, 0);
 
   for (const hostDead of [true, false]) {
-    it(`⭐ яд проклятия второго героя добил монстра — убийство и опыт его; хозяин (${hostDead ? 'мёртв' : 'жив, стоит у входа'}) не получает ничего`, () => {
+    it(`⭐ яд проклятия второго героя добил монстра — УБИЙСТВО его; опыт делится на живых, хозяин (${hostDead ? 'мёртв' : 'жив, стоит у входа'})`, () => {
       const { s, host, main, m } = coop(hostDead ? 110 : 111);
       if (hostDead) { host.alive = false; host.hp = 0; }
       const evs = untilDead(s, main, m, { ...idle, cast: 'b-curse-a4' });
       expect(m.alive, 'яд добил').toBe(false);
       expect(evs.some((e) => e.type === 'hit' && e.target === 'monster'), 'прямого удара не было — только яд').toBe(false);
-      expect(died(evs)?.by).toBe('main');
-      expect(xpTo(evs, 'main')).toBe(500);
-      expect(xpTo(evs, 'host')).toBe(0);
-      expect(host.save.xp).toBe(0);
-      expect(main.save.xp).toBe(500);
+      expect(died(evs)?.by, 'кредит за убийство — повесившему статус (R5-06, правило цело)').toBe('main');
+      // ⭐⭐ Г6: мёртвый хозяин — доли НЕТ (всё добившему, он один живой); живой стоит хоть у входа — доля его, 250 + 250.
+      const want = hostDead ? { main: 500, host: 0 } : { main: 375, host: 375 };
+      expect(xpTo(evs, 'main')).toBe(want.main);
+      expect(xpTo(evs, 'host')).toBe(want.host);
+      expect(host.save.xp).toBe(want.host);
+      expect(main.save.xp).toBe(want.main);
+      // ⚠ Вдвоём сумма 750 из 500 — надбавка за размер пати (её платит жизнь монстра, `balance.coop`); соло — ровно 500.
+      expect(xpTo(evs, 'main') + xpTo(evs, 'host'), 'сумма — опыт монстра с надбавкой пати').toBe(hostDead ? 500 : 750);
     });
   }
 
@@ -1571,9 +1586,10 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
     m.hp = 0.01;                                        // следующий тик кровотечения добивает
     const evs = s.tick(1 / 30, { host: idle, main: idle });
     expect(m.alive).toBe(false);
-    expect(died(evs)?.by).toBe('main');
-    expect(xpTo(evs, 'main')).toBe(500);
-    expect(host.save.xp).toBe(0);
+    expect(died(evs)?.by, 'кредит — ударившему').toBe('main');
+    // ⭐⭐ Г6: оба живы — по 375 (75 % каждому); правило здесь про КРЕДИТ, а не про сумму (см. шапку describe).
+    expect(xpTo(evs, 'main')).toBe(375);
+    expect(host.save.xp, 'сосед получает СВОЮ ДОЛЮ, а не кредит').toBe(375);
   });
 
   it('повесивший ушёл из комнаты — добитое статусом не засчитывается никому (и не первому в комнате)', () => {
@@ -1625,7 +1641,9 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
     const here = run(false), gone = run(true);
     expect(here.m.alive).toBe(false);
     expect(died(here.evs)?.by).toBe('main');
-    expect(xpTo(here.evs, 'main')).toBe(500);
+    // ⭐⭐ Г6: оба живы — по 375; «ушёл» ниже по-прежнему значит «опыта никому».
+    expect(xpTo(here.evs, 'main')).toBe(375);
+    expect(xpTo(here.evs, 'host')).toBe(375);
     expect(here.drops.length, 'при хозяине — золото, сырьё, колба, вещь').toBeGreaterThanOrEqual(3);
 
     expect(gone.m.alive).toBe(false);
@@ -1656,10 +1674,11 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
       const evs = untilDead(s, back, m, idle, ['host', 'main-2']);
       expect(m.alive).toBe(false);
       expect(died(evs)?.by, 'было: undefined — смерть без наград').toBe('main-2');
-      expect(xpTo(evs, 'main-2')).toBe(500);
-      expect(save.xp).toBe(500);
-      expect(xpTo(evs, 'host'), 'соседу — ничего').toBe(0);
-      expect(host.save.xp).toBe(0);
+      // ⭐⭐ Г6: вернувшийся — тот же герой, и доля его; хозяин жив, значит доля есть и у него (375 + 375).
+      expect(xpTo(evs, 'main-2')).toBe(375);
+      expect(save.xp).toBe(375);
+      expect(xpTo(evs, 'host'), 'соседу — СВОЯ ДОЛЯ (Г6), но не кредит').toBe(375);
+      expect(host.save.xp).toBe(375);
     });
   }
 
@@ -1667,8 +1686,9 @@ describe('⚠ R5-06: добитое статусом — тому, кто ста
     const { s, host, main, m } = coop(117);
     host.save.charId = main.save.charId;               // как у ботов сима: charId один на всех
     const evs = untilDead(s, main, m, { ...idle, cast: 'b-curse-a4' });
-    expect(died(evs)?.by).toBe('main');
-    expect(host.save.xp).toBe(0);
+    expect(died(evs)?.by, 'решает id, а не совпавший charId').toBe('main');
+    // ⭐⭐ Г6: по опыту их теперь НЕ различить (оба живы — по 375), поэтому кредит сторожится `by`, а не суммой.
+    expect([xpTo(evs, 'main'), xpTo(evs, 'host')]).toEqual([375, 375]);
   });
 
   it('⭐ шум брони — у ЦЕЛИ монстра, а не у первого в комнате: латник-хозяин вдали не делает тихого соседа слышным', () => {

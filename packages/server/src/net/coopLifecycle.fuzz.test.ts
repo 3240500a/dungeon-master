@@ -3,7 +3,7 @@ import { appendFileSync } from 'node:fs';
 import type { GameConn } from './conn.js';
 import {
   ConfigRegistry, newCharacterSave, generateItem, itemFromBaseId, createRng, playerSnapshot, packInventory, findFree, stashDims,
-  isWalkableWorld, hasLineOfSight, isDifficultyUnlocked, Cell, TILE,
+  isWalkableWorld, hasLineOfSight, isDifficultyUnlocked, waypointStart, nextWaypointAfter, runNodeDepth, Cell, TILE,
   type ServerFrame, type SaveState, type Item, type RunConfig, type RunPlan, type RunNodeState, type PlayerInput, type Grid, type AccountStash,
 } from '@dm/shared';
 import { counters } from './metrics.js';
@@ -65,7 +65,11 @@ import { fuzzRng, mixSeed, shrinkOps, type FuzzRng } from './coopLifecycle.fuzzK
  *      того как она легла, ни одна запись этой сессии не ложится (`7-write-after-farewell`; медленные записи — сбой `slow` и операция
  *      `dropLeave` «выброс в пути, автосейв ждёт, второй выброс за ним, обрыв посреди боя» — из своего потока `lag`);
  *  8 — прогресс забега: глубина сложности и указатель — только достигнутые узлы, не назад; записи узла (сундуки, убитые) не теряются
- *      на входе в узел и одно не берётся дважды; ⭐ C-12: новый забег — в тире, открытом хоть одному из подключённых (`8-tier-locked-start`;
+ *      на входе в узел и одно не берётся дважды; ⭐⭐ 14.10 (Г3, правка 7) ИНВАРИАНТ ГЛУБИНЫ — две метки, ловящие
+ *      ОБХОД ЗАЖИМА ПОРЯДКОМ ДЕЙСТВИЙ: `8-start-depth-unearned` — глубина узла на момент НАЧАЛА забега не глубже
+ *      самой глубокой метки, открытой У КАЖДОГО из `clients` (`waypointStart` без ограничения сверху); `8-progress-leap` —
+ *      прогресс любого героя за ОДИН вход в узел растёт не больше чем на `waypointStep`;
+ *      ⭐ C-12: новый забег — в тире, открытом хоть одному из подключённых (`8-tier-locked-start`;
  *      ветераны — операция `veteran`, тир спуска — поле `diff`: оба — из своего потока чисел, основной поток операций они не сдвигают);
  *      ⭐ R18-02: и когда запись СВОДА падает, а записи героев идут (сбой `ledgerDown`, из своего потока): «Продолжить» не собирает узел по базе
  *      без записей, ждущих повтора в комнате (и в ушедшей), — «занято» или узел со взятым; ⭐ R19-05: и комната не на тике (пауза грейса, ушла) не
@@ -494,7 +498,8 @@ type Op =
   | { k: 'kill'; h: number; body: boolean }
   | { k: 'potion'; h: number; belt: boolean; r: number }
   | { k: 'attack'; h: number; r: number; weaken: boolean }
-  | { k: 'descend'; h: number; r: number; others: Others; near: boolean; pause?: boolean; diff?: number }
+  // ⭐ 14.10 (Г3, правка 7): `depth` — стартовая метка в кадре `descend` из города (нет — кадр без поля, как старые клиенты).
+  | { k: 'descend'; h: number; r: number; others: Others; near: boolean; pause?: boolean; diff?: number; depth?: number }
   | { k: 'town'; h: number; others: Others; near: boolean; pause?: boolean }
   | { k: 'arena'; h: number; others: Others; pause?: boolean }
   | { k: 'vote'; h: number; yes: boolean }
@@ -1238,8 +1243,10 @@ function noteFrame(w: W, c: FakeConn, f: ServerFrame): void {
     if (room && f.t === 'voteEnd' && f.passed) w.soloHints.delete(room);
   }
   // 9 (R16-04): ОКНО ГОЛОСОВАНИЯ ≡ ИСХОД. Окно напарника — текст кадра `voteStart` (`client/ui/voteText.ts`): спуск в подземелье обязан
-  // сказать, куда ведёт (финал — `finish`, ребро — узел и его тип), а принятое голосование — вести ровно туда. Раньше кадр финала был
-  // без `finish`: окно звало «Спуск на след. этаж?», а принявший уходил в город (и лежавшее на полу финала пропадало).
+  // сказать, куда ведёт (завершение забега — `finish`, ребро — узел и его тип), а принятое голосование — вести ровно туда. Раньше кадр
+  // финала был без `finish`: окно звало «Спуск на след. этаж?», а принявший уходил в город (и лежавшее на полу пропадало).
+  // ⚠⚠ 13.10 (Г2, Р3/Р7): ветка `finish` сегодня НЕДОСТИЖИМА — узла без выходов генератор не ставит (спуск бесконечен); живёт ветка
+  // ребра, её и стерегут зубы ниже. Вернёт `finish` фаза Г3 (портал метки-привала).
   if (f.t === 'voteStart') {
     const room = c.roomCode ? rmOf(w).rooms.get(c.roomCode) : undefined;
     c.vote = { f, area: room?.area ?? '?', passed: false };
@@ -1672,13 +1679,18 @@ async function advanceRun(w: W, h: Hero, partner: 'yes' | 'idle'): Promise<void>
   const left = (): boolean => !mine(room) || room.runNodeId !== node0;
   const node = room.runPlan?.nodes.find((n) => n.id === node0);
   if (!node) { tally('advance:no-node'); return; }
-  const fin = node.edges.length === 0;
-  const gate = fin ? portals(room)[0] : room.session.world.exits?.[0];
+  // ⚠ 14.10 (Г3, правка 7): ВЕТКА «УЗЕЛ БЕЗ ВЫХОДОВ → `descend` У ПОРТАЛА» СНЕСЕНА — это было НЕДОСТИЖИМОЕ
+  // вождение: с Г2 спуск бесконечен, и узлов без рёбер генератор не ставит НИ НА КАКОЙ глубине (рёбра
+  // последнего слоя окна смотрят за его край, `generateRunPlan`), а завершает забег теперь явный кадр `finish`
+  // (Г3/В5). Ассертов здесь не было — только вождение, поэтому снос ничего не ослабляет. Узел без рёбер
+  // остался СТОРОЖЕВЫМ (счётчик `advance:no-edges` обязан быть нулём), а не движущей веткой.
+  if (!node.edges.length) { tally('advance:no-edges'); return; }
+  const gate = room.session.world.exits?.[0];
   if (!gate) { tally('advance:no-gate'); return; }
   place(at.p, gate);
   const open = room.vote;
   if (open?.kind === 'descend' && !open.yes.has(at.pid)) send(w, h, { t: 'vote', accept: true });
-  else if (!open) send(w, h, fin ? { t: 'descend' } : { t: 'descend', targetNodeId: node.edges[0]!.to });
+  else if (!open) send(w, h, { t: 'descend', targetNodeId: node.edges[0]!.to });
   await drain(3);
   if (left()) { tally('advance:ok:now'); return; }
   const v = room.vote;
@@ -1930,21 +1942,25 @@ async function exec(w: W, op: Op): Promise<void> {
       const room = at.room;
       let near: Pt | undefined;
       // ⭐ C-12: тир — по выбору (у ветерана — открытый ему; у прочих сервер откатит к открытому).
-      if (room.area === 'town') send(w, h, op.diff !== undefined ? { t: 'descend', difficultyId: tierIds()[op.diff % tierIds().length] } : { t: 'descend' });
-      else if (room.area === 'dungeon') {
+      // ⭐ 14.10 (Г3, правка 7): из города кадр несёт СТАРТОВУЮ МЕТКУ (`op.depth`) — без неё фаззер вообще не ходил
+      // глубже 1-го этажа, и инвариант глубины был бы таким же недостижимым кодом, как снесённые выше ветки.
+      // Подложенное 1e9 в пуле — замер зажима, а не ожидание отказа: старт обязан свестись к разрешённому по сейвам.
+      if (room.area === 'town') {
+        send(w, h, {
+          t: 'descend',
+          ...(op.diff !== undefined ? { difficultyId: tierIds()[op.diff % tierIds().length] } : {}),
+          ...(op.depth !== undefined ? { startDepth: op.depth } : {}),
+        });
+      } else if (room.area === 'dungeon') {
         const node = room.runPlan?.nodes.find((n) => n.id === room.runNodeId);
-        if (!node) return;
-        if (node.edges.length === 0) {
-          near = portals(room)[0];
-          if (near && at.p.alive) place(at.p, near);
-          send(w, h, { t: 'descend' });
-        } else {
-          const i = Math.floor(op.r * node.edges.length) % node.edges.length;
-          const ex = room.session.world.exits?.[i];
-          if (ex && at.p.alive) place(at.p, ex);
-          near = ex;
-          send(w, h, { t: 'descend', targetNodeId: node.edges[i]!.to });
-        }
+        // ⚠ 14.10 (Г3, правка 7): ветка «узел без выходов → `descend` у портала» снесена: с Г2 таких узлов
+        // генератор не ставит ни на какой глубине, и вождение было недостижимым (см. `advanceRun`).
+        if (!node?.edges.length) return;
+        const i = Math.floor(op.r * node.edges.length) % node.edges.length;
+        const ex = room.session.world.exits?.[i];
+        if (ex && at.p.alive) place(at.p, ex);
+        near = ex;
+        send(w, h, { t: 'descend', targetNodeId: node.edges[i]!.to });
       } else return;
       await drain();
       othersVote(w, room, h, op.others, op.near ? near : undefined);
@@ -2254,8 +2270,11 @@ function genOp(w: W, rng: FuzzRng): Op {
     [dun.length ? 5 : 0, () => ({ k: 'attack', h: pickFrom(dun), r: rng.next(), weaken: rng.chance(0.6) })],
     [9 * L, () => {
       const op: Op = { k: 'descend', h: pickFrom(live), r: rng.next(), others: rng.pick(['yes', 'yes', 'yes', 'none', 'no'] as const), near: rng.chance(0.5), pause: rng.chance(0.7) };
+      // ⭐ 14.10 (Г3, правка 7): стартовая метка — часть операции (сжатие её видит и повторяет). 3/18 — в пределах
+      // рекордов, которые ставит операция `veteran` (5/10/12/20), 60 и 1e9 — заведомо глубже любого из них.
       const d = diff();
-      return d === undefined ? op : { ...op, diff: d };
+      const dep = rng.chance(0.4) ? rng.pick([3, 18, 60, 1e9]) : undefined;
+      return { ...op, ...(d === undefined ? {} : { diff: d }), ...(dep === undefined ? {} : { depth: dep }) };
     }],
     [dun.length || arena.length ? 5 : 0, () => ({ k: 'town', h: pickFrom([...dun, ...arena]), others: rng.pick(['yes', 'yes', 'none', 'no'] as const), near: rng.chance(0.7), pause: rng.chance(0.7) })],
     [town.length ? 1.5 : 0, () => ({ k: 'arena', h: pickFrom(town), others: rng.pick(['yes', 'yes', 'none'] as const), pause: rng.chance(0.7) })],
@@ -2798,18 +2817,66 @@ beforeAll(async () => {
   // Зубы R18-02 (`teeth.r1802`): недолёгший свод комнат процесса не виден ни входу, ни отдаче забега (`owes` — ложь).
   around(proto, 'owes', (_self, _a, call) => (teeth.r1802 ? false : call()));
   // 8 (C-12): НОВЫЙ ЗАБЕГ — В ТИРЕ, ОТКРЫТОМ ХОТЬ ОДНОМУ ИЗ ПОДКЛЮЧЁННЫХ (ветеран несёт пати в свой тир, R9-08; без него — нельзя).
+  // ⭐⭐ 14.10 (Г3, правка 7): ЗДЕСЬ ЖЕ — ГЛУБИНА СТАРТА (`8-start-depth-unearned`). Мерится ПОСЛЕ вызова,
+  // по ФАКТИЧЕСКОМУ узлу комнаты, а не по аргументу: аргумент проверял бы сам себя, а спрос — «где пати
+  // ОКАЗАЛАСЬ». Разрешение — самая глубокая метка, открытая У КАЖДОГО из `clients` (тот же шов, что у сервера:
+  // `waypointStart`), без ограничения сверху — просить МЕЛЬЧЕ разрешённого не нарушение («без ограничения»
+  // — это `MAX_SAFE_INTEGER`, а НЕ `Infinity`: у `waypointStart` нечисло значит «границы нет» → вход 1, и инвариант врал бы).
   around(proto, 'startRun', (self, _a, call) => {
     const room = self as RoomIn;
     const w = cur;
+    const heroes0 = w?.born.has(room)
+      ? [...room.clients.keys()].map((pid) => room.session.world.players[pid]?.save).filter((s): s is SaveState => !!s)
+      : [];
     if (w?.born.has(room)) {
       const ds = cfg.get('difficulties');
       const i = ds.findIndex((d) => d.id === room.difficultyId);
-      const heroes = [...room.clients.keys()].map((pid) => room.session.world.players[pid]?.save).filter((s): s is SaveState => !!s);
+      const heroes = heroes0;
       if (!heroes.some((s) => isDifficultyUnlocked(ds, i, s.difficultyProgress ?? {}))) {
         violate(w, '8-tier-locked-start', `комната ${room.code} начала забег в тире «${room.difficultyId}», закрытом всем подключённым (${heroes.map((s) => `${s.charId} ${JSON.stringify(s.difficultyProgress ?? {})}`).join('; ')}); операция ${opText(w)}`);
       }
     }
-    return call();
+    const tier = room.difficultyId;
+    // ⚠⚠ СНИМОК РЕКОРДОВ ДО ВЫЗОВА. `heroes0` — живые сейвы, а `startRun` сам зовёт `enterNode`, который ПИШЕТ рекорд:
+    // считай разрешение после вызова — и оно бралось бы из УЖЕ ВЫРОСШЕГО числа, то есть старт сам себя разрешал (замер: вход
+    // на глубине 1 с пустым рекордом даёт запись 1 ДО замера). Копия самого словаря, а не ссылка на него.
+    const prog0 = heroes0.map((s) => ({ charId: s.charId, prog: { ...(s.difficultyProgress ?? {}) } }));
+    const r = call();
+    if (w && w === cur && w.born.has(room)) {
+      const step = cfg.get('balance').dungeonAccess.portalsAt;   // ⭐ Г8-3: места порталов полосы
+      const allow = waypointStart(prog0.map((h) => h.prog), tier, step, 0, Number.MAX_SAFE_INTEGER);
+      const got = runNodeDepth(room.runNodeId ?? undefined);
+      if (got > allow) {
+        violate(w, '8-start-depth-unearned', `комната ${room.code} начала забег тира «${tier}» с глубины ${got}, а по рекордам пати разрешено ${allow} (шаг ${step}; ${prog0.map((h) => `${h.charId} ${JSON.stringify(h.prog)}`).join('; ') || 'никого'}); операция ${opText(w)}`);
+      }
+    }
+    return r;
+  });
+  // ⭐⭐ 14.10 (Г3, правка 7): ПРОГРЕСС ЗА ОДИН ВХОД — НЕ БОЛЬШЕ ШАГА МЕТКИ (`8-progress-leap`). Мерится ИМЕННО
+  // вокруг `enterNode`, а не между проверками инвариантов: одна операция иногда даёт два входа (продолжение +
+  // спуск), и проверка «за операцию» врала бы на честном прогоне. Это тот самый швов (`Room.enterNode`), через
+  // который пишут прогресс И вход по коду, И продолжение чужого забега, — то есть одна метка на оба обхода.
+  around(proto, 'enterNode', (self, _a, call) => {
+    const room = self as RoomIn;
+    const w = cur;
+    const tier = room.difficultyId;
+    const was = w?.born.has(room)
+      ? [...room.clients.keys()].map((pid) => room.session.world.players[pid]?.save).filter((s): s is SaveState => !!s)
+        .map((s) => ({ s, d: s.difficultyProgress?.[tier] ?? 0 }))
+      : [];
+    const r = call();
+    if (w && w === cur) {
+      // ⭐⭐ Г8-3: потолок прибавки — СЛЕДУЮЩАЯ МЕТКА (места порталов стоят неровно), тем же швом, что у сервера.
+      const access = cfg.get('balance').dungeonAccess;
+      for (const { s, d } of was) {
+        const now = s.difficultyProgress?.[tier] ?? 0;
+        const cap = nextWaypointAfter(d, access.portalsAt, access.contentCycle);
+        if (now > cap) {
+          violate(w, '8-progress-leap', `${s.charId}: прогресс «${tier}» за ОДИН вход вырос ${d} → ${now} (потолок прибавки — метка ${cap}; комната ${room.code}, узел ${String(room.runNodeId)}); операция ${opText(w)}`, heroBy(w, s.charId));
+        }
+      }
+    }
+    return r;
   });
   // ⭐ САМОПРОВЕРКА (`DM_FUZZ_SELFTEST`): вернуть исправленный корень подменой метода — фаззер обязан его найти (зелёный прогон без неё
   // значит «корня нет», а не «проверки ослепли»). `v1` — снятый записью в подземелье не ждёт реконнекта и смерть не метится в сейве;
@@ -3571,10 +3638,14 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
       expect((await replay(94110, teeth)).map((v) => v.inv)).toContain('3-double-penalty');
     } finally { paid.mockRestore(); }
   });
-  // ⭐ R16-04: кадр голосования финала без `finish` (подмена `voteStartFrame` — как до правки): окно напарника звало «спуском», а принятое
-  // голосование уводит в город — `9-vote-misleads` (и `9-vote-blind`). Без подмены — повтор чистый. Последовательность сжата фаззером
-  // (`DM_FUZZ_SELFTEST=r1604`, сид 25 основного прогона).
-  it('самопроверка R16-04: голосование финала, не сказавшее «завершить забег», — ловится', async () => {
+  // ⭐ R16-04: окно голосования, назвавшее НЕ ТОТ узел (подмена `voteStartFrame`), — `9-vote-misleads`. Без подмены — повтор чистый.
+  // Последовательность сжата фаззером (`DM_FUZZ_SELFTEST=r1604`, сид 25 основного прогона).
+  //
+  // ⚠⚠ 13.10 (Г2, Р3/Р7): ПРЕЖНИЕ ЗУБЫ БЫЛИ ПРО ФИНАЛ — кадр финала без `finish` (как до правки R16-04): окно звало «спуском», а принявший
+  // уходил в город. Финала генератор больше не ставит (спуск бесконечен, выходы есть у каждого узла), и до такого голосования сценарий
+  // дойти не может ВООБЩЕ — зубы молча перестали кусаться. Теперь подменяется ТИП ЦЕЛИ обычного спуска: инвариант тот же («окно ≡ исход»),
+  // и его ветка, достижимая сегодня, проверена по-настоящему. Ветку `finish` вернёт фаза Г3 вместе с порталом метки.
+  it('самопроверка R16-04: голосование, назвавшее не тот узел, — ловится', async () => {
     const r1604: Op[] = [
       { k: 'join', h: 1, mode: 'friend', r: 0.6766128141898662, reuse: false },
       { k: 'recruit' },
@@ -3588,11 +3659,11 @@ describe('⭐ B1: фаззер жизненного цикла коопа (RoomM
       { k: 'descend', h: 0, r: 0.10129569005221128, others: 'yes', near: false, pause: true },
     ];
     expect((await replay(25, r1604)).map((v) => v.inv), 'без подмены — чисто').toEqual([]);
-    const roomProto = (await import('./room.js')).Room.prototype as unknown as { voteStartFrame(v: unknown): { finish?: true } };
+    const roomProto = (await import('./room.js')).Room.prototype as unknown as { voteStartFrame(v: unknown): { targetNodeType?: string } };
     const real = roomProto.voteStartFrame;
     const blind = vi.spyOn(roomProto, 'voteStartFrame').mockImplementation(function (this: unknown, v: unknown) {
       const f = real.call(this, v);
-      delete f.finish;
+      if (f.targetNodeType !== undefined) f.targetNodeType = 'подмена';   // узел назван, но не тот — `9-vote-blind` молчит
       return f;
     });
     try {

@@ -31,13 +31,13 @@ const GAMELOG = readFileSync(join(HERE, '../../ui/gameLog.ts'), 'utf8');
  */
 const SRC: [string, string][] = [
   // buildArea: выходы, декор узла, возврат у входа, рычаги, сундуки, город
-  [ONLINE3D, 'const isFinale = (floor.exits?.length ?? 0) === 0;'],
   [ONLINE3D, 'const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);'],
   [ONLINE3D, 'interactables.push(exitInteract(ex, floor, i, () => app.run?.plan, (k) => descendExit(k)));'],
   [ONLINE3D, "if (d.kind === 'shop') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => app.bus.emit('ui:open', { panel: 'shop' }) });"],
-  [ONLINE3D, "else if (d.kind === 'portal') interactables.push(isFinale"],
-  [ONLINE3D, "? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => app.net.send({ t: 'descend' }) }"],
-  [ONLINE3D, ": { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });"],
+  // ⚠⚠ 14.10 (Г3, В5): ПОДПИСИ «ЗАВЕРШИТЬ ЗАБЕГ» У ПОРТАЛА БОЛЬШЕ НЕТ. Она включалась по «нет выходов» (финал), а таких
+  // узлов генератор не ставит с Г2 — то есть не рисовалась НИКОГДА. Портал узла всегда уход в город (он забег ПАРКУЕТ),
+  // а «Завершить забег» — кнопка панели «Карта забега» (эталон `unity_run_ui.json`, раздел `runMap.finish`).
+  [ONLINE3D, "else if (d.kind === 'portal') interactables.push({ x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });"],
   [ONLINE3D, "interactables.push({ x: floor.spawn.x, y: floor.spawn.y, radius: 40, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });"],
   [ONLINE3D, "interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });"],
   [ONLINE3D, 'if (ch.opened) continue;'],   // ⭐ 13.10: открытый (`opened: true`, вход посреди этажа / продолжение узла) — без [E]
@@ -46,7 +46,7 @@ const SRC: [string, string][] = [
   [ONLINE3D, 'const wx = n.cx * TILE + TILE / 2, wz = n.cy * TILE + TILE / 2;'],
   [ONLINE3D, "interactables.push({ x: wx, y: wz, radius: 42, label: n.label, run: () => app.bus.emit('ui:open', { panel: n.panel }) });"],
   [ONLINE3D, 'const pwx = (cols - 4) * TILE + TILE / 2, pwz = (rows - 4) * TILE + TILE / 2;'],
-  [ONLINE3D, "interactables.push({ x: pwx, y: pwz, radius: 46, label: 'В подземелье (выбор сложности)', run: () => app.bus.emit('ui:open', { panel: 'difficulty' }) });"],
+  [ONLINE3D, "interactables.push({ x: pwx, y: pwz, radius: 46, label: 'Портал — куда лететь', run: () => app.bus.emit('ui:open', { panel: 'difficulty' }) });"],
   // спуск по ребру, открытие двери и сундука
   [ONLINE3D, 'const cur = run?.plan.nodes.find((n) => n.id === run.currentNodeId);'],
   [ONLINE3D, "app.net.send({ t: 'descend', targetNodeId: cur?.edges[i]?.to });"],
@@ -94,7 +94,6 @@ interface Act { x: number; y: number; radius: number; label: string; act: string
 function areaActs(floor: FloorInit, plan: RunPlan | undefined, currentNodeId: string | undefined): Act[] {
   const out: Act[] = [];
   if (floor.area === 'dungeon') {
-    const isFinale = (floor.exits?.length ?? 0) === 0;
     const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);
     exits.forEach((ex, i) => {
       let target: string | null | undefined;
@@ -107,11 +106,11 @@ function areaActs(floor: FloorInit, plan: RunPlan | undefined, currentNodeId: st
     });
     for (const d of floor.decor) {
       if (d.kind === 'shop') out.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', act: 'panel', panel: 'shop' });
-      else if (d.kind === 'portal') out.push(isFinale
-        ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', act: 'descend' }
-        : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', act: 'return' });
+      else if (d.kind === 'portal') out.push({ x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', act: 'return' });
     }
     out.push({ x: floor.spawn.x, y: floor.spawn.y, radius: 40, label: 'Вернуться в город (голосование)', act: 'return' });
+    // ⭐⭐ Ф4 (16.10): алтарь на этаже-метке — точку даёт сервер полем `altar`; нет поля — интерактива нет.
+    if (floor.altar) out.push({ x: floor.altar.x, y: floor.altar.y, radius: 42, label: 'Алтарь — настроить отрезок', act: 'panel', panel: 'altar' });
     for (const lv of floor.levers) out.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', act: 'lever', id: lv.id, doorId: lv.doorId });
     for (const ch of floor.chests) if (!ch.opened) out.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', act: 'chest', id: ch.id });
   } else {
@@ -121,7 +120,7 @@ function areaActs(floor: FloorInit, plan: RunPlan | undefined, currentNodeId: st
     }
     const rows = floor.grid.length, cols = floor.grid[0]!.length;
     const pwx = (cols - 4) * TILE + TILE / 2, pwz = (rows - 4) * TILE + TILE / 2;
-    out.push({ x: pwx, y: pwz, radius: 46, label: 'В подземелье (выбор сложности)', act: 'panel', panel: 'difficulty' });
+    out.push({ x: pwx, y: pwz, radius: 46, label: 'Портал — куда лететь', act: 'panel', panel: 'difficulty' });
   }
   return out;
 }
@@ -170,13 +169,16 @@ const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })()
 const slim = (p: RunPlan): unknown => ({ startId: p.startId, nodes: p.nodes.map((n) => ({ id: n.id, type: n.type, edges: n.edges.map((e) => ({ to: e.to })) })) });
 const node = (id: string, type: string, to: string[]): RunPlan['nodes'][number] => ({ id, type, depth: 0, lane: 0, biomeId: 'crypt', floorSpec: {}, modifiers: [], edges: to.map((t) => ({ to: t })) } as unknown as RunPlan['nodes'][number]);
 const SYNTH: RunPlan = {
-  templateId: 't', biomeId: 'crypt', tier: 'normal', seed: 1, startId: 'start', runModifiers: [],
-  nodes: [node('start', 'start', ['n1_0', 'n1_1', 'n1_2']), node('n1_0', 'shop', ['n2_0']), node('n1_1', 'boss', ['n2_0']), node('n1_2', 'mystery', ['n2_0']),
-    node('n2_0', 'combat', ['n3_0', 'ghost']), node('n3_0', 'finale', [])],
+  biomeId: 'crypt', tier: 'normal', seed: 1, startId: 'start', runModifiers: [],
+  nodes: [node('start', 'start', ['n1_0', 'n1_1', 'n1_2']), node('n1_0', 'treasure', ['n2_0']), node('n1_1', 'boss', ['n2_0']), node('n1_2', 'mystery', ['n2_0']),
+    node('n2_0', 'combat', ['n3_0', 'ghost']), node('n3_0', 'boss', [])],
 };
 const PLANS: RunPlan[] = [SYNTH];
-for (const t of reg.get('run-templates').filter((x) => x.enabled !== false)) {
-  for (const seed of [7, 4242]) PLANS.push(generateRunPlan(reg, defaultRunConfig(reg, t.id, seed)));
+for (const t of [{ id: 'спуск' }]) {   // ⚠ Ф1: забег один — форма живёт в балансе
+  // ⭐⭐ 13.10 (Г2): план — ОКНО слоёв; окно задаём явно (умолчание в 3 слоя оставило бы эталону огрызок без развилок).
+  // ⚠ Г8-4 (15.10): шаблон забега стал ОДИН, и выборка эталона просела втрое (88 выходов против 100+).
+  // Порог покрытия НЕ снижаем — возвращаем размер выборки сидами.
+  for (const seed of [7, 4242, 31337, 90210, 777, 12345]) PLANS.push(generateRunPlan(reg, defaultRunConfig(reg, seed), undefined, { from: 1, to: 9 }));
 }
 
 /** Этаж для `areaActs` (поля, которых интерактивы не читают, — пустые). */
@@ -197,6 +199,10 @@ const AREAS: { name: string; floor: FloorInit; plan?: number; current?: string }
   { name: 'один выход на узле-развилке (подпись — тип первого ребра)', plan: 0, current: 'n2_0', floor: dungeon({ runNodeId: 'n2_0', exits: [{ x: 400, y: 600 }] }) },
   { name: 'выход на ребро, которого нет в графе', plan: 0, current: 'n2_0', floor: dungeon({ runNodeId: 'n2_0', exits: [{ x: 400, y: 600 }, { x: 440, y: 600 }, { x: 480, y: 600 }] }) },
   { name: 'плана ещё нет (кадр runPlan позже этажа)', floor: dungeon({ runNodeId: 'start', exits: [{ x: 400, y: 600 }, { x: 448, y: 600 }] }) },
+  // ⭐⭐ Ф4 (16.10): ЭТАЖ-МЕТКА — сервер прислал точку алтаря; рядом портал возврата, чтобы покрыть спор [E] двух
+  // интерактивов в одной области (алтарь в двух клетках от спавна).
+  { name: 'этаж-метка: алтарь отрезка рядом с порталом возврата', plan: 0, current: 'n1_0',
+    floor: dungeon({ runNodeId: 'n1_0', exits: [{ x: 400, y: 600 }], altar: { x: 144, y: 80 }, decor: [{ x: 300, y: 300, kind: 'portal' }] }) },
   { name: 'финал: выходов нет — портал завершает забег', plan: 0, current: 'n3_0', floor: dungeon({ runNodeId: 'n3_0', exits: [], decor: [{ x: 300, y: 300, kind: 'portal' }, { x: 340, y: 300, kind: 'shop' }] }) },
   { name: 'старый сервер: без exits, только stairs', floor: dungeon({ stairs: { x: 400, y: 600 }, decor: [{ x: 300, y: 300, kind: 'portal' }] }) },
   { name: 'без exits и без stairs: финал, выходов нет', floor: dungeon({ decor: [{ x: 300, y: 300, kind: 'portal' }] }) },
@@ -325,7 +331,7 @@ function build(): unknown {
     ...Object.fromEntries(subs.map((x) => [x.id, { name: x.name, short: x.short, color: x.color, ailment: x.ailment }])),
   });
 
-  const markLabels = ['Спуститься глубже (голосование)', 'Спуститься: Лавка (голосование)', 'СПУСТИТЬСЯ', 'В подземелье (выбор сложности)', 'Вернуться в город (голосование)',
+  const markLabels = ['Спуститься глубже (голосование)', 'Спуститься: Сокровищница (голосование)', 'СПУСТИТЬСЯ', 'Портал — куда лететь', 'Вернуться в город (голосование)',
     'Завершить забег (голосование)', 'Рычаг (открыть дверь)', 'РЫЧАГ', 'Сундук (открыть)', 'Лавка', 'Магазин', 'Кузница', 'Доска квестов', 'Город', 'Заверши', 'глубже', ''];
 
   return {
@@ -364,17 +370,22 @@ describe('unityWorldGolden — продюсер эталона мира этаж
       .toEqual(TOWN_NPCS.map((n) => `{ cx: ${n.cx}, cy: ${n.cy}, label: '${n.label}', panel: '${n.panel}', tint: 0x${n.tint.toString(16)} }`));
   });
 
-  it('покрытие: развилка с подписями see-ahead, выход без ребра, план позже этажа, финал, ничьи и граница радиуса', () => {
+  it('покрытие: развилка с подписями see-ahead, выход без ребра, план позже этажа, узел без выходов, ничьи и граница радиуса', () => {
     const g = build() as { exits: { label: string; target: string | null }[]; areas: { acts: Act[]; near: { near: number }[] }[] };
     expect(g.exits.some((e) => e.label.startsWith('Спуститься: '))).toBe(true);
     expect(g.exits.some((e) => e.label === 'Спуститься глубже (голосование)' && e.target != null)).toBe(true);
     expect(g.exits.length).toBeGreaterThan(100);
     const fork = g.areas[0]!;
-    expect(fork.acts.filter((a) => a.act === 'exit').map((a) => a.label)).toEqual(['Спуститься: Лавка (голосование)', 'Спуститься: Босс (голосование)']);
+    expect(fork.acts.filter((a) => a.act === 'exit').map((a) => a.label)).toEqual(['Спуститься: Сокровищница (голосование)', 'Спуститься: Босс (голосование)']);
     expect(fork.acts.filter((a) => a.act === 'exit').map((a) => a.target)).toEqual(['n1_0', 'n1_1']);
-    expect(g.areas[5]!.acts.find((a) => a.act === 'descend')?.label).toBe('Завершить забег (голосование)');
+    // ⚠⚠ 14.10 (Г3, В5): у ПОРТАЛА действие одно — уход в город (он забег ПАРКУЕТ). Прежде на узле без выходов портал
+    // звал «Завершить забег» кадром `descend`, но таких узлов генератор не ставит с Г2: подпись не рисовалась никогда.
+    // Область 5 — ровно такой узел (выходов нет), и теперь она это и доказывает: `descend` у портала нет.
+    expect(g.areas[5]!.acts.filter((a) => a.act === 'descend'), 'у портала «Завершить» больше не вешают').toEqual([]);
+    expect(g.areas[5]!.acts.filter((a) => a.act === 'return').map((a) => a.label), 'портал узла и точка входа — оба «в город»')
+      .toEqual(['Вернуться в город (голосование)', 'Вернуться в город (голосование)']);
     expect(g.areas[3]!.acts.filter((a) => a.act === 'exit').map((a) => a.target)).toEqual(['n3_0', 'ghost', null]);
-    expect(g.areas[3]!.acts.filter((a) => a.act === 'exit').map((a) => a.label)).toEqual(['Спуститься: Финал (голосование)', 'Спуститься глубже (голосование)', 'Спуститься глубже (голосование)']);
+    expect(g.areas[3]!.acts.filter((a) => a.act === 'exit').map((a) => a.label)).toEqual(['Спуститься: Босс (голосование)', 'Спуститься глубже (голосование)', 'Спуститься глубже (голосование)']);
     expect(g.areas.every((a) => a.near.some((n) => n.near >= 0) && a.near.some((n) => n.near < 0))).toBe(true);
     // ⭐ 13.10: открытый сундук (`opened: true`) приходит, но [E] у него нет — ни своей, ни «ближайшей» у его точки
     const cont = g.areas[g.areas.length - 1]!;

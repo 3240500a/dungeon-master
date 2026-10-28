@@ -208,6 +208,12 @@ async function apart(rm: RMIn, tag: string): Promise<{ key: string; chestId: num
   const key = runLedgerKey(room.runConfig!);
   const w = room.session.world;
   for (const m of w.monsters) m.alive = false;
+  // ⚠ СУНДУК НА ЭТАЖЕ — НЕ ГАРАНТИЯ: расстановка может не найти ему места (замер — около 1 % сидов), а сид
+  // забега здесь случайный (`randomSeed()` в `buildRunConfig`). Из-за этого тест падал раз в несколько полных
+  // прогонов пакета (`TypeError: Cannot read properties of undefined`), и падение косило на свод забега, который тут ни при чём.
+  // Стенду сундук нужен КАК РЕКВИЗИТ (тест про СВОД, а не про расстановку), поэтому нет — кладём свой
+  // на точку входа. Настоящая гарантия «на этаже есть сундук» — задача генератора этажа, не этого файла.
+  if (!w.chests.some((c) => !c.opened)) w.chests.push({ id: Math.max(0, ...w.chests.map((c) => c.id)) + 1, pos: { ...w.spawn }, opened: false });
   const chestId = w.chests.find((c) => !c.opened)!.id;
   w.players[pidA]!.pos = { ...w.spawn }; w.players[pidB]!.pos = { ...w.spawn };
   room.movedAt = 0; room.returnTown(pidA); room.castVote(pidB, true);

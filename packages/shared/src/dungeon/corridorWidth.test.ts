@@ -106,7 +106,12 @@ describe('⭐ 13.10: ширина коридоров «от … до» (`corrido
       return seen;
     };
     let floors = 0, narrow = 0;
-    for (const f of reg.get('floors').filter((x) => x.biomeId === 'crypt' && x.role !== 'rest')) for (let seed = 1; seed <= 20; seed++) {
+    // ⚠ Г8-5: число случаев считается ОТ ДАННЫХ, а не зашито числом. Крипта получила «Нижние ярусы», и выборка
+    // выросла со 100 до 120 — правило при этом не менялось. Магическое число здесь значило бы, что каждый новый
+    // этаж крипты валит сторож, не найдя ни одной настоящей ошибки.
+    const SEEDS = 20;
+    const sample = reg.get('floors').filter((x) => x.biomeId === 'crypt' && x.role !== 'rest');
+    for (const f of sample) for (let seed = 1; seed <= SEEDS; seed++) {
       const { layout: L, obstacles } = generateFloorFor(reg, resolveFloorSpec(b, f, f.minDepth, seed * 7919 + 13, [], { exitCount: 1 + (seed % 3) }), b);
       const cols = L.grid[0]!.length;
       floors++;
@@ -118,7 +123,8 @@ describe('⭐ 13.10: ширина коридоров «от … до» (`corrido
         for (const lv of L.levers) expect(closed[at(lv)], `${f.id}/${seed} r ${pad}: рычаг`).toBe(1);
       }
     }
-    expect(floors).toBe(100);
+    expect(floors, 'случаев — все боевые этажи крипты × сиды').toBe(sample.length * SEEDS);
+    expect(sample.length, 'и сама выборка не опустела').toBeGreaterThanOrEqual(5);
     expect(narrow / floors, 'проёмов шириной 2 на этаж').toBeGreaterThan(5);
   });
 });

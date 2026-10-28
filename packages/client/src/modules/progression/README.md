@@ -23,6 +23,15 @@
     resFire/Cold/Lightning/Poison. Реген HP/маны тикает в серверной `GameSession`.
 - **Конфиг:** `balance` (xpTable, attributePointsPerLevel, skillPointsPerLevel,
   passivePointsPerLevel, respecCost), `classes` (старт героя при создании; респек — от старта, записанного в сейв, R18-07).
+- ⭐⭐ **Г6 (14.10): СКОЛЬКО ОПЫТА ДОХОДИТ ДО ГЕРОЯ** — `xpLevelMult` / `xpPartyShare` / `xpForKill`
+  (`@dm/shared/formulas/xp`, числа — `balance.xpShare`, сторож — `formulas/xpShare.test.ts`). Штраф за разницу уровней
+  формой **Path of Exile**: полоса без штрафа `floor(3 + уровень/16)`, дальше плавный спад `((L+5)/(L+5+over^2.5))^1.5`
+  с полом 1 %; опыт делится на ВСЮ пати (все игроки сессии, живые и мёртвые — как зона PoE), доля
+  `(1 + bonus×(n−1))/n` при `partyBonusPerMember` = 0, то есть честное `1/n`. Выдача — `GameSession.awardKillXp`
+  (было «всё живому убийце»); убийца не особый, его доля такая же, но без убийцы опыт не идёт никому (яд добил после
+  выхода хозяина — это «никто не убивал», добыча падает, опыт нет). ⚠ Выключается одним числом: `floor: 1` снимает
+  штраф, `partyBonusPerMember: 1` — дележ. ЗАМЕР: монстр 1000 xp на 60-м этаже — соло 1000, вдвоём по 500,
+  протащенный 10-го уровня 5 (0.5 %).
 - **Формулы:** `levelForXp`, `xpForLevel`, `xpProgress` (полоса опыта, D2) (`@dm/shared/formulas/xp`); `gainXp`, `creditEarned`
   (`@dm/shared/economy/progression`); `pointsHeld`, `settleEarned` (`@dm/shared/economy/townActions`, D2).
 - ⚠ **Кривая опыта строго растёт (R20-05):** `balance.xpTable` = 0, 0, дальше строго по возрастанию, числа конечные ≥ 0 — иначе
@@ -59,7 +68,7 @@
   `StatsCheck`; разбор U5/U6): окна веба рисуются в node на поддельном DOM (`unityGoldenDom.testkit.ts`: элементы и SVG, `style.cssText`,
   `innerHTML`, подсказка `attachTooltip` — посланным `mouseenter`) с настоящим `App` без сети и `GameState` — копий правил почти нет.
   Снимается: деривы героя целиком (гир, класс брони, мастерства, древо, ауры) и резерв пулов, `xpProgress`, HUD 3D (`hud3d`: полосы, зоны
-  резерва, «(−N)», «этаж · сложность · вызов ур.»), блок атрибутов мастера (`derivedBlock`), лист персонажа (`characterPanel`: блоки, строки
+  резерва, «(−N)», «этаж · сложность · монстры ур.»), блок атрибутов мастера (`derivedBlock`), лист персонажа (`characterPanel`: блоки, строки
   ячейками, подсказки), карточки оружия и таблица «в руках → скую» окна ковки (`cardWith`, `compareTable`), предпросмотр верстака
   (`benchTarget` → `diffStrings`), древо скилов (`renderSkillTree`: свои ветки, ромбы-вставки, подсказки). Случай `caps` — со своими таблицами
   конфига (`patch`: класс брони сверх потолков бега, атаки и выдержки). Перезапись — `npx vitest run …/unityStatsGolden.gen.test.ts`.

@@ -1,6 +1,6 @@
 import {
   ConfigRegistry, generateRunPlan, generateFloorFor, resolveMonsterPool, spawnPacksEl, createRng,
-  newBotSave, effectiveLevel, rollTierLevel, pickTierClamped, depthRarityBoost, salvageFromMonster,
+  rollTierLevel, pickTierClamped, depthRarityBoost, salvageFromMonster,
   forgeGold, nextTierOf, type Item, type Rng,
 } from '@dm/shared';
 
@@ -20,7 +20,13 @@ function regFromData(data: Record<string, unknown>): ConfigRegistry {
 }
 
 // ── Состояние страницы (переживает перерисовки) ──────────────────────────────
-interface Knobs { power: number; depth: number; diffId: string; floors: number }
+/**
+ * Ручки страницы. ⚠ 13.10 (Г1): вместо «мощи героя» — `seed`. Мощь из всех чисел этой страницы ушла (уровень
+ * монстра решает глубина), и ползунок остался ровно сидом бросков (`createRng` в `measureFloor`): каждое число
+ * таблиц — ОДИН случайный прогон, и другой сид показывает, насколько они дрожат. Именовать его «мощью» было ловушкой:
+ * страница обещала влияние, которого нет, а двигала ВСЕ числа сразу.
+ */
+interface Knobs { seed: number; depth: number; diffId: string; floors: number }
 let knobs: Knobs | null = null;
 
 const CSS = {
@@ -63,10 +69,10 @@ function measureFloor(reg: ConfigRegistry, k: Knobs): FloorPay {
     monsters: 0, lvlLo: Infinity, lvlHi: 0, items: 0, intact: 0, broken: 0, fromChest: 0,
     mats: [0, 0, 0, 0], potions: 0, gold: 0, chests: 0,
   };
-  const rng: Rng = createRng(k.depth * 7919 + Math.round(k.power) * 31 + 1);
+  const rng: Rng = createRng(k.depth * 7919 + Math.round(k.seed) * 31 + 1);
   let floors = 0;
   for (let seed = 1; seed <= Math.max(1, k.floors); seed++) {
-    const plan = generateRunPlan(reg, { templateId: reg.get('run-templates')[0]!.id, biomeId: biomes[0]!.id, tier: k.diffId, seed, modifiers: [] });
+    const plan = generateRunPlan(reg, { biomeId: biomes[0]!.id, tier: k.diffId, seed, modifiers: [] });
     // ⚠ Узла типа 'town' в графе нет вовсе — этажи отличаются НАЛИЧИЕМ floorSpec.
     const node = plan.nodes.find((n) => n.floorSpec);
     if (!node?.floorSpec) continue;
@@ -74,8 +80,10 @@ function measureFloor(reg: ConfigRegistry, k: Knobs): FloorPay {
     // ⭐ 12.10 (G12): этаж — как у сервера (`generateFloorFor`: декор биома и паспорта, оформление, сундуки) — сундук без свободной клетки
     // (всё под преградами декора) на сервере пропадает, и монстры заселяются в обход преград: счёт обязан видеть то же
     const layout = generateFloorFor(reg, node.floorSpec, biome).layout;
+    // ⭐ 13.10 (Г1): монстров решает ГЛУБИНА — мощи героя среди входов заселения нет вовсе (бывший ползунок
+    // «мощь» стал сидом прогона, см. `rng` выше).
     const list = spawnPacksEl(reg, layout, k.depth, k.diffId, createRng((node.floorSpec.seed >>> 0) || 1),
-      k.power, resolveMonsterPool(biome, Math.max(1, Math.min(k.depth, 20))), node.floorSpec.packDensity, node.floorSpec.floorId);
+      resolveMonsterPool(biome, Math.max(1, Math.min(k.depth, 20))), node.floorSpec.packDensity, node.floorSpec.floorId);
     floors++;
     out.chests += layout.chests.length;
     for (const s of list) {
@@ -305,23 +313,23 @@ function cardTiers(reg: ConfigRegistry, curLvl: number): HTMLElement {
 }
 
 /**
- * Сырьё по глубине: настоящая генерация на каждую строку, поэтому результат КЭШИРУЕТСЯ.
- * Пересчитывать восемь глубин на каждое движение ползунка — секунды залипания, а таблица от
- * ползунков и не зависит: состав решает редкость монстров, а её решает глубина.
+ * Сырьё по глубине: настоящая генерация на каждую строку, поэтому результат КЭШИРУЕТСЯ (ключ — СИД прогона).
+ * Пересчитывать восемь глубин на каждое движение ползунка — секунды залипания, а от ползунка «глубина»
+ * таблица и не зависит: у каждой строки своя глубина, а состав решает редкость монстров, её — глубина.
  */
-let depthCache: { rows: (string | number)[][]; power: number } | null = null;
+let depthCache: { rows: (string | number)[][]; seed: number } | null = null;
 
-function depthMatRows(reg: ConfigRegistry, power: number): (string | number)[][] {
-  if (depthCache && depthCache.power === power) return depthCache.rows;
+function depthMatRows(reg: ConfigRegistry, seed: number): (string | number)[][] {
+  if (depthCache && depthCache.seed === seed) return depthCache.rows;
   const c = reg.get('balance').loot.depthRarity;
   const rows = [5, 15, 25, 50, 100, 200, 400, 1000].map((d) => {
-    const p = measureFloor(reg, { power, depth: d, diffId: 'normal', floors: 3 });
+    const p = measureFloor(reg, { seed, depth: d, diffId: 'normal', floors: 3 });
     const tot = p.mats[1]! + p.mats[2]! + p.mats[3]!;
     return [d, depthRarityBoost(d, c).toFixed(1),
       n0(p.mats[1]!), n0(p.mats[2]!), n0(p.mats[3]!), n0(tot),
       `${tot > 0 ? Math.round((100 * (p.mats[2]! + p.mats[3]!)) / tot) : 0} %`];
   });
-  depthCache = { rows, power };
+  depthCache = { rows, seed };
   return rows;
 }
 
@@ -351,10 +359,10 @@ function cardDepth(reg: ConfigRegistry, curDepth: number): HTMLElement {
 }
 
 /** Сырьё за этаж по глубине — та же кривая, но уже в единицах материалов. */
-function cardDepthMats(reg: ConfigRegistry, power: number, curDepth: number, onRefresh: () => void): HTMLElement {
+function cardDepthMats(reg: ConfigRegistry, seed: number, curDepth: number, onRefresh: () => void): HTMLElement {
   const mats = reg.get('craft-materials');
   const nameOfTier = (t: number): string => mats.find((m) => m.tier === t)?.name.replace(/\s.*/, '') ?? `т${t}`;
-  const rows = depthMatRows(reg, power);
+  const rows = depthMatRows(reg, seed);
   const depths = rows.map((r) => Number(r[0]));
   const near = depths.reduce((b, d) => (Math.abs(d - curDepth) < Math.abs(b - curDepth) ? d : b), depths[0]!);
   const box = el('div', CSS.card);
@@ -377,10 +385,7 @@ function cardDepthMats(reg: ConfigRegistry, power: number, curDepth: number, onR
 // ── Страница ─────────────────────────────────────────────────────────────────
 export function renderLootPage(host: HTMLElement, data: Record<string, unknown>): void {
   const reg = regFromData(data);
-  if (!knobs) {
-    const save = newBotSave(reg, reg.get('classes')[0]!.id);
-    knobs = { power: effectiveLevel(save, reg.get('balance').power, undefined, reg.get('item-tiers')).total, depth: 5, diffId: 'normal', floors: 6 };
-  }
+  if (!knobs) knobs = { seed: 1, depth: 5, diffId: 'normal', floors: 6 };
   const k = knobs;
   host.innerHTML = '';
   const wrap = el('div', 'padding:4px 8px 24px;overflow-y:auto');
@@ -403,7 +408,8 @@ export function renderLootPage(host: HTMLElement, data: Record<string, unknown>)
     g.append(inp, out);
     return g;
   };
-  bar.append(slider('мощь героя', 1, 100, k.power, (v) => { k.power = v; }));
+  // Сид, а не «мощь»: двигает броски всей страницы (видно, насколько числа дрожат от прогона к прогону), уровней монстров не касается.
+  bar.append(slider('сид прогона', 1, 100, k.seed, (v) => { k.seed = v; }));
   bar.append(slider('глубина', 1, 20, k.depth, (v) => { k.depth = v; }));
   const sel = document.createElement('select');
   sel.style.cssText = 'background:#1c1c26;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:6px;padding:4px 8px';
@@ -425,6 +431,6 @@ export function renderLootPage(host: HTMLElement, data: Record<string, unknown>)
   wrap.append(cardForge(reg, pay, k));
   wrap.append(cardTiers(reg, pay.lvlHi));
   wrap.append(cardDepth(reg, k.depth));
-  wrap.append(cardDepthMats(reg, k.power, k.depth, () => renderLootPage(host, data)));
+  wrap.append(cardDepthMats(reg, k.seed, k.depth, () => renderLootPage(host, data)));
   host.appendChild(wrap);
 }

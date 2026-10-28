@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { ConfigRegistry, newCharacterSave, isDifficultyUnlocked, type ServerFrame, type SaveState, type RunConfig } from '@dm/shared';
 import { limits } from './rateLimit.js';
 import { counters } from './metrics.js';
+import { standDifficulties } from './difficultyStand.js';
 
 // Тесты ждут комнату оборотами цикла; под нагрузкой полного прогона умолчание 5 с — лотерея. Исходы решают мок базы и шаги комнаты.
 vi.setConfig({ testTimeout: 30_000 });
@@ -70,6 +71,7 @@ beforeAll(async () => {
   ({ Room: RoomCtor } = (await import('./room.js')) as unknown as { Room: typeof RoomCtor });
   cfg = new ConfigRegistry();
   cfg.loadAll();
+  standDifficulties(cfg);   // ⚠ тиры — свой стенд, см. difficultyStand.ts
 });
 const rooms: RoomIn[] = [];
 afterEach(() => {
@@ -149,7 +151,7 @@ function nextNode(r: RoomIn, pid: string): string {
 /** Чужой забег: тот же шаблон и биом, другой сид (`sameRun` — нет) и своя личность. */
 function foreignRun(of: RunConfig, node: string): NonNullable<SaveState['run']> {
   const config: RunConfig = { ...of, seed: of.seed + 7, id: `foreign-${++seq}` };
-  return { templateId: config.templateId, config, currentNodeId: node, visited: [node] };
+  return { config, currentNodeId: node, visited: [node] };
 }
 
 describe('⭐ C-03: смена этажа оживляет и ждущих реконнекта — «мёртв, оплачено» с них снимается', () => {
