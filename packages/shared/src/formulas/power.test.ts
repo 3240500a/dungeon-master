@@ -8,9 +8,7 @@ import { createRng } from './rng.js';
 import type { SaveState } from '../types/save.js';
 import {
   effectiveLevel,
-  startChallenge,
-  challengeAtFloor,
-  runChallengeLevel,
+  floorMonsterLevel,
   isDifficultyUnlocked,
   lockedDifficulties,
   type PowerConfig,
@@ -157,32 +155,43 @@ describe('effectiveLevel', () => {
   });
 });
 
-describe('startChallenge', () => {
-  it('flat: EL + offset', () => {
-    expect(startChallenge(20, normal)).toBe(20);
-    expect(startChallenge(20, hard)).toBe(25);
-  });
-  it('percent: EL × (1 + offset)', () => {
-    expect(startChallenge(20, easy)).toBe(18); // -10%
-  });
-  it('не опускается ниже 1', () => {
-    expect(startChallenge(1, easy)).toBe(1);
-  });
-});
-
-describe('challengeAtFloor', () => {
-  it('этаж 1 = стартовый CL, глубже — растёт', () => {
-    expect(challengeAtFloor(20, normal, 1)).toBe(20);
-    expect(challengeAtFloor(20, normal, 5)).toBe(24);
+/**
+ * ⭐⭐ 13.10 (Г1): уровень монстра — ТОЛЬКО от глубины. Эти ассерты обязаны валить:
+ *  • возврат мощи героя в формулу (любое слагаемое, кроме `startLevel`/`floorStep`);
+ *  • потолок уровня (ограничили глубину или результат — этаж 1000 перестанет давать 1000);
+ *  • подмену `startLevel` на «этаж +1» (этаж 1 на `normal` обязан быть 1, а не 2).
+ *
+ * ⭐⭐ 13.10 (Г2, Р6): этажи 200 и 1000 ниже — УЖЕ ДОСТИЖИМАЯ ГЛУБИНА, а не только проверка формулы: дна у мира нет
+ * (`generateRunPlan` строит слой по его глубине, `config/difficultyReach.test.ts` доказывает узел на 10 000). Кривую под
+ * бесконечный спуск менять не пришлось — потолок лежал в шаблонах забега, не здесь.
+ */
+describe('floorMonsterLevel', () => {
+  it('этаж 1 = startLevel тира, глубже — рамп floorStep', () => {
+    expect(floorMonsterLevel(normal, 1)).toBe(1);        // normal: startLevel 1, floorStep 1
+    expect(floorMonsterLevel(normal, 5)).toBe(5);
+    expect(floorMonsterLevel(hard, 1)).toBe(6);          // hard: startLevel 6, floorStep 1.5
   });
   it('дробный floorStep округляется', () => {
-    expect(challengeAtFloor(25, hard, 3)).toBe(28); // 25 + 2*1.5
+    expect(floorMonsterLevel(hard, 3)).toBe(9);          // 6 + 2×1.5
+    expect(floorMonsterLevel(easy, 6)).toBe(5);          // easy: 1 + 5×0.8 = 5
   });
-});
-
-describe('runChallengeLevel', () => {
-  it('голый персонаж на средней, этаж 1 = уровень', () => {
-    expect(runChallengeLevel(mkSave({ level: 10 }), normal, 1, powerCfg)).toBe(10);
+  it('глубина 0 и меньше читается как 1-й этаж, ниже 1 не опускается', () => {
+    expect(floorMonsterLevel(normal, 0)).toBe(1);
+    expect(floorMonsterLevel(normal, -7)).toBe(1);
+  });
+  it('⭐ ПОТОЛКА НЕТ: 200-й и 1000-й этажи дают 200 и 1000 уровень', () => {
+    expect(floorMonsterLevel(normal, 200)).toBe(200);
+    expect(floorMonsterLevel(normal, 1000)).toBe(1000);
+  });
+  it('⭐ мощь героя в формулу не входит: у функции нет для неё места', () => {
+    // ⚠ ЗАКРЕПЛЁН ТЕКСТ СПИСКА АРГУМЕНТОВ, а не только `length`: параметр со значением по умолчанию
+    // (`el = 0`) в `length` НЕ ПОПАДАЕТ, и ассерт `length === 2` такую мутацию пропускал — проверено
+    // замером 13.10. Список изменился — перечитай функцию: не вернулась ли в неё мощь героя.
+    const args = (/^function\s+\w+\(([^)]*)\)/.exec(String(floorMonsterLevel))?.[1] ?? '?').replace(/\s+/g, ' ').trim();
+    expect(args, 'подпись floorMonsterLevel: лишний аргумент — не мощь ли это?').toBe('diff, depth');
+    expect(floorMonsterLevel.length).toBe(2);            // (diff, depth) — и всё
+    // Лишние поля тира формула тоже не читает: мощь нельзя протащить ни параметром, ни данными.
+    expect(floorMonsterLevel({ ...normal, offset: 40, offsetMode: 'flat' } as unknown as typeof normal, 1)).toBe(1);
   });
 });
 
@@ -198,27 +207,34 @@ describe('isDifficultyUnlocked', () => {
   });
 });
 
+/**
+ * ⚠⚠ 13.10 (Г2, Р6): ПРИЧИНА «ПОРОГ ГЛУБЖЕ ДНА МИРА» СНЯТА — дна нет, спуск бесконечен, и аргумента `maxDepth` у
+ * функции больше нет. Поэтому сколь угодно глубокий порог (30, 20, 99) тир НЕ запирает — это и проверяется первым
+ * тестом; история (прежний «Кошмар»: 20-й этаж при дне мира 15) — в `formulas/power.ts` и `config/difficultyReach.test.ts`.
+ * Живой осталась одна причина — `'prev'`.
+ */
 describe('lockedDifficulties — R8-13: тир, который не откроется никогда', () => {
   const tier = (id: string, unlockFloor: number, enabled = true) => ({ ...normal, id, unlockFloor, enabled });
   const chain = [tier('a', 0), tier('b', 5), tier('c', 10), tier('d', 20)];
 
-  it('порог глубже самого глубокого узла — замок (прежний «Кошмар»: 20 при забеге до 15)', () => {
-    expect(lockedDifficulties(chain, 15)).toEqual([{ id: 'd', unlockFloor: 20, prevId: 'c', cause: 'depth' }]);
-    expect(lockedDifficulties(chain, 20)).toEqual([]);   // ровно порог — открывается (`>=` в isDifficultyUnlocked)
+  it('⭐ Г2: глубокий порог замком БОЛЬШЕ НЕ БЫВАЕТ — любая глубина достижима', () => {
+    expect(lockedDifficulties(chain)).toEqual([]);
+    expect(lockedDifficulties([tier('a', 0), tier('b', 10_000)]), 'порог 10 000 — не замок').toEqual([]);
   });
 
   it('выключенный предыдущий тир запирает следующий: прогресс на нём не набрать', () => {
     const off = [tier('a', 0), tier('b', 5), tier('c', 10, false), tier('d', 12)];
-    expect(lockedDifficulties(off, 15)).toEqual([{ id: 'd', unlockFloor: 12, prevId: 'c', cause: 'prev' }]);
+    expect(lockedDifficulties(off)).toEqual([{ id: 'd', unlockFloor: 12, prevId: 'c', cause: 'prev' }]);
   });
 
   it('замок тянется по цепочке, а тир с порогом 0 открыт при любом предыдущем', () => {
-    const deep = [tier('a', 0), tier('b', 30), tier('c', 5), tier('d', 0)];
-    expect(lockedDifficulties(deep, 15).map((l) => `${l.id}:${l.cause}`)).toEqual(['b:depth', 'c:prev']);
+    // `b` выключен → `c` не набрать; `d` с порогом 0 открыт при любом предыдущем. Глубина порогов роли не играет (Р6).
+    const deep = [tier('a', 0), tier('b', 30, false), tier('c', 5), tier('d', 0)];
+    expect(lockedDifficulties(deep).map((l) => `${l.id}:${l.cause}`)).toEqual(['c:prev']);
   });
 
   it('выключенный тир сам не в отчёте — его выключили намеренно', () => {
-    expect(lockedDifficulties([tier('a', 0), tier('b', 99, false)], 15)).toEqual([]);
+    expect(lockedDifficulties([tier('a', 0), tier('b', 99, false)])).toEqual([]);
   });
 });
 

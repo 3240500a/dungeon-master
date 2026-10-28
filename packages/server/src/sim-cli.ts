@@ -67,6 +67,8 @@ function runSession(craft: boolean | undefined): RunReport {
 }
 
 // Свип уровень×монстр → удары-до-смерти (CSV). `--scenario=sweep --lmin=5 --lmax=85 --lstep=10 --mon=zombie,...`.
+// ⚠ `--depthoff` — СДВИГ УРОВНЯ МОБА от уровня героя, а НЕ глубина этажа: 0 — моб ровно моего уровня, +5 — на пять выше
+// (уровень монстра в игре решает глубина — Г1, `floorMonsterLevel`; здесь калибровочная ось хитмапа).
 if (str('scenario', 'progression') === 'sweep') {
   const lmin = num('lmin', 5), lmax = num('lmax', 85), lstep = num('lstep', 10);
   const levels: number[] = []; for (let l = lmin; l <= lmax; l += lstep) levels.push(l);
@@ -98,7 +100,7 @@ if (str('scenario', 'progression') === 'ttk') {
   const monBaseId = str('mon', reg.get('monsters')[0]!.id);
   const rarity = str('rarity', 'normal') as 'normal' | 'magic' | 'rare' | 'unique';
   const mon = generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'),
-    { baseId: monBaseId, depth: Math.max(0, save.level - 1), mderive: reg.get('monster-derive'), itemAffixes: reg.get('monster-item-affixes'), rarities: reg.get('rarities'), rarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') },
+    { baseId: monBaseId, depth: Math.max(0, save.level - 1), mderive: reg.get('monster-derive'), itemAffixes: reg.get('monster-item-affixes'), rarities: reg.get('rarities'), rarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'), gearTiers: reg.get('monster-gear-tiers') },
     createRng(1));
   const t = Date.now();
   const s = microFightStats(reg, { save, monsters: [mon] }, num('runs', 30), num('seed', 1));
@@ -220,7 +222,8 @@ console.log(`\n=== SIM ${settings.scenario} · класс ${classId} · тир $
 
 if (out.fight) {
   const f = out.fight;
-  console.log(`Игрок ур.${f.playerLevel} (мощь ${f.power}) vs монстры ур.${f.challengeLevel}, итераций ${f.iterations}`);
+  // ⭐ 13.10 (Г1): «мощь» и «монстры ур.» — больше НЕ связка: уровень монстров даёт этаж, мощь печатаем как характеристику бойца.
+  console.log(`Игрок ур.${f.playerLevel} (мощь ${f.power}) · этаж ${settings.floor} → монстры ур.${f.challengeLevel}, итераций ${f.iterations}`);
   console.log(`  Победы:   ${pct(f.winRate)}`);
   console.log(`  Время:    ${f2(f.avgTimeSec)} с`);
   console.log(`  HP в конце (победы): ${pct(f.avgHpFracOnWin)}`);
@@ -229,7 +232,7 @@ if (out.fight) {
 
 if (out.floor) {
   const f = out.floor;
-  console.log(`Этаж ${settings.floor} (вызов ур.${f.challengeLevel}), игрок ур.${settings.level}, итераций ${f.iterations}`);
+  console.log(`Этаж ${settings.floor} → монстры ур.${f.challengeLevel}, игрок ур.${settings.level}, итераций ${f.iterations}`);
   console.log(`  Зачистка: ${pct(f.clearRate)} · смерти: ${pct(f.deathRate)}`);
   console.log(`  Время:    ${f2(f.avgTimeSec)} с · пачек ${f2(f.avgPacks)}`);
   console.log(`  XP/золото/дроп: ${Math.round(f.avgXp)} / ${Math.round(f.avgGold)} / ${f2(f.avgDrops)}`);

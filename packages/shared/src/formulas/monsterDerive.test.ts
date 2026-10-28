@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterTemplate } from './monsterDerive.js';
 import type { ConfigShapes } from '../config/schemas.js';
+import { ConfigRegistry } from '../config/registry.js';
 
 type Gear = ConfigShapes['monster-gear'][number];
 type GearWeapon = Extract<Gear, { kind: 'weapon' }>;
@@ -8,26 +9,26 @@ type GearArmor = Extract<Gear, { kind: 'armor' }>;
 type GearShield = Extract<Gear, { kind: 'shield' }>;
 
 const sword: GearWeapon = {
-  kind: 'weapon', id: 'w-sword', name: 'меч', faction: 'undead', enabled: true,
+  kind: 'weapon', id: 'w-sword', name: 'меч', faction: 'undead', enabled: true, minGearTier: 'm0', maxGearTier: 'm19', withLevel: true,
   weaponClass: 'sword', weight: 'medium', attackType: 'melee', hands: 1,
   damageType: 'physical', minDamage: 3, maxDamage: 6, attackSpeed: 1,
 };
 const bow: GearWeapon = {
-  kind: 'weapon', id: 'w-bow', name: 'лук', faction: 'undead', enabled: true,
+  kind: 'weapon', id: 'w-bow', name: 'лук', faction: 'undead', enabled: true, minGearTier: 'm0', maxGearTier: 'm19', withLevel: true,
   weaponClass: 'bow', weight: 'light', attackType: 'ranged', hands: 2,
   damageType: 'physical', minDamage: 2, maxDamage: 5, attackSpeed: 1,
 };
 const staff: GearWeapon = {
-  kind: 'weapon', id: 'w-staff', name: 'посох', faction: 'undead', enabled: true,
+  kind: 'weapon', id: 'w-staff', name: 'посох', faction: 'undead', enabled: true, minGearTier: 'm0', maxGearTier: 'm19', withLevel: true,
   weaponClass: 'staff', weight: 'magical', attackType: 'ranged', hands: 2,
   damageType: 'cold', minDamage: 4, maxDamage: 8, attackSpeed: 0.8,
 };
 const plate: GearArmor = {
-  kind: 'armor', id: 'a-plate', name: 'латы', faction: 'undead', enabled: true,
+  kind: 'armor', id: 'a-plate', name: 'латы', faction: 'undead', enabled: true, minGearTier: 'm0', maxGearTier: 'm19', withLevel: true,
   armorClass: 'plate', slot: 'chest', defense: 30,
 };
 const shield: GearShield = {
-  kind: 'shield', id: 's-shield', name: 'щит', faction: 'undead', enabled: true,
+  kind: 'shield', id: 's-shield', name: 'щит', faction: 'undead', enabled: true, minGearTier: 'm0', maxGearTier: 'm19', withLevel: true,
   block: 0.18, defense: 6,
 };
 
@@ -123,5 +124,42 @@ describe('deriveMonsterStats', () => {
   it('xp берётся из xpBase/xpPerLevel/tierXp конфига', () => {
     const s = { ...DEFAULT_MDERIVE, xpBase: 100, xpPerLevel: 0 };
     expect(deriveMonsterStats(base, sword, null, null, 1, s).xp).toBe(100); // medium tierXp=1
+  });
+});
+
+/**
+ * ⭐ БЛОКЕР ПЛАНА «Монстры: план по силе» (13.10): две вещи, из-за которых правка кривой НЕ ДОЕЗЖАЛА до игры.
+ *
+ * 1. `DEFAULT_MDERIVE` расходился с `monster-derive.json` (`hpPerLevel` 1 против 5): тесты и инструменты без реестра
+ *    меряли ДРУГУЮ игру, и сверка «в симе так, в игре иначе» упиралась в это.
+ * 2. У 18 из 19 монстров в `monsters.json` лежала ПОЛНАЯ КОПИЯ базовых коэффициентов (16 ключей, все
+ *    равны базе): правка `monster-derive.json` меняла ровно одного монстра из 19. Оверрайд остаётся правом
+ *    монстра отличаться — но только ТЕМИ ключами, которые действительно другие; ключ равный базе — шум, который
+ *    глушит правку баланса.
+ */
+describe('⭐ коэффициенты деривации: дефолт ≡ данные, оверрайд ≡ отличие', () => {
+  const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
+
+  it('⭐ `DEFAULT_MDERIVE` совпадает с `monster-derive.json` поле в поле', () => {
+    const data = reg.get('monster-derive') as unknown as Record<string, unknown>;
+    const dflt = DEFAULT_MDERIVE as unknown as Record<string, unknown>;
+    const bad = Object.keys(data)
+      .filter((k) => JSON.stringify(dflt[k]) !== JSON.stringify(data[k]))
+      .map((k) => `${k}: дефолт ${JSON.stringify(dflt[k])} против данных ${JSON.stringify(data[k])}`);
+    expect(bad, 'дефолт кода расходится с живым конфигом').toEqual([]);
+    expect(Object.keys(data).length, 'сторож что-то мерит').toBeGreaterThan(10);
+  });
+
+  it('⭐ в `monsters.json` нет оверрайдов-копий: каждый ключ `derive` реально отличается от базы', () => {
+    const data = reg.get('monster-derive') as unknown as Record<string, unknown>;
+    const noise: string[] = [];
+    for (const m of reg.get('monsters')) {
+      const ovr = (m as { derive?: Record<string, unknown> }).derive;
+      if (!ovr) continue;
+      for (const k of Object.keys(ovr)) {
+        if (JSON.stringify(ovr[k]) === JSON.stringify(data[k])) noise.push(`${m.id}.derive.${k}`);
+      }
+    }
+    expect(noise, 'ключ равен базе — убрать, иначе правка баланса монстра не касается').toEqual([]);
   });
 });

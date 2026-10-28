@@ -17,9 +17,16 @@ describe('depthRarityBoost', () => {
     for (let d = 0; d <= C.freeDepth; d++) expect(depthRarityBoost(d, C)).toBe(1);
   });
 
-  it('самый длинный шаблон забега не достаёт до кривой', () => {
-    const maxLen = Math.max(...reg.get('run-templates').filter((t) => t.enabled !== false).map((t) => t.length.max));
-    expect(maxLen).toBeLessThanOrEqual(C.freeDepth);   // иначе правка тихо изменит текущий контент
+  it('⭐⭐ 13.10 (Г2): кривая начинается НЕ РАНЬШЕ прежнего дна мира (15) — тот контент не тронут, глубже она живая', () => {
+    // До Г2 забег кончался на 15-м этаже (`length.max` самого длинного шаблона + финал), и «задел под бесконечный
+    // забег» не действовал нигде. Шаблоны потеряли длину (спуск бесконечен), сравнивать стало не с чем — порог
+    // держим числом: мельче 15-го этажа множитель обязан быть ровно 1, иначе правка кривой тихо изменит ВЕСЬ
+    // нынешний контент, а не только бездну за ним.
+    const PRE_G2_WORLD = 15;
+    expect(C.freeDepth, 'кривая не смеет начинаться внутри прежнего мира').toBeGreaterThanOrEqual(PRE_G2_WORLD);
+    expect(depthRarityBoost(PRE_G2_WORLD, C)).toBe(1);
+    // А за порогом она теперь ДОСТИЖИМА (в этом и смысл Г2): буст есть и растёт.
+    expect(depthRarityBoost(C.freeDepth + C.step, C)).toBeGreaterThan(1);
   });
 
   it('глубже — больше, но с затуханием', () => {

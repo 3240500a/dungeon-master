@@ -13,6 +13,9 @@
     "maxDamage": 4,
     "attackSpeed": 1.4,
     "physSub": "piercing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -40,6 +43,9 @@
     "maxDamage": 9,
     "attackSpeed": 1.0,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -72,6 +78,9 @@
     "maxDamage": 7,
     "attackSpeed": 0.8,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -104,6 +113,9 @@
     "maxDamage": 8,
     "attackSpeed": 1.0,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -131,6 +143,9 @@
     "maxDamage": 10,
     "attackSpeed": 0.8,
     "physSub": "crushing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -163,6 +178,9 @@
     "maxDamage": 7,
     "attackSpeed": 0.9,
     "physSub": "piercing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -190,6 +208,9 @@
     "maxDamage": 16,
     "attackSpeed": 0.5,
     "physSub": "piercing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -227,6 +248,9 @@
     "maxDamage": 20,
     "attackSpeed": 0.6,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -259,6 +283,9 @@
     "maxDamage": 22,
     "attackSpeed": 0.6,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -285,6 +312,9 @@
     "minDamage": 4,
     "maxDamage": 9,
     "attackSpeed": 0.8,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -316,6 +346,9 @@
     "minDamage": 8,
     "maxDamage": 16,
     "attackSpeed": 0.85,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -348,6 +381,9 @@
     "maxDamage": 16,
     "attackSpeed": 0.75,
     "physSub": "piercing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -380,6 +416,9 @@
     "maxDamage": 24,
     "attackSpeed": 0.6,
     "physSub": "chopping",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "iron-1",
@@ -412,6 +451,9 @@
     "maxDamage": 5,
     "attackSpeed": 1.0,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -444,6 +486,9 @@
     "maxDamage": 7,
     "attackSpeed": 0.8,
     "physSub": "slashing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -476,6 +521,9 @@
     "maxDamage": 9,
     "attackSpeed": 0.5,
     "physSub": "piercing",
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",
@@ -506,6 +554,9 @@
     "faction": "undead",
     "armorClass": "quilted",
     "defense": 2,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "cloth-1",
@@ -521,6 +572,9 @@
     "faction": "undead",
     "armorClass": "leather",
     "defense": 5,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "hide-1",
@@ -536,6 +590,9 @@
     "faction": "undead",
     "armorClass": "chain",
     "defense": 11,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "plate-1",
@@ -556,6 +613,9 @@
     "faction": "undead",
     "armorClass": "segmented",
     "defense": 18,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "plate-1",
@@ -581,6 +641,9 @@
     "faction": "undead",
     "armorClass": "plate",
     "defense": 30,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "plate-1",
@@ -607,6 +670,9 @@
     "armorClass": "quilted",
     "slot": "helm",
     "defense": 1,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "cloth-1",
@@ -623,6 +689,9 @@
     "armorClass": "leather",
     "slot": "helm",
     "defense": 2,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "hide-1",
@@ -639,6 +708,9 @@
     "armorClass": "chain",
     "slot": "helm",
     "defense": 4,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "plate-1",
@@ -660,6 +732,9 @@
     "armorClass": "segmented",
     "slot": "helm",
     "defense": 7,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "plate-1",
@@ -681,6 +756,9 @@
     "armorClass": "plate",
     "slot": "helm",
     "defense": 12,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "plate-1",
@@ -701,6 +779,9 @@
     "faction": "undead",
     "block": 0.18,
     "defense": 6,
+    "minGearTier": "m0",
+    "maxGearTier": "m19",
+    "withLevel": true,
     "salvageTo": [
       {
         "materialId": "wood-1",

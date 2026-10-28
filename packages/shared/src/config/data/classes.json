@@ -50,7 +50,7 @@
   {
     "id": "mage",
     "name": "Заклинатель",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
       "strength": 10,
       "dexterity": 10,
@@ -91,7 +91,7 @@
   {
     "id": "archer",
     "name": "Ловчая",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
       "strength": 10,
       "dexterity": 17,
@@ -132,7 +132,7 @@
   {
     "id": "zastupnik",
     "name": "Заступник",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
       "strength": 15,
       "dexterity": 10,
@@ -173,7 +173,7 @@
   {
     "id": "vyuga",
     "name": "Вьюга",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
       "strength": 15,
       "dexterity": 12,
@@ -214,7 +214,7 @@
   {
     "id": "arbalest",
     "name": "Вольный стрелок",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
       "strength": 12,
       "dexterity": 15,
@@ -255,7 +255,7 @@
   {
     "id": "vorozheya",
     "name": "Ворожея",
-    "enabled": true,
+    "enabled": false,
     "startAttributes": {
       "strength": 10,
       "dexterity": 12,

@@ -117,13 +117,20 @@ describe('трофей: снаряжение монстра → база игр�
     }
   });
 
-  it('⭐⭐ КАЖДЫЙ класс оружия ПАДАЕТ с монстра, который реально спавнится в каком-то включённом биоме', () => {
+  it('⭐⭐ КАЖДЫЙ класс оружия ПАДАЕТ с монстра, который реально спавнится в каком-то биоме', () => {
     // ⚠ Запись в `monster-gear` — ещё не носитель, и монстр в `monsterPool` — ещё не спавн: пачки берут
     // монстров ПО РОЛЯМ (`packs.json`), и роль, которой нет ни в одной пачке, не выходит никогда. Замер
     // до F2: в крипте спавнились только scout/warrior/thrower — булава (охранник), посох (колдун, шаман)
     // и арбалет (арбалетчик) лежали в пуле и не падали вовсе, как и копьё, алебарда и жезл без носителей.
-    // Поэтому здесь НАСТОЯЩИЙ спавн (`spawnPacksEl` — тот же, что у сервера), по всем включённым биомам,
-    // их этажам и тирам глубины, а не чтение пулов.
+    // Поэтому здесь НАСТОЯЩИЙ спавн (`spawnPacksEl` — тот же, что у сервера), по биомам, их этажам и
+    // тирам глубины, а не чтение пулов.
+    //
+    // ⭐ Биомы и этажи берём ВСЕ, а не только включённые. Это сторож АВТОРИНГА: носитель класса обязан
+    // существовать и в том биоме, который сегодня выключен (ранний доступ едет на одной крипте, остальное
+    // владелец включит по одному) — иначе прогон худеет вместе с поставкой и перестаёт ловить дыру ДО
+    // включения, а он написан ровно за этим. Зубы от этого не страдают: убери носителя класса из пачек
+    // (или класс из пула его биома) — тест краснеет, как и раньше. Что реально падает во ВКЛЮЧЁННЫХ
+    // биомах — отдельная проверка ниже, и она не вправе требовать, чтобы биомов было больше одного.
     const bases = reg.get('items.base');
     const gear = reg.get('monster-gear');
     const classes = new Set<string>();
@@ -132,25 +139,36 @@ describe('трофей: снаряжение монстра → база игр�
     const rooms = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 2 + (i % 4) * 16, y: 2 + Math.floor(i / 4) * 16, w: 12, h: 12, type: i % 2 ? 'large' : 'small' }));
     const layout = { grid: makeGrid(68, 36, Cell.Floor), rooms } as unknown as DungeonLayout;
     const dropped = new Map<string, string>();   // класс трофея → кто его уронил (для сообщения)
-    for (const biome of reg.get('biomes').filter((b) => b.enabled !== false)) {
-      const floorIds = ['', ...reg.get('floors').filter((f) => f.biomeId === biome.id && f.enabled !== false).map((f) => f.id)];
+    const byBiome = new Map<string, Set<string>>();   // биом → какие классы падают именно в нём
+    for (const biome of reg.get('biomes')) {
+      const seen = new Set<string>();
+      byBiome.set(biome.id, seen);
+      const floorIds = ['', ...reg.get('floors').filter((f) => f.biomeId === biome.id).map((f) => f.id)];
       for (const depth of [1, 4, 7, 11, 16, 23]) {
         for (const floorId of floorIds) {
           for (let seed = 1; seed <= 4; seed++) {
-            const spawns = spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + depth), depth,
+            const spawns = spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + depth),
               resolveMonsterPool(biome, depth), 1, floorId);
             for (const s of spawns) {
               const worn = s.def.gearRolls?.find((r) => r.slot === 'weapon')?.gearId;
               const g = worn ? gear.find((x) => x.id === worn) : undefined;
               if (!g) continue;
               const b = bases.find((x) => x.id === trophyBaseFor(g, bases, first));
-              if (b?.kind === 'weapon' && !dropped.has(b.weaponClass)) dropped.set(b.weaponClass, `${biome.id}/${s.def.id}`);
+              if (b?.kind !== 'weapon') continue;
+              seen.add(b.weaponClass);
+              if (!dropped.has(b.weaponClass)) dropped.set(b.weaponClass, `${biome.id}/${s.def.id}`);
             }
           }
         }
       }
     }
     for (const c of classes) expect(dropped.has(c), `класс «${c}» не падает ни с одного монстра, который спавнится`).toBe(true);
+    // ИГРОВАЯ половина: каждый ВКЛЮЧЁННЫЙ биом обязан заселяться и ронять оружие — ловит «биом включили,
+    // а пачек/пула под его этажи нет» (этаж пустой, с трупов нечего взять). Сколько биомов включено и
+    // сколько классов в каждом — не наше дело: одного биома и одного класса достаточно, чтобы быть живым.
+    for (const biome of reg.get('biomes').filter((b) => b.enabled !== false)) {
+      expect(byBiome.get(biome.id)!.size, `включённый биом «${biome.id}»: с его монстров не падает оружие вовсе`).toBeGreaterThan(0);
+    }
   });
 
   it('счёт сходства: одинаковый класс важнее одинакового числа рук', () => {

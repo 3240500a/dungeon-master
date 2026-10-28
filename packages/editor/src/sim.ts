@@ -106,7 +106,7 @@ function renderResults(out: SimOutput, ms: number): string {
   if (out.floor) {
     const f = out.floor;
     return head + `<table style="font-size:13px;line-height:1.7">
-      <tr><td style="color:#b8b8c8;padding-right:16px">Вызов ур.</td><td>${f.challengeLevel}</td></tr>
+      <tr><td style="color:#b8b8c8;padding-right:16px">Монстры ур.</td><td>${f.challengeLevel}</td></tr>
       <tr><td style="color:#b8b8c8">Зачистка / смерти</td><td><b>${pct(f.clearRate)}</b> / ${pct(f.deathRate)}</td></tr>
       <tr><td style="color:#b8b8c8">Время этажа</td><td>${f2(f.avgTimeSec)} с (${f2(f.avgPacks)} пачек)</td></tr>
       <tr><td style="color:#b8b8c8">XP / золото / дроп</td><td>${Math.round(f.avgXp)} / ${Math.round(f.avgGold)} / ${f2(f.avgDrops)}</td></tr>

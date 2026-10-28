@@ -182,7 +182,12 @@ describe('⚠ R13-12: уник на выключенной базе не пад�
  * выключенная база). Теперь выключенная кожаная вещь не выдаётся, а оружие заменяет включённая база той же семьи и хвата.
  */
 describe('⚠ R14-08: выключенная база — не стартовый комплект', () => {
-  const classes = live.get('classes').filter((c) => c.enabled !== false);
+  /**
+   * ВСЕ записи `classes.json`, включая выключенные: R14-08 — про АВТОРИНГ. Выключенная база не смеет попасть в комплект
+   * ЛЮБОГО класса, и замена оружия обязана находиться для каждого — иначе беда дождётся дня, когда владелец включит класс,
+   * и выйдет к игрокам уже в поставке. Галка класса решает, кого можно выбрать в игре, а не кого проверять.
+   */
+  const classes = live.get('classes');
   const STARTER = ['leather-cap', 'leather-armor', 'leather-boots', 'leather-belt'];
   const kitOf = (s: SaveState): Item[] => [...Object.values(s.equipment).filter((i): i is Item => !!i), ...s.inventory];
   const baseOf = (reg: ConfigRegistry, id: string) => reg.get('items.base').find((b) => b.id === id);

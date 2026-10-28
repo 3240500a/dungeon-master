@@ -2,41 +2,41 @@
   {
     "id": "easy",
     "name": "Лёгкая",
-    "offsetMode": "percent",
-    "offset": -0.1,
-    "floorStep": 1,
+    "startLevel": 1,
+    "floorStep": 0.8,
     "goldMult": 0.9,
     "magicFind": 0.9,
-    "unlockFloor": 0
+    "unlockFloor": 0,
+    "enabled": false
   },
   {
     "id": "normal",
     "name": "Средняя",
-    "offsetMode": "flat",
-    "offset": 0,
+    "startLevel": 1,
     "floorStep": 1,
     "goldMult": 1,
     "magicFind": 1,
-    "unlockFloor": 5
+    "unlockFloor": 0,
+    "enabled": true
   },
   {
     "id": "hard",
     "name": "Сложная",
-    "offsetMode": "flat",
-    "offset": 5,
+    "startLevel": 6,
     "floorStep": 1.5,
     "goldMult": 1.25,
     "magicFind": 1.25,
-    "unlockFloor": 10
+    "unlockFloor": 10,
+    "enabled": false
   },
   {
     "id": "nightmare",
     "name": "Кошмар",
-    "offsetMode": "flat",
-    "offset": 12,
+    "startLevel": 13,
     "floorStep": 2,
     "goldMult": 1.6,
     "magicFind": 1.6,
-    "unlockFloor": 12
+    "unlockFloor": 12,
+    "enabled": false
   }
 ]

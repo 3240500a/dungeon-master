@@ -3,6 +3,10 @@ import { ConfigRegistry, sweepHitsToKill, DEFAULT_BUILD, type SweepCell, type Bo
 /**
  * Вкладка «Свипы»: сетка уровень×монстр → хитмап ударов-до-смерти (цель 5-6 зелёным). Гоняет реальный
  * микро-бой (тот же движок) на уровне-адекватном боте. Сразу видно, где баланс вылетает из цели.
+ *
+ * ⚠ ОСЬ «Сдвиг ур. моба» (`depthOffset` в `sweepHitsToKill`) — ЭТО НЕ ГЛУБИНА ЭТАЖА, а сдвиг уровня моба относительно
+ * героя: 0 — моб РОВНО моего уровня, +5 — на пять выше. Уровень монстра в ИГРЕ решает только глубина
+ * (Г1, `floorMonsterLevel`) — здесь же калибровочная ось, и подпись поля говорит ровно это. CLI: `--depthoff` (`sim-cli --scenario=sweep`).
  */
 
 let classId = '';
@@ -64,7 +68,7 @@ export function renderSweepPage(page: HTMLElement, data: Record<string, unknown>
     field('Ур. от', num(lmin, (v) => { lmin = v; })),
     field('до', num(lmax, (v) => { lmax = v; })),
     field('шаг', num(lstep, (v) => { lstep = Math.max(1, v); }, 46)),
-    field('Глуб.смещ.', num(depthOff, (v) => { depthOff = v; }, 52)),
+    field('Сдвиг ур. моба', num(depthOff, (v) => { depthOff = v; }, 52)),   // 0 = моб ровно уровня героя (не глубина этажа)
     field('Прогонов', num(runs, (v) => { runs = Math.max(1, v); }, 52)),
     field('Стиль', sel(style, [['clear', 'зачистка'], ['balanced', 'сбаланс.'], ['rush', 'раш']], (v) => { style = v as BotStyle; })),
     field('Мастерство', sel(tier, [['basic', 'базовый'], ['kite', '+кайт'], ['potions', '+зелья'], ['rotation', 'полный']], (v) => { tier = v as BotTier; })),

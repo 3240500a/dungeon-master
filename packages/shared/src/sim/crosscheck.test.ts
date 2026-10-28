@@ -32,13 +32,26 @@ describe('кросс-чек: закрытая формула ≈ реальны�
     // формула и движок должны сойтись близко. (На ~1-ударных киллах отношение искажает целочисленность.)
     for (const level of [15, 25, 35]) {
       const save = buildBotAt(reg, classId, level, DEFAULT_BUILD, 7);
-      const m = mob('zombie-knight', level * 2 + 10); // танк (щит, латы); глубина растёт быстрее уровня — кил за много ударов
+      // ⚠ 13.10: ГЛУБИНУ ИЩЕМ, А НЕ ЗАДАЁМ ЧИСЛОМ. Было `level * 2 + 10` — «танк, кил за много ударов».
+      // План по силе поднял жизнь монстров с ×6.5 до ×160 за 10→80 — и на той же глубине бот перестал убивать
+      // вовсе (killRate 0), то есть сторож проверял бы согласие двух моделей на пустом наборе. Предмет здесь —
+      // СОГЛАСИЕ формулы и движка, а не конкретная глубина: берём САМУЮ ТАНКОВУЮ из тех, где бот ещё стабильно
+      // убивает и ударов больше трёх. Так сторож живёт через любую правку баланса.
+      // Кандидаты от самого танкового к самому хрупкому: рыцарь (strong, щит+латы) → боец (medium) → зомби (weak).
+      const CAND: [string, number][] = [
+        ['zombie-knight', level * 2 + 10], ['zombie-knight', level + 10], ['zombie-knight', level],
+        ['zombie-fighter', level + 10], ['zombie-fighter', level], ['zombie', level + 10], ['zombie', level],
+      ];
+      const tries = CAND.map(([id, depth]) => {
+        const m = mob(id, depth);
+        return { id, depth, m, mc: microFightStats(reg, { save, monsters: [m], tier: 'basic' }, 60, 3) };
+      });
+      const ok = tries.filter((t) => t.mc.killRate > 0.7 && t.mc.hitsToKill.mean > 3);
+      expect(ok.length, `нет монстра, которого бот ${level} ур. убивает за >3 ударов: ${tries.map((t) => `${t.id} гл.${t.depth} kill=${Math.round(t.mc.killRate * 100)}% ударов=${t.mc.hitsToKill.mean.toFixed(1)}`).join(' · ')}`).toBeGreaterThan(0);
+      const { depth, m, mc } = ok[0]!;
       const cf = closedFormTtk(reg, save, m);
-      const mc = microFightStats(reg, { save, monsters: [m], tier: 'basic' }, 40, 3);
       const ratio = mc.hitsToKill.mean / cf.landedHitsToKill;
-      console.log(`L${level}: движок=${mc.hitsToKill.mean.toFixed(2)} формула=${cf.landedHitsToKill.toFixed(2)} отношение=${ratio.toFixed(2)} kill=${Math.round(mc.killRate * 100)}% ударов~${mc.hitsToKill.mean.toFixed(0)}`);
-      expect(mc.killRate).toBeGreaterThan(0.7);    // базовый бот стабильно убивает
-      expect(mc.hitsToKill.mean).toBeGreaterThan(3); // достаточно ударов, чтобы дискретность не искажала
+      console.log(`L${level} (${ok[0]!.id} гл.${depth}): движок=${mc.hitsToKill.mean.toFixed(2)} формула=${cf.landedHitsToKill.toFixed(2)} отношение=${ratio.toFixed(2)} kill=${Math.round(mc.killRate * 100)}%`);
       expect(ratio).toBeGreaterThan(0.7);           // формула и движок в согласии (±допуск на крит/роллы)
       expect(ratio).toBeLessThan(1.45);
     }

@@ -23,7 +23,7 @@ function spawnOn(packs: unknown[], floorId: string, seed = 1): number {
   const r = reg();
   r.reload({ packs });
   const pool = r.get('biomes')[0]!.monsterPool;
-  return spawnPacksEl(r, oneSmallRoom(), 1, 'normal', createRng(seed), 10, pool, 1, floorId).length;
+  return spawnPacksEl(r, oneSmallRoom(), 1, 'normal', createRng(seed), pool, 1, floorId).length;
 }
 
 describe('spawnPacksEl — привязка пачки к этажам (packs[].floors)', () => {

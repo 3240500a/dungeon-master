@@ -59,7 +59,7 @@ function makeSession(): { s: GameSession; inputs: Record<string, PlayerInput> } 
   const rng = createRng(7);
   const monsters = Array.from({ length: 8 }, (_, i) => {
     const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'),
-      { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, rng);
+      { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1, gearTiers: r.get('monster-gear-tiers') }, rng);
     const at = cellToWorld(6 + (i % 4) * 2, 6 + Math.floor(i / 4) * 2);
     return { def, x: at.x, y: at.y };
   });

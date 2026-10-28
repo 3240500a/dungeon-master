@@ -142,6 +142,7 @@ export function fightCheck(reg: ConfigRegistry, save: SaveState, weapon: Item | 
   const mons = Array.from({ length: pack }, (_, i) => generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'), {
     baseId: monsterId, depth: Math.max(0, save.level - 1), mderive: reg.get('monster-derive'), itemAffixes: reg.get('monster-item-affixes'),
     rarities: reg.get('rarities'), rarity: 'normal', monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'),
+    gearTiers: reg.get('monster-gear-tiers'),
   }, createRng(i + 1)));
   let dps = 0, dpsIn = 0, hps = 0, ttk = 0, kills = 0;
   for (let r = 0; r < runs; r++) {

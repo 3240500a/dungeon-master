@@ -1,7 +1,7 @@
 /**
  * ПРОДЮСЕР И СТОРОЖ эталона СТАТОВ ГЕРОЯ ДЛЯ UNITY (разбор U5/U6): производные статы целиком (`GameState.derived` с провайдерами
  * `App` — гир, класс брони, мастерства, древо скилов, ауры и стойки), свои и итоговые атрибуты, резерв пулов, полоса опыта (`xpProgress`),
- * HUD 3D (`hud3d`: полосы с резервом, «(−N)», инфо-строка «этаж · сложность · вызов ур.»), блок атрибутов мастера (`derivedBlock`), ЛИСТ
+ * HUD 3D (`hud3d`: полосы с резервом, «(−N)», инфо-строка «этаж · сложность · монстры ур.»), блок атрибутов мастера (`derivedBlock`), ЛИСТ
  * ПЕРСОНАЖА целиком (`characterPanel`: шапка, полосы, ауры, мощь, атрибуты своё/гир, урон ЛКМ/ПКМ/хотбара с ДПС и разбивкой, статусы
  * удара, защита, сопротивления и выдержка, «Статусы», «Прочее», подсказки), карточка оружия и таблица «в руках → скую» окна ковки
  * (`cardWith`, `compareTable` — с вилкой до ковки), предпросмотр верстака (`benchTarget` → `diffStrings` строк без аффиксов) и древо
@@ -87,7 +87,13 @@ const allocate = (o: Record<string, number>, ids: string[], r: number): void => 
 interface Case {
   name: string; save: SaveState; toggles: string[]; hp: number; mana: number; stamina: number;
   lastTarget?: { name: string; accuracy: number; evade: number };
-  area: 'town' | 'dungeon'; depth: number; difficultyId: string; challengeLevel: number | null;
+  area: 'town' | 'dungeon'; depth: number; difficultyId: string;
+  /**
+   * Уровень монстров этажа, КАК ЕГО ПРИСЛАЛ СЕРВЕР — вход фикстуры, а не вывод из мощи: HUD его только печатает.
+   * ⚠ 13.10 (Г1): числа ниже нарочно НЕ сходятся с глубиной (`70` на `depth: 9`) — это сторож того, что клиент берёт поле
+   * сервера, а не пересчитывает. `null` же гоняет фолбэк, и ТАМ число обязано быть ровно глубиной.
+   */
+  challengeLevel: number | null;
   pending?: Partial<Record<'strength' | 'dexterity' | 'intelligence' | 'vitality', number>>;
   /** Таблицы конфига этого случая поверх общего (Unity накладывает то же). */
   patch?: Record<string, unknown>;

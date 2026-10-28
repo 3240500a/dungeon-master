@@ -1,5 +1,5 @@
 [
-  { "id": "magic", "name": "Магический", "minItems": 1, "maxItems": 4, "levelsPerItem": 12 },
-  { "id": "rare", "name": "Редкий", "minItems": 2, "maxItems": 4, "levelsPerItem": 16 },
-  { "id": "unique", "name": "Уникальный", "minItems": 4, "maxItems": 4, "levelsPerItem": 1 }
+  { "id": "magic", "name": "Магический", "minItems": 1, "maxItems": 4, "levelsPerItem": 12, "hpMult": 1, "dmgMult": 1, "accMult": 1, "levelBonus": 0, "hpRegenPct": 0 },
+  { "id": "rare", "name": "Редкий", "minItems": 2, "maxItems": 4, "levelsPerItem": 16, "hpMult": 2.5, "dmgMult": 1.9, "accMult": 1.75, "levelBonus": 2, "hpRegenPct": 0.006 },
+  { "id": "unique", "name": "Уникальный", "minItems": 4, "maxItems": 4, "levelsPerItem": 1, "hpMult": 3, "dmgMult": 1.75, "accMult": 2, "levelBonus": 3, "hpRegenPct": 0.006 }
 ]

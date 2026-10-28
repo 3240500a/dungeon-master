@@ -3,7 +3,7 @@ import { generateMonster } from '../formulas/monstergen.js';
 import { generateItem, rollTierLevel } from '../formulas/itemgen.js';
 import { shapeFoundWeapon } from '../formulas/craft.js';
 import { spawnWeightAt, weightedPickId } from '../formulas/spawnWeight.js';
-import { effectiveLevel, startChallenge, challengeAtFloor, type Difficulty } from '../formulas/power.js';
+import { floorMonsterLevel, type Difficulty } from '../formulas/power.js';
 import type { Rng } from '../formulas/rng.js';
 import type { SaveState } from '../types/save.js';
 import { makePlayerModel } from './playerBot.js';
@@ -72,12 +72,14 @@ export function simulateFloor(
   const monAffixes = reg.get('monster-affixes');
   const monsterGear = reg.get('monster-gear');
   const mderive = reg.get('monster-derive');
+  const gearTiers = reg.get('monster-gear-tiers'); // ступень снаряжения монстра — как в игре (`dungeon/floor.ts`)
   const itemsBase = reg.get('items.base');
   const affixes = reg.get('affixes');
   const uniques = reg.get('uniques');
 
-  const el = effectiveLevel(save, reg.get('balance').power, undefined, reg.get('item-tiers')).total;
-  const cl = challengeAtFloor(startChallenge(el, diff), diff, floor);
+  // ⭐ 13.10 (Г1): уровень монстров этажа — ОДНОЙ функцией игры (`floorMonsterLevel`), мощь героя в него не входит.
+  // Второго источника правды тут быть не должно: сим — оракул баланса, разъехался бы молча.
+  const cl = floorMonsterLevel(diff, floor);
   const model = makePlayerModel(reg, save, { useSkills: policy.useSkills });
 
   // Монстр по РОЛИ из пула (для состава пачки), по весу спавна игры; фолбэк — любой из пула.
@@ -93,12 +95,15 @@ export function simulateFloor(
   for (const roomType of floorRoomTypes(floor, rng)) {
     const spec = packsCfg.find((p) => p.roomType === roomType) ?? packsCfg.find((p) => p.roomType === 'small');
     if (!spec) continue;
-    const mDepth = roomType === 'boss' ? cl + 3 : cl;
+    // ⚠ `generateMonster` ждёт НОЛЬ-БАЗОВУЮ глубину (`level = depth + 1`) — как в игре (`dungeon/floor.ts`): `cl - 1`,
+    // босс-комната — ДОЛЕЙ уровня сверху (`bossRoomDepthPct`, минимум +1; ⭐ 13.10, было плоское «+3»). Поправишь
+    // на `cl` или вернёшь плоскую надбавку — сим станет врать против живого заселения.
+    const mDepth = cl - 1 + (roomType === 'boss' ? Math.max(1, Math.round(cl * mderive.bossRoomDepthPct)) : 0);
     const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4 }];
     const pack = entries.flatMap((e) =>
       Array.from({ length: rng.int(e.min, e.max) }, () =>
-        generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(e.role), depth: mDepth, mderive }, rng)));
-    if (!pack.length) pack.push(generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(), depth: mDepth, mderive }, rng));
+        generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(e.role), depth: mDepth, mderive, gearTiers }, rng)));
+    if (!pack.length) pack.push(generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(), depth: mDepth, mderive, gearTiers }, rng));
 
     const r = simulateFight(model, pack, rng, { startHp: hp });
     timeSec += r.timeSec;
@@ -114,7 +119,7 @@ export function simulateFloor(
       save.gold += Math.max(1, Math.round(rng.int(1, 5 + m.level * 2) * diff.goldMult));
       if (rng.chance(DROP_CHANCE)) {
         const item = shapeFoundWeapon(reg, generateItem(itemsBase, affixes, uniques,
-          // Сложность двигает уровень МОНСТРОВ, а не уровень вещи напрямую (`ilvlBonus` вырезан).
+          // Уровень вещи — от уровня МОНСТРОВ этажа (его двигает глубина), а не от сложности напрямую (`ilvlBonus` вырезан).
           { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, cl),
             tierLevel: rollTierLevel(Math.max(1, cl), reg.get('balance').loot.tierWindow, rng),
             tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), baseRoll: reg.get('balance').loot.baseRoll, origin: 'drop' }, rng));

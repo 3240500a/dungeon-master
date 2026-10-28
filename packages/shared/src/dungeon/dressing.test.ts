@@ -335,7 +335,7 @@ describe('⭐ 08.10: этажи крипты целиком', () => {
       }
       const pitObst = obst.filter((o) => o.shape === 'circle' && L.decor.some((d) => pitIds.has(d.objectId ?? '') && d.x === o.x && d.y === o.y));
       for (const c of L.chests) for (const o of pitObst) expect(pushOutObstacle(c.x, c.y, TILE / 4, o), 'сундук под костром').toBeNull();
-      const mons = spawnPacksEl(reg, L, 3, 'normal', createRng(7), 10, crypt.monsterPool, 1, 'crypt-halls');
+      const mons = spawnPacksEl(reg, L, 3, 'normal', createRng(7), crypt.monsterPool, 1, 'crypt-halls');
       for (const m of mons) for (const o of pitObst) expect(pushOutObstacle(m.x, m.y, TILE / 4, o), 'монстр в костре').toBeNull();
       for (const d of L.decor.filter((x) => x.wallFaces)) {
         const o = obst.find((q) => q.x === d.x && q.y === d.y)!;

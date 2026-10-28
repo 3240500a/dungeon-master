@@ -5,13 +5,15 @@ import { CRAFT_SLOT_LIST } from '../formulas/craftType.js';
 import { anatomyOf, defaultParts, fullJournal, materialId, partFamily, shapeFoundWeapon, type CraftInput } from '../formulas/craft.js';
 import { createRng } from '../formulas/rng.js';
 import { ESSENCE_ID, salvageFromItem, salvageFromMonster, type SalvageRng } from '../formulas/salvage.js';
-import { craftAction, repairCost, salvageRange, salvageYield, sellItem, upgradeCost } from './townActions.js';
+import { craftAction, repairCost, salvageRange, salvageWorth, salvageYield, sellItem, shopSellPrice, upgradeCost } from './townActions.js';
 import { emptyStash } from './stashActions.js';
 import { giveMaterialsTo } from './materials.js';
 import type { Item, Rarity } from '../types/items.js';
 import type { MonsterGearRoll } from '../types/world.js';
 import type { SaveState } from '../types/save.js';
 import { generateItem, itemFromBase, rollTierLevel } from '../formulas/itemgen.js';
+import { rewardScaleOf, rewardRolls } from '../formulas/lootRate.js';
+import { floorMonsterLevel } from '../formulas/power.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
 import { spawnPacksEl } from '../dungeon/floor.js';
 import { resolveMonsterPool } from '../dungeon/floorSpec.js';
@@ -244,12 +246,14 @@ describe('⚠ R2-29: лестница улучшения и починки не 
     const gear = reg.get('monster-gear');
     const LADDER = /^(iron|wood)-[123]$/;
     const ladder = (g: Record<string, number>): number => Object.entries(g).reduce((s, [id, k]) => s + (LADDER.test(id) ? k : 0), 0);
-    for (const el of [10, 50, 90]) {
-      const rng = createRng(el * 13 + 1);
+    // ⚠ 13.10 (Г1): ось — ГЛУБИНА, а не «мощь 10 / 50 / 90»: уровень монстра = номер этажа (`floorMonsterLevel`), и прежняя
+    // ось задавала лишь производную `round(el/4)` и сид — то есть этажи 3 / 13 / 23 под именем мощи. Точки — как у R3-20 ниже:
+    // 1 и 8 (начало и середина), 15 (прежнее дно мира), 40 и 80 за ним — все достижимы (спуск бесконечен, Г2/Р6).
+    for (const depth of [1, 8, 15, 40, 80]) {
+      const rng = createRng(depth * 13 + 1);
       let kills = 0, bodies = 0, parts = 0, rule = 0;
       for (let seed = 1; kills < 4000; seed++) {
-        const depth = Math.max(1, Math.round(el / 4));
-        for (const s of spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + el), el, resolveMonsterPool(biome, depth), 1, '')) {
+        for (const s of spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + depth), resolveMonsterPool(biome, depth), 1, '')) {
           kills++;
           if (rng.chance(loot.materials.chance) || s.def.rarity === 'unique') {
             bodies += loot.materials.mult * ladder(salvageFromMonster(s.def.gearRolls, (id) => gear.find((x) => x.id === id), rng,
@@ -264,43 +268,77 @@ describe('⚠ R2-29: лестница улучшения и починки не 
           rule += ladder(byRule(it, rng));
         }
       }
-      expect(bodies / kills * 100, `мощь ${el}: с тел за 100 убийств`).toBeGreaterThan(40);
-      expect((bodies + parts) / (bodies + rule), `мощь ${el}: тела ${(bodies / kills * 100).toFixed(1)}, разбор ${(parts / kills * 100).toFixed(1)} против ${(rule / kills * 100).toFixed(1)}`).toBeGreaterThanOrEqual(0.9);
+      expect(bodies / kills * 100, `глубина ${depth}: с тел за 100 убийств`).toBeGreaterThan(40);
+      expect((bodies + parts) / (bodies + rule), `глубина ${depth}: тела ${(bodies / kills * 100).toFixed(1)}, разбор ${(parts / kills * 100).toFixed(1)} против ${(rule / kills * 100).toFixed(1)}`).toBeGreaterThanOrEqual(0.9);
     }
   });
 });
 
 describe('⚠ R3-20: сданное в лавку сырьё с тел — не кран золота', () => {
   /**
-   * С врезки ковки лавка платит за сырьё ПОШТУЧНО (`shopSellPrice`: 1 · 4 · 12 · 36 · 108 по ступеням), а до того
-   * брала стек любой длины за 7 золота. Сырьё с тел подбирается само, и сданный стек — новый доход. Бот прогона
-   * баланса сырьё не продаёт (копит на кузницу), поэтому отчёт показывает этот кран отдельно — `craft.materials.sellWorth`.
-   * Замер на настоящем спавне, 4000 убийств на точку, за 100 убийств (монеты / сырьё с тел в лавку / доля):
-   * мощь 10 — 822 / 217 / 26.4 %, мощь 50 — 3 267 / 233 / 7.1 %, мощь 90 — 5 747 / 343 / 6.0 % (при 7 золота
-   * за стек было бы ≈ 80–100 на любой глубине). Потолок — замер с запасом: 30 % на 10-й мощи, 10 % глубже.
+   * С врезки ковки лавка платит за сырьё ПОШТУЧНО (`shopSellPrice`: 1 · 2 · 5 · 10 · 15 по сортам), а до того брала стек любой
+   * длины за 7 золота. Сырьё с тел подбирается само, и сданный стек — новый доход. Бот прогона баланса сырьё не продаёт
+   * (копит на кузницу), поэтому отчёт показывает этот кран отдельно — `craft.materials.sellWorth`.
+   *
+   * ⚠⚠ 13.10 (Г1): ОСЬ СТОРОЖА — ГЛУБИНА, А НЕ МОЩЬ. Уровень монстра отвязан от героя и равен номеру этажа
+   * (`floorMonsterLevel`), так что прежняя ось «мощь 10 / 50 / 90» задавала только производную глубину `round(el/4)` и сид —
+   * мерила, по сути, этажи 3 / 13 / 23, называя их мощью. Теперь точки — сами этажи: 1 и 8 (начало и середина нынешнего мира),
+   * 15 (прежнее дно мира, снято в Г2/Р6) и 40 / 80 за ним: формула глубины потолка не имеет, бесконечный спуск
+   * включает Г2, и сторож обязан держать и его.
+   *
+   * СУТЬ ИНВАРИАНТА ПРОВЕРЕНА, А НЕ ПОДОГНАНА. «Сырьё с тел — не кран золота» — это два утверждения, и оба держатся
+   * (замер 13.10, настоящий спавн, 4000 убийств на точку, всё за 100 убийств):
+   *   глуб  1 (ур. 1): монет  198, сырьё с тел 143 — 72.0 % от монет, 33.4 % от всего дохода; вещей  12 на   229
+   *   глуб  8 (ур. 8): монет  564, сырьё с тел 158 — 28.0 % от монет, 14.8 %;                 вещей  15 на   503
+   *   глуб 15 (ур.15): монет  879, сырьё с тел 168 — 19.1 % от монет,  6.4 %;                 вещей  36 на  1765
+   *   глуб 40 (ур.40): монет 2137, сырьё с тел 173 —  8.1 % от монет,  0.8 %;                 вещей 192 на 20312
+   *   глуб 80 (ур.80): монет 4092, сырьё с тел 182 —  4.4 % от монет,  0.2 %;                 вещей 500 на 96175
+   * 1) ДОЛЯ НЕ РАСТЁТ С ГЛУБИНОЙ — она падает, и падает круто (72 % → 4.4 %): приход, который глубже всё менее заметен,
+   *    краном не становится. Это утверждение сторож теперь держит ПРЯМО (доля строго убывает по точкам), а не только потолком.
+   * 2) ПРОДАТЬ СЫРЬЁ НЕВЫГОДНЕЕ, ЧЕМ ПРОДАТЬ ВЕЩЬ — поток вещей с тех же тел дороже всего сданного сырья на любой
+   *    глубине (229 против 143 на первом этаже, 96 175 против 182 на 80-м), и каждая вещь по отдельности дороже своего
+   *    разбора (здесь — на каждой выпавшей; на каждой базе × ступени × редкости — свой сторож `salvageSell.test.ts`, D4).
+   *
+   * ⚠ ПОЧЕМУ ДОЛЯ УЕХАЛА ВВЕРХ НА МЕЛКОВОДЬЕ (было «мощь 10 — 26.4 %», стало «глуб 1 — 72 %»). Сырья с тела не стало
+   * больше: 143 → 182 за 100 убийств по всей глубине, то есть ПЛОСКО (×1.27 за 1→80) — куча берётся из НАДЕТОГО, а надетое
+   * растёт только ступенями снаряжения. Уехало ЗОЛОТО: монета с тела — `rng.int(1, 5 + ур.×2)`, линейна по уровню монстра,
+   * а уровень монстра на первом этаже теперь 1, а не «мощь + глубина» = 13. Монет стало 198 вместо 822 — в 4.2 раза меньше
+   * при том же сырье. По УРОВНЮ МОНСТРА сторож даже затянулся: прежние 26.4 % мерились на 13-м уровне, а 13-й этаж сегодня
+   * даёт 20.2 %. Калибровка лута — за владельцем (фаза Г9, «шмот пока тестовый»): `balance.loot.*` и `rewardPower` этот
+   * сторож не калибрует, он только не даёт правке проехать молча.
+   *
    * Решение R3-20 — цены не трогаем: первая ступень и так стоит минимальный целый золотой, а ступени 2–3 — мерка
    * лестницы улучшения, пола цены покупки (`salvageWorth`) и инвариантов «не прачечная». Продажа съедает сырьё
    * лестницы (20 единиц первой ступени на подъём тира), то есть это выбор, а не дармовой приход. Сторож держит
    * потолок доли от монет: правка `sellPrice`, `salvageTo` или `loot.materials` не превратит сырьё в кран тихо.
    */
-  const CEIL: Record<number, number> = { 10: 0.3, 50: 0.1, 90: 0.1 };
+  /** Потолок доли от монет по ГЛУБИНЕ — замер 13.10 (72.0 / 28.0 / 19.1 / 8.1 / 4.4 %) с запасом ~1.2, как и прежние 26.4 → 30 %. */
+  const CEIL: Record<number, number> = { 1: 0.85, 8: 0.34, 15: 0.24, 40: 0.11, 80: 0.06 };
 
-  it('⭐ за 100 убийств сырьё с тел в лавку — не больше потолка доли от монет (мощь 10 / 50 / 90)', () => {
+  it('⭐ за 100 убийств сырьё с тел в лавку — не больше потолка доли от монет; доля падает с глубиной, вещи дороже сырья', () => {
     const reg = live;
     const bal = reg.get('balance');
     const loot = bal.loot;
     const gear = reg.get('monster-gear');
     const mats = reg.get('craft-materials');
+    const mdr = reg.get('monster-derive');
     const known = (id: string): boolean => mats.some((c) => c.id === id && c.enabled);
-    const goldMult = reg.get('difficulties').find((d) => d.id === 'normal')!.goldMult;
+    const diff = reg.get('difficulties').find((d) => d.id === 'normal')!;
     const rooms = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 2 + (i % 4) * 16, y: 2 + Math.floor(i / 4) * 16, w: 12, h: 12, type: i % 2 ? 'large' : 'small' }));
     const layout = { grid: makeGrid(68, 36, Cell.Floor), rooms } as unknown as DungeonLayout;
     const biome = reg.get('biomes').find((b) => b.enabled !== false)!;
+    /** Находка с тела: уровень вещи = уровень монстра, ступень — бросок в окне (как `weaponDrop` выше, но для любой базы). */
+    const dropOf = (baseId: string, level: number, rng: ReturnType<typeof createRng>): Item =>
+      shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+        dropBias: 1, itemLevel: Math.max(1, level), tierLevel: rollTierLevel(level, loot.tierWindow, rng), baseId,
+        tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), categoryWeights: loot.categoryWeights, baseRoll: loot.baseRoll, origin: 'drop',
+      }, rng));
     // Сумка без тесноты: мерим цену сырья, а не то, сколько его не влезло.
     const dims = { ...bal.inventory, cols: 40, rows: 40 };
-    for (const el of [10, 50, 90]) {
-      const rng = createRng(el * 101 + 3);
-      let kills = 0, coins = 0, sold = 0, uid = 0;
+    const shares: { depth: number; share: number }[] = [];
+    for (const depth of [1, 8, 15, 40, 80]) {
+      const rng = createRng(depth * 101 + 3);
+      let kills = 0, coins = 0, sold = 0, uid = 0, items = 0, itemGold = 0;
       const save = { gold: 0, inventory: [] } as unknown as SaveState;
       // Город — каждые 100 убийств: каждый стек сырья из сумки — настоящей продажей, как у сервера (`sellItem`).
       const town = (): void => {
@@ -309,10 +347,9 @@ describe('⚠ R3-20: сданное в лавку сырьё с тел — не 
         sold += save.gold - g0;
       };
       for (let seed = 1; kills < 4000; seed++) {
-        const depth = Math.max(1, Math.round(el / 4));
-        for (const s of spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + el), el, resolveMonsterPool(biome, depth), 1, '')) {
+        for (const s of spawnPacksEl(reg, layout, depth, 'normal', createRng(seed * 7919 + depth), resolveMonsterPool(biome, depth), 1, '')) {
           // Награды тела — как `GameSession.killMonster`: монета, затем сырьё × `loot.materials.mult`, округление броском.
-          if (rng.chance(loot.goldChance)) coins += Math.max(1, Math.round(rng.int(1, 5 + s.def.level * 2) * goldMult));
+          if (rng.chance(loot.goldChance)) coins += Math.max(1, Math.round(rng.int(1, 5 + s.def.level * 2) * diff.goldMult));
           if (rng.chance(loot.materials.chance)) {
             const g = salvageFromMonster(s.def.gearRolls, (id) => gear.find((x) => x.id === id), rng,
               { rarity: s.def.rarity, knownMaterial: known });
@@ -323,16 +360,40 @@ describe('⚠ R3-20: сданное в лавку сырьё с тел — не 
             }
             expect(giveMaterialsTo(save.inventory, g, mats, dims, bal.inventory.materialStack, () => `m${uid++}`)).toEqual({});
           }
+          // ⭐ 13.10: ВЕЩИ С ТОГО ЖЕ ТЕЛА — вторая половина сути. Бросков столько, сколько заслужил монстр (`rewardScale`
+          // по кривой жизни — как `killMonster`), трофей — по надетому: это ровно тот поток, с которым сырьё и сравнивается.
+          const baseTier = reg.get('monsters').find((b) => b.id === s.def.id)?.tier ?? 'medium';
+          const scale = rewardScaleOf(s.def.level, (mdr.tierHp[baseTier] ?? 1) / (mdr.tierHp.medium || 1), loot.rewardPower);
+          for (let i = rewardRolls(loot.dropChance, scale, (pr) => rng.chance(pr)); i > 0; i--) {
+            const baseId = monsterTrophyBase(s.def.gearRolls, (id) => gear.find((x) => x.id === id), reg.get('items.base'), rng, loot.categoryWeights);
+            const b = baseId ? reg.get('items.base').find((x) => x.id === baseId) : undefined;
+            if (!b || b.kind === 'consumable') continue;
+            const it = dropOf(b.id, s.def.level, rng);
+            items++;
+            itemGold += shopSellPrice(reg, it);
+            // Та же вещь, разобранная лучшим броском, в лавке дешевле самой вещи (D4).
+            expect(salvageWorth(reg, it), `глубина ${depth}: разбор ${it.baseId} дороже самой вещи`).toBeLessThanOrEqual(shopSellPrice(reg, it));
+          }
           if (++kills % 100 === 0) town();
         }
       }
       town();
       const share = sold / coins;
-      expect(share, `мощь ${el}: за 100 убийств монет ${Math.round(coins / kills * 100)}, сырьё с тел в лавку ${Math.round(sold / kills * 100)}`
-        + ` (${(share * 100).toFixed(1)} % от монет)`).toBeLessThanOrEqual(CEIL[el]!);
-      expect(sold, `мощь ${el}: сырьё продаётся`).toBeGreaterThan(0);
+      const line = `глубина ${depth} (ур. монстра ${floorMonsterLevel(diff, depth)}): за 100 убийств монет ${Math.round(coins / kills * 100)},`
+        + ` сырьё с тел в лавку ${Math.round(sold / kills * 100)} (${(share * 100).toFixed(1)} % от монет),`
+        + ` вещей ${Math.round(items / kills * 100)} на ${Math.round(itemGold / kills * 100)}`;
+      expect(share, line).toBeLessThanOrEqual(CEIL[depth]!);
+      expect(sold, `глубина ${depth}: сырьё продаётся`).toBeGreaterThan(0);
+      // Суть, половина вторая: поток вещей с тех же тел дороже всего сданного сырья.
+      expect(itemGold, `${line} — сырьё с тел дороже потока вещей`).toBeGreaterThan(sold);
+      shares.push({ depth, share });
     }
-  });
+    // Суть, половина первая: доля сырья в доходе НЕ РАСТЁТ с глубиной (замер: 72 % → 4.4 %).
+    for (let i = 1; i < shares.length; i++) {
+      expect(shares[i]!.share, `доля сырья выросла с глубины ${shares[i - 1]!.depth} (${(shares[i - 1]!.share * 100).toFixed(1)} %)`
+        + ` к глубине ${shares[i]!.depth} (${(shares[i]!.share * 100).toFixed(1)} %)`).toBeLessThan(shares[i - 1]!.share);
+    }
+  }, 120_000);
 });
 
 /**

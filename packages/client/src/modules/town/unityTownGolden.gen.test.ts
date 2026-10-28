@@ -282,7 +282,11 @@ function equipCases() {
   let n = 0;
   const uidOf = (it: Item): Item => ({ ...it, uid: `eq-${n++}` });
   const pack = ['short-sword', 'dagger', 'hand-crossbow', 'apprentice-wand', 'greatsword', 'claymore', 'wooden-shield', 'leather-cap', 'healing-potion'];
-  for (const [ci, cls] of reg.get('classes').filter((c) => c.enabled !== false).slice(0, 3).entries()) {
+  // ⚠ 13.10: КЛАССЫ ЗДЕСЬ — СВОЙ СТЕНД, А НЕ ПОСТАВКА (фильтр `enabled` снят). Эталон отдаёт порту Unity
+  // ПРАВИЛА пупсика, а не список готовых классов: владелец гасит `enabled` у ненастроенного (ранний доступ —
+  // один класс), и на одном включённом часть причин отказа («Занято двумя руками» и др.) просто не рождалась —
+  // эталон уходил в Unity беднее, чем правила. Правила одни для всех классов, сколько бы их ни было включено.
+  for (const [ci, cls] of reg.get('classes').slice(0, 3).entries()) {
     const s = view(newCharacterSave(reg, cls.id, 'golden', 'golden'));
     s.inventory = s.inventory.map(uidOf);
     for (const k of Object.keys(s.equipment) as EquipSlot[]) if (s.equipment[k]) s.equipment[k] = uidOf(s.equipment[k]!);

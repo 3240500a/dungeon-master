@@ -5,6 +5,7 @@ import type { RolledAffix } from '../types/items.js';
 import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Rng } from './rng.js';
 import { rollAffixes, type AffixTarget } from './itemgen.js';
+import { pickGearTier, tierWeapon, tierArmor, tierShield, type GearTier } from './monsterGearTier.js';
 import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterDeriveScaling, type MonsterTemplate } from './monsterDerive.js';
 import { weapon3dKeyFromEquipment } from '../session/weapon3d.js';   // 3D-ключ оружия монстра (форма меша) — общий с игроком
 
@@ -19,6 +20,7 @@ type ItemAffixes = ConfigShapes['affixes'];
 type Rarities = ConfigShapes['rarities'];
 type MonsterRarityCfg = ConfigShapes['monster-rarity'];
 type MonsterUniques = ConfigShapes['monster-uniques'];
+type MonsterGearTiers = ConfigShapes['monster-gear-tiers'];
 /** Редкость гира монстра как у предметов: 4 редкости. unique — топ (элит-статы + уник-имя + гир на всех слотах). */
 type GearRarity = 'normal' | 'magic' | 'rare' | 'unique';
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
@@ -91,12 +93,38 @@ function affixWords(rolled: RolledAffix[], itemAffixes: ItemAffixes): string[] {
   return out;
 }
 
-/** Элит-буст (чемпион/уник): жирный HP/урон/xp + реген (мин. 1). */
-function eliteBoost(m: ScaledMonster, xpMult: number): void {
-  m.hp = Math.round(m.hp * 2.5);
-  m.minDamage *= 1.5; m.maxDamage *= 1.5;
+/**
+ * Число снаряжения ДЛЯ ПОКАЗА. Ступень множит статы вещи без округления (целые делает деривация,
+ * см. `monsterGearTier.tierWeapon`), поэтому в тултип они пошли бы как «урон 5.2–10.4». Округляем
+ * ровно здесь — на витрине, — а не в расчёте: иначе двойники снова разъедутся по ДПС.
+ */
+const shown = (v: number): number => Math.round(v);
+
+/** Ступень вещи в тултип снаряжения; нет лестницы в вызове — полей нет (а не 't0' на пустом месте). */
+function tierOf(t: GearTier | undefined): { tier?: string; tierName?: string } {
+  return t ? { tier: t.id, tierName: t.name } : {};
+}
+
+/**
+ * Элит-буст редкости (чемпион/уник): жизнь, урон, меткость, xp и реген — ВСЁ ИЗ КОНФИГА (`monster-rarity`).
+ * ⚠ 13.10: было вшито в код (×2.5 hp / ×1.5 урона) и только для `unique` — «чемпион» (rare) статов не получал.
+ * Уровень редкости (`levelBonus`) учтён ДО деривации — см. `rarityOf` в `generateMonster`.
+ */
+function eliteBoost(m: ScaledMonster, r: RarityBoost, xpMult: number): void {
+  m.hp = Math.round(m.hp * r.hpMult);
+  m.minDamage = Math.round(m.minDamage * r.dmgMult);
+  m.maxDamage = Math.max(m.minDamage, Math.round(m.maxDamage * r.dmgMult));
+  m.accuracy = Math.round(m.accuracy * r.accMult);
   m.xp = Math.round(m.xp * xpMult);
-  m.hpRegen = Math.max(1, Math.round(m.hp * 0.006));
+  if (r.hpRegenPct > 0) m.hpRegen = Math.max(1, Math.round(m.hp * r.hpRegenPct));
+}
+/** Стат-буст редкости из `monster-rarity`; нет записи или редкость `normal` — ничего не множится. */
+interface RarityBoost { hpMult: number; dmgMult: number; accMult: number; levelBonus: number; hpRegenPct: number }
+const NO_BOOST: RarityBoost = { hpMult: 1, dmgMult: 1, accMult: 1, levelBonus: 0, hpRegenPct: 0 };
+function rarityBoost(cfg: MonsterRarityCfg | undefined, rarity: GearRarity): RarityBoost {
+  if (rarity === 'normal') return NO_BOOST;
+  const c = cfg?.find((x) => x.id === rarity);
+  return c ? { hpMult: c.hpMult, dmgMult: c.dmgMult, accMult: c.accMult, levelBonus: c.levelBonus, hpRegenPct: c.hpRegenPct } : NO_BOOST;
 }
 
 /** Имя уникального монстра из пула (по фракции; фолбэк — любой доступный, затем дефолт). */
@@ -118,22 +146,54 @@ function monsterAffixName(name: string, rolled: RolledAffix[], itemAffixes: Item
   return n;
 }
 
-/** Резерв-оружие: если у монстра не задано/не найдено оружие — бьёт «кулаками» (валидный монстр). */
+/** Резерв-оружие: если у монстра не задано/не найдено оружие — бьёт «кулаками» (валидный монстр).
+ *  Ступени у кулаков нет (`withLevel: false`): кулак 40 уровня — тот же кулак. */
 const FISTS: GearWeapon = {
   kind: 'weapon', id: '__fists', name: 'кулаки', faction: 'monster', enabled: true,
   weaponClass: 'mace', weight: 'light', attackType: 'melee', hands: 1,
   damageType: 'physical', minDamage: 1, maxDamage: 2, attackSpeed: 1,
+  minGearTier: 'm0', maxGearTier: 'm0', withLevel: false,
 };
 
-/** Разрешить экипировку монстра по id-ссылкам его заготовки (оружие обязательно → фолбэк FISTS). 4 слота. */
-function resolveGear(gear: MonsterGear, tpl: { weapon?: string; armor?: string; helm?: string; offhand?: string }): {
-  weapon: GearWeapon; armor: GearArmor | null; helm: GearArmor | null; shield: GearShield | null;
-} {
-  const weapon = (gear.find((g) => g.kind === 'weapon' && g.id === tpl.weapon) as GearWeapon | undefined) ?? FISTS;
-  const armor = tpl.armor ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.armor) as GearArmor | undefined) ?? null) : null;
-  const helm = tpl.helm ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.helm) as GearArmor | undefined) ?? null) : null;
-  const shield = tpl.offhand ? ((gear.find((g) => g.kind === 'shield' && g.id === tpl.offhand) as GearShield | undefined) ?? null) : null;
-  return { weapon, armor, helm, shield };
+/** Ступени надетого по слотам — для тултипа («чем именно бьёт монстр этого уровня»). */
+interface GearTiers { weapon?: GearTier; armor?: GearTier; helm?: GearTier; shield?: GearTier }
+
+/**
+ * Разрешить экипировку монстра по id-ссылкам его заготовки (оружие обязательно → фолбэк FISTS). 4 слота.
+ *
+ * ⭐ СТУПЕНЬ ПО УРОВНЮ. Найденная вещь дальше масштабируется ступенью `item-tiers` в её собственном
+ * ряду [minTier, maxTier] — тем же механизмом, что растит шмот игрока. Лестницы нет в вызове
+ * (`ladder` пуст) → ничего не множится, числа ровно те, что в `monster-gear`.
+ *
+ * ⚠ Ступень применяется ДО `deriveMonsterStats`, а не после: тогда урон/броня деривятся из уже
+ * «подросшей» вещи, и множитель по атрибутам ложится поверх неё — ровно как у игрока. Правка
+ * «домножить деривнутые статы в конце» выглядит эквивалентной, но ею ступень обходит и округление
+ * вилки, и вклад брони в `armorPerStr`, и тултип остаётся врать прежними числами базы.
+ */
+function resolveGear(
+  gear: MonsterGear,
+  tpl: { weapon?: string; armor?: string; helm?: string; offhand?: string },
+  level: number,
+  ladder: MonsterGearTiers | undefined,
+): { weapon: GearWeapon; armor: GearArmor | null; helm: GearArmor | null; shield: GearShield | null; tier: GearTiers } {
+  const w0 = (gear.find((g) => g.kind === 'weapon' && g.id === tpl.weapon) as GearWeapon | undefined) ?? FISTS;
+  const a0 = tpl.armor ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.armor) as GearArmor | undefined) ?? null) : null;
+  const h0 = tpl.helm ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.helm) as GearArmor | undefined) ?? null) : null;
+  const s0 = tpl.offhand ? ((gear.find((g) => g.kind === 'shield' && g.id === tpl.offhand) as GearShield | undefined) ?? null) : null;
+
+  const tier: GearTiers = {};
+  const tw = pickGearTier(ladder, w0, level); if (tw) tier.weapon = tw;
+  const ta = a0 ? pickGearTier(ladder, a0, level) : undefined; if (ta) tier.armor = ta;
+  const th = h0 ? pickGearTier(ladder, h0, level) : undefined; if (th) tier.helm = th;
+  const ts = s0 ? pickGearTier(ladder, s0, level) : undefined; if (ts) tier.shield = ts;
+
+  return {
+    weapon: tierWeapon(w0, tw),
+    armor: a0 ? tierArmor(a0, ta) : null,
+    helm: h0 ? tierArmor(h0, th) : null,
+    shield: s0 ? tierShield(s0, ts) : null,
+    tier,
+  };
 }
 
 /**
@@ -153,14 +213,26 @@ export function generateMonster(
     monsterRarity?: MonsterRarityCfg;
     /** Пул имён уникальных монстров (для rarity:'unique'). */
     monsterUniques?: MonsterUniques;
+    /** ⭐ Лестница ступеней снаряжения МОНСТРОВ (`monster-gear-tiers`) — своя, не игроковая (почему —
+     *  в шапке `monsterGearTier.ts`). Не передана → снаряжение не растёт по уровню (поведение до
+     *  ступеней): нужно тестам и старым инструментам. */
+    gearTiers?: MonsterGearTiers;
   },
   rng: Rng,
 ): ScaledMonster {
   const base = (opts.baseId ? monsters.find((b) => b.id === opts.baseId) : undefined) ?? rng.pick(monsters);
-  const level = Math.max(0, opts.depth) + 1;
-  const { weapon, armor, helm, shield } = resolveGear(monsterGear, base);
-  // Коэффициенты деривации: сначала переопределение самого моба (monster.derive), иначе — общие (opts.mderive).
-  const mderive = (base as { derive?: MonsterDeriveScaling }).derive ?? opts.mderive ?? DEFAULT_MDERIVE;
+  // ⭐ 13.10: уровень редкости — ДО деривации (как в D2: чемпион +2, босс области +3), иначе буст не доставался
+  // ни ступени снаряжения, ни атрибутам, ни тиру афиксов — только готовому стат-блоку множителем.
+  const boost = rarityBoost(opts.monsterRarity, opts.rarity ?? 'normal');
+  const level = Math.max(0, opts.depth) + 1 + boost.levelBonus;
+  // Коэффициенты деривации: общие (opts.mderive) + ТОЧЕЧНЫЙ оверрайд самого моба (monster.derive) поверх.
+  // ⚠ 13.10: раньше оверрайд ЗАМЕНЯЛ блок ЦЕЛИКОМ, а схема требовала все 16 ключей — поэтому в `monsters.json`
+  // у 18 из 19 лежала ПОЛНАЯ КОПИЯ базы, и правка `monster-derive.json` меняла ровно одного монстра из 19.
+  // `tierXp` сливается ПОЛЯМИ: оверрайд одного тира не обнуляет остальные до схемных умолчаний.
+  const mbase = opts.mderive ?? DEFAULT_MDERIVE;
+  const movr = (base as { derive?: Partial<MonsterDeriveScaling> | null }).derive ?? {};
+  const mderive: MonsterDeriveScaling = { ...mbase, ...movr, tierXp: { ...mbase.tierXp, ...(movr.tierXp ?? {}) } };
+  const { weapon, armor, helm, shield, tier: gearTier } = resolveGear(monsterGear, base, level, opts.gearTiers);
   const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, mderive, helm);
 
   const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
@@ -184,19 +256,19 @@ export function generateMonster(
     // (item-движок катает афиксы на каждом по его цели: оружие→оружейные, броня/шлем→броневые, щит→блок),
     // все афиксы маппятся в статы. Оружие «прокачиваем» первым (урон), остальное — по rng-порядку.
     const gearRar: GearRarity = opts.rarity ?? 'normal';
-    // unique — топ-редкость: элит-статы (×hp/×dmg/реген) + уник-имя, гир катается на ВСЕХ слотах.
-    if (gearRar === 'unique') eliteBoost(m, opts.uniqueXpMult ?? 3);
+    // Статы редкости — из `monster-rarity` (13.10): чемпион (rare) и уник своими множителями, уник — ещё и имя из пула.
+    if (gearRar !== 'normal') eliteBoost(m, boost, gearRar === 'unique' ? (opts.uniqueXpMult ?? 3) : 1);
     const affRar: GearRarity = gearRar;
     const slotRar: GearRarity = affRar === 'unique' ? 'rare' : affRar; // у unique-предметов слоты игрока=0 → монстру берём rare
     m.rarity = gearRar; // normal/magic/rare/unique
 
     // Надетые слоты (оружие всегда) + цель афиксов + базовые статы каждого (для тултипа).
-    const pieces: { slot: MonsterGearRoll['slot']; name: string; gearId: string; target: AffixTarget; base: MonsterGearRoll['base'] }[] = [
-      { slot: 'weapon', name: weapon.name, gearId: weapon.id, target: { kind: 'weapon', slot: 'weapon', attackType: weapon.attackType, damageKind: weapon.damageType === 'physical' ? 'physical' : 'magic' }, base: { minDamage: weapon.minDamage, maxDamage: weapon.maxDamage, damageType: weapon.damageType, attackSpeed: weapon.attackSpeed } },
+    const pieces: { slot: MonsterGearRoll['slot']; name: string; gearId: string; target: AffixTarget; base: MonsterGearRoll['base']; tier?: GearTier }[] = [
+      { slot: 'weapon', name: weapon.name, gearId: weapon.id, target: { kind: 'weapon', slot: 'weapon', attackType: weapon.attackType, damageKind: weapon.damageType === 'physical' ? 'physical' : 'magic' }, base: { minDamage: shown(weapon.minDamage), maxDamage: shown(weapon.maxDamage), damageType: weapon.damageType, attackSpeed: weapon.attackSpeed }, tier: gearTier.weapon },
     ];
-    if (armor) pieces.push({ slot: 'armor', name: armor.name, gearId: armor.id, target: { kind: 'armor', slot: 'chest' }, base: { defense: armor.defense } });
-    if (shield) pieces.push({ slot: 'shield', name: shield.name, gearId: shield.id, target: { kind: 'shield', slot: 'offhand' }, base: { block: shield.block, defense: shield.defense } });
-    if (helm) pieces.push({ slot: 'helm', name: helm.name, gearId: helm.id, target: { kind: 'armor', slot: 'helm' }, base: { defense: helm.defense } });
+    if (armor) pieces.push({ slot: 'armor', name: armor.name, gearId: armor.id, target: { kind: 'armor', slot: 'chest' }, base: { defense: shown(armor.defense) }, tier: gearTier.armor });
+    if (shield) pieces.push({ slot: 'shield', name: shield.name, gearId: shield.id, target: { kind: 'shield', slot: 'offhand' }, base: { block: shield.block, defense: shown(shield.defense) }, tier: gearTier.shield });
+    if (helm) pieces.push({ slot: 'helm', name: helm.name, gearId: helm.id, target: { kind: 'armor', slot: 'helm' }, base: { defense: shown(helm.defense) }, tier: gearTier.helm });
 
     const nItems = affixedItemCount(opts.monsterRarity, affRar, level, pieces.length); // unique → все слоты
     // Выбор слотов: оружие первым (индекс 0), остальные — перетасованы rng (детерминизм по сиду).
@@ -214,9 +286,9 @@ export function generateMonster(
         const rolled = rollAffixes(opts.itemAffixes, p.target, slotRar, slots, level, rng);
         allRolled.push(...rolled);
         const mods = rolled.filter((r) => r.modifier).map((r) => r.modifier!);
-        rolls.push({ slot: p.slot, name: p.name, gearId: p.gearId, rarity: affRar, affixes: affixWords(rolled, opts.itemAffixes), mods, base: p.base });
+        rolls.push({ slot: p.slot, name: p.name, gearId: p.gearId, rarity: affRar, affixes: affixWords(rolled, opts.itemAffixes), mods, base: p.base, ...tierOf(p.tier) });
       } else {
-        rolls.push({ slot: p.slot, name: p.name, gearId: p.gearId, rarity: 'normal', affixes: [], mods: [], base: p.base });
+        rolls.push({ slot: p.slot, name: p.name, gearId: p.gearId, rarity: 'normal', affixes: [], mods: [], base: p.base, ...tierOf(p.tier) });
       }
     }
     for (const ra of allRolled) if (ra.modifier) applyGearAffix(m, ra.modifier);

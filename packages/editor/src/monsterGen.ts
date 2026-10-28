@@ -88,8 +88,11 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const mderive = reg.get('monster-derive');
   const monsterRarity = reg.get('monster-rarity');
   const monsterUniques = reg.get('monster-uniques');
+  const gearTiers = reg.get('monster-gear-tiers'); // ступень снаряжения по уровню монстра (как в игре)
+  // ⚠ `depth: level - 1` — ПРАВИЛЬНО, а не опечатка: `generateMonster` считает `level = max(0, depth) + 1`, то есть его
+  // `depth` НОЛЬ-БАЗОВЫЙ. Поправишь на `level` — вся песочница поедет на уровень вверх против живой игры.
   const rollOne = (s: number): ScaledMonster =>
-    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, mderive, itemAffixes, rarities, rarity, monsterRarity, monsterUniques }, createRng(s));
+    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, mderive, gearTiers, itemAffixes, rarities, rarity, monsterRarity, monsterUniques }, createRng(s));
   const SLOT_RU: Record<string, string> = { weapon: 'Оружие', armor: 'Броня', helm: 'Шлем', shield: 'Щит' };
   const rarColOf = (r: string): string => rarities.find((x) => x.id === r)?.color ?? '#c8c8c8';
 
@@ -114,6 +117,8 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
       const gearTip = (g: MonsterGearRoll): string => {
         const col = rarColOf(g.rarity), b = g.base;
         const lines = [`<div style="color:${col};font-weight:600;margin-bottom:4px">${g.name}</div>`];
+        // ⭐ Ступень снаряжения по уровню монстра (`item-tiers`): статы ниже УЖЕ с её множителем.
+        if (g.tierName) lines.push(`<div style="color:#9aa;font-size:11px">Ступень ${g.tierName} (${g.tier})</div>`);
         if (b.minDamage != null) lines.push(`<div style="color:#dcdce4">Урон ${b.minDamage}–${b.maxDamage} ${DMG_SHORT[b.damageType ?? 'physical'] ?? b.damageType}</div>`);
         if (b.attackSpeed != null) lines.push(`<div style="color:#9aa">Скор. атаки ${b.attackSpeed}</div>`);
         if (b.defense) lines.push(`<div style="color:#dcdce4">Защита +${b.defense}</div>`);
@@ -125,6 +130,7 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
       for (const g of m.gearRolls) {
         const gr = h('div', 'font-size:12px;margin:2px 0;line-height:1.4;cursor:help');
         gr.innerHTML = `<span style="color:#8a8a9a">${SLOT_RU[g.slot] ?? g.slot}:</span> <span style="color:${rarColOf(g.rarity)}">${g.name}</span>` +
+          (g.tier ? ` <span style="color:#6a8a6a;font-size:11px">${g.tier}</span>` : '') +
           (g.affixes.length ? ` <span style="color:${rarColOf(g.rarity)};font-size:11px">[${g.affixes.join(', ')}]</span>` : '');
         gr.addEventListener('mousemove', (e) => showTip(gearTip(g), (e as MouseEvent).clientX, (e as MouseEvent).clientY));
         gr.addEventListener('mouseleave', hideTip);

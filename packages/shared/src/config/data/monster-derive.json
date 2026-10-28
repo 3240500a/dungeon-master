@@ -1,8 +1,9 @@
 {
   "levelGrowth": 0.1,
-  "hpBase": 6,
-  "hpPerVit": 1.2,
-  "hpPerLevel": 5,
+  "hpBase": 10,
+  "hpPerVit": 3.37,
+  "hpPerLevel": 0,
+  "hpVitPower": 1.76,
   "dmgPerAttr": 0.02,
   "armorPerStr": 0.15,
   "accBase": 20,
@@ -19,5 +20,18 @@
     "medium": 1,
     "strong": 1.8,
     "boss": 4
-  }
+  },
+  "tierHp": {
+    "weak": 0.5,
+    "medium": 1,
+    "strong": 2.5,
+    "boss": 10
+  },
+  "tierDmg": {
+    "weak": 0.8,
+    "medium": 1,
+    "strong": 1.5,
+    "boss": 3
+  },
+  "bossRoomDepthPct": 0.1
 }

@@ -46,7 +46,16 @@ export interface SweepOpts {
   classId: string;
   levels: number[];
   monsterIds: string[];
-  /** Смещение глубины моба от уровня игрока (моб = depth `level + depthOffset`). По умолчанию 0 (на-уровне). */
+  /**
+   * Сдвиг УРОВНЯ моба от уровня игрока. По умолчанию 0 — «монстр РОВНО моего уровня».
+   * ⚠ 13.10 (Г1): имя `depthOffset` врёт — это НЕ глубина этажа. Глубина решает уровень монстра в ИГРЕ
+   * (`floorMonsterLevel`), а здесь калибровочная ось хитмапа: «сколько ударов на моба на N уровней выше меня».
+   * Переименование тянет CLI-флаг `--depthoff` и вкладку свипов — отдельной правкой.
+   * ⚠ ОДИН НА ОДИН: `generateMonster` считает `level = max(0, depth) + 1`, то есть его `depth` НОЛЬ-БАЗОВЫЙ, поэтому
+   * ось кладёт ему `level - 1 + depthOffset` (та же «−1», что у заселения: `dungeon/floor.ts`, `mDepth = floorCL - 1`).
+   * До 13.10 здесь было `level + depthOffset` — и при сдвиге 0 хитмап мерил моба на уровень ВЫШЕ героя, то есть вся
+   * ось была смещена на единицу против собственной подписи.
+   */
   depthOffset?: number;
   build?: BuildPolicy;
   tier?: BotTier;
@@ -76,11 +85,12 @@ export function sweepHitsToKill(reg: ConfigRegistry, opts: SweepOpts): SweepCell
   for (const level of opts.levels) {
     const save = buildBotAt(reg, opts.classId, level, build, seed + level * 101);
     for (const monsterId of opts.monsterIds) {
-      const depth = Math.max(0, level + depthOff);
+      const depth = Math.max(0, level - 1 + depthOff);   // ноль-базовый `depth` генератора: сдвиг 0 = моб ровно моего уровня
       const mon = generateMonster(monsters, gear, affx, {
         baseId: monsterId, depth, mderive: reg.get('monster-derive'),
         itemAffixes: reg.get('monster-item-affixes'), rarities: reg.get('rarities'), rarity,
         monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'),
+        gearTiers: reg.get('monster-gear-tiers'),
       }, createRng(1));
       const s = microFightStats(reg, { save, monsters: [mon], tier: opts.tier, style: opts.style }, runs, seed);
       cells.push({

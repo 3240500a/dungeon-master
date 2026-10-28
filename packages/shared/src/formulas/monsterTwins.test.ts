@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { SaveState } from '../types/save.js';
-import { deriveMonsterStats, type MonsterDeriveScaling, type MonsterTemplate } from './monsterDerive.js';
+import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterDeriveScaling, type MonsterTemplate } from './monsterDerive.js';
+import { pickGearTier, tierWeapon } from './monsterGearTier.js';
 import { spawnShareOf, spawnWeightAt } from './spawnWeight.js';
 import { generateMonster } from './monstergen.js';
 import { itemFromBaseId } from './itemgen.js';
@@ -33,6 +34,7 @@ type Gear = ConfigShapes['monster-gear'][number];
 type GearWeapon = Extract<Gear, { kind: 'weapon' }>;
 
 const monsters = reg.get('monsters').filter((m) => m.enabled !== false);
+const ladder = reg.get('monster-gear-tiers');
 const weaponOf = (m: Monster): GearWeapon => {
   const g = reg.get('monster-gear').find((x) => x.kind === 'weapon' && x.id === m.weapon);
   if (!g || g.kind !== 'weapon') throw new Error(`${m.id}: нет оружия ${m.weapon}`);
@@ -50,10 +52,40 @@ const groups = (() => {
   return [...by.values()].filter((g) => g.some((m) => spawnShareOf(m) < 1));
 })();
 
+/**
+ * ⚠⚠ 12.10: МЕРИМ НОСИМОЕ, А НЕ ЗАПИСЬ. Раньше обе проверки ДПС брали `weaponOf(m)` — сырую строку
+ * `monster-gear`. Со ступенями снаряжения (`monsterGearTier.ts`) носимое перестало быть равным
+ * записи, и сторож ослеп: ревью нашло расхождение двойников 10.0 % против капа ±8 %, а набор
+ * оставался зелёным. Берём оружие ТОЙ ЖЕ ступени, что носит монстр этого уровня.
+ */
+const wornWeapon = (m: Monster, level: number): GearWeapon =>
+  tierWeapon(weaponOf(m), pickGearTier(ladder, weaponOf(m), level));
+
 const gearDps = (w: GearWeapon): number => ((w.minDamage + w.maxDamage) / 2) * w.attackSpeed;
+/** Оверрайд моба — ЧАСТИЧНЫЙ (13.10): кладётся поверх базы точно так же, как в `generateMonster`. */
+const deriveOf = (m: Monster): MonsterDeriveScaling => {
+  const ovr = (m.derive ?? {}) as Partial<MonsterDeriveScaling>;
+  return { ...DEFAULT_MDERIVE, ...ovr, tierXp: { ...DEFAULT_MDERIVE.tierXp, ...(ovr.tierXp ?? {}) } };
+};
 const derivedDps = (m: Monster, level: number): number => {
-  const d = deriveMonsterStats(m as unknown as MonsterTemplate, weaponOf(m), null, null, level, (m.derive ?? undefined) as MonsterDeriveScaling | undefined);
+  const d = deriveMonsterStats(m as unknown as MonsterTemplate, wornWeapon(m, level), null, null, level, deriveOf(m));
   return ((d.minDamage + d.maxDamage) / 2) * d.attackSpeed;
+};
+/**
+ * Тот же ДПС, но БЕЗ ОКРУГЛЕНИЯ до целых: движок кладёт `minDamage`/`maxDamage` целыми, и на
+ * малых числах один пункт округления — уже проценты. Этот замер шума не имеет, и на нём стоит УЗКИЙ
+ * сторож (±1 %): системное расхождение двойников (другой ведущий атрибут, другой множитель тира) он ловит
+ * там, где округлённый вынужден держать широкий кап.
+ */
+const exactDps = (m: Monster, level: number): number => {
+  const s = deriveOf(m);
+  const w = wornWeapon(m, level);
+  const g = 1 + Math.max(0, level - 1) * s.levelGrowth;
+  const attr = w.damageType !== 'physical' ? m.int * g
+    : w.attackType === 'ranged' ? m.dex * g
+      : new Set(['heavy', 'massive', 'medium']).has(w.weight ?? '') ? m.str * g : m.dex * g;
+  const mult = (1 + attr * s.dmgPerAttr) * (s.tierDmg[(m as { tier?: 'weak' | 'medium' | 'strong' | 'boss' }).tier ?? 'medium'] ?? 1);
+  return ((w.minDamage + w.maxDamage) / 2) * mult * (w.attackSpeed * (1 + m.dex * g * s.iasPerDex));
 };
 
 /**
@@ -98,9 +130,15 @@ const incomingDps = (monsterId: string, classId: string, level: number, seed: nu
   const ticks = FIGHT_SEC * 30;
   let dmg = 0;
   for (let i = 0; i < ticks; i++) {
-    p.hp = 1e7;
+    // ⚠⚠ 13.10: БЕССМЕРТЕН В ПРЕДЕЛАХ СВОЕГО МАКСИМУМА. Раньше строка была `p.hp = 1e7`, а движок
+    // на тике зажимает HP по своему максимуму (~100 на 5 ур.) — и `1e7 − p.hp` давало ПОЧТИ 1e7 КАЖДЫЙ
+    // тик. Замер показывал 3·10⁸ «урона в секунду» у ЛЮБОГО монстра, и сторож сравнивал ЗАЖИМ с ЗАЖИМОМ:
+    // обе стороны совпадали до 0.0 %, а расхождения вылезали только из тиков, где герой погиб и зажим не сработал.
+    // Теперь чиним и HP, и «жив» (иначе монстр перестаёт бить труп), и считаем снятое от ЕГО максимума:
+    // входящий ДПС стал 6–16 вместо 3·10⁸, и расхождение двойников стало видно (клетки −8.6…−0.7 % на 12 сидах).
+    p.hp = p.maxHp; p.alive = true;
     s.tick(1 / 30, {});
-    dmg += 1e7 - p.hp;
+    dmg += Math.max(0, p.maxHp - p.hp);
   }
   return dmg / FIGHT_SEC;
 };
@@ -152,7 +190,27 @@ describe('двойники монстров: носители новых кла�
     }
   });
 
-  it('⭐ ДПС после деривации по уровням 1…60: в среднем ±2 %, на любом уровне ±8 % (округление малых чисел)', () => {
+  /**
+   * ⚠ 13.10: кап худшего уровня расширен ±8 % → ±10 %, и рядом поставлен УЗКИЙ сторож на ТОЧНЫЙ ДПС.
+   * Причина: множитель урона по тиру (`tierDmg`, weak ×0.8) УМЕНЬШАЕТ и так малые числа слабых монстров,
+   * а `minDamage`/`maxDamage` — ЦЕЛЫЕ: на 6 уровне один пункт округления даёт 9.1 % у `zombie-hexer` (среднее за
+   * 60 уровней — 0.15 %). Зубы сторожа переехали туда, где шума нет: точный (неокруглённый) ДПС сходится ±1 %
+   * на любом уровне — и именно он сломается, если двойнику достался другой ведущий атрибут или другой тир.
+   */
+  it('⭐ ТОЧНЫЙ ДПС (без округления) двойника = источника ±1 % на любом уровне 1…200', () => {
+    for (const g of groups) {
+      for (const m of g.slice(1)) {
+        let worst = 0, worstL = 0;
+        for (let L = 1; L <= 200; L++) {
+          const d = exactDps(m, L) / exactDps(g[0]!, L) - 1;
+          if (Math.abs(d) > Math.abs(worst)) { worst = d; worstL = L; }
+        }
+        expect(Math.abs(worst), `${m.id}: ${(worst * 100).toFixed(2)} % на ур. ${worstL}`).toBeLessThanOrEqual(0.01);
+      }
+    }
+  });
+
+  it('⭐ ДПС после деривации по уровням 1…60: в среднем ±2 %, на любом уровне ±10 % (округление малых чисел)', () => {
     for (const g of groups) {
       for (const m of g.slice(1)) {
         let sum = 0, worst = 0;
@@ -162,7 +220,7 @@ describe('двойники монстров: носители новых кла�
           if (Math.abs(d) > Math.abs(worst)) worst = d;
         }
         expect(Math.abs(sum / 60), `${m.id}: среднее ${(sum / 60 * 100).toFixed(2)} %`).toBeLessThanOrEqual(0.02);
-        expect(Math.abs(worst), `${m.id}: худший уровень ${(worst * 100).toFixed(1)} %`).toBeLessThanOrEqual(0.08);
+        expect(Math.abs(worst), `${m.id}: худший уровень ${(worst * 100).toFixed(1)} %`).toBeLessThanOrEqual(0.10);
       }
     }
   });

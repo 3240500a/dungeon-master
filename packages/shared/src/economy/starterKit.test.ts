@@ -30,7 +30,15 @@ import type { SaveState } from '../types/save.js';
  * нельзя»). В поле — отказ всегда: сырья комплект не даёт, а каталог пишет только кузнец (D2).
  */
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
-const classes = reg.get('classes').filter((c) => c.enabled !== false);
+/**
+ * ВСЕ записи `classes.json`, включая выключенные. Сторожа этого файла — про АВТОРИНГ: комплект каждого класса обязан быть
+ * бесплатным-и-бесполезным вне своего героя (R3-04), не краном у кузнеца (R4-34) и держаться на своих атрибутах (V-B2-02).
+ * Эти свойства ломает правка таблиц (`items.base` и `startAttributes` живут порознь), а не галка поставки: если ходить
+ * только по включённым, беда в выключенном классе дождётся дня, когда владелец его включит, — и выйдет к игрокам. Ровно
+ * поэтому сторож смотрит на весь конфиг: он ловит расхождение ДО включения. Что реально выбирается в игре — дело сторожей
+ * выбора класса, не этих.
+ */
+const classes = reg.get('classes');
 const kitOf = (s: SaveState): Item[] => [...Object.values(s.equipment).filter((i): i is Item => !!i), ...s.inventory];
 const MAX = { int: (_a: number, b: number) => b, chance: () => true };
 
@@ -241,7 +249,8 @@ describe('⚠ V-B2-02: стартовый комплект держится на
       }),
       classes: r.get('classes').map((c) => ({ ...c, startAttributes: { ...c.startAttributes, dexterity: Math.max(0, c.startAttributes.dexterity - 3) } })),
     });
-    for (const cls of r.get('classes').filter((c) => c.enabled !== false)) {
+    // Тоже по ВСЕМ записям: правку таблиц переживать обязан комплект каждого класса, а не только того, что включён в поставке.
+    for (const cls of r.get('classes')) {
       const save = newCharacterSave(r, cls.id, 'Альт', `v-b2-02-edit-${cls.id}`);
       const w = save.equipment.weapon;
       expect(w, `${cls.id}: оружие-замена выдано`).toBeDefined();
