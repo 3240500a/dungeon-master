@@ -24,3 +24,7 @@ packages/server/content/
 packages/server/dev-secrets/
 # Копии FBX из каталога Unity для поз-редактора (Ф1): пишет ArtManifestExporter, источник истины — проект Unity (LFS).
 packages/server/assets/src/
+# Загруженное через редактор (концепты артбука, модели персонажей корня assets): данные сервера, как база, — в git не кладём
+# (70 МБ двоичного без LFS). Между компами ездят снимком export-workstation (файлы вне git).
+packages/server/assets/artbook/
+/packages/server/assets/*.glb
