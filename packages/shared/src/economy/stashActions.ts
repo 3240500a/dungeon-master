@@ -44,6 +44,8 @@ export function sanitizeStash(reg: ConfigRegistry, stash: AccountStash): Account
   // того типа, отбрасывается, ключей — не больше 32 последних. Нет поля — пустой журнал, как у нового.
   stash.forgeJournal = normalizeJournal(stash.forgeJournal);
   stash.craftNonces = normalizeCraftNonces(stash.craftNonces);
+  // ⭐ 23.10: ключи обмена печатей — тем же правилом (валидные, без повторов, последние 32).
+  stash.sealNonces = normalizeCraftNonces(stash.sealNonces);
   return stash;
 }
 

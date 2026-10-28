@@ -7,6 +7,7 @@ import {
   addToInventory, carriedMaterials, shopBuyPrice, Cell, addDebuffStack, acceptQuest,
   type ServerFrame, type RunPlan, type RunNode, type SaveState, type Item, type AccountStash, type CraftInput, type CraftJournal,
   type CraftCost,
+  isWaypoint as isWaypointAt,
 } from '@dm/shared';
 import { counters } from './metrics.js';
 import { limits } from './rateLimit.js';
@@ -19,9 +20,24 @@ vi.setConfig({ testTimeout: 20_000 });
 /**
  * E2E (headless) серверного жизненного цикла забега v2 (Ф4.2/4.4). Гоняем реальную `Room`
  * с фейковым ws, читаем ИСХОДЯЩИЕ кадры как чёрный ящик: старт из города → RunPlan → узлы с
- * выходами (контракт exits.length == edges.length) → развилки → финал (портал, 0 выходов) →
- * завершение → город; `save.run` персистится в забеге и очищается на финале. Плюс алтарь:
+ * выходами (контракт exits.length == edges.length) → развилки → привалы с порталом → город;
+ * `save.run` персистится в забеге, паркуется уходом в город и снимается смертью. Плюс алтарь:
  * выбор биома/шаблона учитывается, невалидный/выключенный отбрасывается (анти-чит).
+ *
+ * ⚠⚠ 13.10 (Г2, Р3/Р7): ФИНАЛА У ГЕНЕРАТОРА БОЛЬШЕ НЕТ, И ШЕСТЬ ТЕСТОВ ПРО НЕГО ПЕРЕПИСАНЫ. Спуск бесконечен
+ * (`generateRunPlan` отдаёт ОКНО слоёв, у каждого узла есть рёбра и выходы), узел с 0 выходов не рождается, а забег
+ * кончается смертью, «Завершить» или уходом в город — уход его ПАРКУЕТ (продолжить можно). Поэтому «старт → … →
+ * город» больше не ждёт «граф сошёлся к финалу»: он идёт фиксированное число этажей и ТРЕБУЕТ, чтобы у каждого узла
+ * были выходы (тупик = обрезка окна по краю, то есть баг), ловит привал по чистой каденции глубины и паркует забег
+ * уходом в город.
+ *
+ * ⭐⭐ 14.10 (Г3, В5): ВЕТКА «ВЫХОДОВ НЕТ → ПОРТАЛ → ЗАВЕРШИТЬ ЗАБЕГ» СНЯТА, И ЧЕТЫРЕ ТЕСТА ЭТОГО ФАЙЛА ПЕРЕВЕДЕНЫ НА
+ * ЯВНОЕ «ЗАВЕРШИТЬ» (`Room.finish`, кадр `finish`) — тот вход, которым пользуется игрок. Рукотворных терминальных
+ * узлов (`makeTerminal`) больше нет: сторож мёртвого кода зелен всегда, а правила живы и теперь судятся на обычном
+ * узле. Что именно под охраной: завершение зовут только у портала/точки входа (`canLeave`), забег снимается и у
+ * копии ждущего реконнекта, истечение грейса после этого — не смерть, «Завершить» хоронит сбежавшего из боя.
+ * ⚠ Второе условие `canLeave` (портал ДЕКОРА, а не точка входа) требует портала ДАЛЬШЕ `EXIT_REACH_PX` от входа —
+ * его даёт `nodePortal` ниже, живой фичей этажа `features.portal`, не обнулением рёбер.
  *
  * БД замокана: `db.ts` открывает пул к Postgres при импорте — не тащим базу в юнит-тест (и не
  * трогаем боевую БД дев-сервера). Ф2: доступ асинхронный, поэтому мок отдаёт ПРОМИСЫ — синхронный
@@ -193,19 +209,44 @@ const areaOf = (room: Room): string => (room as unknown as { area: string }).are
 type Pt = { x: number; y: number };
 type RunIn = {
   runPlan: RunPlan | null; runNodeId: string | null; depth: number; decor: { kind: string; x: number; y: number }[];
+  runConfig: { tier: string } | null;
   session: { world: { exits?: Pt[]; spawn: Pt; players: Record<string, { pos: Pt; hp: number; alive: boolean; debuffs: Record<string, unknown> }> } };
+  enterNode(nodeId: string): void;
 };
 const runOf = (room: Room): RunIn => room as unknown as RunIn;
 /**
  * Встать туда, откуда честный клиент зовёт спуск (R3-01): к выходу ребра на узел `to` (выход i ↔ ребро i), без `to` —
- * к выходу первого ребра, на финале — к порталу. Сервер спуск издалека больше не принимает.
+ * к выходу первого ребра. Сервер спуск издалека больше не принимает.
  */
 function toExit(room: Room, pid: string, to?: string): void {
   const r = runOf(room);
   const node = nodeOf(r.runPlan!, r.runNodeId!);
   const i = Math.max(0, to ? node.edges.findIndex((e) => e.to === to) : 0);
-  const at = node.edges.length === 0 ? r.decor.find((d) => d.kind === 'portal')! : r.session.world.exits![i]!;
+  const at = r.session.world.exits![i]!;
   r.session.world.players[pid]!.pos = { x: at.x, y: at.y };
+}
+/** Встать к точке входа узла — оттуда разрешены и уход в город, и «Завершить» (`Room.canLeave`, первое условие). */
+function toSpawn(room: Room, pid: string): void {
+  const w = runOf(room).session.world;
+  w.players[pid]!.pos = { ...w.spawn };
+}
+/**
+ * ⭐⭐ 14.10 (Г3, В5): УЗЕЛ С ДАЛЁКИМ ПОРТАЛОМ — ЖИВОЙ ФИЧЕЙ ЭТАЖА, А НЕ «ФИНАЛОМ».
+ *
+ * `Room.canLeave` — ДВА условия: точка входа узла (`world.spawn`) и портал ДЕКОРА. Отличить второе от первого можно
+ * только там, где портал дальше входа, чем запас `EXIT_REACH_PX`: на привале он стоит в двух клетках от входа
+ * (геометрия хаба `townFloor`), то есть ровно на границе запаса. Прежде такой узел собирался обнулением рёбер
+ * (`makeTerminal` — вместе с веткой «выходов нет», которой больше нет), а теперь — РУЧКОЙ ДАННЫХ: `features.portal`
+ * ставит портал на месте лестницы (`applyFeatures`), и это живая галка редактора, просто в `floors.json` её пока не
+ * включили ни одному боевому этажу. Рёбра узла целы — сторож судит живое правило, а не мёртвый код.
+ */
+function nodePortal(room: Room): string {
+  const r = runOf(room);
+  const node = nodeOf(r.runPlan!, r.runNodeId!);
+  node.floorSpec = { ...node.floorSpec, features: { ...node.floorSpec.features, portal: true } };
+  r.enterNode(node.id);
+  expect(runOf(room).decor.some((d) => d.kind === 'portal'), 'фича `features.portal` дала портал узла').toBe(true);
+  return node.id;
 }
 /** Настоящая вещь из конвейера генерации, уложенная в сумку. */
 function weaponInBag(save: SaveState, x = 0, y = 0): Item {
@@ -228,8 +269,8 @@ beforeAll(async () => {
 afterEach(() => { for (const r of rooms) r.stop(); rooms.length = 0; });
 
 describe('Room — жизненный цикл забега v2 (сервер, headless)', () => {
-  it('старт → выходы по рёбрам → финал → город; exits==edges на каждом шаге, save.run пишется и очищается', () => {
-    const { room, ws, pid } = makeRoom();
+  it('старт → выходы по рёбрам → спуск НЕ КОНЧАЕТСЯ; exits==edges на каждом шаге; привал несёт портал, уход в город паркует забег', () => {
+    const { room, ws, pid, save } = makeRoom();
 
     // Старт забега из города (соло → голосование проходит сразу).
     room.descend(pid);
@@ -246,12 +287,15 @@ describe('Room — жизненный цикл забега v2 (сервер, he
       expect(area.floor.exits?.length ?? 0).toBe(cur.edges.length);
     }
 
-    // Прогон всего графа по первому ребру до финала (0 рёбер), проверяя контракт на каждом узле.
-    let guard = 0;
-    for (; guard < 40; guard++) {
+    // ⭐⭐ 13.10 (Г2): СПУСК БЕСКОНЕЧЕН — идём по первому ребру фиксированное число этажей и требуем, чтобы каждый узел
+    // имел выходы. Прежде этот цикл ждал «сошлось к финалу (0 рёбер)»; теперь тупик — это БАГ: окно слоёв могло бы
+    // обрезать рёбра по краю, и спуск упирался бы в стену каждые `lookahead` этажей.
+    const WALK = 12;
+    let waypoints = 0;
+    for (let step = 0; step < WALK; step++) {
       const rp = ws.last('runPlan')!;
       const cur = nodeOf(rp.plan, rp.currentNodeId);
-      if (cur.edges.length === 0) break; // достигли финала
+      expect(cur.edges.length, `с этажа ${cur.depth} есть куда идти`).toBeGreaterThan(0);
       const target = cur.edges[0]!.to;
       ready(room);
       toExit(room, pid, target);
@@ -261,20 +305,28 @@ describe('Room — жизненный цикл забега v2 (сервер, he
       const a2 = ws.last('areaChanged')!;
       expect(a2.floor.runNodeId).toBe(target);
       expect(a2.floor.exits?.length ?? 0).toBe(nodeOf(rp2.plan, target).edges.length);
+      // Привал (чистая каденция глубины, `balance.dungeonAccess.waypointStep`) — узел-город: портал есть, монстров нет.
+      if (nodeOf(rp2.plan, target).type === 'rest') {
+        waypoints++;
+        expect(a2.floor.decor.some((d) => d.kind === 'portal'), 'привал даёт портал в город').toBe(true);
+        expect(a2.floor.runNodeType, 'и он помечен клиенту как привал').toBe('rest');
+        expect(a2.floor.chests, 'сундука на привале нет — сундук аккаунта открывается в городе (R7-11)').toHaveLength(0);
+      }
     }
-    expect(guard, 'граф сошёлся к финалу за разумное число шагов').toBeLessThan(40);
+    // ⭐ Г8-3: привалы стоят на МЕСТАХ полосы (неровно), поэтому ждём ровно столько, сколько даёт чистая функция.
+    const access = cfg.get('balance').dungeonAccess;
+    let want = 0;
+    for (let d = 1; d <= WALK + 1; d++) if (isWaypointAt(d, access.portalsAt, access.contentCycle)) want += 1;
+    expect(waypoints, `за ${WALK} этажей привалов (места ${access.portalsAt.join(', ')}) встретилось`).toBe(want);
 
-    // Финал: выходов нет, есть портал-декор в город.
-    const finArea = ws.last('areaChanged')!;
-    expect(finArea.floor.exits?.length ?? 0).toBe(0);
-    expect(finArea.floor.decor.some((d) => d.kind === 'portal'), 'финал даёт портал в город').toBe(true);
-
-    // Завершение забега (финал → город + очистка run) — у портала.
+    // ⚠ Р7: ЗАБЕГ ТАК НЕ КОНЧАЕТСЯ — уход в город его ПАРКУЕТ (продолжить можно), а снимают его смерть («вАЙП ЗАВЕРШАЕТ
+    // ЗАБЕГ» ниже) и «Завершить» из лобби. Финала, который чистил `save.run` порталом, больше нет.
+    const parked = ws.last('runPlan')!.currentNodeId;
     ready(room);
-    toExit(room, pid);
-    room.descend(pid);
-    expect(ws.last('areaChanged')?.floor.area, 'финиш возвращает в город').toBe('town');
-    expect(ws.last('saveUpdate')?.save.run, 'после финиша забег очищен').toBeUndefined();
+    runOf(room).session.world.players[pid]!.pos = { ...runOf(room).session.world.spawn };
+    room.returnTown(pid);
+    expect(ws.last('areaChanged')?.floor.area, 'от портала входа — в город').toBe('town');
+    expect(save.run?.currentNodeId, 'забег припаркован на том узле, с которого ушли').toBe(parked);
   });
 
   /**
@@ -282,7 +334,7 @@ describe('Room — жизненный цикл забега v2 (сервер, he
    * и высаживал на том же этаже, где убили, со всем живым прогрессом.
    *
    * Корень: возврат после вайпа идёт через `enterTown`, а забег чистил только `finishRun`
-   * (финал). Значит `save.run` переживал смерть и персистился со старым узлом.
+   * (финал, которого больше нет — Г2/Р7). Значит `save.run` переживал смерть и персистился со старым узлом.
    */
   it('⭐ сундуки этажа ДОЕЗЖАЮТ до игрока: этаж их генерил, а сессия не получала', () => {
     // ⚠ Ровно этот баг: `generateFloor` расставлял сундуки, но `enterFloor` звался без них,
@@ -374,29 +426,24 @@ describe('Room — жизненный цикл забега v2 (сервер, he
     expect(room.inRun, 'после вайпа продолжать нечего — модалка не должна появляться').toBe(false);
   });
 
-  it('алтарь: выбранные биом/шаблон учитываются; несуществующие/выключенные отбрасываются (фолбэк)', () => {
+  it('алтарь: выбранный биом учитывается; несуществующий/выключенный отбрасывается (фолбэк)', () => {
     const biomes = cfg.get('biomes').filter((b) => b.enabled !== false);
-    const tpls = cfg.get('run-templates').filter((t) => t.enabled !== false);
     expect(biomes.length, 'есть включённые биомы').toBeGreaterThan(0);
-    expect(tpls.length, 'есть включённые шаблоны').toBeGreaterThan(0);
 
     // Берём НЕ первый (если возможно) — чтобы доказать, что выбор реально учтён, а не дефолт.
     const pickBiome = biomes[biomes.length - 1]!;
-    const pickTpl = tpls[tpls.length - 1]!;
     {
       const { room, ws, pid } = makeRoom();
-      room.descend(pid, 'normal', undefined, { biomeId: pickBiome.id, templateId: pickTpl.id, modifiers: [] });
+      room.descend(pid, 'normal', undefined, { biomeId: pickBiome.id });
       const rp = ws.last('runPlan')!;
       expect(rp.plan.biomeId).toBe(pickBiome.id);
-      expect(rp.plan.templateId).toBe(pickTpl.id);
     }
     // Мусорный выбор → фолбэк на включённый контент (без падения/мусора в плане).
     {
       const { room, ws, pid } = makeRoom();
-      room.descend(pid, 'normal', undefined, { biomeId: 'no-such-biome', templateId: 'no-such-tpl', modifiers: ['bogus'] });
+      room.descend(pid, 'normal', undefined, { biomeId: 'no-such-biome' });
       const rp = ws.last('runPlan')!;
       expect(biomes.some((b) => b.id === rp.plan.biomeId)).toBe(true);
-      expect(tpls.some((t) => t.id === rp.plan.templateId)).toBe(true);
     }
   });
 });
@@ -540,7 +587,7 @@ describe('Room — команды города: ответы, схема, лим
    */
   it('⭐ R7-11: привал — портал в город, а сундука в кадре области нет', () => {
     const { room, ws, pid } = makeRoom();
-    room.descend(pid, 'normal', undefined, { templateId: 'dungeon-standard' });
+    room.descend(pid, 'normal', undefined);
     for (let g = 0; g < 40; g++) {
       const r = runOf(room);
       const node = nodeOf(r.runPlan!, r.runNodeId!);
@@ -1786,9 +1833,9 @@ describe('Room — раунд 3: случайные квесты доски (R3-
   it('⭐ «достичь этажа» не засчитывает продолжение забега на уже пройденном узле — только новый вход глубже', async () => {
     const { room, ws, pid, save } = makeRoom('user-r310-resume');
     await settle();
-    const tpl = cfg.get('run-templates').find((t) => t.enabled !== false && (t.length?.min ?? 0) >= 6)!;
-    expect(tpl, 'шаблон забега не короче шести этажей').toBeDefined();
-    room.descend(pid, 'normal', undefined, { templateId: tpl.id });
+    // ⭐⭐ 13.10 (Г2) → Ф1 (16.10): длины у забега нет — спуск бесконечен и уходит сколь угодно глубоко;
+    // шаблона, который мог бы его укоротить, больше не существует вовсе.
+    room.descend(pid, 'normal');
     diveTo(room, ws, pid, 4);
     const parked = ws.last('runPlan')!.currentNodeId;
     ready(room); room.returnTown(pid);
@@ -1997,7 +2044,7 @@ describe('Room — раунд 3: эскизы кузнеца (R3-11)', () => {
   });
 });
 
-describe('Room — раунд 3: спуск, финал и грейс (R3-01, R3-05, R3-06, R3-17)', () => {
+describe('Room — раунд 3: спуск, завершение забега и грейс (R3-01, R3-05, R3-06, R3-17)', () => {
   const dist = (a: Pt, b: Pt): number => Math.hypot(a.x - b.x, a.y - b.y);
   /** Узел, на котором стоит комната, — по последнему кадру `runPlan`. */
   const nodeNow = (ws: FakeWs): RunNode => { const rp = ws.last('runPlan')!; return nodeOf(rp.plan, rp.currentNodeId); };
@@ -2034,6 +2081,9 @@ describe('Room — раунд 3: спуск, финал и грейс (R3-01, R3
   it('⭐ R3-01: спуск издалека — отказ «far»: голосования нет, узел и прогресс сложности те же; у выхода — спуск', () => {
     const { room, ws, pid, save } = makeRoom('user-r301');
     room.descend(pid, 'easy');
+    // Тир спрашиваем у комнаты, а не ждём «easy»: выключенный тир сервер подменяет открытым (`validDifficulty`),
+    // а сторож здесь про ГЛУБИНУ в прогрессе, а не про имя тира.
+    const tier = runOf(room).runConfig!.tier;
     const start = nodeNow(ws);
     expect(start.edges.length, 'со старта есть куда спускаться').toBeGreaterThan(0);
     const w = runOf(room).session.world;
@@ -2052,24 +2102,25 @@ describe('Room — раунд 3: спуск, финал и грейс (R3-01, R3
     expect(areaOf(room)).toBe('dungeon');
     expect(runOf(room).runNodeId, 'узел тот же').toBe(start.id);
     expect(save.run?.currentNodeId).toBe(start.id);
-    expect(save.difficultyProgress.easy, 'прогресс сложности — по настоящей глубине').toBe(start.depth);
+    expect(save.difficultyProgress[tier], 'прогресс сложности — по настоящей глубине').toBe(start.depth);
 
     ready(room);
     toExit(room, pid, start.edges[0]!.to);
     room.descend(pid, undefined, start.edges[0]!.to);
     const next = nodeNow(ws);
     expect(next.id, 'от выхода — спуск').toBe(start.edges[0]!.to);
-    expect(save.difficultyProgress.easy).toBe(next.depth);
+    expect(save.difficultyProgress[tier]).toBe(next.depth);
   });
 
-  it('⭐ R3-01: на развилке — ребро только своего выхода, без выбора — выход, у которого стоишь; финал — только у портала', () => {
+  it('⭐ R3-01: на развилке — ребро только своего выхода, без выбора — выход, у которого стоишь; «Завершить» — только у входа/портала', () => {
     let forks = 0;
     for (let attempt = 0; attempt < 6 && !forks; attempt++) {
       const { room, ws, pid } = makeRoom('user-r301-fork');
-      room.descend(pid, undefined, undefined, { templateId: 'deep-expedition' });
-      for (let guard = 0; guard < 40; guard++) {
+      room.descend(pid, undefined, undefined);
+      // ⭐⭐ Г2: граф никуда не «сходится» — спуск бесконечен, поэтому идём фиксированное число этажей и ищем развилку.
+      for (let guard = 0; guard < 24; guard++) {
         const cur = nodeNow(ws);
-        if (cur.edges.length === 0) break;
+        expect(cur.edges.length, `с этажа ${cur.depth} есть куда идти`).toBeGreaterThan(0);
         ready(room);
         if (cur.edges.length >= 2 && !forks) {
           forks++;
@@ -2086,45 +2137,49 @@ describe('Room — раунд 3: спуск, финал и грейс (R3-01, R3
         toExit(room, pid, cur.edges[0]!.to);
         room.descend(pid, undefined, cur.edges[0]!.to);
       }
-      const fin = nodeNow(ws);
-      expect(fin.edges, 'дошли до финала').toHaveLength(0);
-      const portal = runOf(room).decor.find((d) => d.kind === 'portal')!;
+      // ⭐⭐ 14.10 (Г3, В5): ЗАВЕРШЕНИЕ — ЯВНАЯ ПРОСЬБА (`Room.finish`), И ЦЕНА ЕЙ ТА ЖЕ, ЧТО УХОДУ В ГОРОД
+      // (`canLeave`). Прежде правило судилось на РУКОТВОРНОМ узле без выходов — то есть на ветке, в которую
+      // генератор не приводит ни на какой глубине; теперь — на том самом узле, где пати и стоит.
+      const w2 = runOf(room).session.world;
+      const portal = runOf(room).decor.find((d) => d.kind === 'portal');
       ready(room);
-      runOf(room).session.world.players[pid]!.pos = { x: portal.x + 300, y: portal.y };
-      expect(dist(runOf(room).session.world.players[pid]!.pos, portal)).toBeGreaterThan(100);
-      room.descend(pid);
+      w2.players[pid]!.pos = { x: w2.spawn.x + 3000, y: w2.spawn.y + 3000 };
+      expect(dist(w2.players[pid]!.pos, w2.spawn), 'стоим далеко от точки входа').toBeGreaterThan(100);
+      if (portal) expect(dist(w2.players[pid]!.pos, portal), 'и от портала узла').toBeGreaterThan(100);
+      room.finish(pid);
       expect(ws.last('error')?.code).toBe('far');
-      expect(areaOf(room), 'финал издалека не завершается').toBe('dungeon');
-      toExit(room, pid);
-      room.descend(pid);
-      expect(areaOf(room), 'у портала — завершение').toBe('town');
+      expect(areaOf(room), 'издалека забег не завершается').toBe('dungeon');
+      expect(runOf(room).runPlan, 'и забег цел').not.toBeNull();
+      toSpawn(room, pid);
+      room.finish(pid);
+      expect(areaOf(room), 'у точки входа — завершение').toBe('town');
     }
     expect(forks, 'в графе встретилась развилка').toBe(1);
   });
 
   it('⭐ R3-05: пати закончила забег, пока партнёр в грейсе, — забег окончен и для него: копия и база без забега, грейс без штрафа', async () => {
     const { a, b, down } = await party('r305');
-    for (let g = 0; g < 40 && nodeNow(a.ws).edges.length; g++) down();
-    const fin = nodeNow(a.ws).id;
+    down(); down();                                   // глубже старта — иначе «забег окончен» не отличить от «не начинался»
+    const fin = nodeNow(a.ws).id;                     // ⭐ Г3 (В5): конец забега — просьба «Завершить», а не особый узел
     expect(b.save.run?.currentNodeId).toBe(fin);
-    await a.room.removePlayer(b.pid);                    // B закрыл вкладку на финале → грейс
-    expect(db.data.get(b.save.charId)!.run?.currentNodeId, 'прощальная запись — с финалом').toBe(fin);
-    ready(a.room); toExit(a.room, a.pid); a.room.descend(a.pid);
+    await a.room.removePlayer(b.pid);                    // B закрыл вкладку на этом узле → грейс
+    expect(db.data.get(b.save.charId)!.run?.currentNodeId, 'прощальная запись — с этим узлом').toBe(fin);
+    ready(a.room); toSpawn(a.room, a.pid); a.room.finish(a.pid);
     expect(areaOf(a.room), 'A завершил забег').toBe('town');
     await settle();
     expect(disconnectedOf(a.room).get(b.save.charId)?.save.run, 'копия ждущего — без забега').toBeUndefined();
     expect(db.data.get(b.save.charId)!.run, 'и в базе: «Продолжить» некуда').toBeUndefined();
     (a.room as unknown as { expireGrace(): void }).expireGrace();
     await settle();
-    expect(db.data.get(b.save.charId)!.gold, 'истечение грейса после финала — не смерть').toBe(1000);
+    expect(db.data.get(b.save.charId)!.gold, 'истечение грейса после завершения забега — не смерть').toBe(1000);
   });
 
-  it('⭐ R3-05: вернувшийся после чужого финала — в городе, и его спуск начинает НОВЫЙ забег, а не финал', async () => {
+  it('⭐ R3-05: вернувшийся после чужого завершения — в городе, и его спуск начинает НОВЫЙ забег, а не тот же узел', async () => {
     const { a, b, down } = await party('r305r');
-    for (let g = 0; g < 40 && nodeNow(a.ws).edges.length; g++) down();
-    const fin = nodeNow(a.ws).id;
+    down(); down();
+    const fin = nodeNow(a.ws).id;                     // ⭐ Г3 (В5): конец забега — просьба «Завершить»
     await a.room.removePlayer(b.pid);
-    ready(a.room); toExit(a.room, a.pid); a.room.descend(a.pid);
+    ready(a.room); toSpawn(a.room, a.pid); a.room.finish(a.pid);
     await settle();
     const ws2 = new FakeWs();
     const pidB = a.room.reconnect(ws2 as unknown as GameConn, 'user-r305r-b', structuredClone(db.data.get(b.save.charId)!), db.saves.get(b.save.charId)!);
@@ -2205,8 +2260,8 @@ describe('Room — раунд 3: спуск, финал и грейс (R3-01, R3
     w.players[b.pid]!.pos = { ...left };
     (w.players[b.pid] as unknown as { combatTimer: number }).combatTimer = 0;   // ушёл не из боя — штрафа за это нет (R4-14)
     await a.room.removePlayer(b.pid);
-    for (let g = 0; g < 40 && nodeNow(a.ws).edges.length; g++) down();
-    ready(a.room); toExit(a.room, a.pid); a.room.descend(a.pid);
+    down(); down();
+    ready(a.room); toSpawn(a.room, a.pid); a.room.finish(a.pid);   // ⭐ Г3 (В5): так забег кончает игрок
     expect(areaOf(a.room), 'забег 1 закончен').toBe('town');
     ready(a.room); a.room.descend(a.pid);
     expect(nodeNow(a.ws).depth, 'забег 2 — снова глубина 1').toBe(1);
@@ -2378,7 +2433,17 @@ describe('Room — раунд 4: узел забега не фармится в�
     await drained();
     expect(areaOf(room), 'спустились').toBe('dungeon');
   }
-  /** Спуск по первому ребру (у его выхода), пока узел не подойдёт; `null` — дошли до финала, не найдя. */
+  /**
+   * Спуск по первому ребру (у его выхода), пока узел не подойдёт; `null` — 40 этажей и не нашли (⭐ Г2: спуск
+   * бесконечен, упереться не во что). `vote` — голос напарника на каждый переход.
+   *
+   * ⚠⚠ `chestHere`: СУНДУК НА УЗЛЕ — НЕ ГАРАНТИЯ. Их число берётся из `balance.loot.chestsPerFloor` (мин 1), но
+   * РАССТАВИТЬ сундук этаж может и не суметь (свободные клетки комнат), а привал их не несёт вовсе (R7-11). Замер по 200
+   * сидам: на первом слое «без сундука» — 1 % (2/200). Сид забега у каждой комнаты СВОЙ (`crypto.randomInt`), поэтому
+   * сторожа, бравшие `chests[0]` на стартовом узле, падали раз в несколько полных прогонов на пустом `chests[0]`
+   * (именно так, а не понятным утверждением). Предмет тех сторожей — что ВЗЯТОЕ не встаёт, а не где стоит сундук, —
+   * поэтому они доходят до узла с сундуком этим же помощником.
+   */
   function diveUntil(room: Room, ws: FakeWs, pid: string, want: () => boolean, vote?: () => void): RunNode | null {
     for (let g = 0; g < 40; g++) {
       if (want()) return nodeNow(ws);
@@ -2395,6 +2460,11 @@ describe('Room — раунд 4: узел забега не фармится в�
   it('⭐ открытый сундук остаётся открытым: возврат и продолжение не дают второй вещи — ни командой, ни по [E]', async () => {
     const { room, ws, pid, save } = makeRoom('user-r401-chest');
     room.descend(pid);
+    // ⚠⚠ 13.10 (Г2): СУНДУКИ ЕСТЬ НЕ У КАЖДОГО УЗЛА — их даёт `features.chests` выбранного этажа, роль слоя бросается
+    // СВОИМ сидом (Р1), а на привале сундука нет по правилу (R7-11). Сторож судил стартовый узел и на части сидов падал
+    // на «на узле есть сундуки» — при том, что предмет его не в том, ГДЕ сундук, а в том, что открытый не открывается
+    // второй раз. Поэтому доходим до узла с сундуком (сид забега свой у каждой комнаты — ждать его нельзя).
+    expect(diveUntil(room, ws, pid, () => wOf(room).chests.length > 0), 'нашли узел с сундуком').not.toBeNull();
     const node = nodeNow(ws).id;
     const all = wOf(room).chests.map((c) => c.id);
     expect(all.length, 'на узле есть сундуки').toBeGreaterThan(0);
@@ -2446,10 +2516,10 @@ describe('Room — раунд 4: узел забега не фармится в�
 
   it('⭐ убитые уник и босс не встают: продолжение узла — без них, и повтор круга награды не даёт', async () => {
     let tried = 0;
-    for (const templateId of ['dungeon-standard', 'deep-expedition']) {
+    for (const templateId of ['x']) {   // ⚠ Ф1: шаблонов нет — проход остался один
       for (let attempt = 0; attempt < 3; attempt++) {
         const { room, ws, pid, save } = makeRoom('user-r401-boss');
-        room.descend(pid, undefined, undefined, { templateId });
+        room.descend(pid, undefined, undefined);
         const hasUnique = (): boolean => wOf(room).monsters.some((m) => m.alive && m.def.rarity === 'unique');
         if (!diveUntil(room, ws, pid, hasUnique)) continue;
         tried++;
@@ -2506,6 +2576,8 @@ describe('Room — раунд 4: узел забега не фармится в�
   it('⭐ вышел из игры в городе, «Продолжить» — новая комната из сейва базы: узел тот же и как его оставили', async () => {
     const { room, ws, pid, save } = makeRoom('user-r401-relog');
     room.descend(pid);
+    // ⚠ Сундук на СТАРТОВОМ узле — не гарантия (см. `chestHere` выше): доходим до узла с сундуком.
+    expect(diveUntil(room, ws, pid, () => wOf(room).chests.length > 0), 'нашли узел с сундуком').not.toBeNull();
     const node = nodeNow(ws).id;
     const chest = wOf(room).chests[0]!;
     standAt(room, pid, chest.pos);
@@ -2532,7 +2604,7 @@ describe('Room — раунд 4: узел забега не фармится в�
     let seen = 0;
     for (let attempt = 0; attempt < 8 && !seen; attempt++) {
       const { room, ws, pid, save } = makeRoom('user-r401-lever');
-      room.descend(pid, undefined, undefined, { templateId: 'deep-expedition' });
+      room.descend(pid, undefined, undefined);
       if (!diveUntil(room, ws, pid, () => wOf(room).levers.length > 0)) continue;
       seen++;
       const lever = wOf(room).levers[0]!;
@@ -2558,6 +2630,8 @@ describe('Room — раунд 4: узел забега не фармится в�
     await settle();
     a.room.descend(a.pid);
     a.room.castVote(b.pid, true);
+    // ⚠ Сундук на СТАРТОВОМ узле — не гарантия (см. `chestHere` выше): доходим до узла с сундуком.
+    expect(diveUntil(a.room, a.ws, a.pid, () => wOf(a.room).chests.length > 0, () => a.room.castVote(b.pid, true)), 'нашли узел с сундуком').not.toBeNull();
     const node = nodeNow(a.ws).id;
     const chest = wOf(a.room).chests[0]!;
     standAt(a.room, b.pid, chest.pos);
@@ -2587,6 +2661,8 @@ describe('Room — раунд 4: узел забега не фармится в�
     await settle();
     a.room.descend(a.pid);
     a.room.castVote(b.pid, true);
+    // ⚠ Сундук на СТАРТОВОМ узле — не гарантия (см. `chestHere` выше): доходим до узла с сундуком.
+    expect(diveUntil(a.room, a.ws, a.pid, () => wOf(a.room).chests.length > 0, () => a.room.castVote(b.pid, true)), 'нашли узел с сундуком').not.toBeNull();
     const node = nodeNow(a.ws).id;
     await a.room.removePlayer(b.pid);                       // B закрыл вкладку в подземелье → грейс, в базе — узел без сундука
     await settle();
@@ -2617,6 +2693,8 @@ describe('Room — раунд 4: узел забега не фармится в�
     await settle();
     a.room.descend(a.pid);
     a.room.castVote(b.pid, true);
+    // ⚠ Сундук на СТАРТОВОМ узле — не гарантия (см. `chestHere` выше): доходим до узла с сундуком.
+    expect(diveUntil(a.room, a.ws, a.pid, () => wOf(a.room).chests.length > 0, () => a.room.castVote(b.pid, true)), 'нашли узел с сундуком').not.toBeNull();
     const x = nodeNow(a.ws);
     expect(x.edges.length).toBeGreaterThan(0);
     await a.room.removePlayer(b.pid);                       // B отвалился на X: в базе у B — X без взятого
@@ -2666,12 +2744,18 @@ describe('Room — раунд 4: узел забега не фармится в�
     room.returnTown(pid);
     expect(areaOf(room), 'от портала входа — в город').toBe('town');
 
-    // Портал узла — тоже выход в город (на финале он далеко от входа: проверяем именно его).
+    // Портал узла — тоже выход в город, и это ВТОРОЕ условие `canLeave`, а не то же самое: проверять его можно только
+    // там, где портал ДАЛЬШЕ точки входа, чем запас `EXIT_REACH_PX`. На привале (единственный узел с порталом, который
+    // ставит генератор) портал стоит в двух клетках от входа — ровно на границе запаса, и второе условие он не отличает.
+    // ⚠ Г3 (В5): поэтому узел с далёким порталом включаем фичей этажа (`nodePortal`) — у генератора таких пока нет.
     const r = makeRoom('user-r401-portal2');
-    r.room.descend(r.pid, undefined, undefined, { templateId: 'crypt-short' });
-    expect(diveUntil(r.room, r.ws, r.pid, () => nodeNow(r.ws).edges.length === 0), 'дошли до финала').not.toBeNull();
+    r.room.descend(r.pid, undefined, undefined);
+    // Нужен НЕ привал: у него геометрия города-хаба (портал у входа), а нам нужен обычный этаж — там портал встаёт
+    // на месте лестницы, то есть заведомо далеко от точки входа.
+    expect(diveUntil(r.room, r.ws, r.pid, () => nodeNow(r.ws).depth >= 3 && nodeNow(r.ws).type !== 'rest'), 'спустились до обычного этажа').not.toBeNull();
+    nodePortal(r.room);
     const portal = runOf(r.room).decor.find((d) => d.kind === 'portal')!;
-    expect(Math.hypot(portal.x - wOf(r.room).spawn.x, portal.y - wOf(r.room).spawn.y), 'портал финала — не у входа').toBeGreaterThan(128);
+    expect(Math.hypot(portal.x - wOf(r.room).spawn.x, portal.y - wOf(r.room).spawn.y), 'портал узла — не у входа').toBeGreaterThan(128);
     ready(r.room);
     standAt(r.room, r.pid, { x: portal.x + 30, y: portal.y });
     r.room.returnTown(r.pid);
@@ -3074,7 +3158,13 @@ describe('Room — раунд 5: здоровье, добивание стату
     const counter = (s: SaveState): number | undefined => s.quests.find((x) => x.questId === 'q-r506')?.counters.o1;
     expect(counter(mainSave), 'убийство — соседа (яд проклятия мог задеть и соседних того же вида)').toBeGreaterThanOrEqual(1);
     expect(counter(host.save), 'хозяину — ничего').toBe(0);
-    expect(host.save.xp, 'опыт хозяину не пришёл').toBe(hostXp);
+    // ⭐⭐ 14.10 (Г6): КРЕДИТ за убийство («Уничтожить N») — соседа, а ОПЫТ теперь делится на живых участников, и доля
+    // хозяина пришла. Правило R5-06 этим не ослаблено: оно про кредит, и счётчик квеста выше его и сторожит (0 у
+    // хозяина). Сторожим здесь две вещи: доля хозяина меньше доли соседа-добившего не стала (дележ ровный) и сумма
+    // не выросла — опыта из воздуха дележ не печатает.
+    const hostGot = host.save.xp - hostXp, mainGot = mainSave.xp - mainXp;
+    expect(hostGot, 'доля хозяина пришла (Г6)').toBeGreaterThan(0);
+    expect(hostGot, 'дележ ровный: доли живых равны').toBe(mainGot);
     expect(mainSave.xp, 'опыт — соседу').toBeGreaterThan(mainXp);
   });
   it('⭐ R5-20: старый сейв с тысячами сданных заданий доски входит в комнату уже чистым; квота помнит поколение', async () => {

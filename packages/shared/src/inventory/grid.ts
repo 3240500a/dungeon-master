@@ -56,6 +56,21 @@ export function packInventory(items: Item[], dims: Dims): void {
 }
 
 /**
+ * ⭐⭐ Ф5-1 (17.10): ЧТО СТЕКАЕТСЯ И С ЧЕМ — ОДИН ШОВ.
+ *
+ * Ключ стека: сырьё сливается по виду материала, печать — по ПАРЕ «вид + ступень» (решение
+ * владельца 16.10: связка читается как «Логово II ×3, Кишащий I ×5»). `null` — вещь не стекается.
+ *
+ * ⚠ Разные ступени НЕ СМЕШИВАЮТСЯ — иначе стек из пяти первых и одной третьей ступени потерял бы
+ * силу каждой штуки внутри себя (та же грабля, что у сортов сырья).
+ */
+export function stackKeyOf(it: Item): string | null {
+  if (it.kind === 'material' && it.materialId) return `m:${it.materialId}`;
+  if (it.kind === 'seal' && it.sealId) return `s:${it.sealId}:${it.sealTier ?? ''}`;
+  return null;
+}
+
+/**
  * Добавляет предмет в первую свободную клетку. false — если места нет.
  *
  * ⭐ СТЕК МАТЕРИАЛА СЛИВАЕТСЯ с уже лежащим: сперва доливаем в существующие стеки того же
@@ -67,11 +82,12 @@ export function packInventory(items: Item[], dims: Dims): void {
  * делать: подбор с земли оставляет остаток лежать, а не уничтожает его.
  */
 export function addToInventory(items: Item[], item: Item, dims: Dims, stackMax = 0): boolean {
-  if (item.kind === 'material' && item.materialId && stackMax > 0) {
+  const key = stackKeyOf(item);
+  if (key && stackMax > 0) {
     let left = item.count ?? 1;
     for (const it of items) {
       if (left <= 0) break;
-      if (it.kind !== 'material' || it.materialId !== item.materialId) continue;
+      if (stackKeyOf(it) !== key) continue;
       const room = stackMax - (it.count ?? 1);
       if (room <= 0) continue;
       const add = Math.min(room, left);

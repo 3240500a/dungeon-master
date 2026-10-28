@@ -1,0 +1,66 @@
+[
+  {
+    "id": "swarming",
+    "name": "Кишащий",
+    "desc": "Пачки крупнее, и с убитых падает больше вещей.",
+    "biomes": [],
+    "danger": { "stat": "packSize", "value": 0.2 },
+    "reward": { "stat": "itemRolls", "value": 0.15 }
+  },
+  {
+    "id": "cursed-descent",
+    "name": "Проклятый сход",
+    "desc": "Больше магических и редких монстров — и выше редкость находок.",
+    "biomes": [],
+    "danger": { "stat": "monsterRarity", "value": 0.25 },
+    "reward": { "stat": "dropBias", "value": 0.2 }
+  },
+  {
+    "id": "enduring",
+    "name": "Стойкие",
+    "desc": "Монстры живучее, но дают больше опыта.",
+    "biomes": [],
+    "danger": { "stat": "monsterHp", "value": 0.25 },
+    "reward": { "stat": "xp", "value": 0.2 }
+  },
+  {
+    "id": "furious",
+    "name": "Яростные",
+    "desc": "Удары монстров больнее, зато выше редкость лута.",
+    "biomes": [],
+    "danger": { "stat": "monsterDamage", "value": 0.2 },
+    "reward": { "stat": "dropBias", "value": 0.15 }
+  },
+  {
+    "id": "onslaught",
+    "name": "Натиск",
+    "desc": "Монстры бьют чаще — и вещей с них больше.",
+    "biomes": [],
+    "danger": { "stat": "monsterAttackSpeed", "value": 0.18 },
+    "reward": { "stat": "itemRolls", "value": 0.12 }
+  },
+  {
+    "id": "pursuit",
+    "name": "Погоня",
+    "desc": "Монстры быстрее — и золота с них больше.",
+    "biomes": [],
+    "danger": { "stat": "monsterMoveSpeed", "value": 0.15 },
+    "reward": { "stat": "gold", "value": 0.25 }
+  },
+  {
+    "id": "lair",
+    "name": "Логово",
+    "desc": "Одна комната этажа становится логовом: вся её пачка — редкие монстры, и находки щедрее.",
+    "biomes": [],
+    "danger": { "stat": "elitePacks", "value": 1.75 },
+    "reward": { "stat": "dropBias", "value": 1.25 }
+  },
+  {
+    "id": "warden",
+    "name": "Сторожевой",
+    "desc": "В пачку этажа встаёт чемпион — уник с надбавкой уровня ранга «мини»; за него и опыт больше.",
+    "biomes": [],
+    "danger": { "stat": "miniBosses", "value": 0.75 },
+    "reward": { "stat": "xp", "value": 0.55 }
+  }
+]

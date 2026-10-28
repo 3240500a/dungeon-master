@@ -90,7 +90,16 @@
     38120108,
     39265155,
     40430277,
-    41615536
+    41615536,
+    42821002,
+    44046736,
+    45292791,
+    46559212,
+    47846035,
+    49153286,
+    50480983,
+    51829134,
+    53197737
   ],
   "attributePointsPerLevel": 5,
   "skillPointsPerLevel": 1,
@@ -124,6 +133,15 @@
   },
   "monsterXpGrowth": 0.2,
   "uniqueXpMult": 3,
+  "xpShare": {
+    "safeBase": 3,
+    "safePerLevel": 0.0625,
+    "refBonus": 5,
+    "diffPow": 2.5,
+    "multPow": 1.5,
+    "floor": 0.01,
+    "partyBonusPerMember": 0.5
+  },
   "monsterScaling": {
     "hpPerLevel": 10,
     "damagePerLevel": 1,
@@ -144,6 +162,7 @@
   "combatLogoutSec": 10,
   "loot": {
     "dropChance": 0.12,
+    "rewardPower": 1.35,
     "goldChance": 0.5,
     "chestsPerFloor": {
       "min": 1,
@@ -243,6 +262,36 @@
     "rows": 6,
     "materialStack": 200
   },
+  "seals": {
+    "enabled": true,
+    "dangerCapPerSeal": 0.6,
+    "reroll": { "enabled": true, "goldCost": 400, "differs": true },
+    "tiers": [
+      { "id": "t1", "name": "I", "mul": 1, "minDepth": 1, "weight": 6 },
+      { "id": "t2", "name": "II", "mul": 2.2, "minDepth": 8, "weight": 3 },
+      { "id": "t3", "name": "III", "mul": 4, "minDepth": 16, "weight": 1 }
+    ],
+    "stackMax": 20,
+    "slots": [
+      { "fromRecord": 0, "count": 1 },
+      { "fromRecord": 20, "count": 2 },
+      { "fromRecord": 40, "count": 3 },
+      { "fromRecord": 80, "count": 4 }
+    ],
+    "reforge": {
+      "enabled": true,
+      "need": 3,
+      "mode": "sameTier",
+      "goldCost": 0,
+      "gateByRecord": true
+    },
+    "drop": {
+      "byRarity": { "magic": 0.02, "rare": 0.09, "unique": 0.3 },
+      "chestChance": 0.14,
+      "bossByRank": { "mini": 1, "strong": 2, "act": 3 },
+      "dangerBonus": 0.6
+    }
+  },
   "stash": {
     "tabs": 2,
     "cols": 20,
@@ -309,13 +358,48 @@
   "salvage": {
     "fieldYield": 0.3,
     "recipeByTier": [
-      [1, 1, 1, 1],
-      [2, 1, 1, 1],
-      [2, 2, 2, 2],
-      [3, 3, 3, 3],
-      [4, 3, 3, 3],
-      [4, 4, 4, 4],
-      [5, 5, 5, 5]
+      [
+        1,
+        1,
+        1,
+        1
+      ],
+      [
+        2,
+        1,
+        1,
+        1
+      ],
+      [
+        2,
+        2,
+        2,
+        2
+      ],
+      [
+        3,
+        3,
+        3,
+        3
+      ],
+      [
+        4,
+        3,
+        3,
+        3
+      ],
+      [
+        4,
+        4,
+        4,
+        4
+      ],
+      [
+        5,
+        5,
+        5,
+        5
+      ]
     ],
     "nonFindMaxGrade": 3,
     "uniqueSalvage": false,
@@ -551,10 +635,70 @@
     "passiveDivisor": 8,
     "passiveMax": 10
   },
+  "coop": {
+    "hpPerExtraPlayer": 0.5
+  },
   "dungeonAccess": {
-    "townReturnEvery": 5,
-    "townReturnJitter": 2,
-    "stashEvery": 3,
-    "stashJitter": 1
+    "portalsAt": [
+      3,
+      6,
+      9,
+      12,
+      15,
+      18,
+      20
+    ],
+    "lookahead": 2,
+    "contentCycle": 20,
+    "bossLadder": [
+      {
+        "at": 5,
+        "rank": "mini"
+      },
+      {
+        "at": 14,
+        "rank": "strong"
+      },
+      {
+        "at": 19,
+        "rank": "act"
+      }
+    ],
+    "bossRanks": {
+      "mini": {
+        "levelMult": 1,
+        "hpMult": 1,
+        "floorScale": 1
+      },
+      "strong": {
+        "levelMult": 2,
+        "hpMult": 1.4,
+        "floorScale": 1.1
+      },
+      "act": {
+        "levelMult": 3,
+        "hpMult": 2.2,
+        "floorScale": 1.35
+      }
+    },
+    "width": {
+      "min": 1,
+      "max": 3
+    },
+    "branching": 0.55,
+    "nodeTypeWeights": {
+      "combat": 6,
+      "elite": 2,
+      "treasure": 1
+    },
+    "allowedModifiers": [
+      "pack-swarm",
+      "hardened-foes",
+      "savage-blows",
+      "greedy-vault",
+      "gilded-fortune",
+      "relic-vitality",
+      "relic-greed"
+    ]
   }
 }

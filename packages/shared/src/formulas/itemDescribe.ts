@@ -149,6 +149,13 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
     return [{ text: `${kind} · в стеке ${item.count ?? 1}`, affix: false },
             { text: 'Сдаётся в сундук, тратится у кузнеца', affix: false }];
   }
+  // ⭐⭐ Ф5-1: ПЕЧАТЬ — ДВЕ СТРОКИ СРАЗУ: чем опаснее и чем богаче. Статы в самом предмете НЕ лежат
+  // (они в конфиге `seals`), поэтому строки даёт `sealLines` рядом с реестром, а здесь — только то, что видно из вещи.
+  if (item.kind === 'seal') {
+    const n = item.count ?? 1;
+    return [{ text: `Печать отрезка${n > 1 ? ` · в стеке ${n}` : ''}`, affix: false },
+            { text: 'Вставляется на алтаре метки — опаснее и богаче до следующей метки', affix: false }];
+  }
   const out: ItemLine[] = [];
   const base = (text: string): void => { out.push({ text, affix: false }); };
   const aff = (text: string): void => { out.push({ text, affix: true }); };

@@ -12,8 +12,10 @@ vi.setConfig({ testTimeout: 20_000 });
 
 /**
  * Раунд 8 (ядро): то, что правка ядра обязана довезти через настоящую `Room` — мощь узла не поднимают вещи сумки, которые
- * герою не надеть, а строка «вызов ур.» клиента получает уровень заселения узла (R8-10); выбор алтаря без дублей и без
+ * герою не надеть, а строка HUD получает уровень, по которому узел заселён (R8-10); выбор алтаря без дублей и без
  * модификаторов, чей эффект игра не применяет (R8-12). Сокет — фейковый, база — заглушка.
+ * ⭐⭐ 13.10 (Г1): уровень монстров этажа — от ОДНОЙ ГЛУБИНЫ (`floorMonsterLevel`), мощь узла (`nodeState.el`) в него не
+ * входит. Сторожа мощи остались (на ней ворота прогресса сложности), но ожидания строки HUD — числом от глубины.
  */
 vi.mock('../db/db.js', () => ({
   // R9-01: свод записей забегов в базе (`run_ledger`) — пустой; комнаты пишут в него, вход читает.
@@ -72,7 +74,7 @@ function makeRoom(level: number): { room: Room; ws: FakeWs; pid: string; save: S
   return { room, ws, pid, save: live };
 }
 
-describe('⭐ R8-10: мощь узла — по тому, что герою надеть, и «вызов ур.» клиента — уровень заселения', () => {
+describe('⭐ R8-10: мощь узла — по тому, что герою надеть; строка HUD — уровень монстров этажа (Г1: от глубины)', () => {
   /** Магическое в уровень героя во все слоты, без требований (как у героя в обычном снаряжении). */
   function wearMagic(s: SaveState): void {
     for (const b of cfg.get('items.base')) {
@@ -84,7 +86,7 @@ describe('⭐ R8-10: мощь узла — по тому, что герою на
     }
   }
 
-  it('редкие находки этажа, которые герой не может надеть, в сумке — узел заселён по надетому, как и без них', async () => {
+  it('редкие находки этажа, которые герой не может надеть, в сумке — мощь узла записана по надетому, как и без них', async () => {
     const power = cfg.get('balance').power;
     const { room, ws, pid, save } = makeRoom(12);
     wearMagic(save);
@@ -108,11 +110,15 @@ describe('⭐ R8-10: мощь узла — по тому, что герою на
     room.descend(pid);
     expect(inner(room).area).toBe('dungeon');
     expect(inner(room).nodeState?.el, 'мощь узла — по надетому').toBe(equipped);
-    // Строка «вызов ур.» — уровень, по которому заселён узел, и тир забега.
+    // Строка HUD — уровень монстров этажа (по нему же заселён узел) и тир забега.
     const floor = ws.last('areaChanged')!.floor;
     const r = inner(room);
     expect(floor.difficultyId).toBe(r.difficultyId);
-    expect(floor.challengeLevel).toBe(floorChallengeLevel(cfg, r.nodeState!.el, r.difficultyId, r.depth));
+    // ⭐ 13.10 (Г1): уровень монстров этажа — от ГЛУБИНЫ, мощь узла (`nodeState.el`) в него не входит. Сверяем и
+    // вызовом (подпись), и ЧИСЛОМ: вызов один и тот же ловит только смену подписи, а не смену закона.
+    expect(floor.challengeLevel).toBe(floorChallengeLevel(cfg, r.difficultyId, r.depth));
+    expect(floor.challengeLevel, 'этаж N → монстры N уровня (normal: startLevel 1, floorStep 1)').toBe(r.depth);
+    expect(floor.challengeLevel, 'мощь узла его не поднимает').not.toBe(r.nodeState!.el + r.depth - 1);
   });
 
   it('контроль: то, что герой надеть может, в сумке — в счёте (R7-02), и строка вызова — по нему же', () => {
@@ -128,7 +134,8 @@ describe('⭐ R8-10: мощь узла — по тому, что герою на
     room.descend(pid);
     expect(inner(room).nodeState?.el).toBe(effectiveLevel(save, power, save.inventory).total);
     const r = inner(room);
-    expect(ws.last('areaChanged')!.floor.challengeLevel).toBe(floorChallengeLevel(cfg, r.nodeState!.el, r.difficultyId, r.depth));
+    expect(ws.last('areaChanged')!.floor.challengeLevel).toBe(floorChallengeLevel(cfg, r.difficultyId, r.depth));
+    expect(ws.last('areaChanged')!.floor.challengeLevel, 'Г1: уровень монстров = номер этажа, мощь в сумке его не двигает').toBe(r.depth);
   });
 
   it('город: уровня вызова в кадре нет — там нет узла', () => {
@@ -139,15 +146,34 @@ describe('⭐ R8-10: мощь узла — по тому, что герою на
   });
 });
 
-describe('⚠ R8-12: выбор алтаря — без дублей и без модификаторов, чей эффект игра не применяет', () => {
-  it('⭐ 32 × «Реликвия алчности» — ни в конфиг забега, ни в план, ни в этажи', () => {
+describe('⚠ R8-12 / ⭐⭐ Ф7 (17.10): ИЗ ГОРОДА МОДИФИКАТОРОВ НЕ БЫВАЕТ ВОВСЕ — даже подделанным вызовом', () => {
+  /**
+   * ⚠⚠ ПОЧЕМУ ЭТО СТАЛО ВАЖНЕЕ. До Ф5 выбор города был безвредным: эффекты не применялись нигде, и сторож ловил
+   * лишь дубли и «не действует». После Ф5-0 эффекты ДЕЙСТВУЮТ, и тот же набор «опасность + благо», за который на
+   * алтаре метки платят ПЕЧАТЬЮ и получают только на ОДИН отрезок, приезжал бы из кадра спуска ДАРОМ и сразу на
+   * весь забег — то есть печати были бы налогом для тех, кто играет честно.
+   *
+   * Закрыто ПРАВИЛОМ: поля нет ни в схеме кадра, ни в типе выбора, и сервер его не спрашивает (`altarOf`).
+   * Поэтому замер идёт ПОДДЕЛАННЫМ вызовом (мимо типа): так сторож ловит возврат поля любым путём.
+   */
+  it('⭐ 32 × «Реликвия алчности» подделанным вызовом — ни в конфиг забега, ни в план, ни в этажи', () => {
     const { room, ws, pid } = makeRoom(5);
-    room.descend(pid, 'easy', undefined, { templateId: 'crypt-short', modifiers: Array(32).fill('relic-greed') });
+    room.descend(pid, 'easy', undefined, { modifiers: Array(32).fill('relic-greed') } as never);
     const r = inner(room);
     expect(r.area).toBe('dungeon');
+    expect(r.runConfig!.modifiers, 'модификаторы доехали до конфига забега').toEqual([]);
+    expect(r.runPlan!.runModifiers, 'и до плана').toEqual([]);
+    expect(ws.last('areaChanged')!.floor.floorModifiers ?? [], 'и до этажа').not.toContain('relic-greed');
+  });
+
+  it('⭐⭐ и ЧЕСТНЫЙ выбор опасности с благом из города тоже не проходит — это цена печати, а не галочка', () => {
+    const { room, ws, pid } = makeRoom(5);
+    // Пара «опасность + благо» — ровно то, что `pickRunModifiers` раньше пропускал как законную связку.
+    room.descend(pid, 'easy', undefined, { modifiers: ['pack-swarm', 'greedy-vault'] } as never);
+    const r = inner(room);
     expect(r.runConfig!.modifiers).toEqual([]);
     expect(r.runPlan!.runModifiers).toEqual([]);
-    expect(ws.last('areaChanged')!.floor.floorModifiers ?? []).not.toContain('relic-greed');
+    expect(ws.last('areaChanged')!.floor.floorModifiers ?? []).toEqual([]);
   });
 });
 

@@ -5,7 +5,8 @@ import type { ClientFrame, TownCommand } from './netTypes.js';
 import type { PlayerInput } from './session.js';
 import {
   ALLOC_ATTR_MAX, WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_EXCHANGE_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_MATERIALS_MAX,
-  WIRE_RUN_MODIFIERS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN, isWireText,
+  WIRE_RUN_MODIFIERS_MAX, WIRE_SEAL_REFORGE_MAX, WIRE_SEAL_SLOTS_MAX, WIRE_SOCKETS, WIRE_STASH_TABS, WIRE_TOKEN_RE,
+  WIRE_CHAR_ID_RE, ROOM_CODE_LEN, isWireText,
 } from './wireLimits.js';
 
 /**
@@ -130,6 +131,37 @@ export const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('forgeSketch'), variantId: cfgId, cfgRev, build }).strict(),
   // ⭐ Обмен сырья у кузнеца: что отдать (id), во что (семья), сколько; можно ли и почём — решает ядро (`forgeExchange`).
   z.object({ cmd: z.literal('forgeExchange'), from: cfgId, to: cfgId, n: z.number().int().min(1).max(WIRE_EXCHANGE_MAX), maxGold, maxMaterials, minYield, cfgRev, build }).strict(),
+  /**
+   * ⭐⭐ Ф5-6 (17.10): ПЕРЕКОВКА ПЕЧАТЕЙ у кузнеца: связка «вид@ступень» → штук + согласие на пошлину.
+   *
+   * ⚠ Границы здесь — только про размер кадра. Сколько штук НУЖНО и можно ли мешать виды —
+   * решает конфиг и ядро (`canReforgeSeals`), и провод об этом не должен знать: иначе правка `need`
+   * в редакторе требовала бы правки схемы провода.
+   */
+  z.object({
+    cmd: z.literal('sealReforge'),
+    // Ключ — «вид@ступень»: два id конфига и разделитель, поэтому рамка длины вдвое плюс один.
+    seals: z.record(wireText(3, WIRE_ID_MAX * 2 + 1), z.number().int().min(1).max(WIRE_SEAL_REFORGE_MAX))
+      .refine((r) => Object.keys(r).length > 0 && Object.keys(r).length <= WIRE_SEAL_REFORGE_MAX, 'связка перековки пуста или длиннее потолка кадра'),
+    /**
+     * ⭐⭐ КЛЮЧ ЗАЯВКИ — против ДВОЙНОГО СПИСАНИЯ при повторе (тот же довод, что у ковки).
+     *
+     * Ответ не дошёл — честный клиент повторит заявку, а повтор перековки — это ещё три сожжённые печати,
+     * которые игрок даже не заметит (копии неотличимы, результат сливается в стек). Тот же алфавит, что у ковки.
+     */
+    nonce: z.string().regex(CRAFT_NONCE_RE).optional(),
+    /**
+     * ⭐⭐ 23.10 (Ф5-6′): ЧТО ИМЕННО ПРОСИМ — `up` (перековка 3→1, по умолчанию) или `reroll` (перекат вида).
+     *
+     * ⚠ Одна команда на два действия НАРОЧНО: у них общее всё, кроме правила обмена — место (кузница),
+     * лимит темпа, согласие на цену, ключ заявки, чтение сундука и ОДНА транзакция «сейв + сундук».
+     * Вторая команда означала бы вторую копию этой обвязки, а значит и второе место, где её можно забыть.
+     */
+    // ⚠ Поля нет — значит `up`: решает ЧИТАТЕЛЬ (сервер), а не `.default()` схемы. Иначе тип команды стал бы
+    // «op обязателен» (у zod на выходе default — не опция), и каждый старый вызов пришлось бы править.
+    op: z.enum(['up', 'reroll']).optional(),
+    maxGold, cfgRev, build,
+  }).strict(),
   z.object({ cmd: z.literal('depositMaterials') }).strict(),
   z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield, cfgRev, build }).strict(),
   // R11-02: цель — только вторая рука (дуал-вилд, щит); без неё — родной слот вещи. Встанет ли — решает ядро (`equip`).
@@ -209,14 +241,35 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
     t: z.literal('descend'),
     difficultyId: frameText(WIRE_DIFFICULTY_ID_MAX).optional(),
     targetNodeId: frameText(64).optional(),
-    runConfig: z.object({
-      biomeId: frameText(WIRE_ID_MAX).optional(),
-      templateId: frameText(WIRE_ID_MAX).optional(),
-      modifiers: z.array(frameText(WIRE_ID_MAX)).max(WIRE_RUN_MODIFIERS_MAX).optional(),
-    }).optional(),
+    // ⭐⭐ 14.10 (Г3, В2): метка старта. ПОТОЛКА НЕТ намеренно (спуск бесконечен, Г2) — глубину зажимает комната по
+    // рекордам сейвов пати (`waypointStart`), и даже `1e9` там становится рекордом, а не читом. Схема — первая линия:
+    // отбрасывает форму (дробь, минус, `NaN`, `Infinity`, строку), чтобы такое не ехало дальше границы.
+    startDepth: z.number().int().min(1).optional(),
+    /**
+     * ⚠⚠ Ф7 (17.10): У КАДРА СПУСКА МОДИФИКАТОРОВ БОЛЬШЕ НЕТ — только биом («куда лететь»).
+     *
+     * До Ф5 это было безвредно: эффекты не применялись вовсе. Теперь применяются, и тот же набор «опасность +
+     * благо», за который на алтаре платят ПЕЧАТЬЮ, приезжал бы из города ДАРОМ и сразу НА ВЕСЬ ЗАБЕГ.
+     * Закрывается ПРАВИЛОМ, а не проверкой: поля нет в схеме, и сервер его не спрашивает (`altarOf`).
+     */
+    runConfig: z.object({ biomeId: frameText(WIRE_ID_MAX).optional() }).optional(),
   }),
   z.object({ t: z.literal('arena') }),
   z.object({ t: z.literal('return') }),
+  z.object({ t: z.literal('finish') }),   // ⭐ Г3 (В5): «Завершить забег» — без полей: разрешение считает комната (`Room.finish`)
+  /**
+   * ⭐⭐ Ф5-3 (17.10): АЛТАРЬ МЕТКИ — СВЯЗКА ПЕЧАТЕЙ на СЛЕДУЮЩИЙ отрезок: ключ «вид@ступень» → штук.
+   *
+   * ⚠ Границы здесь — только про РАЗМЕР кадра (число ключей, длина ключа, потолок штук). Что игрок
+   * МОЖЕТ вставить — есть ли такая печать в сумке, жив ли вид, хватает ли гнёзд — решает СЕРВЕР (`Room.altarPick`):
+   * схема провода не видит ни сумки, ни рекорда, и попытка проверять это здесь создала бы вторую правду.
+   */
+  z.object({
+    t: z.literal('altar'),
+    seals: z.record(frameText(WIRE_ID_MAX * 2 + 1), z.number().int().min(1).max(WIRE_SEAL_SLOTS_MAX))
+      .refine((r) => Object.keys(r).length <= WIRE_RUN_MODIFIERS_MAX, 'связка длиннее потолка кадра (R2-27)')
+      .optional(),
+  }),
   z.object({ t: z.literal('lever'), leverId: z.number().int().min(0) }),
   z.object({ t: z.literal('chest'), chestId: z.number().int().min(0) }),
   z.object({ t: z.literal('vote'), accept: z.boolean() }),

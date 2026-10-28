@@ -332,6 +332,62 @@ describe('⭐ фаззер — обмен сырья у кузнеца', () => {
 });
 
 /**
+ * ⭐⭐ Ф5-6′ (23.10): ПЕЧАТИ У КУЗНЕЦА — свой профиль весов: приход печатей с тел, перековка 3→1 и перекат вида
+ * чаще прочего, плюс обычная городская возня вокруг (сундук, продажа, конфиг живьём).
+ *
+ * ⚠⚠ ЗАЧЕМ ФАЗЗЕР ПОВЕРХ ЮНИТ-СТОРОЖЕЙ. У перековки и переката есть то, чего нет у остальной кузницы:
+ * ПРЕДМЕТ СО СТЕКОМ ВНЕ ЛЕДЖЕРА. Юнит-тесты проверяют правила обмена, а здесь проверяются СКВОЗНЫЕ
+ * инварианты аккаунта на случайных заявках: отказ не трогает ничего (I1), золото сдвинулось ровно на пошлину
+ * и не больше согласия, вещи не рождаются и не исчезают мимо спеки (I4), гросбух не растёт (I5 — у печати
+ * цена ноль, и если она когда-нибудь появится, упадёт именно здесь), журнал кузнеца не шевелится (I6),
+ * каждая печать проходит схему сейва туда-обратно (I7) и ложится в сетку без наложений.
+ *
+ * Сверх общих — арифметика обмена в `extra`: перековка снимает ровно `need` штук своей ступени и даёт ровно
+ * одну следующей, а перекат НЕ МЕНЯЕТ ни числа печатей, ни раскладки по ступеням.
+ */
+describe('⭐⭐ фаззер — печати: перековка и перекат', () => {
+  type OpKind = import('./fuzz/economyFuzz.js').OpKind;
+  const SEALS: Partial<Record<OpKind, number>> = {
+    sealLoot: 12, sealForge: 14, sealRoll: 12, gold: 4, stashMove: 3, deposit: 2, sell: 2, loot: 2, config: 3, clientSync: 2, death: 1,
+  };
+  it('24 цепочки по 70 шагов: ни одного нарушения; обмены и проходили, и отказывали', () => {
+    const hits: string[] = [];
+    let forged = 0, forgeNo = 0, rolled = 0, rollNo = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const out = runOps(seed, genOps(seed, 70, SEALS), hooks, undefined, (k) => !REPORT_KNOWN && !!knownId(k));
+      if (out.found) hits.push(`✗ ${violationKey(out.found)} — сид ${seed}: ${out.found.v.msg}\n    ${out.found.log.slice(-8).join('\n    ')}`);
+      forged += out.stats.sealForge?.ok ?? 0;
+      forgeNo += out.stats.sealForge?.no ?? 0;
+      rolled += out.stats.sealRoll?.ok ?? 0;
+      rollNo += out.stats.sealRoll?.no ?? 0;
+    }
+    expect(hits, hits.join('\n\n')).toEqual([]);
+    console.log(`Ф5-6′ ФАЗЗЕР ПЕЧАТЕЙ: перековок ${forged} прошло / ${forgeNo} отказано; перекатов ${rolled} / ${rollNo}`);
+    expect(forged, 'перековки проходят').toBeGreaterThan(10);
+    expect(forgeNo, 'и отказывают (нехватка, смесь ступеней, выдуманный ключ, согласие)').toBeGreaterThan(10);
+    expect(rolled, 'перекаты проходят').toBeGreaterThan(10);
+    expect(rollNo, 'и отказывают (две печати за одну, пустая заявка, мусорный ключ)').toBeGreaterThan(10);
+  });
+
+  it('⭐ у сторожа есть зубы: лишняя печать сверх обмена ловится правилом арифметики', () => {
+    const want = 'rule:extra:sealForge';
+    const got = new Set<string>();
+    const bug = (w: import('./fuzz/economyFuzz.js').FuzzWorld, op: Op, res: { ok: boolean }): void => {
+      if (op.k !== 'sealForge' || !res.ok) return;
+      // Подкладываем лишнюю печать той же пары: число штук перестаёт сходиться с «отдал need — получил одну».
+      const s = w.heroes[op.h];
+      const seal = s.inventory.find((i) => i.kind === 'seal');
+      if (seal) seal.count = (seal.count ?? 1) + 1;
+    };
+    for (let seed = 1; seed <= 40 && !got.has(want); seed++) {
+      const out = runOps(seed, genOps(seed, 70, SEALS), { ...hooks, afterRun: bug }, want);
+      if (out.found) got.add(violationKey(out.found));
+    }
+    expect([...got], `ждали ${want}`).toContain(want);
+  });
+});
+
+/**
  * ⚠ R23-04: МНОЖИТЕЛЬ ЦЕНЫ РЕДКОСТИ ВНИЗ ДО НУЛЯ — свой профиль весов (шаг `priceEdit`): покупка, продажа, прилавок заново, добыча и правка
  * чаще прочего. Схема пускает `rarities.priceMult` от 0, оценка вещи — `round(… × priceMult)`: ниже ≈ 0.026 зелье прилавка стоило 0, а
  * сдавалось за 1 — прилавок раскупался без гроша и сдавался в плюс, на каждый заход в город. Сторожа два: цена прилавка (`shopArbitrage`:

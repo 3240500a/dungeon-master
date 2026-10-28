@@ -7,7 +7,7 @@ import { attackWeaponsOf } from '../../formulas/playerCombat.js';
 import { asHeld, gripOf } from '../../formulas/versatile.js';
 import { generateItem, itemFromBaseId } from '../../formulas/itemgen.js';
 import { shapeFoundWeapon } from '../../formulas/craft.js';
-import { xpForLevel, levelForXp } from '../../formulas/xp.js';
+import { xpForLevel, levelForXp, xpForKill } from '../../formulas/xp.js';
 import { newCharacterSave, fitToClass } from '../../economy/newCharacter.js';
 import { allocActive, allocAttr, equip, unequip, respecSkills, socketInsert, socketClear } from '../../economy/townActions.js';
 import { addToInventory } from '../../inventory/grid.js';
@@ -167,9 +167,117 @@ export function fuzzRegConstructs(): ConfigRegistry {
   return REG_CONSTRUCTS;
 }
 
+/**
+ * ⚠ 13.10: СОСТАВ ПАЧЕК ДЛЯ ПЕРЕПРОГОНОВ — тот, по которому записаны сжатые цепочки (роли scout/warrior/thrower).
+ *
+ * Держим его ЗДЕСЬ, а не ссылкой на `packs.json`: состав пачек — живой контент, его правят регулярно, а каждый
+ * новый вход меняет и состав монстров, и число бросков выбора пачки (`pickPack` бросает только при двух и более
+ * пачках типа) — и записанная цепочка уходит с своего пути. Так и случилось 13.10, когда план добавил четыре пачки
+ * с ролями archer/shield-guard/mage/shaman (без них 6 монстров из 19 не спавнились никогда): два перепрогона стали
+ * проходить ВПУСТУЮ. ШИРОКИЕ ПРОГОНЫ берут ЖИВЫЕ пачки — им настоящий мир полезен и новые роли нужно стеречь.
+ */
+const PINNED_PACKS = [
+  { roomType: 'small' as const, floors: ['crypt-halls'], entries: [
+    { role: 'scout', min: 2, max: 3, magicChance: 0.12, rareChance: 0.03 },
+    { role: 'thrower', min: 1, max: 1, magicChance: 0.12, rareChance: 0.03 }] },
+  { roomType: 'small' as const, floors: ['crypt-halls'], entries: [
+    { role: 'scout', min: 2, max: 3, magicChance: 0.05, rareChance: 0.01 },
+    { role: 'warrior', min: 1, max: 2, magicChance: 0.05, rareChance: 0.01 }] },
+  { roomType: 'large' as const, floors: ['crypt-halls'], entries: [
+    { role: 'scout', min: 2, max: 2, magicChance: 0.12, rareChance: 0.03 },
+    { role: 'warrior', min: 1, max: 2, magicChance: 0.12, rareChance: 0.03 },
+    { role: 'thrower', min: 1, max: 1, magicChance: 0.12, rareChance: 0.03 }] },
+  { roomType: 'large' as const, floors: ['crypt-halls'], entries: [
+    { role: 'scout', min: 2, max: 3, magicChance: 0.12, rareChance: 0.03 },
+    { role: 'warrior', min: 2, max: 3, magicChance: 0.12, rareChance: 0.03 }] },
+];
+
+/**
+ * ⚠ 13.10: КРИВАЯ СИЛЫ МОНСТРА ДЛЯ ПЕРЕПРОГОНОВ — та, по которой записаны сжатые цепочки (до плана по силе).
+ *
+ * План поднял жизнь монстров с ×6.5 до ×160 за 10→80 и добавил разброс по тирам. Для перепрогонов это
+ * смертельно: их зубы — в точности пути («герой добил монстра на этом тике, и взрыв убил его»), а монстр втрое
+ * толще просто не умирает на том тике — сторож проходит ВПУСТУЮ. Правило, которое они стерегут, от баланса не
+ * зависит вовсе, поэтому баланс для них ЗАМОРОЖЕН здесь числами, а не ссылкой на живой конфиг: следующая
+ * правка баланса их больше не тронет. ШИРОКИЕ ПРОГОНЫ идут на ЖИВОЙ кривой — им настоящий мир полезен.
+ */
+const PINNED_DERIVE = {
+  hpBase: 6, hpPerVit: 1.2, hpPerLevel: 5, hpVitPower: 1,
+  tierHp: { weak: 1, medium: 1, strong: 1, boss: 1 },
+  tierDmg: { weak: 1, medium: 1, strong: 1, boss: 1 },
+};
+
+/**
+ * ⚠⚠ 13.10 (Г1): ЗАКОН УРОВНЯ МОНСТРА ДЛЯ ПЕРЕПРОГОНОВ — тот, по которому записаны сжатые цепочки.
+ *
+ * С Г1 уровень монстра — ровно `startLevel + (глубина − 1) × floorStep` из `difficulties`, и эти два числа стали
+ * ГЛАВНОЙ балансной ручкой игры: владелец будет крутить их чаще всего. Для перепрогона это та же беда, что и кривая
+ * жизни (`PINNED_DERIVE`): монстр втрое слабее просто не убивает на том тике, и сторож проходит ВПУСТУЮ — зелёным, но
+ * уже ничего не доказывая. Закон приколочен ЧИСЛАМИ (а не ссылкой на живой конфиг) на обе ручки сразу: и на уровень
+ * монстра, и на глубину, которую по уровню пати выбирает `fuzzDepthFor` (она — обратная тому же закону).
+ * ШИРОКИЕ ПРОГОНЫ идут на ЖИВЫХ числах — им настоящий мир полезен.
+ */
+const PINNED_LEVELS = { startLevel: 1, floorStep: 1 };
+
+/**
+ * ⚠⚠ 14.10 (Г6): ЗАКОН ОПЫТА ДЛЯ ПЕРЕПРОГОНОВ — ТОТ, ПО КОТОРОМУ ЗАПИСАНЫ СЖАТЫЕ ЦЕПОЧКИ: без штрафа за разницу
+ * уровней и без дележа (`floor: 1`, `partyBonusPerMember: 1`).
+ *
+ * ЗАЧЕМ. Зубы сжатого перепрогона — В ТОЧНОСТИ ПУТЬ: у R21-06 герой обязан ВЗЯТЬ УРОВЕНЬ на том же тике, где его
+ * убивает взрыв (правило — «награды до взрыва, живому», а не «сколько опыта»). Г6 поделила опыт и ввела штраф —
+ * и ЗАМЕР это подтвердил: цепочка перестала доходить до левелапа (`blast-kill` 0), то есть сторож стал проходить
+ * ВПУСТУЮ. Приколачиваем числами, как уже приколочены кривая жизни (`PINNED_DERIVE`) и закон уровня
+ * (`PINNED_LEVELS`): следующая правка `xpShare` перепрогоны больше не тронет. ШИРОКИЕ ПРОГОНЫ идут на ЖИВЫХ
+ * числах — новый закон опыта фаззится там (инвариант `I6:xp-source` считает по формуле того же конфига).
+ */
+const PINNED_XP_SHARE = { floor: 1, partyBonusPerMember: 1 };
+
+const REG_PINNED = new Map<string, ConfigRegistry>();
+/**
+ * ⚠ ВАРИАНТ ДЛЯ СЖАТЫХ ПЕРЕПРОГОНОВ — МИР ПРИКОЛОЧЕН: снаряжение монстров на нижней ступени
+ * (`withLevel: false`), состав пачек — записанный (`PINNED_PACKS`), кривая силы — записанная (`PINNED_DERIVE`),
+ * закон уровня по глубине — записанный (`PINNED_LEVELS`), закон опыта — записанный (`PINNED_XP_SHARE`).
+ *
+ * ЗАЧЕМ. У сжатого перепрогона зубы — В ТОЧНОСТИ ПУТИ: цепочка из 12 шагов приводит героя к смерти на
+ * конкретном тике. Монстр на 30 % сильнее или другой состав пачки уводят её с этого пути, и сторож проходит
+ * ВПУСТУЮ — он больше не доказывает, что правило держит. Та же причина и то же лечение, что у `balance.moveDir`
+ * и у набора классов/биомов в `buildReg` ниже.
+ *
+ * Ортогонально профилю: `constructs` приколоченному миру не обязателен (перепрогон PvP прикалывается без него).
+ */
+export function fuzzRegPinned(constructs: boolean): ConfigRegistry {
+  const key = constructs ? 'constructs' : 'plain';
+  let reg = REG_PINNED.get(key);
+  if (!reg) {
+    reg = buildReg();
+    if (constructs) reg.reload({ monsters: reg.get('monsters').map((m) => ({ ...m, faction: 'monster' as const })) });
+    reg.reload({
+      'monster-gear': reg.get('monster-gear').map((g) => ({ ...g, withLevel: false })),
+      packs: PINNED_PACKS,
+      'monster-derive': { ...reg.get('monster-derive'), ...PINNED_DERIVE },
+      difficulties: reg.get('difficulties').map((d) => ({ ...d, ...PINNED_LEVELS })),
+      balance: { ...reg.get('balance'), xpShare: { ...reg.get('balance').xpShare, ...PINNED_XP_SHARE } },
+    });
+    REG_PINNED.set(key, reg);
+  }
+  return reg;
+}
+
 function buildReg(): ConfigRegistry {
   const reg = new ConfigRegistry();
   reg.loadAll();
+  // ⚠ 12.10: МИР ФАЗЗЕРА — СТЕНД, А НЕ ПОСТАВКА: все классы и все биомы включены, сколько бы их ни было
+  // включено в поставке. Владелец гасит `enabled` у ненастроенного контента (ранний доступ — один биом и
+  // один класс) и будет включать готовое по одному; правила же ядра одни для всех классов и биомов, и
+  // стеречь их надо целиком — иначе выключенный класс копит нарушения до дня, когда его включат.
+  // Вторая причина — та же, что у `balance.moveDir` ниже: сжатые перепрогоны (R21-06, R15-10 и др.)
+  // записаны по прежнему составу мира, и смена набора классов/биомов уводит цепочку с её пути — сторож
+  // тогда проходит ВПУСТУЮ. Поставку стерегут сторожа авторинга (у каждого класса комплект, носитель
+  // оружия и т. п.), они ходят по всем записям и без этого.
+  reg.reload({
+    classes: reg.get('classes').map((c) => ({ ...c, enabled: true })),
+    biomes: reg.get('biomes').map((b) => ({ ...b, enabled: true })),
+  });
   const tpl = reg.get('items.base').find((b) => b.id === 'healing-potion')!;
   const pot = (id: string, use: Record<string, unknown>) => ({
     ...structuredClone(tpl), id, name: id, enabled: false, dropWeight: 0,
@@ -451,7 +559,8 @@ function makeHero(reg: ConfigRegistry, r: Rng, i: number): { save: SaveState; ki
 
 /** Мир из сида: этаж забега (как `Room.enterNode`) или компактная арена; 1–3 героя. */
 export function newWorld(seed: number, hooks: FuzzHooks = {}): FuzzWorld {
-  const reg = hooks.world?.constructs ? fuzzRegConstructs() : fuzzReg();
+  const reg = hooks.world?.pinnedWorld ? fuzzRegPinned(!!hooks.world?.constructs)
+    : hooks.world?.constructs ? fuzzRegConstructs() : fuzzReg();
   const r = createRng((seed ^ 0x5eed5) >>> 0 || 1);
   const s = new GameSession(reg, seed, r.pick(['normal', 'normal', 'hard']));
   const n = Math.max(hooks.world?.minHeroes ?? 1, r.pick([1, 1, 2, 2, 3]));
@@ -499,8 +608,38 @@ export function newWorld(seed: number, hooks: FuzzHooks = {}): FuzzWorld {
   return w;
 }
 
-/** Уровень пати для заселения — сильнейший герой (как `Room.partyLevel` по уровню). */
+/** Уровень пати — сильнейший герой (как `Room.partyLevel`). Решает не уровень монстра, а ГЛУБИНУ, на которую стенд водит пати. */
 const partyLevel = (w: FuzzWorld): number => Math.max(1, ...w.heroes.map((h) => w.s.world.players[h.pid]?.save.level ?? 1));
+
+/**
+ * ⭐⭐ 13.10 (Г1): НА КАКУЮ ГЛУБИНУ СТЕНД ВОДИТ ПАТИ — обратная `floorMonsterLevel`: глубина, на которой монстр
+ * выходит РОВНО уровня сильнейшего героя (`startLevel + (d − 1) × floorStep = level`).
+ *
+ * ЗАЧЕМ ВООБЩЕ ВЫБИРАТЬ ГЛУБИНУ. Мощь героя из уровня монстра убрана навсегда — сложность решает одна глубина. Но
+ * фаззеру смертность героев НУЖНА: половина его инвариантов — про мёртвого (награда трупу, замах трупа, сумка трупа,
+ * часы баффа у павшего, откаты в сейве ушедшего мёртвым). До правки он входил в узел с глубиной СЛОЯ графа (1…15) с
+ * героями до 55-го уровня — и герои просто не погибали: четыре сторожа проходили впустую. Глубину выбирает СТЕНД, как её
+ * выбрал бы игрок («спускаюсь настолько, насколько вырос»), и ею же входит в мир (`enterFloor`) — ровно по закону глубины,
+ * без всякого обратного влияния героя на уровень монстра.
+ *
+ * ⚠ ГЛУБИНА, А НЕ «ПОБОЛЬШЕ» — ЗАМЕР 13.10 (20 цепочек по 80 шагов, профили `floor` и `constructs`; «цепочек со
+ * смертью» и «средний тик первой смерти» при ~1200–1500 тиках в цепочке):
+ *   монстр ≈ ¼ уровня героя — 15 % / 40 %, смерть на тике 898 / 703 (почти не гибнут — как до правки);
+ *   монстр ≈ ½ уровня героя — 55 % / 70 %, тик 747 / 623 (гибнут поздно, в сжатую цепочку не попадает);
+ *   МОНСТР = УРОВЕНЬ ГЕРОЯ   — 55 % / 90 %, тик 364 / 438 — взято;
+ *   монстр ≈ ×2 уровня героя — 70 % / 95 %, тик 313 / 280 (смертность почти та же, а мир — не игра: у пати 36-го
+ *     уровня монстры 78-го, и бой перестаёт быть боем — остальное покрытие (сундуки, подбор, касты) гаснет).
+ * То есть равный уровень — первая точка, где смерть попадает в первую треть цепочки, и при этом герои живут сотнями
+ * тиков: покрытие боя, добычи и команд мира остаётся.
+ *
+ * ⚠ Глубина выходит больше достижимой в игре (15 до фазы Г2) — так и надо: стенд обязан стеречь правила и там, где
+ * мир будет завтра (формула потолка не имеет), а геометрию узла даёт слой графа, она от глубины не зависит.
+ */
+export function fuzzDepthFor(reg: ConfigRegistry, difficultyId: string, level: number): number {
+  const diffs = reg.get('difficulties');
+  const d = diffs.find((x) => x.id === difficultyId) ?? diffs.find((x) => x.id === 'normal') ?? diffs[0]!;
+  return Math.max(1, Math.round(1 + (level - d.startLevel) / Math.max(0.1, d.floorStep)));
+}
 
 /** Войти на этаж: `floor` — узел забега (генератор, декор, сундуки, двери+рычаги закрыты), `arena` — компактная, `town` — город. */
 function enterFloorFor(w: FuzzWorld, r: Rng, mode: FuzzWorld['mode']): void {
@@ -513,10 +652,13 @@ function enterFloorFor(w: FuzzWorld, r: Rng, mode: FuzzWorld['mode']): void {
   } else if (mode === 'floor') {
     if (!w.plan || r.chance(0.3)) {
       const biomes = reg.get('biomes').filter(enabledBase);
-      const tpls = reg.get('run-templates').filter(enabledBase);
-      w.plan = generateRunPlan(reg, { templateId: r.pick(tpls).id, biomeId: r.pick(biomes).id, tier: w.s.world.difficultyId, seed: r.int(1, 2 ** 31 - 1), modifiers: [] });
+      w.plan = generateRunPlan(reg, { biomeId: r.pick(biomes).id, tier: w.s.world.difficultyId, seed: r.int(1, 2 ** 31 - 1), modifiers: [] });
     }
-    const nodes = w.plan.nodes.filter((nd) => nd.type !== 'rest');
+    // ⚠⚠ 13.10 (Г2): привалы отбрасываем (на них нет ни монстров, ни правил боя), НО окно плана короткое (`lookahead`),
+    // и при `balance.dungeonAccess.waypointStep: 1` (схема допускает) привалами станут ВСЕ его слои — список опустел бы,
+    // а `r.pick([])` вернул бы undefined и уронил стенд на правке данных, а не на баге правил. Пусто — берём как есть.
+    const noRest = w.plan.nodes.filter((nd) => nd.type !== 'rest');
+    const nodes = noRest.length ? noRest : w.plan.nodes;
     // Этажи с замком (дверь + рычаг) — вдвое чаще: их в забеге мало, а правила двери — в числе главных.
     const locked = nodes.filter((nd) => nd.floorSpec.locked);
     const node: RunNode = locked.length && r.chance(0.5) ? r.pick(locked) : r.pick(nodes);
@@ -525,19 +667,28 @@ function enterFloorFor(w: FuzzWorld, r: Rng, mode: FuzzWorld['mode']): void {
     const layout = generateFloor(node.floorSpec, reg.get('room-prefabs'), decorSpecs, undefined,
       { tiers: reg.get('chests'), perFloor: reg.get('balance').loot.chestsPerFloor }, dressingOf(biome, reg.get('balance')));   // как Room.enterNode (⭐ 08.10)
     const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((d) => [d.id, d])));
-    const monsters = spawnPacksEl(reg, layout, node.depth, w.s.world.difficultyId, createRng((node.floorSpec.seed >>> 0) || 1), partyLevel(w),
-      resolveMonsterPool(biome, node.depth), node.floorSpec.packDensity, node.floorSpec.floorId);
-    w.s.enterFloor(node.depth, {
+    // ⭐ 13.10 (Г1): заселение — ПО ГЛУБИНЕ (единственная ручка сложности), а глубину входа выбирает стенд по уровню пати
+    // (`fuzzDepthFor`). Слой графа (`node.depth`) остаётся тем, чем он и был, — адресом геометрии: сама геометрия от глубины
+    // не зависит (её решает `floorSpec`), а уровень пати в уровень монстра не входит — только в выбор этажа.
+    // ⚠⚠ ОСОЗНАННОЕ РАСХОЖДЕНИЕ СО СЕРВЕРОМ: он берёт ОДНО число — `node.depth` (room.ts, заселение и `enterFloor`), а стенд
+    // входит глубиной пати, передавая при этом `runNodeId` узла с другим `node.depth` (их обоих печатает `w.about`: «слой N,
+    // глуб. M»). Сегодня пару никто не сверяет, и стенду это нужно, чтобы доставать глубины 40–80, которых в графе из 15 слоёв
+    // нет. ⚠ Г2 СВЯЖЕТ глубину с узлом (пулы тиров, квесты «достичь этажа», прогресс сложности) — тогда стенд обязан выбирать
+    // узел ПО ГЛУБИНЕ, иначе начнёт кормить их несогласованной парой. Это первое, что надо тронуть здесь после Г2.
+    const depth = fuzzDepthFor(reg, w.s.world.difficultyId, partyLevel(w));
+    const monsters = spawnPacksEl(reg, layout, depth, w.s.world.difficultyId, createRng((node.floorSpec.seed >>> 0) || 1),
+      resolveMonsterPool(biome, depth), node.floorSpec.packDensity, node.floorSpec.floorId);
+    w.s.enterFloor(depth, {
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles, chests: layout.chests,
       doors: layout.doors, levers: layout.levers, biomeId: biome.id, runNodeId: node.id, runNodeType: node.type,
       floorLevel: monsters.reduce((m, sp) => Math.max(m, sp.def.level), 0), floorModifiers: node.floorSpec.modifiers,
     });
-    w.about = `этаж ${node.id} (${node.type}, ${biome.id}, глуб. ${node.depth}${node.floorSpec.locked ? ', замок' : ''}): ${layout.grid[0]?.length}×${layout.grid.length}, монстров ${monsters.length}, сундуков ${layout.chests.length}, дверей ${layout.doors.length}, преград ${obstacles.length}`;
+    w.about = `этаж ${node.id} (${node.type}, ${biome.id}, слой ${node.depth}, глуб. ${depth}${node.floorSpec.locked ? ', замок' : ''}): ${layout.grid[0]?.length}×${layout.grid.length}, монстров ${monsters.length} ур. ${monsters.reduce((m, sp) => Math.max(m, sp.def.level), 0)}, сундуков ${layout.chests.length}, дверей ${layout.doors.length}, преград ${obstacles.length}`;
   } else {
     const a = arenaLayout(w, r);
     w.s.enterFloor(a.depth, a.layout);
     for (const d of a.drops) w.s.world.drops.push({ ...d, id: w.s.world.nextId++ } as DropEntity);
-    w.about = `арена${a.layout.pvp ? ' PvP' : ''}: монстров ${a.layout.monsters.length}, сундуков ${a.layout.chests?.length ?? 0}, добычи ${a.drops.length}`;
+    w.about = `арена${a.layout.pvp ? ' PvP' : ''} глуб. ${a.depth}: монстров ${a.layout.monsters.length} ур. ${a.layout.monsters.reduce((m, sp) => Math.max(m, sp.def.level), 0)}, сундуков ${a.layout.chests?.length ?? 0}, добычи ${a.drops.length}`;
   }
   w.regions = new Regions(w.s.world.grid);
   w.probe.resetFloor();
@@ -614,12 +765,16 @@ function arenaLayout(w: FuzzWorld, r: Rng): { depth: number; layout: FloorLayout
     { id: 3, ...cellToWorld(wx + 1, 3), tier: r.pick(tiers).id },
   ];
   const biome = r.pick(reg.get('biomes').filter(enabledBase));
-  const depth = r.pick([1, 1, 2, 3, 5, 8]);
+  // ⭐ 13.10 (Г1): глубина арены — та же, что у узла (`fuzzDepthFor` по уровню пати), плюс 0…7 этажей вниз: часть арен
+  // тяжелее пати, как бывает и в забеге. Бросок — `r.pick` по массиву ТОЙ ЖЕ ДЛИНЫ, что прежний `[1,1,2,3,5,8]`: поток
+  // бросков мира не сдвинулся ни на один, и сиды записанных перепрогонов собирают тот же мир (только монстры в нём — по
+  // глубине пати, а не 1…8 уровня, которых герой 55-го уровня не замечал).
+  const depth = fuzzDepthFor(reg, w.s.world.difficultyId, partyLevel(w)) + r.pick([0, 0, 1, 2, 4, 7]);
   const lay: DungeonLayout = {
     grid, spawn, stairsDown: spawn, exits: [], decor: [], doors: [], levers: [], chests: [],
     rooms: [{ x: 1, y: 1, w: wx - 1, h: rows - 2, type: 'small' }, { x: wx + 1, y: 1, w: cols - wx - 2, h: rows - 2, type: r.pick(['small', 'large'] as const) }],
   } as unknown as DungeonLayout;
-  const monsters = spawnPacksEl(reg, lay, depth, w.s.world.difficultyId, createRng(r.int(1, 2 ** 31 - 1)), partyLevel(w), resolveMonsterPool(biome, depth), r.float(0.5, 1.5), '');
+  const monsters = spawnPacksEl(reg, lay, depth, w.s.world.difficultyId, createRng(r.int(1, 2 ** 31 - 1)), resolveMonsterPool(biome, depth), r.float(0.5, 1.5), '');
   const drops: NewDrop[] = [];
   const bases = reg.get('items.base').filter(enabledBase);
   const loot = (): Item => itemFromBaseId(bases, r.pick(bases).id, reg.get('item-tiers'), 'drop')!;
@@ -1240,7 +1395,15 @@ function instrument(w: FuzzWorld): Probe {
       if (p.stunTimer > 0) V('I5', 'chest-stunned', `оглушённый ${heroName(p)} открыл сундук ${c.id}`);
       if (chestId != null && chestId !== c.id) V('I5', 'chest-wrong', `${heroName(p)} просил сундук ${chestId}, открылся ${c.id}`);
       const tier = reg.get('chests').find((t) => t.id === c.tier);
-      const got = world.drops.length - nDrops;
+      // ⚠ Ф5-2: печати из сундука в ВИЛКУ ВЕЩЕЙ НЕ ВХОДЯТ: вилка `chests[].items*` — про снаряжение,
+      // а печать — свой канал со своим шансом (`balance.seals.drop.chestChance`). Считать их вместе значило бы, что
+      // упавшая печать «съедает» вещь сундука — или что сундук «щедрее вилки» без причины.
+      let seals = 0;
+      for (let i = nDrops; i < world.drops.length; i++) {
+        const d = world.drops[i];
+        if (d && d.kind === 'item' && d.item.kind === 'seal') seals += 1;
+      }
+      const got = world.drops.length - nDrops - seals;
       if (tier && (got < tier.itemsMin || got > Math.max(tier.itemsMin, tier.itemsMax))) V('I5', 'chest-count', `сундук ${c.id} (${c.tier}) дал ${got} вещей, вилка ${tier.itemsMin}–${tier.itemsMax}`);
     }
     if (world.chests.filter((c) => c.opened && shut.has(c.id)).length > 1) V('I5', 'chest-many', `одно [E]/команда открыло несколько сундуков`);
@@ -1597,13 +1760,44 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
     // ⭐ D4: правило времени баффа по часам героя; ⚠ R23-05: и откат не длиннее них.
     cdClock(w, p, b, dt, name, V);
     buffClock(w, p, b, dt, name, V);
-    // I6: опыт — только за убийство, ровно опыт монстра; уровень и очки — по таблице.
+    // I6: опыт — только за убийство (ЛЮБЫМ живым участником, Г6), долей по формуле; уровень и очки — по таблице.
     const xpEv = ev.filter((e): e is Extract<SessionEvent, { type: 'xp' }> => e.type === 'xp' && e.playerId === p.id);
-    const kills = ev.filter((e): e is Extract<SessionEvent, { type: 'monster-died' }> => e.type === 'monster-died' && e.by === p.id).map((e) => e.def.xp).filter((x) => x > 0);
     const gained = xpEv.reduce((s, e) => s + e.amount, 0);
     if (Math.abs(p.save.xp - b.xp - gained) > EPS) V('I6', 'xp', `${name}: опыт ${b.xp}→${p.save.xp}, событий на ${gained}`);
-    const kxp = [...kills].sort((a, c) => a - c).join(','), exp = xpEv.map((e) => e.amount).sort((a, c) => a - c).join(',');
-    if (kxp !== exp) V('I6', 'xp-source', `${name}: события опыта [${exp}] ≠ опыт убитых им [${kxp}]`);
+    /**
+     * ⭐⭐ Г6 (14.10): ОПЫТ ПРИХОДИТ ОТ УБИЙСТВА ЛЮБОГО УЧАСТНИКА, А НЕ ТОЛЬКО СВОЕГО. Прежний инвариант сверял события
+     * игрока с опытом убитых ИМ монстров — ровно то правило, которое Г6 отменила (дележ на пати + штраф за разницу
+     * уровней). Теперь сверяем ПО ФОРМУЛЕ (`xpForKill`, тот же шов, что у выдачи), а не по «ровно опыт монстра»:
+     *  • событие — на КАЖДОЕ убийство с убийцей (`by` задан) и опытом > 0, по одному (пол формулы — 1, то есть нулевых
+     *    долей не бывает);
+     *  • величина — в вилке [по уровню до тика, по уровню после] × [по числу живых до тика, после]: за один тик герой
+     *    мог поднять уровень, а сосед — умереть, и доля честно поехала бы внутри этой вилки.
+     * Такая вилка ловит и «опыт мимо формулы» (любое число вне вилки), и «забыли поделить» (доля вдвое больше при
+     * двоих), и «событие без убийства».
+     */
+    const kills = ev.filter((e): e is Extract<SessionEvent, { type: 'monster-died' }> => e.type === 'monster-died' && e.by !== undefined && e.def.xp > 0);
+    const aliveNow = Object.values(w.s.world.players).filter((x) => x.alive).length;
+    const aliveWas = [...pre.heroes.values()].filter((h) => h.alive).length;
+    const nLo = Math.max(1, Math.min(aliveNow, aliveWas)), nHi = Math.max(1, aliveNow, aliveWas);
+    const lvlLo = Math.min(b.level, p.save.level), lvlHi = Math.max(b.level, p.save.level);
+    const band = (k: Extract<SessionEvent, { type: 'monster-died' }>): { lo: number; hi: number } => {
+      const all = [lvlLo, lvlHi].flatMap((L) => [nLo, nHi].map((n) => xpForKill(k.def.xp, L, k.def.level, n, bal.xpShare)));
+      return { lo: Math.min(...all), hi: Math.max(...all) };
+    };
+    const bands = kills.map(band);
+    const los = bands.map((x) => x.lo).sort((a, c) => a - c), his = bands.map((x) => x.hi).sort((a, c) => a - c);
+    const got = xpEv.map((e) => e.amount).sort((a, c) => a - c);
+    // ⚠ ЖИВОЙ ЛИ ОН БЫЛ В МИГ ВЫДАЧИ. Мёртвому доля не идёт вовсе (V-RF-04/R5-06 — левелап лечит до полного), а умереть
+    // или быть поднятым он мог ПОСРЕДИ тика: тогда честных событий от 0 до числа убийств. Поэтому точное число ждём
+    // только у того, кто был жив и до, и после, — на нём и держится сторож «забыли выдать».
+    const steady = b.alive && p.alive;
+    if (steady ? got.length !== bands.length : got.length > bands.length) {
+      V('I6', 'xp-source', `${name}: событий опыта ${got.length} [${got.join(',')}], убийств с убийцей ${bands.length}`
+        + (steady ? ' (жив весь тик — ждали по одному на каждое)' : ' (умер/поднят в тике — ждали не больше)'));
+    } else if (got.some((x, i) => x < los[i]! - EPS || x > his[i]! + EPS)) {
+      V('I6', 'xp-source', `${name}: события опыта [${got.join(',')}] вне вилки формулы [${los.map((x, i) => `${x}…${his[i]}`).join(', ')}]`
+        + ` (уровень ${lvlLo}…${lvlHi}, живых ${nLo}…${nHi})`);
+    }
     if (xpEv.length && !b.alive) V('I6', 'xp-dead', `мёртвый ${name} получил опыт ${gained}`);
     const lvl = p.save.xp !== b.xp ? Math.max(b.level, levelForXp(p.save.xp, bal.xpTable)) : b.level;
     if (p.save.level !== lvl) V('I6', 'level', `${name}: уровень ${b.level}→${p.save.level}, по таблице ${lvl}`);
@@ -1631,7 +1825,9 @@ function tickInvariants(w: FuzzWorld, pre: Pre, ev: SessionEvent[], dt: number):
     for (const it of p.save.inventory) {
       // I6 (⭐ R20-07): сумка мёртвого не растёт — ни подбором, ни автоподбором (поднятое мимо броска штрафа смерти).
       if (!b.alive && !b.inv.has(it.uid)) V('I6', 'dead-bag-grew', `мёртвый ${name}: в сумке появилась ${it.baseId}/${it.uid.slice(-6)}`);
-      if (b.inv.has(it.uid) || picked.has(it.uid) || it.kind === 'material') continue;
+      // Ф5-2: стек печатей — как стек сырья: при подборе он СЛИВАЕТСЯ, и у новой клетки свой uid,
+      // не тот, что несло событие подбора. Именно поэтому здесь уже исключено сырьё.
+      if (b.inv.has(it.uid) || picked.has(it.uid) || it.kind === 'material' || it.kind === 'seal') continue;
       V('I5', 'inv-appeared', `${name}: в сумке появилась ${it.baseId}/${it.uid.slice(-6)} без подбора`);
     }
     const now = new Set(p.save.inventory.map((i) => i.uid));
@@ -1736,7 +1932,11 @@ export interface FuzzHooks {
    * высшем ранге и печати вставок на высшем ранге донора (R19-03, ⭐ D4: правило времени баффа — в общем профиле ранги размазаны по
    * дереву, а печати редки), ⚠ R21-06: все монстры — конструкты (`fuzzRegConstructs`: взрыв при смерти; в поставке путь скрытый).
    */
-  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean; buffs?: boolean; constructs?: boolean };
+  world?: { arena?: number; pvp?: number; minHeroes?: number; pillars?: number; levelup?: boolean; buffs?: boolean; constructs?: boolean;
+    /** ⚠ Только для СЖАТЫХ ПЕРЕПРОГОНОВ: мир приколочен — снаряжение монстров на нижней ступени и
+     *  состав пачек — записанный (`fuzzRegPinned`), чтобы правка баланса или контента не уводила
+     *  записанную цепочку с её пути. Профилю ортогонален (работает и с `constructs`, и без). */
+    pinnedWorld?: boolean };
   /** Только для зубов сторожа: подложить «баг» после каждого тика. */
   afterTick?: (w: FuzzWorld) => void;
   /** ⭐ D4 (только для зубов сторожа): после возврата героя с арены в город (`arenaReturn`) — подложить «баг» в его тело. */

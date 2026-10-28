@@ -127,7 +127,7 @@ describe('схема команд города', () => {
    */
   const EVERY: Record<TownCommand['cmd'], true> = {
     buy: true, sell: true, forgeUpgrade: true, forgeReroll: true, forgeRepair: true, depositMaterials: true,
-    forgeSalvage: true, craft: true, forgeEnchant: true, forgeSketch: true, forgeExchange: true, salvage: true, equip: true, unequip: true, allocAttr: true, respec: true,
+    forgeSalvage: true, craft: true, forgeEnchant: true, forgeSketch: true, forgeExchange: true, sealReforge: true, salvage: true, equip: true, unequip: true, allocAttr: true, respec: true,
     respecPassives: true, respecSkills: true, allocPassive: true, allocSkill: true, socketInsert: true,
     socketClear: true, useConsumable: true, moveBelt: true, moveItem: true, stashOpen: true, stashMove: true,
     bind: true, pickup: true, drop: true, acceptQuest: true, turnInQuest: true,
@@ -401,7 +401,10 @@ describe('⚠ R3-02 / R3-14: строки провода без U+0000 и неп
   it('прочие строки кадров (код комнаты, сложность, узел, выбор алтаря) — тоже без U+0000 и суррогатов', () => {
     const frames: Record<string, unknown>[] = [
       { t: 'join', token: TOKEN, charId: 'c1', roomCode: 'AB12C' },
-      { t: 'descend', difficultyId: 'normal', targetNodeId: 'n2_0', runConfig: { biomeId: 'crypt', templateId: 'default', modifiers: ['m1'] } },
+      // ⚠ Ф7 (17.10): у `runConfig` остался ТОЛЬКО биом — модификаторы из города сняты вместе с полем
+      // (их место заняли печати на алтаре метки, и те стоят печати из сумки, а не галочки в кадре).
+      { t: 'descend', difficultyId: 'normal', targetNodeId: 'n2_0', runConfig: { biomeId: 'crypt' } },
+      { t: 'altar', seals: { 'swarming@t1': 2 } },
     ];
     for (const f of frames) {
       expect(parseClientFrame(JSON.stringify(f)), JSON.stringify(f)).not.toBeNull();

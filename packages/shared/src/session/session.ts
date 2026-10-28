@@ -2,13 +2,15 @@ import { vecLen, wrapAngle, normalizeAngle } from '../world/fastMath.js';
 import { moveDirMult } from '../formulas/moveDir.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
-import type { Item, AttackType, ConsumableUse } from '../types/items.js';
+import type { Item, AttackType, ConsumableUse, ItemOrigin } from '../types/items.js';
 import type { DropPayload, ScaledMonster, MonsterFaction } from '../types/world.js';
 import type { CombatStats, DamagePacket, DamageType } from '../types/combat.js';
 import type { StatModifier } from '../types/attributes.js';
 import { emptyPacket, packetTotal } from '../types/combat.js';
 import type { Difficulty } from '../formulas/power.js';
-import { createRng, type Rng } from '../formulas/rng.js';
+import { createRng, type Rng , strSeed } from '../formulas/rng.js';
+import { rewardScaleOf, rewardRolls } from '../formulas/lootRate.js';
+import { runModBuffs, liveModStats, mergeRunBuffs, NO_RUN_BUFFS, type RunModBuffs } from '../dungeon/run/runModEffects.js';
 import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
 import { buffNodeCooldown, clampBuffCooldown } from '../formulas/buffTiming.js';
 import { hitMaterialOf, type HitMaterial } from '../formulas/hitMaterial.js';
@@ -23,8 +25,12 @@ import { shapeFoundWeapon } from '../formulas/craft.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
 import { giveMaterials } from '../economy/materials.js';
+import { buildSeal, rollSeal, sealBossCount, sealBuffs, sealChestChance, sealKillChance, sealStackMax } from '../economy/seals.js';
+import { bossRankAt } from '../formulas/power.js';
+import { RUN_MOD_DANGER_STATS, type SealDangerStat } from '../config/schemas.js';
 import { uuidv7 } from '../formulas/uuid.js';
 import { gainXp } from '../economy/progression.js';
+import { xpForKill } from '../formulas/xp.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
 import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, statusChance, type DebuffApply, type DebuffKind, type DebuffState } from '../world/debuffs.js';
 import type { ConfigShapes } from '../config/schemas.js';
@@ -122,6 +128,22 @@ export interface FloorLayout {
   obstacles?: Obstacle[];
   /** PvP-арена: атаки игроков бьют друг друга (иначе — обычный этаж/город). */
   pvp?: boolean;
+  /**
+   * ⭐⭐ 17.10 (правка по ревизии): ЛИЧНОСТЬ ЗАБЕГА (`RunConfig.id`) — в СИД ПОТОКА ПЕЧАТЕЙ.
+   *
+   * Без неё сид был функцией (сид сессии, глубина), а сессия у комнаты ОДНА на все забеги: повторный вход на ту же
+   * глубину в новом забеге начинал тот же поток — хороший этаж фармился повтором через город. С личностью
+   * правило «награда от МЕСТА, а не от маршрута» сохраняется (узел в сид не входит), а повтор места в ДРУГОМ
+   * забеге перестаёт быть копией старого.
+   */
+  runId?: string;
+  /**
+   * ⭐⭐ Ф5-3 (17.10): СВЯЗКА ПЕЧАТЕЙ ОТРЕЗКА («вид@ступень» → штук), если этот этаж в отрезке.
+   *
+   * ⚠ Сюда приходит УЖЕ ПРОВЕРЕННОЕ сервером: сессия не знает ни сумки, ни гнёзд, и её дело —
+   * только применить. Трату и права считает `Room.altarPick`.
+   */
+  segmentSeals?: Record<string, number>;
 }
 
 /** Материал цели для звука удара: монстр — по надетой броне (нагрудник, иначе шлем). */
@@ -259,6 +281,30 @@ export class GameSession {
   readonly world: WorldState;
   private cfg: ConfigRegistry;
   private rng: Rng;
+  /** ⭐ Ф5-0: множители модификаторов ТЕКУЩЕГО этажа (считаются на входе в этаж).  */
+  private floorBuffs: RunModBuffs = NO_RUN_BUFFS;
+  /**
+   * ⭐⭐ Ф5-2 (17.10): У ПЕЧАТЕЙ СВОЙ ПОТОК СЛУЧАЙНОСТИ, И ЭТО НЕ УДОБСТВО, А ТРЕБОВАНИЕ.
+   *
+   * ⚠⚠ Броски печати идут в тех же местах, где уже катается лут (смерть монстра, сундук). Возьми их из `this.rng`
+   * — и включение печатей СДВИНУЛО БЫ весь дальнейший поток лута: те же сид и действия дали бы другие вещи, другие
+   * ступени, другое золото. Отдельный поток, заведённый от сида этажа, оставляет лут бит в бит прежним при любом
+   * состоянии механики. Сторож на это — `economy/sealDrop.test.ts` («включение печатей не сдвигает поток лута»).
+   */
+  private sealRng: Rng;
+  /**
+   * ⚠⚠ ГАРАНТИЯ БОССА — ОДИН РАЗ НА ЭТАЖ, и это правка по ЗАМЕРУ (17.10).
+   *
+   * Было: гарантия платилась за КАЖДого убитого редкости `unique` на боссовой глубине. А боссовая комната
+   * форсит `unique` ВСЕМ своим монстрам (`spawnPacksEl`: «её монстры и есть бой с боссом») — их там 3.5 / 6.6 / 11.0
+   * на местах 5 / 14 / 19. Замер: за круг выходило 52.7 печати гарантий вместо задуманных 1+2+3 = 6.
+   *
+   * Поэтому гарантию платит ПЕРВАЯ победа над `unique` на боссовом этаже, дальше его чемпионы идут
+   * обычным броском. Правило «ранг → столько печатей» стало выполняться буквально.
+   */
+  private bossSealPaid = false;
+  /** Сид сессии — нужен производному потоку печатей (сам `rng` состояния не отдаёт). */
+  private readonly seed: number;
   private events: SessionEvent[] = [];
   /** Кэш боевого снимка каждого игрока на текущий тик. */
   private snaps = new Map<string, PlayerSnapshot>();
@@ -305,6 +351,8 @@ export class GameSession {
   constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean; rng?: Rng } = {}) {
     this.cfg = cfg;
     this.rng = opts.rng ?? createRng((seed >>> 0) || 1);
+    this.seed = (seed >>> 0) || 1;
+    this.sealRng = createRng(((this.seed * 2654435761) >>> 0) ^ 0x5ea15ea1);
     this.world = newWorldState([], seed, 0, difficultyId);
     this.rewards = opts.rewards ?? true;
     this.sustain = opts.sustain ?? this.rewards;
@@ -344,6 +392,20 @@ export class GameSession {
     w.runNodeId = layout.runNodeId;
     w.runNodeType = layout.runNodeType;
     w.floorModifiers = layout.floorModifiers;
+    // ⭐⭐ Ф5-0 (16.10): МНОЖИТЕЛИ ОТРЕЗКА СЧИТАЮТСЯ ОДИН РАЗ НА ЭТАЖ. До Ф5-0 `floorModifiers` ехали только
+    // подписью: id лежали в кадре, а награда и монстры их не знали. Теперь из них выводятся множители, и
+    // их читают оба шва — заселение (`spawnPacksEl`) и награда за убийство.
+    // ⭐⭐ Ф5-3: множители этажа = модификаторы генератора × ПЕЧАТИ, вставленные игроком на алтаре.
+    this.floorBuffs = mergeRunBuffs(
+      runModBuffs(this.cfg.get('run-modifiers'), layout.floorModifiers, liveModStats(this.cfg)),
+      // ⚠ Ф5-6′: биом этажа — часть правила: вид, привязанный к другому биому, не действует (и не падает).
+      sealBuffs(this.cfg, layout.segmentSeals, layout.biomeId),
+    );
+    // ⭐ Ф5-2: поток печатей — от сида сессии И глубины: один и тот же этаж даёт один и тот же приход, а соседний
+    // этаж — свой. Узел в сид не берём намеренно: переход «тот же этаж другим путём» не должен менять награду.
+    this.sealRng = createRng(((this.seed * 2654435761) >>> 0) ^ (((depth >>> 0) + 1) * 0x9e3779b1)
+      ^ (strSeed(layout.runId ?? '') >>> 0) ^ 0x5ea15ea1);
+    this.bossSealPaid = false;   // гарантия — одна на этаж, и новый этаж начинает счёт заново
     w.biomeId = layout.biomeId;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
@@ -1887,6 +1949,14 @@ export class GameSession {
     const diff = this.currentDifficulty();
     const level = m.def.level;
     const loot = this.cfg.get('balance').loot;
+    // ⭐⭐ 13.10 (шаг 8 плана «Монстры: план по силе»): НАГРАДА ЕДЕТ ПО КРИВОЙ ЖИЗНИ МОНСТРА.
+    // Жизнь выросла ×160 за 10→80, время убийства ×16.5 — при плоском шансе поток вещей в час падал в те же ×16.5.
+    // Тир берём из ЗАГОТОВКИ по id (в `MonsterDef` его нет): босс с ×10 жизни убивается ×10 дольше и обязан
+    // отдавать ×10 награды — иначе бить его невыгодно. Подробно и с замерами — в шапке `formulas/lootRate.ts`.
+    const mdr = this.cfg.get('monster-derive');
+    const baseTier = this.cfg.get('monsters').find((b) => b.id === m.def.id)?.tier ?? 'medium';
+    const rewardScale = rewardScaleOf(level, (mdr.tierHp[baseTier] ?? 1) / (mdr.tierHp.medium || 1), loot.rewardPower);
+    const rolls = (chance: number): number => rewardRolls(chance, rewardScale, (pr) => this.rng.chance(pr));
 
     // ⭐ Золото ПАДАЕТ, а не начисляется телепортом: до этого монета не выпадала вовсе — число
     // в углу экрана просто росло. Физический дроп + автоподбор (`balance.autoPickup`) делают
@@ -1894,7 +1964,8 @@ export class GameSession {
     // Золото падает НЕ С КАЖДОГО: ровный ручеёк мелочи читается хуже редкой кучи
     // и копится быстрее, чем тратится (`loot.goldChance`).
     if (this.rng.chance(loot.goldChance)) {
-      const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult));
+      // ⭐ Ф5-0: `gold` модификатора — поверх множителя тира (это разные вещи: тир — правило игры, модификатор — выбор).
+      const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult * this.floorBuffs.gold));
       this.spawnDrop(m.pos, { kind: 'gold', gold }, away);
     }
 
@@ -1935,16 +2006,21 @@ export class GameSession {
 
     // ⭐ Расходники своим каналом: трофей с тела их исключает (`monsterTrophyBase`), а при
     // `trophyChance` = 1.0 трофеями становится ВЕСЬ дроп с монстров — колбам взяться было неоткуда.
-    if (this.rng.chance(loot.potions.chance)) {
+    const potionRolls = rolls(loot.potions.chance);
+    if (potionRolls > 0) {
       const pots = this.cfg.get('items.base').filter((b) => b.kind === 'consumable' && b.enabled !== false);
-      if (pots.length) {
+      for (let i = 0; i < potionRolls && pots.length; i++) {
         const item = itemFromBase(this.rng.pick(pots), undefined, 'drop');
         const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, away);
         this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
       }
     }
 
-    if (this.rng.chance(loot.dropChance)) {
+    // ⭐⭐ 13.10: БРОСКОВ ВЕЩИ — СТОЛЬКО, СКОЛЬКО ЗАСЛУЖИЛ МОНСТР (см. `rewardScale` выше). Целая часть —
+    // гарантированные вещи, остаток — бросок. На 10 ур. это ровно прежние 0.12 — раннюю игру не трогаем.
+    // ⭐ Ф5-0: `itemRolls` модификатора множит ШАНС вещи — то есть и число бросков награды.
+    const itemRolls = rolls(loot.dropChance * this.floorBuffs.itemRolls);
+    for (let di = 0; di < itemRolls; di++) {
       // ⚠ Биом ЭТАЖА, а не первый из списка: до этого `biomes[0]` игнорировал, где мы находимся,
       // и магия дропа всюду считалась по крипте. Без этого «у каждого биома свои материалы» невозможно.
       const biomes = this.cfg.get('biomes');
@@ -1971,7 +2047,8 @@ export class GameSession {
         this.cfg.get('affixes'),
         this.cfg.get('uniques'),
         {
-          dropBias: theme.dropBias * diff.magicFind,
+          // ⭐ Ф5-0: `dropBias` модификатора — поверх темы биома и магии тира.
+          dropBias: theme.dropBias * diff.magicFind * this.floorBuffs.dropBias,
           // ⚠ Сложность БОЛЬШЕ НЕ ПРИБАВЛЯЕТСЯ к уровню вещи напрямую (был `+ diff.ilvlBonus`).
           // Она и так поднимает уровень МОНСТРОВ (на кошмаре моб 1-й мощи идёт 14–17 против 2–5),
           // и дроп подтягивается оттуда. Второй прямой канал делал сложность двойной ручкой.
@@ -1999,7 +2076,78 @@ export class GameSession {
       this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
     }
 
-    if (reward) this.awardXp(reward, m.def.xp); // опыт монстра уже отскейлен по его уровню
+    // ⭐⭐ Ф5-2 (17.10): ПЕЧАТЬ С УБИТОГО — только элита, редкий и уник; с рядового НИКОГДА (решение владельца
+    // 16.10: «с рядовых убийств печати не падают — это мусор, а не событие»). Множитель прихода — от суммарной
+    // опасности отрезка: риск оплачивает следующий риск.
+    // ⚠ Происхождение ставим и печати: инвариант «каждая рождённая вещь знает, откуда она» (D16) — всеобщий,
+    // и исключение для печати было бы вторым правилом на ровном месте. На разбор и лавку это не влияет: печать
+    // туда не ходит вовсе (`canSalvage`, `shopSellPrice`).
+    this.dropSeals(m.pos, this.sealKillCount(m.def.rarity), m.def.rarity === 'unique' ? 'boss' : 'drop', away);
+
+    this.awardKillXp(m, reward);
+  }
+
+  /**
+   * ⭐ Ф5-2: СКОЛЬКО ПЕЧАТЕЙ ДАЁТ ЭТО УБИЙСТВО. Босс лестницы (`bossRankAt` по глубине) даёт ГАРАНТИЮ по рангу —
+   * и тогда броска нет вовсе: гарантия и есть сустейн (приём PoE2 — камень ступенью выше с босса).
+   *
+   * ⚠ Уник НЕ на боссовой глубине остаётся броском: боссом его делает место круга, а не редкость.
+   */
+  private sealKillCount(rarity: string | undefined): number {
+    const bal = this.cfg.get('balance');
+    if (rarity === 'unique' && !this.bossSealPaid) {
+      const rank = bossRankAt(this.world.depth, bal.dungeonAccess.portalsAt, bal.dungeonAccess.contentCycle, bal.dungeonAccess.bossLadder);
+      const n = sealBossCount(this.cfg, rank);
+      // ⚠ Флаг ставим ТОЛЬКО когда реально заплатили: иначе нулевая гарантия ранга «съела бы» право на бросок.
+      if (n > 0) { this.bossSealPaid = true; return n }
+    }
+    return this.sealRng.chance(sealKillChance(this.cfg, rarity, this.segmentDanger())) ? 1 : 0;
+  }
+
+  /**
+   * ⭐ Ф5-2: СУММАРНАЯ ОПАСНОСТЬ ОТРЕЗКА — чем злее настроил, тем больше печатей вернёт отрезок (правило 4 плана).
+   * Считается из УЖЕ ПРИМЕНЁННЫХ множителей этажа, а не из списка id: так опасность, пришедшая любым путём
+   * (печать, узловой модификатор, выбор алтаря), платит одинаково, и второго правила не возникает.
+   */
+  private segmentDanger(): number {
+    let sum = 0;
+    for (const s of RUN_MOD_DANGER_STATS as readonly SealDangerStat[]) sum += Math.max(0, this.floorBuffs[s] - 1);
+    return sum;
+  }
+
+  /** Кладёт `n` печатей на пол (каждая — своим броском вида и ступени). Ничего не упало — тихо ничего. */
+  private dropSeals(at: Vec2, n: number, origin: ItemOrigin, away?: Vec2): void {
+    if (n <= 0) return;
+    for (let i = 0; i < n; i++) {
+      const roll = rollSeal(this.cfg, this.world.depth, this.sealRng, this.world.biomeId);
+      // ⚠ Отказ ОДНОГО броска — не отказ всей выдачи: иначе гарантия актового босса в три печати
+      // оборвалась бы на первом же пустом броске (вид с нулевым весом на этой глубине, правка конфига на лету).
+      if (!roll) continue;
+      // ⚠ uid — ТЕМ ЖЕ ШВОМ, ЧТО У ВСЕХ ВЕЩЕЙ (`uuidv7`). Счётчик мира — это id СУЩНОСТИ в кадре, он
+      // начинается с единицы в КАЖДОЙ сессии, а личность предмета живёт в сейве годами: две печати из разных
+      // забегов получали ОДИН uid, и дальше всё, что ищет вещь по uid (перекладывание, сундук, сетка), брало первую.
+      const item = buildSeal(this.cfg, roll.sealId, roll.tierId, 1, uuidv7());
+      if (!item) continue;
+      item.origin = origin;
+      // ⚠⚠ РАСКЛАДКА ТОЖЕ НА СВОЁМ ПОТОКЕ. Замер показал: `spawnDrop` жжёт до 13 бросков `this.rng` на
+      // разлёт, и одна упавшая печать меняла содержимое ТОГО ЖЕ сундука в 20 сидах из 20. Обещание
+      // «включение печатей не сдвигает лут» держится только если СВОЙ поток покрывает всё рождение печати.
+      const { x, y } = this.spawnDrop(at, { kind: 'item', item }, away, this.sealRng);
+      this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
+    }
+  }
+
+  /**
+   * ⭐⭐ 17.10: МОЖНО ЛИ ПОЛЬЗОВАТЬСЯ ОБЪЕКТОМ В ТОЧКЕ `at` — один ответ для всего, что стоит на этаже.
+   *
+   * Те же три условия, что у сундука и рычага: игрок жив и не оглушён (`canInteract`), близко, и не сквозь стену
+   * (R6-26). До 17.10 алтарь отрезка не проверялся вовсе, и радиус жил только в клиенте — то есть объект в мире был
+   * декорацией, а не условием.
+   */
+  canUseAt(playerId: string, at: Vec2, radius: number): boolean {
+    const p = this.world.players[playerId];
+    if (!p || !this.canInteract(p)) return false;
+    return this.within(p, at, radius) && this.hasLos(p.pos, at);
   }
 
   /**
@@ -2015,10 +2163,13 @@ export class GameSession {
    * клетку и закрытую дверь, и добыча убитого у стены ложилась в соседнюю комнату, а то и в запечатанную область.
    * Не нашли годного направления за несколько проб — кладём вплотную, как раньше.
    */
-  private spawnDrop(at: Vec2, payload: DropPayload, awayFrom?: Vec2): { x: number; y: number } {
+  private spawnDrop(at: Vec2, payload: DropPayload, awayFrom?: Vec2, rngOverride?: Rng): { x: number; y: number } {
     const sc = this.cfg.get('balance').loot.scatter;
+    // ⚠ Поток бросков — ПАРАМЕТРОМ: у печатей свой (`sealRng`), иначе их раскладка сдвигает весь дальнейший
+    // лут (замер: содержимое сундука разъехалось в 20 из 20 сидов). Золото, вещи и сырьё как раньше — `this.rng`.
+    const r = rngOverride ?? this.rng;
     // Направление «прочь от игрока»; игрок ровно в точке смерти (или его нет) — берём любое.
-    let baseAng = this.rng.float(0, Math.PI * 2);
+    let baseAng = r.float(0, Math.PI * 2);
     if (awayFrom) {
       const dx = at.x - awayFrom.x, dy = at.y - awayFrom.y;
       if (dx * dx + dy * dy > 1) baseAng = Math.atan2(dy, dx);
@@ -2026,8 +2177,8 @@ export class GameSession {
     let x = at.x, y = at.y;
     for (let i = 0; i < 6; i++) {
       // Разлёт в пределах полусферы «от игрока»: строго по лучу три награды легли бы стопкой.
-      const ang = baseAng + this.rng.float(-Math.PI / 2, Math.PI / 2);
-      const dist = this.rng.float(sc.min, Math.max(sc.min, sc.max));
+      const ang = baseAng + r.float(-Math.PI / 2, Math.PI / 2);
+      const dist = r.float(sc.min, Math.max(sc.min, sc.max));
       const nx = at.x + Math.cos(ang) * dist;
       const ny = at.y + Math.sin(ang) * dist;
       const c = worldToCell(nx, ny);
@@ -2081,6 +2232,8 @@ export class GameSession {
     const theme = biomes.find((b) => b.id === this.world.biomeId) ?? biomes[0]!;
     const bal = this.cfg.get('balance');
     const n = tier ? this.rng.int(tier.itemsMin, Math.max(tier.itemsMin, tier.itemsMax)) : 1;
+    // ⭐ Ф5-2: сундук — второй источник печати (правило 1: сундук только под охраной, бой за него уже заплачен).
+    this.dropSeals(ch.pos, this.sealRng.chance(sealChestChance(this.cfg, this.segmentDanger())) ? 1 : 0, 'chest');
     for (let i = 0; i < n; i++) {
       const item = shapeFoundWeapon(this.cfg, generateItem(
         this.cfg.get('items.base'),
@@ -2115,6 +2268,37 @@ export class GameSession {
   }
 
   /** Начисляет XP и обрабатывает левелапы (полностью лечит, выдаёт очки). */
+  /**
+   * ⭐⭐ Г6 (14.10): ОПЫТ ЗА УБИЙСТВО — КАЖДОМУ УЧАСТНИКУ СВОЯ ДОЛЯ. Было «всё живому убийце», штрафа за разницу
+   * уровней не было вовсе — и самой выгодной игрой было стоять в углу, пока тебя тащат по глубине (прямая жалоба
+   * владельца в плане «Глубина и вейпоинты»). Считает чистая `xpForKill` (форма PoE, числа — `balance.xpShare`),
+   * один шов на сервер, сим и будущий порт.
+   *
+   * ⚠ КТО УЧАСТНИК: ВСЕ ЖИВЫЕ игроки сессии, а не только убийца. Сессия — это и есть пати забега (комната сервера).
+   * Убийца при этом НЕ ОСОБЫЙ: его доля такая же.
+   *
+   * ⚠⚠ МЁРТВЫМ — НЕ ИДЁТ, ХОТЯ У PoE ЗОНА ДЕЛИТ ОПЫТ И НА ТРУПЫ. Это домашнее правило проекта, и оно СИЛЬНЕЕ формы:
+   * награды убийцы — только живому (V-RF-04), а «опыт мёртвому» уже закрывали как баг (R5-06), потому что ЛЕВЕЛАП
+   * ЛЕЧИТ ДО ПОЛНОГО — труп получал бы полное здоровье при `alive = false`. Заодно это и есть ответ на «стоять в углу»
+   * в худшем его виде: лежать и получать нельзя. Инвариант фаззера `I6:xp-dead` сторожит ровно это.
+   *
+   * ⚠ ПОЧЕМУ ОПЫТ ВСЁ-ТАКИ НЕ ИДЁТ, ЕСЛИ УБИЙЦЫ НЕТ ВОВСЕ (яд добил после выхода хозяина, `reward === undefined`):
+   * это не «награда пати», а «никто не убивал» — добыча падает (R9-06), а опыт нет, как и прежде. Иначе ушедший
+   * хозяин яда кормил бы опытом комнату, в которой его уже нет.
+   */
+  private awardKillXp(m: MonsterEntity, reward: PlayerEntity | undefined): void {
+    if (!reward) return;
+    const xpShare = this.cfg.get('balance').xpShare;
+    const members = Object.values(this.world.players).filter((p) => p.alive);
+    const n = Math.max(1, members.length);
+    for (const p of members) {
+      // Опыт монстра уже отскейлен по его уровню; штраф — от разницы с уровнем ЭТОГО героя, доля — от размера пати.
+      // ⭐ Ф5-0: `xp` модификатора — поверх правила дележа и штрафа за разницу уровней.
+      const got = Math.round(xpForKill(m.def.xp, p.save.level, m.def.level, n, xpShare) * this.floorBuffs.xp);
+      if (got > 0) this.awardXp(p, got);
+    }
+  }
+
   private awardXp(p: PlayerEntity, amount: number): void {
     if (amount <= 0) return;
     const save = p.save;
@@ -2292,7 +2476,11 @@ export class GameSession {
     const x = d.pos.x;
     const y = d.pos.y;
     if (d.kind === 'item') {
-      if (!addToInventory(p.save.inventory, d.item, this.cfg.get('balance').inventory)) return null;
+      // ⭐ Ф5-2: ПЕЧАТЬ СЛИВАЕТСЯ В СТЕК при подборе — иначе связка из пяти заняла бы пять клеток, а стек
+      // существует именно затем, чтобы этого не было. Сырьё здесь по-прежнему без слияния: у него свой путь
+      // (`giveMaterialsTo`), и менять его этой правкой нельзя — сдвинется укладка сумки в сейвах.
+      const cap = d.item.kind === 'seal' ? sealStackMax(this.cfg) : 0;
+      if (!addToInventory(p.save.inventory, d.item, this.cfg.get('balance').inventory, cap)) return null;
       this.world.drops.splice(index, 1);
       return { item: d.item, x, y, ...(d.owner !== undefined ? { thrown: true as const } : {}) };   // R4-26
     }

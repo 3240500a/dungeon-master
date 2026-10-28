@@ -141,9 +141,17 @@ export interface FloorInit {
   /** id активных модификаторов этажа (v2). */
   floorModifiers?: string[];
   /**
-   * ⭐ R8-10: тир сложности и УРОВЕНЬ ВЫЗОВА узла — ровно то, по чему сервер его заселил (`floorChallengeLevel` от мощи
-   * узла). Клиент показывает их в строке «этаж · тир · вызов ур.»: своей мерой он не знает ни снаряжения напарников, ни
-   * мощи, с которой узел заселили раньше. Только в подземелье; нет поля (старый сервер) — клиент считает сам, как прежде.
+   * ⭐⭐ Ф4 (16.10): МЕСТО АЛТАРЯ НА ЭТАЖЕ-МЕТКЕ (решение владельца: «алтарь делать там, а не в городе»). Поля
+   * нет — алтаря на этаже нет. Точку считает СЕРВЕР: он один знает, метка ли это (`isWaypoint` — тот же шов,
+   * что у портала и у списка стартов), и он же проверяет кадр `altar`; клиент только рисует интерактив.
+   */
+  altar?: { x: number; y: number };
+  /**
+   * ⭐ 13.10 (Г1): тир сложности и УРОВЕНЬ МОНСТРОВ узла — ровно то, по чему сервер его заселил (`floorChallengeLevel`,
+   * а она считает от одной ГЛУБИНЫ). Клиент показывает их в строке «этаж · тир · монстры ур.». Прежняя причина поля —
+   * «клиент не знает ни снаряжения напарников, ни мощи, с которой узел заселили раньше» — ушла вместе с мощью: теперь
+   * поле остаётся потому, что источник истины по этажу — сервер (тир он тоже валидирует). Только в подземелье; нет поля
+   * (старый сервер) — клиент считает сам той же формулой по своей глубине.
    */
   difficultyId?: string;
   challengeLevel?: number;
@@ -221,6 +229,10 @@ export type TownCommand =
    * (`balance.forgePrices.exchange`). Согласие: `maxGold` — золото карточки, `maxMaterials` — сколько она возьмёт, `minYield` — сколько даст.
    */
   | { cmd: 'forgeExchange'; from: string; to: string; n: number; maxGold?: number; maxMaterials?: Record<string, number>; minYield?: Record<string, number>; cfgRev?: string; build?: string }
+  /**
+   * ⭐⭐ Ф5-6: перековка печатей — связка «вид@ступень» → штук; сколько нужно и можно ли мешать виды — решает конфиг.
+   */
+  | { cmd: 'sealReforge'; seals: Record<string, number>; nonce?: string; op?: 'up' | 'reroll'; maxGold?: number; cfgRev?: string; build?: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
   | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string; build?: string }
   /**
@@ -274,10 +286,22 @@ export type ClientFrame =
   | { t: 'cmd'; command: TownCommand; id?: number }
   // Спуск: из города — старт забега (difficultyId=тир; runConfig=выбор алтаря: биом/шаблон/модификаторы);
   // в подземелье — спуск по ребру графа (targetNodeId).
-  | { t: 'descend'; difficultyId?: string; targetNodeId?: string; runConfig?: { biomeId?: string; templateId?: string; modifiers?: string[] } }
+  // ⭐⭐ 14.10 (Г3, В2): `startDepth` — С КАКОЙ МЕТКИ НАЧАТЬ. Только из города и только на НОВЫЙ забег (продолжение
+  // припаркованного идёт по своему указателю и это поле не смотрит). ⚠ Число ЛИШЬ ОГРАНИЧИВАЕТ СВЕРХУ: разрешение
+  // сервер считает сам, по рекордам сейвов всей пати (`waypointStart`, `Room.descend`), поэтому подложить глубину
+  // нельзя в принципе — негодное или слишком глубокое число даёт 1-й этаж (или ближайшую метку ниже), а не отказ.
+  // Потолка у поля нет намеренно: спуск бесконечен (Г2).
+  | { t: 'descend'; difficultyId?: string; targetNodeId?: string; startDepth?: number; runConfig?: { biomeId?: string; modifiers?: string[] } }
   // Вход в PvP-арену из города (через алтарь) — голосование, затем круглый зал с уроном игрок↔игрок.
+  | { t: 'altar'; seals?: Record<string, number> }
   | { t: 'arena' }
   | { t: 'return' }
+  // ⭐⭐ 14.10 (Г3, В5): «ЗАВЕРШИТЬ ЗАБЕГ» — ЯВНЫМ КАДРОМ. Прежде завершение случалось само на узле без выходов
+  // (ветка `node.edges.length === 0` в `Room.descend`), но генератор таких узлов не ставит с Г2 — то есть в живой
+  // игре завершить забег было НЕЛЬЗЯ ВОВСЕ: уход в город его паркует. Теперь это отдельная просьба: голосование
+  // (`voteStart{kind:'descend', finish:true}`) → `finishRun` (забег снят, пати в городе). Зовут там же, где уход в
+  // город (`Room.canLeave`: у портала узла, у точки входа или мёртвым) — цена та же, и правило одно.
+  | { t: 'finish' }
   | { t: 'lever'; leverId: number }
   | { t: 'chest'; chestId: number }
   | { t: 'vote'; accept: boolean }
@@ -357,11 +381,16 @@ export type ServerFrame =
    * ⭐ R16-04: В ПОДЗЕМЕЛЬЕ — КУДА ВЕДЁТ: спуск по ребру несёт узел цели (`targetNodeId`) и его тип (`targetNodeType` — ветку
    * развилки, которую выбрал зовущий), а голосование финала (узел без рёбер) — `finish`: принятое ЗАВЕРШАЕТ забег (в город).
    * Раньше окно напарника и там спрашивало «Спуск на след. этаж?».
+   * ⭐⭐ 14.10 (Г3, В2): `startDepth` — ГЛУБИНА, С КОТОРОЙ НАЧНЁТСЯ новый забег (метка; 1 — вход в спуск). Это УЖЕ
+   * зажатое сервером число, то есть ровно то, что начнётся: иначе пати голосовала бы за 18-й этаж, а попадала на 1-й
+   * (у напарника рекорд мельче). Тот же инвариант «окно ≡ исход», что у тира и шаблона (R9-08): сменилось, пока
+   * голосовали (вошёл напарник с мелким рекордом), — голосование отменяется. У продолжения забега поля нет: там
+   * глубину называет `resume.depth`.
    */
   | {
     t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string;
     finish?: true;
-    difficultyId?: string; templateId?: string; biomeId?: string; modifiers?: string[]; resume?: { host: string; depth: number };
+    difficultyId?: string; biomeId?: string; modifiers?: string[]; startDepth?: number; resume?: { host: string; depth: number };
   }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }

@@ -184,7 +184,8 @@ export function salvagePreview(reg: ConfigRegistry, item: Item, journal: CraftJo
 export function itemOriginNote(
   item: Pick<Item, 'kind' | 'origin' | 'tierForged' | 'bornTier'>, tierName: (id: string) => string | undefined,
 ): string | null {
-  if (item.kind === 'material' || item.kind === 'consumable') return null;
+  // Ф5-1: печать не разбирается на сырьё — она не вещь и не из сырья сделана (перековка 3→1 — Ф5-6′).
+  if (item.kind === 'material' || item.kind === 'consumable' || item.kind === 'seal') return null;
   const head = item.origin === undefined ? 'Вещь из прежней версии'
     : item.origin === 'shop' ? 'Куплено в лавке'
     : item.origin === 'quest' ? 'Награда за задание'

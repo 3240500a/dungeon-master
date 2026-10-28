@@ -364,7 +364,8 @@ describe('RoomManager — сетевая граница (D11)', () => {
     const err = vi.spyOn(console, 'error');
     const bad0 = counters.framesInvalid;
     wsA.frames.length = 0; wsB.frames.length = 0;
-    wsA.push({ t: 'descend', runConfig: { modifiers: 'x' } });
+    // Ф7: модификаторов у кадра спуска больше нет вовсе, поэтому кривизна — в том, что осталось (биом).
+    wsA.push({ t: 'descend', runConfig: { biomeId: 123 } });
     wsB.push({ t: 'vote', accept: 'no' });
     wsA.push({ t: 'join', token: TOK, charId: a, roomCode: 123 });
     await settle();
@@ -1471,10 +1472,11 @@ describe('RoomManager — раунд 5: вход, слив и лимиты ло�
   });
 });
 
-describe('RoomManager — раунд 3: финал без партнёра, недописанные копии (R3-05, R3-19)', () => {
+describe('RoomManager — раунд 3: завершение забега без партнёра, недописанные копии (R3-05, R3-19)', () => {
   type RunIn = {
-    runPlan: { nodes: { id: string; edges: { to: string }[] }[] }; runNodeId: string;
+    runPlan: { nodes: { id: string; edges: { to: string }[]; floorSpec: { exitCount: number } }[] }; runNodeId: string;
     decor: { kind: string; x: number; y: number }[]; session: { world: { exits?: { x: number; y: number }[] } };
+    enterNode(nodeId: string): void;
   };
 
   it('⭐ R3-05: пати закончила забег, пока партнёр в грейсе, — статус его забега «нет», в базе забега нет', async () => {
@@ -1487,9 +1489,10 @@ describe('RoomManager — раунд 3: финал без партнёра, не
     await settle();
     expect(room.area).toBe('dungeon');
     const r = room as unknown as RunIn;
-    const node = (): { id: string; edges: { to: string }[] } => r.runPlan.nodes.find((n) => n.id === r.runNodeId)!;
+    const node = () => r.runPlan.nodes.find((n) => n.id === r.runNodeId)!;
     const pa = room.session.world.players[pidOf(room, a)]!;
-    for (let g = 0; g < 40 && node().edges.length; g++) {
+    // ⭐⭐ 13.10 (Г2): спуск бесконечен — идём два этажа, а не «пока есть рёбра».
+    for (let g = 0; g < 2; g++) {
       const to = node().edges[0]!.to;
       room.movedAt = 0;
       pa.pos = { ...r.session.world.exits![0]! };      // спуск — от выхода (R3-01)
@@ -1500,14 +1503,17 @@ describe('RoomManager — раунд 3: финал без партнёра, не
       await settle();
       expect(r.runNodeId).toBe(to);
     }
-    wsB.close();                                       // B отвалился на финале
+    // ⭐⭐ 14.10 (Г3, В5): правило «забег окончен и для копии в грейсе» жило в ветке `node.edges.length === 0`
+    // (`Room.descend` → `finishRun`), а узлов без выходов генератор не ставит с Г2 — сторож охранял мёртвый код.
+    // Теперь забег кончает ЯВНЫЙ кадр `finish` (`RoomManager` → `Room.finish`), и этот сторож заодно единственный,
+    // кто проводит кадр `finish` через настоящий провод менеджера: забудь его `case` — тест упадёт.
+    wsB.close();                                       // B отвалился на этом узле
     await settle(10);
     expect(inner().graceByChar.get(b), 'B ждёт реконнекта').toBe(room);
-    expect(saved(b).run, 'прощальная запись — с финалом').toBeTruthy();
-    const portal = r.decor.find((d) => d.kind === 'portal')!;
+    expect(saved(b).run, 'прощальная запись — с этим узлом').toBeTruthy();
     room.movedAt = 0;
-    pa.pos = { x: portal.x, y: portal.y };
-    wsA.push({ t: 'descend' });                        // A завершает забег
+    pa.pos = { ...(r.session.world as unknown as { spawn: { x: number; y: number } }).spawn };   // у точки входа — оттуда «Завершить» принимают (`canLeave`)
+    wsA.push({ t: 'finish' });                         // A завершает забег
     await settle(10);
     expect(room.area).toBe('town');
     expect(saved(b).run, 'в базе у B забега нет').toBeUndefined();

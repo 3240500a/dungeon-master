@@ -67,7 +67,9 @@ export function applyDeathPenalty(save: SaveState, penalty: DeathPenaltyBalance,
     // ⚠ R13-13: и эта доля — броском (`byChance`), как число жертв. Было `max(1, round(n × доля))`: вверх от половины и не
     // меньше единицы, и при живых 0.5 × 0.5 (цель — четверть любого стека) одна единица теряла 50 %, три — 33 %, пять — 30 %:
     // мелкий запас (ценное сырьё высокой ступени) платил за смерть до двух настроенных долей. Бросок оставил всё — стек цел.
-    if (it.kind === 'material') {
+    // Ф5-1: стек печатей в СУМКЕ теряет ту же долю, что стек сырья (всё или ничего ощущалось бы поломкой).
+    // ⚠ ВСТАВЛЕННОЕ на алтаре — другой счёт: его смерть СЖИГАЕТ целиком (Ф5-5), и там оно уже не в сумке.
+    if (it.kind === 'material' || it.kind === 'seal') {
       const have = it.count ?? 1;
       const lost = Math.min(have, byChance(have * penalty.materialStackLossPercent, rng));
       materialsLost += lost;

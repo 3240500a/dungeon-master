@@ -9,3 +9,4 @@ export * from './death.js';
 export * from './materials.js';
 export * from './retiredMaterials.js';
 export * from './exchange.js';
+export * from './seals.js';

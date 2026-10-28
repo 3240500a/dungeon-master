@@ -1,0 +1,114 @@
+[
+  {
+    "id": "packSize",
+    "name": "Размер пачки",
+    "desc": "Во сколько раз больше монстров в пачке.",
+    "seam": "заселение этажа (spawnPacksEl)",
+    "enabled": true,
+    "node": false,
+    "cap": 0.8
+  },
+  {
+    "id": "monsterRarity",
+    "name": "Редкость монстров",
+    "desc": "Множитель шансов магического и редкого монстра.",
+    "seam": "заселение этажа (spawnPacksEl)",
+    "enabled": true,
+    "node": false,
+    "cap": 0.9
+  },
+  {
+    "id": "monsterHp",
+    "name": "Жизнь монстров",
+    "desc": "Множитель здоровья готового монстра.",
+    "seam": "монстр после generateMonster",
+    "enabled": true,
+    "node": false,
+    "cap": 0.8
+  },
+  {
+    "id": "monsterDamage",
+    "name": "Урон монстров",
+    "desc": "Множитель урона готового монстра.",
+    "seam": "монстр после generateMonster",
+    "enabled": true,
+    "node": false,
+    "cap": 0.8
+  },
+  {
+    "id": "monsterAttackSpeed",
+    "name": "Скорость атаки монстров",
+    "desc": "Множитель скорости атаки.",
+    "seam": "монстр после generateMonster",
+    "enabled": true,
+    "node": false,
+    "cap": 0.6
+  },
+  {
+    "id": "monsterMoveSpeed",
+    "name": "Скорость хода монстров",
+    "desc": "Множитель скорости передвижения.",
+    "seam": "монстр после generateMonster",
+    "enabled": true,
+    "node": false,
+    "cap": 0.4
+  },
+  {
+    "id": "elitePacks",
+    "name": "Логова (комнаты элиты)",
+    "desc": "Сколько комнат этажа становятся элитными: вся их пачка — редкие монстры.",
+    "seam": "заселение этажа, после основного (spawnPacksEl)",
+    "enabled": true,
+    "node": false,
+    "unit": "count",
+    "perUnit": 1.75,
+    "cap": 3.5
+  },
+  {
+    "id": "miniBosses",
+    "name": "Чемпионы",
+    "desc": "Сколько чемпионов ранга «мини» встают в пачки этажа (уник с надбавкой уровня).",
+    "seam": "заселение этажа, после основного (spawnPacksEl)",
+    "enabled": true,
+    "node": false,
+    "unit": "count",
+    "perUnit": 0.75,
+    "cap": 2.25
+  },
+  {
+    "id": "dropBias",
+    "name": "Смещение редкости лута",
+    "desc": "Множитель смещения редкости выпадающих вещей.",
+    "seam": "награда за убийство (GameSession)",
+    "enabled": true,
+    "node": false,
+    "cap": 2.4
+  },
+  {
+    "id": "itemRolls",
+    "name": "Число вещей",
+    "desc": "Множитель шанса вещи с убитого (а значит и числа бросков).",
+    "seam": "награда за убийство (GameSession)",
+    "enabled": true,
+    "node": false,
+    "cap": 1.8
+  },
+  {
+    "id": "gold",
+    "name": "Золото",
+    "desc": "Множитель выпадающего золота.",
+    "seam": "награда за убийство (GameSession)",
+    "enabled": true,
+    "node": false,
+    "cap": 3.0
+  },
+  {
+    "id": "xp",
+    "name": "Опыт",
+    "desc": "Множитель опыта за убийство.",
+    "seam": "награда за убийство (GameSession)",
+    "enabled": true,
+    "node": false,
+    "cap": 2.4
+  }
+]

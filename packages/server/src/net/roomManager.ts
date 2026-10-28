@@ -3,7 +3,8 @@ import { randomInt } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
   packInventory, applyDeathPenalty, validateInput, clientFrameSchema, ROOM_CODE_LEN, ROOM_CODE_ALPHABET, mendBrokenUniques,
-  foldRunRecords, runRecords, putRunRecords, settleEarned, migrateRetiredInSave,
+  foldRunRecords, runRecords, putRunRecords, settleEarned, migrateRetiredInSave, runNodeDepth, RUN_NODES_MAX,
+  depthRecordOf, WAYPOINT_DEPTH_LIMIT,
   type ConfigRegistry, type ClientFrame, type SaveState, type RunNodeState,
 } from '@dm/shared';
 import { getSession, getCharacter, getRunLedger } from '../db/db.js';
@@ -357,6 +358,13 @@ export class RoomManager {
   private joinsQueued = new WeakMap<GameConn, number>();
   /** ⭐ R13-08: токены (отпечатком), чью сессию база отказала при годном пропуске маршрута, — их пропуск больше не пропуск (на его срок). */
   private passRefused = new RecentKeys(ROUTE_PASS_TTL_MS + 60_000, 10_000);
+  /**
+   * ⭐⭐ Г4: какие ИНЦИДЕНТЫ починки сейва процесс уже сказал (герой × вид починки, см. `repairDepth`). Срока нет — повторять
+   * одну и ту же строку разбору человеком незачем; потолок есть, чтобы память не росла с числом героев (вытеснение
+   * старейшего даст строку ещё раз — это не поток, а редкий повтор). НЕ влияет на САМУ починку: она идёт всегда, глушится
+   * только строка и счётчик.
+   */
+  private repairSaid = new RecentKeys(Infinity, 10_000);
   /**
    * ⭐ V2: ОДИН ЗАБЕГ — ОДНА КОМНАТА: ключ забега (`runLedgerKey`) → комната, которая его взяла (`Room.takeRun`). Держит, пока `holdsRun` и
    * комната жива: сверка — на каждом вопросе (`runHolder`), уход комнаты и конец забега освобождают сами. Продолжение забега в другой
@@ -786,9 +794,12 @@ export class RoomManager {
       // D11: форму команды и номера проверяет сама комната (схемой, до исполнения) — сюда кадр
       // приходит лишь разобранным JSON, и `command`/`id` в нём могут быть чем угодно.
       case 'cmd': await conn.room.handleCmd(conn.pid, (frame as { command?: unknown }).command, (frame as { id?: unknown }).id); break;
-      case 'descend': conn.room.descend(conn.pid, frame.difficultyId, frame.targetNodeId, frame.runConfig); break;
+      // ⭐ Г3 (В2): `startDepth` едет как есть — разрешение комната считает по сейвам пати (`startDepthOf`), кадр лишь ограничивает сверху.
+      case 'descend': conn.room.descend(conn.pid, frame.difficultyId, frame.targetNodeId, frame.runConfig, frame.startDepth); break;
       case 'arena': conn.room.enterArena(conn.pid); break;
       case 'return': conn.room.returnTown(conn.pid); break;
+      case 'finish': conn.room.finish(conn.pid); break;   // ⭐ Г3 (В5): «Завершить забег» — явная просьба вместо недостижимой ветки «узел без выходов»
+      case 'altar': conn.room.altarPick(conn.pid, frame.seals); break;   // ⭐ Ф4: алтарь на этаже-метке
       case 'lever': conn.room.pullLever(conn.pid, frame.leverId); break;
       case 'chest': conn.room.openChest(conn.pid, frame.chestId); break;
       case 'vote': conn.room.castVote(conn.pid, frame.accept); break;
@@ -1036,11 +1047,17 @@ export class RoomManager {
     if (!run?.config) return true;
     const key = runLedgerKey(run.config);
     const drained = await runLedgerDrain(key);
-    const stored = await getRunLedger(key);
+    // ⭐⭐ 14.10: ОКНО СВОДА — ВОКРУГ ГЛУБИНЫ ЭТОГО ГЕРОЯ (`getRunLedger` режет по ней). Герой, отставший от напарника
+    // больше чем на окно, получал его глубокий хвост БЕЗ записи своего узла — и свой узел собирал свежим; хуже того,
+    // `putRunRecords` ниже оставляет самые ГЛУБОКИЕ записи, то есть чужой хвост вытеснял из сейва и собственные.
+    const stored = await getRunLedger(key, RUN_NODES_MAX, runNodeDepth(run.currentNodeId));
     if (!stored.length) return drained;
     const all = new Map<string, RunNodeState>();
-    foldRunRecords(all, runRecords(run, run.config));
-    if (foldRunRecords(all, stored)) putRunRecords(run, all.values());
+    // ⭐⭐ Г2 (Р5): свод базы может быть шире окна записей сейва (его сносят несколько комнат), и окно режется по
+    // ГЛУБИНЕ — поэтому запись узла, НА КОТОРОМ СТОИТ ЭТОТ ГЕРОЙ, из окна не вытесняется: иначе его узел собрался бы
+    // свежим (сундуки, босс) при живых записях соседей глубже.
+    foldRunRecords(all, runRecords(run, run.config), run.currentNodeId);
+    if (foldRunRecords(all, stored, run.currentNodeId)) putRunRecords(run, all.values());
     return drained;
   }
 
@@ -1703,6 +1720,137 @@ export class RoomManager {
     // что у героя есть, по конфигу ДО любой будущей правки (старт — не выше своих атрибутов), дальше заморожено (`settleEarned`). Иначе старт
     // писал только сброс — по живому конфигу: правка хозяина успевала раньше, и итог героя двигался. Записанное вход не трогает никогда.
     settleEarned(this.cfg, save);
+    // ⭐⭐ Г4: рекорд глубины тира и указатель припаркованного забега — починить и КРИКНУТЬ (см. `repairDepth`).
+    this.repairDepth(save);
     return save;
   }
+
+  /**
+   * ⭐⭐ Г4 (14.10): ДВА ПОЛЯ, КОТОРЫЕ ДО Г1–Г3 НИКУДА УВЕСТИ НЕ МОГЛИ, — РЕКОРД ГЛУБИНЫ (`difficultyProgress`) И УКАЗАТЕЛЬ
+   * ЗАБЕГА (`run.currentNodeId`). Пока забег был конечным (15 этажей, длина в шаблоне), из этих полей не следовало ни мира,
+   * ни прав: глубина упиралась в дно шаблона, а метки не существовало. С Г1–Г3 из них следует ВСЁ — уровень монстров
+   * (`floorMonsterLevel` от глубины узла), стартовая метка (`waypointStart` от рекорда) и то, какой узел пересоберёт
+   * продолжение. Поэтому вход их теперь проверяет, а `sanitize` выше их не смотрел.
+   *
+   * ⚠⚠ ПОЧЕМУ ПОЧИНИТЬ, А НЕ ОТВЕРГНУТЬ. Это домашнее правило проекта, и оно уже записано дважды: уровень героя
+   * сознательно НЕ пересчитывают вниз («правка конфига уровней не отнимает», R9-05 выше), а `upgradeStoredOverride` для
+   * конфигов чинит сохранённое и ОТДАЁТ СПИСОК ПОЧИНОК вместо отказа. Запереть героя из игры за нашу же кривую строку —
+   * ровно то, от чего это правило защищает. ЗАМЕР 14.10 показал, что «отвергнуть» тут вообще не вариант: порченый сейв
+   * сегодня не отказывает, он БРОСАЕТ, — то есть герой не входит вовсе:
+   *   • `difficultyProgress` = `undefined`/`null`/`'abc'`/`42` → `TypeError: Cannot set properties of …` в `Room.enterNode`
+   *     (запись рекорда кладёт число ПО КЛЮЧУ), то есть спуск не состоится ни разу; массив `[1,2]` не бросает, но рекорд
+   *     на нём не выживает в JSON — прогресс молча не копится;
+   *   • `run` без `config` → `TypeError: Cannot read properties of undefined (reading 'tier')` в `Room.resumeRun` и
+   *     `(reading 'id')` в `runLedgerKey` — кадр входа гасится, и ЭТОТ герой не войдёт больше никогда.
+   *
+   * ⚠ ПОЧИНКА ГОВОРИТСЯ ВСЛУХ (`ИНЦИДЕНТ` + счётчик `saveRepaired`), в отличие от молчаливых починок выше (уровень,
+   * золото, раскладка сумки, старт, книга заработанного): у тех мотивировка «сейв старше правила», и шуметь на каждом
+   * входе старого героя не надо, а ЗДЕСЬ мусора быть не может по построению — оба поля пишет только сервер и только
+   * годными. Значит либо мы сами написали кривое, либо базу правили в обход сервера; и то и то — повод разбора человеком.
+   * ⚠ ГЛУШИТЕЛЬ: на пути ВХОДА он не нужен — починка ложится первой же записью сейва. Но `ownedSave` зовёт и
+   * кадр лобби `runStatus`, который сейв НЕ ПИШЕТ: порченая строка базы давала бы строку и +1 к счётчику на
+   * КАЖДЫЙ запрос (потолок лобби `RateLimiter(20, 2)` — около двух строк в секунду с героя, ≈170 тыс. в сутки).
+   * Поэтому строка и счётчик — по одному разу на (герой × вид починки) за жизнь процесса (`repaired`): разбор
+   * человеком от повтора не выигрывает, а поток в логе прячет остальные инциденты.
+   */
+  private repairDepth(save: SaveState): void {
+    const who = `${save.charId || '?'}${save.name ? ` («${save.name}»)` : ''}`;
+    const say = (kind: string, what: string): void => {
+      // По разу на (герой × вид починки) за жизнь процесса: кадр лобби `runStatus` зовёт починку, но сейв НЕ ПИШЕТ —
+      // без этого порченая строка базы давала строку и +1 к счётчику на КАЖДЫЙ запрос (замер: три `ownedSave` — три строки;
+      // потолок лобби — два запроса в секунду, то есть около 170 тыс. строк в сутки с одного героя). Разбору человеком
+      // повтор не даёт ничего, а поток в логе прячет остальные инциденты. Счётчик растёт вместе со строкой — они про одно.
+      const once = `${save.charId || '?'}${kind}`;
+      if (this.repairSaid.has(once)) return;
+      this.repairSaid.add(once);
+      counters.saveRepaired++;
+      console.error(`[room] ИНЦИДЕНТ: сейв ${who} починен входом — ${what}`);
+    };
+    // ── (а) РЕКОРД ГЛУБИНЫ ТИРА ───────────────────────────────────────────────
+    const prog: unknown = save.difficultyProgress;
+    if (!prog || typeof prog !== 'object' || Array.isArray(prog)) {
+      // Поля НЕТ ВОВСЕ (`undefined`) — сейв старше рекорда: МОЛЧА пустой (та же мотивировка, что у молчаливых починок
+      // выше). Любое ДРУГОЕ значение кто-то записал — мусор: пустой + крик (запись рекорда на нём бросает, см. шапку).
+      save.difficultyProgress = {};
+      if (prog !== undefined) say('prog-shape', `рекорд глубины был ${JSON.stringify(prog) ?? String(prog)} (не объект) → пустой; вход в узел на нём БРОСАЛ, то есть спуск не состоялся бы ни разу`);
+    } else {
+      const rec = prog as Record<string, unknown>;
+      for (const tier of Object.keys(rec)) {
+        // ⚠ ОБЩИМ ШВОМ (`depthRecordOf`), а не своим приведением: тем же числом рекорд читают список меток алтаря
+        // (`openWaypoints`), стартовая глубина (`waypointStart`) и запись прогресса (`Room.enterNode`). Своё правило
+        // здесь завело бы ВТОРОЙ источник правды о том, какому числу верить, — и алтарь показал бы метку, которой
+        // сервер не даст. Нечисло/дробь/минус/`NaN`/`Infinity`/`1e9` — все дают разрешённое целое, а не отказ.
+        const fixed = depthRecordOf(rec as Record<string, number>, tier);
+        const raw = rec[tier];
+        // ⚠ `Object.is`, а не `===`: `-0 === 0` — правда, и минус-ноль остался бы в сейве непочиненным.
+        if (typeof raw === 'number' && Object.is(raw, fixed)) continue;
+        rec[tier] = fixed;
+        // ⚠ Это НЕ «отнимание»: глубже `WAYPOINT_DEPTH_LIMIT` игра числу из сейва не верила и до починки (зажим в
+        // `depthRecordOf`), так что ни одной открытой метки герой не теряет — сейв лишь перестаёт носить мусор.
+        say(`prog-tier:${tier}`, `рекорд глубины тира «${tier}» был ${JSON.stringify(raw) ?? String(raw)} → ${fixed} (целое 0…${WAYPOINT_DEPTH_LIMIT}, потолок доверия тот же, что у меток)`);
+      }
+      // ⚠ КЛЮЧ, НЕ ПОХОЖИЙ НА ТИР, ОСТАВЛЕН НАМЕРЕННО (решение этой правки). Он ИНЕРТЕН: рекорд читают только по id
+      // тира (`depthRecordOf(progress, tierId)`, `isDifficultyUnlocked(… , progress)`), и ни мира, ни прав из лишнего
+      // ключа не следует. Снимать его — значит УНЕСТИ ЗАРАБОТАННОЕ при живой правке конфига: хозяин переименовал или
+      // выключил тир на день (а конфиг правится живьём, см. `configLive`), и вход стёр бы рекорд навсегда — ровно то
+      // «правка конфига не отнимает», от чего сторожит R9-05. Число ключей ограничено конфигом, а не клиентом: пишется
+      // рекорд только для `Room.difficultyId`, а тот приходит из `validDifficulty` (id из списка тиров) либо из
+      // `save.run.config.tier` (пишет сервер).
+    }
+    // ── (б) УКАЗАТЕЛЬ ПРИПАРКОВАННОГО ЗАБЕГА ─────────────────────────────────
+    const run: unknown = save.run;
+    if (run === undefined) return;
+    const bad = runUnusable(run);
+    if (!bad) return;
+    // ПРИПАРКОВАННЫЙ ЗАБЕГ СНИМАЕТСЯ (`delete save.run`), а не «чинится на первый этаж»: он всё равно НЕВОССТАНОВИМ.
+    // ЗАМЕР 14.10 (настоящая `Room`, `addPlayerResumeRun`):
+    //   • имя не по форме (`'start'`, `'n1e9_0'`, `''`) → `resumeRun` берёт `runPlan.startId`: герой «продолжает»
+    //     забег с 60-го этажа НА ПЕРВОМ, с записями глубоких узлов в сумке. Это не обход (первый этаж — самый бедный),
+    //     но и не продолжение: тихая подмена мира вместо честного «забега нет».
+    //   • `'n0_0'` (форма годна, глубина 0) → узла такой глубины генератор не строит (`startId` окна = `n{from}_0`,
+    //     `from ≥ 1`), `enterNode` молча выходит: комната остаётся В ГОРОДЕ с областью `town` и `runNodeId = null`, а
+    //     «Продолжить» даёт этот же тупик сколько угодно раз.
+    //   • `'n1000000000_0'` — ФОРМА ГОДНА, и это самый дорогой случай: комната САДИТСЯ НА ЭТАЖ 1 000 000 000 — 54
+    //     монстра уровня 1 100 000 003 с hp 1,9e25 (u32 кадра — 4 294 967 295). Поэтому проверка формы ОДНА эту дыру НЕ
+    //     ЗАКРЫВАЕТ, и к ней добавлен потолок доверия `WAYPOINT_DEPTH_LIMIT` — ТОТ ЖЕ, которым Г3 уже ограничила рекорд
+    //     (один шов, одно число: 10 000 — тридцать три прицела владельца, в честной игре недостижимо).
+    //   • `run` без `config` → вход БРОСАЕТ (см. шапку): герой не войдёт вовсе. Это и есть «запереть героя», от чего
+    //     правило «починить, а не отвергнуть» и защищает.
+    // Герой при этом входит В ГОРОД и НЕ ТЕРЯЕТ НИЧЕГО ЗАРАБОТАННОГО: сумка, сундук, золото, уровень, рекорд глубины и
+    // открытые метки — всё при нём, и следующий забег он начнёт с самой глубокой заработанной метки (`waypointStart`).
+    delete save.run;
+    say(`run:${bad}`, `припаркованный забег снят (${bad}) — забег невосстановим, герой входит в город; заработанное (уровень, золото, сумка, рекорд глубины и открытые метки) при нём`);
+  }
+}
+
+/**
+ * ⭐⭐ Г4: ПРИПАРКОВАННЫЙ ЗАБЕГ НЕГОДЕН — чем именно (строка для инцидента) или `null`, если годен. Проверяется ТОЛЬКО то,
+ * по чему сервер РЕШАЕТ, какой мир собрать, и то, без чего вход бросает; остальные поля `save.run` нормализованы в точке
+ * чтения и мусором в них читер делает хуже только себе:
+ *  • `templateId` — читателя нет вовсе (пишется и не читается);
+ *  • `config.tier` — не из списка тиров: `floorChallengeLevel` падает на `normal` (самый дешёвый мир), а прогресс уезжает
+ *    в инертный ключ рекорда — ни неправильного мира, ни обхода;
+ *  • `config.seed`/`floorKey` — этаж узла считает HMAC ключа (`runPlanOf` уже проверяет тип и длину ключа), мусор даёт
+ *    другой, но ЗАКОННЫЙ этаж; выбрать его клиент не может — оба поля пишет сервер и клиенту не отдаёт (`clientSave`);
+ *  • `visited` — не-строки отбрасывает `noteVisited`, а лишнее имя делает узел «уже взятым»: монстры не встают, сундуки
+ *    открыты — беднее, а не богаче;
+ *  • `nodes[]` — форму держит `normalizeNodeState` (id — непустая строка, `el` ≥ 0, номера — целые ≥ 0), мусорная запись
+ *    в окне самая мелкая и вытесняется первой (`deepestFirst`);
+ *  • `peak` — уже чинится в точке чтения (`runPeak`: годное число > 0, иначе 0);
+ *  • `deadAt` — ЛЕЧИТЬ НЕЛЬЗЯ: честную метку «погиб, штраф оплачен» от подложенной не отличить, а снять её значит взять
+ *    штраф за одну смерть дважды. Подложенная экономит штраф за брошенный забег — в `openQuestions` правки 8 (охота).
+ */
+function runUnusable(run: unknown): string | null {
+  if (!run || typeof run !== 'object' || Array.isArray(run)) return `на месте забега ${JSON.stringify(run) ?? String(run)}`;
+  const r = run as { config?: unknown; currentNodeId?: unknown };
+  if (!r.config || typeof r.config !== 'object' || Array.isArray(r.config)) return `забег без config (${JSON.stringify(r.config) ?? String(r.config)}) — вход на нём БРОСАЕТ`;
+  const id = r.currentNodeId;
+  // ⚠ ФОРМА — ОБЩИМ ШВОМ `runNodeDepth` (`n<до 15 цифр>_<цифры>`), а не своей регуляркой: тем же читают глубину узла
+  // сервер (`Room.depthOf`), окна списков сейва (`deepestFirst`) и SQL-шов свода (`LEDGER_DEPTH` берёт `[0-9]{1,15}` —
+  // имя длиннее уронило бы ВЕСЬ запрос свода). Второе правило рядом с первым разошлось бы на первой же правке.
+  if (typeof id !== 'string') return `указатель узла ${JSON.stringify(id) ?? String(id)} — не строка`;
+  const depth = runNodeDepth(id);
+  if (depth < 1) return `указатель узла ${JSON.stringify(id)} не имя узла забега (ждём «n<до 15 цифр>_<полоса>» с глубиной ≥ 1)`;
+  if (depth > WAYPOINT_DEPTH_LIMIT) return `указатель узла ${JSON.stringify(id)} глубже потолка доверия ${WAYPOINT_DEPTH_LIMIT} (замер: этаж 1e9 — монстры уровня 1,1e9 с hp 1,9e25)`;
+  return null;
 }

@@ -14,20 +14,35 @@ const allLive: ReadonlySet<string> = new Set(mods.flatMap((m) => m.effects.map((
  * до каждого этажа, благо без опасности проходило всегда — подключи эффект умножением, и это ×1.15^32 к находкам.
  */
 describe('⚠ R8-12: модификаторы забега — только действующие, каждый один раз, благо — не даром', () => {
-  it('⭐ сторож: алтарь предлагает только модификаторы, чей КАЖДЫЙ эффект игра применяет; сейчас не применяет ни один', () => {
-    // Подключил стат — внеси его в `RUN_MOD_LIVE_STATS` и сюда, вместе с тестом, что эффект действует.
-    expect([...RUN_MOD_LIVE_STATS], 'подключённые статы эффектов').toEqual([]);
-    for (const tpl of reg.get('run-templates')) {
-      const offered = altarModifiers(mods, tpl.allowedModifiers);
-      for (const m of offered) expect(m.effects.every((e) => RUN_MOD_LIVE_STATS.has(e.stat)), m.id).toBe(true);
-      expect(offered.map((m) => m.id), `алтарь «${tpl.id}» — секция скрыта`).toEqual([]);
-    }
+  /**
+   * ⭐⭐ Ф5-0 (16.10): ТЕПЕРЬ ПРИМЕНЯЕТ. Раньше `RUN_MOD_LIVE_STATS` было пустым и сторож требовал пустой секции —
+   * это было честно: эффекты не читал никто. С Ф5-0 живы десять статов, у которых есть шов, и правило осталось тем
+   * же: алтарь предлагает РОВНО те модификаторы, у которых КАЖДЫЙ эффект применяется. Проверяем обе стороны —
+   * предложенное действует, непредложенное отброшено за мёртвый стат.
+   */
+  it('⭐⭐ Ф5-0: алтарь предлагает только модификаторы, чей КАЖДЫЙ эффект игра применяет — и их уже не ноль', () => {
+    expect([...RUN_MOD_LIVE_STATS].sort(), 'подключённые статы эффектов').toEqual(
+      // ⭐⭐ Ф5-6″ (23.10): + два СЧЁТНЫХ шва-события (`elitePacks`, `miniBosses`) под печати «Логово» и
+      // «Сторожевой». Список здесь — ПЕРЕПИСЬ, а не фильтр: новый стат обязан приехать сюда вместе со своим
+      // замером исхода (`runModLive.test.ts`), иначе алтарь снова начнёт обещать несделанное.
+      ['dropBias', 'elitePacks', 'gold', 'itemRolls', 'miniBosses', 'monsterAttackSpeed', 'monsterDamage',
+        'monsterHp', 'monsterMoveSpeed', 'monsterRarity', 'packSize', 'xp']);
+    const allowed = reg.get('balance').dungeonAccess.allowedModifiers;
+    const offered = altarModifiers(mods, allowed);
+    for (const m of offered) expect(m.effects.every((e) => RUN_MOD_LIVE_STATS.has(e.stat)), m.id).toBe(true);
+    expect(offered.length, 'секция алтаря больше не пуста (до Ф5-0 была)').toBeGreaterThan(0);
+    const runMods = mods.filter((m) => m.scope === 'run' && m.enabled !== false && (!allowed.length || allowed.includes(m.id)));
+    const dead = runMods.filter((m) => !m.effects.length || m.effects.some((e) => !RUN_MOD_LIVE_STATS.has(e.stat)));
+    for (const m of dead) expect(offered.some((o) => o.id === m.id), `${m.id}: мёртвый стат — не предлагаем`).toBe(false);
+    console.log(`Ф5-0 АЛТАРЬ: предложено ${offered.length} из ${runMods.length} забеговых (${offered.map((m) => m.id).join(', ')})`);
   });
 
-  it('⭐ 32 копии «Реликвии алчности» — ни в конфиг забега, ни в план, ни в этажи (эффект не подключён)', () => {
+  it('⭐ 32 копии «Реликвии алчности» — в забег попадает НЕ БОЛЬШЕ ОДНОЙ, и только в паре с опасностью', () => {
     const picked = Array(32).fill('relic-greed');
-    expect(pickRunModifiers(mods, [], picked)).toEqual([]);
-    const plan = generateRunPlan(reg, { ...defaultRunConfig(reg, 'crypt-short', 7), modifiers: picked });
+    // ⚠ Ф5-0: эффект подключён, поэтому модификатор больше не отбрасывается «за мёртвый стат». Правило
+    // осталось другим и более сильным: дублей нет, а благо без опасности не проходит (`pickRunModifiers`).
+    expect(pickRunModifiers(mods, [], picked), 'благо в одиночку — не проходит').toEqual([]);
+    const plan = generateRunPlan(reg, { ...defaultRunConfig(reg, 7), modifiers: picked });
     expect(plan.runModifiers).toEqual([]);
     for (const n of plan.nodes) expect(n.floorSpec.modifiers.filter((id) => id === 'relic-greed'), n.id).toEqual([]);
   });
@@ -64,18 +79,35 @@ describe('⚠ R8-12: модификаторы забега — только де
  * случайности перестроил бы граф каждого запаркованного забега (`currentNodeId`, `run_ledger`). Отбрасывается только результат.
  */
 describe('⚠ R10-15: узловые модификаторы — только действующие', () => {
-  /** Каждый включённый шаблон × включённый биом × `seeds` сидов. */
-  const configs = (seeds: number) => reg.get('run-templates').filter((t) => t.enabled !== false).flatMap((t) =>
+  /**
+   * Каждый включённый шаблон × включённый биом × `seeds` сидов.
+   *
+   * ⚠ Г8-4 (15.10): ШАБЛОН ТЕПЕРЬ ОДИН (выбор с алтаря снят), и выборка сторожей просела втрое — 375 узлов против
+   * прежних 500+. Это не «модификаторов стало меньше», а «конфигов стало втрое меньше». Пороги НЕ снижаем (это
+   * спрятало бы потерю покрытия) — возвращаем размер ВЫБОРКИ сидами.
+   */
+  const configs = (seeds: number) => [{ id: 'спуск' }].flatMap((t) =>
     reg.get('biomes').filter((b) => b.enabled !== false).flatMap((b) =>
-      Array.from({ length: seeds }, (_, i) => ({ ...defaultRunConfig(reg, t.id, i * 7919 + 13), biomeId: b.id }))));
+      Array.from({ length: seeds }, (_, i) => ({ ...defaultRunConfig(reg, i * 7919 + 13), biomeId: b.id }))));
   const shape = (p: ReturnType<typeof generateRunPlan>) =>
     p.nodes.map((n) => [n.id, n.type, n.depth, n.lane, n.edges.map((e) => e.to), n.floorSpec.floorId, n.floorSpec.seed]);
+  /**
+   * ⭐⭐ 13.10 (Г2): окно слоёв ЯВНОЕ. Умолчание генератора — 3 слоя (`balance.dungeonAccess.lookahead`), и выборка
+   * сторожей просела бы втрое (280 узлов против прежних 500+) — не потому, что модификаторов стало меньше, а потому,
+   * что забег больше не строится целиком. Берём 12 слоёв: примерно столько и давал прежний «длинный» шаблон.
+   */
+  const WIN = { from: 1, to: 12 };
 
-  it('⭐ пока ни один узловой эффект не подключён — ни у одного узла нет модификатора и ★', () => {
+  /**
+   * ⭐⭐ Ф5-0 (16.10): УЗЛОВЫЕ ОСТАЛИСЬ ВЫКЛЮЧЕННЫМИ, и это решение, а не недосмотр. Забеговые статы ожили
+   * (их выбирает игрок и платит опасностью), а узловые вешает генератор сам — среди них есть чистое благо
+   * `boon-cache` (`dropBias ×1.5`), которое дало бы бесплатную награду и обошло правило владельца.
+   */
+  it('⭐⭐ Ф5-0: узловые эффекты по-прежнему не подключены — ни у одного узла нет модификатора и ★', () => {
     let nodes = 0;
-    for (const c of configs(20)) {
-      for (const n of generateRunPlan(reg, c).nodes) {
-        expect(n.modifiers, `${c.templateId}/${c.biomeId}/${c.seed} ${n.id}`).toEqual([]);
+    for (const c of configs(60)) {
+      for (const n of generateRunPlan(reg, c, undefined, WIN).nodes) {
+        expect(n.modifiers, `${c.biomeId}/${c.seed} ${n.id}`).toEqual([]);
         expect(n.floorSpec.modifiers).toEqual([]);
         nodes++;
       }
@@ -85,10 +117,10 @@ describe('⚠ R10-15: узловые модификаторы — только �
 
   it('⭐ граф забега — тот же, что до правки: со всеми статами «действующими» те же узлы получают модификаторы', () => {
     let modded = 0;
-    for (const c of configs(20)) {
-      const now = generateRunPlan(reg, c);
-      const all = generateRunPlan(reg, c, allLive);   // = план до правки: тогда годился любой узловой модификатор
-      expect(shape(now), `${c.templateId}/${c.biomeId}/${c.seed}`).toEqual(shape(all));
+    for (const c of configs(60)) {
+      const now = generateRunPlan(reg, c, undefined, WIN);
+      const all = generateRunPlan(reg, c, allLive, WIN, allLive);   // = план до правки: годился любой узловой модификатор
+      expect(shape(now), `${c.biomeId}/${c.seed}`).toEqual(shape(all));
       modded += all.nodes.filter((n) => n.modifiers.length > 0).length;
     }
     expect(modded, 'сторож сравнения: модификаторы у узлов были').toBeGreaterThan(100);
@@ -97,7 +129,8 @@ describe('⚠ R10-15: узловые модификаторы — только �
   it('подключили стат — его узлы возвращаются сами: `dropBias` → «Тайник», а «Лихорадки» и «Закалки» по-прежнему нет', () => {
     const live: ReadonlySet<string> = new Set(['dropBias']);
     const seen = new Set<string>();
-    for (const c of configs(20)) for (const n of generateRunPlan(reg, c, live).nodes) for (const id of n.modifiers) seen.add(id);
+    // ⚠ Ф5-0: узловым нужен ИХ набор — забеговый (`live`) их больше не открывает.
+    for (const c of configs(60)) for (const n of generateRunPlan(reg, c, live, WIN, live).nodes) for (const id of n.modifiers) seen.add(id);
     expect([...seen]).toEqual(['boon-cache']);
   });
 });

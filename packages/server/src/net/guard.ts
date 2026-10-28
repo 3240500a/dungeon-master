@@ -56,6 +56,7 @@ const SCOPE: Record<TownCommand['cmd'], CmdScope> = {
   forgeSketch: 'town',
   // Обмен сырья — у кузнеца: тратит сумку и сундук аккаунта, а сундук в подземелье не открыт (и мост «обменял на этаже» обнулял бы риск ноши).
   forgeExchange: 'town',
+  sealReforge: 'town',   // Ф5-6: перековка — верстак кузнеца, в поле его нет
   depositMaterials: 'town',
   stashOpen: 'town',
   stashMove: 'town',

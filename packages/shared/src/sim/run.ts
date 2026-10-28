@@ -1,14 +1,14 @@
 import { ConfigRegistry } from '../config/registry.js';
-import { createRng } from '../formulas/rng.js';
+import { createRng, type Rng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
-import { effectiveLevel, startChallenge, challengeAtFloor } from '../formulas/power.js';
+import { effectiveLevel, floorMonsterLevel } from '../formulas/power.js';
 import { newBotSave, levelUpBotTo, makePlayerModel } from './playerBot.js';
 import { allocateSkillsAndPassives, visitShop } from './economy.js';
 import { simulateFights } from './fight.js';
 import { monsterPicker, simulateFloor } from './floor.js';
 import { simulateProgression } from './progression.js';
 import type { SaveState } from '../types/save.js';
-import type { FightStats, ProgressionResult, ScenarioKind, SimSettings } from './types.js';
+import type { BuildPolicy, FightStats, ProgressionResult, ScenarioKind, SimSettings } from './types.js';
 
 export interface FightOutput extends FightStats {
   challengeLevel: number;
@@ -36,15 +36,23 @@ export interface SimOutput {
   progression?: ProgressionResult;
 }
 
-/** Экипирует бота уровня L: стипендия «как будто нафармил» + магазин + скиллы/пассивы. */
-function prepBotAt(reg: ConfigRegistry, settings: SimSettings, rng: ReturnType<typeof createRng>): SaveState {
-  const save = newBotSave(reg, settings.classId);
-  levelUpBotTo(reg, save, settings.level, settings.build, rng);
-  save.gold += settings.level * 120;
-  for (let k = 0; k < 3; k++) visitShop(reg, save, settings.level, rng, settings.build);
-  allocateSkillsAndPassives(reg, save, settings.build, rng);
+/**
+ * Экипирует бота уровня L: стипендия «как будто нафармил» + магазин + скиллы/пассивы.
+ *
+ * ⚠ ОДИН «честный герой» на весь оракул: сим баланса и ЗАМЕРЫ (ttk потолков печатей — `economy/sealCaps.test.ts`)
+ * обязаны мерить одного и того же бота. Соберёшь героя второй раз рядом — замер начнёт мерить сборку, а не правило.
+ */
+export function prepBot(reg: ConfigRegistry, classId: string, level: number, build: BuildPolicy, rng: Rng): SaveState {
+  const save = newBotSave(reg, classId);
+  levelUpBotTo(reg, save, level, build, rng);
+  save.gold += level * 120;
+  for (let k = 0; k < 3; k++) visitShop(reg, save, level, rng, build);
+  allocateSkillsAndPassives(reg, save, build, rng);
   return save;
 }
+
+const prepBotAt = (reg: ConfigRegistry, settings: SimSettings, rng: Rng): SaveState =>
+  prepBot(reg, settings.classId, settings.level, settings.build, rng);
 
 /** Единая точка запуска сима: диспетчеризует по сценарию и агрегирует итог. */
 export function runSim(reg: ConfigRegistry, settings: SimSettings): SimOutput {
@@ -57,15 +65,17 @@ export function runSim(reg: ConfigRegistry, settings: SimSettings): SimOutput {
     const save = prepBotAt(reg, settings, rng);
     const model = makePlayerModel(reg, save, { useSkills: settings.build.useSkills });
     const el = effectiveLevel(save, power, undefined, reg.get('item-tiers')).total;
-    const cl = challengeAtFloor(startChallenge(el, diff), diff, settings.floor);
+    const cl = floorMonsterLevel(diff, settings.floor);   // ⭐ 13.10 (Г1): уровень монстров — от глубины, не от мощи `el`
     const monsters = reg.get('monsters');
     const affx = reg.get('monster-affixes');
     const gear = reg.get('monster-gear');
     const mderive = reg.get('monster-derive');
+    const gearTiers = reg.get('monster-gear-tiers'); // ступень снаряжения монстра — как в игре
     // Монстр — по весу спавна игры на этом этаже (`monsterPicker`), а не поштучно: двойники делят вес источника.
     const picker = monsterPicker(reg, settings.floor);
     const make = (r: typeof rng) =>
-      Array.from({ length: 3 }, () => generateMonster(monsters, gear, affx, { baseId: picker.pick(r), depth: cl, mderive }, r));
+      // ⚠ `depth` генератора НОЛЬ-БАЗОВЫЙ (`level = depth + 1`) — как в игре, кладём `cl - 1`, иначе монстр на уровень сильнее.
+      Array.from({ length: 3 }, () => generateMonster(monsters, gear, affx, { baseId: picker.pick(r), depth: cl - 1, mderive, gearTiers }, r));
     const stats = simulateFights(make, model, settings.iterations, rng);
     return { scenario: 'fight', fight: { ...stats, challengeLevel: cl, playerLevel: save.level, power: el } };
   }

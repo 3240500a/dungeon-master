@@ -32,6 +32,8 @@ describe('⭐ D3: согласие на сборку (`buildChanged`, `withConfi
     const minimal: Record<string, Record<string, unknown>> = {
       sell: { uid: 'x' }, forgeUpgrade: { uid: 'x' }, forgeReroll: { uid: 'x' }, forgeRepair: { uid: 'x' }, forgeSalvage: { uid: 'x' },
       salvage: { uid: 'x' }, forgeEnchant: { uid: 'x', rarity: 'magic' }, forgeSketch: { variantId: 'x' }, forgeExchange: { from: 'iron-1', to: 'wood', n: 3 },
+      // Ф5-6: перековка печатей — исход считается по конфигу (need, ступени, пошлина), значит и согласие нужно.
+      sealReforge: { seals: { 'swarming@t1': 3 } },
       craft: { nonce: 'nonce-0001', input: { weaponClass: 'sword', hands: 1, parts: { strike: { id: 'a', step: 1 }, grip: { id: 'b', step: 1 }, bind: { id: 'c', step: 1 }, head: { id: 'd', step: 1 } } } },
     };
     expect(Object.keys(minimal).sort()).toEqual([...CONFIG_CONSENT_CMDS].sort());

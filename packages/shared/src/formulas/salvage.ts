@@ -213,6 +213,10 @@ export function canSalvage(
   t: SalvageTuning,
   inField: boolean,
 ): { ok: boolean; reason?: string } {
+  // ⭐⭐ Ф5-1: ПЕЧАТЬ НЕ РАЗБИРАЕТСЯ — шов один для кузнеца, поля и отказа сервера. Разбор печати в сырьё
+  // сделал бы из топлива отрезка обычный доход БЕЗ боя — та же дыра, из-за которой отвергнута катаная схема.
+  // Перековка «три печати → одна ступенью выше» — СВОЕ действие кузницы (Ф5-6′), а не разбор.
+  if (item.kind === 'seal') return { ok: false, reason: SEAL_NO_SALVAGE };
   // Явный выключатель (`uniqueSalvage`), а не «ступень 0» у редкости: прежний `rarityTier.unique = 0` глушил заодно и тела боссов.
   if (item.rarity === 'unique' && !t.uniqueSalvage) return { ok: false, reason: UNIQUE_NO_SALVAGE };
   if (item.parts) return { ok: false, reason: 'Скованную вещь переплавляют, а не разбирают' };
@@ -221,6 +225,9 @@ export function canSalvage(
   if (salvageMult(item, t, inField) <= 0) return { ok: false, reason: 'Разбор ничего не даст' };
   return { ok: true };
 }
+
+/** Отказ разбора печати (Ф5-1) — одна строка на все места отказа. */
+export const SEAL_NO_SALVAGE = 'Печать не разбирается — её тратят на алтаре';
 
 /** Отказ разбора уникальной вещи — одна строка для кузницы, поля и карточки. */
 export const UNIQUE_NO_SALVAGE = 'Уникальные вещи не разбираются — их можно продать';

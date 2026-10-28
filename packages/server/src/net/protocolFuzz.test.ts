@@ -5,7 +5,7 @@ import type { WebSocket } from 'ws';
 import { MAX_FRAME_BYTES } from './conn.js';
 import {
   ConfigRegistry, newCharacterSave, clientFrameSchema, validateInput, shopBuyPrice, ATTRIBUTES, stashDims, emptyStash,
-  generateItem, createRng, addToInventory, materialItem, uuidv7,
+  generateItem, createRng, addToInventory, materialItem, uuidv7, buildSeal, liveSealDefs,
   CRAFT_SLOT_LIST, keySlotOf, keyVariantsByBase, variantsFor, craftWeapon, emptyJournal, sketchable, normalizeCraftNonces,
   upgradeCost, repairCost, rerollMaterials, enchantMaterials,
   type SaveState, type Item, type TownCommand, type CraftInput, type CraftJournal, type AccountStash,
@@ -366,12 +366,20 @@ const IPS = ['198.51.100.7', '203.0.113.9', '2001:db8:1:2::77', ''] as const;
 /** Адрес по номеру: первые четыре — `IPS`, дальше — каждый свой (IPv4 и IPv6 в своих /48): рост карт «на адрес» (I6). */
 const ipOf = (i: number): string => (i < IPS.length ? IPS[i]! : i % 2 ? `2001:db8:${(i & 0xffff).toString(16)}::${(i >> 16) + 1}` : `192.0.2.${i % 250}`);
 
-type FrameKind = 'join' | 'joinCode' | 'resume' | 'runStatus' | 'abandon' | 'cmd' | 'input' | 'ping' | 'descend' | 'vote'
-  | 'lever' | 'chest' | 'arena' | 'return' | 'leave';
+// ⭐ 14.10 (Г3, правка 7): `finish` — новая поверхность провода («Завершить забег»). Без него фаззер не трогал
+// ЕДИНСТВЕННУЮ дверь к `finishRun` вовсе: ни честной формы, ни мутаций, ни потока — а этот кадр снимает забег
+// у ВСЕЙ пати, включая копию ждущего реконнекта (R3-05), и хоронит сбежавшего из боя (R4-14).
+type FrameKind = 'altar' | 'join' | 'joinCode' | 'resume' | 'runStatus' | 'abandon' | 'cmd' | 'input' | 'ping' | 'descend' | 'vote'
+  | 'lever' | 'chest' | 'arena' | 'return' | 'leave' | 'finish';
 const FRAME_KINDS: readonly (readonly [number, FrameKind])[] = [
   [25, 'cmd'], [20, 'input'], [10, 'join'], [5, 'joinCode'], [4, 'resume'], [6, 'runStatus'], [3, 'abandon'], [6, 'ping'],
-  [6, 'descend'], [4, 'vote'], [2, 'lever'], [2, 'chest'], [2, 'arena'], [2, 'return'], [3, 'leave'],
+  [6, 'descend'], [4, 'vote'], [2, 'lever'], [2, 'chest'], [2, 'arena'], [2, 'return'], [3, 'leave'], [2, 'finish'],
 ];
+// ⚠⚠ Ф5-6′: КАДР АЛТАРЯ И КОМАНДА ПЕЧАТЕЙ В СЛУЧАЙНЫЕ ПУЛЫ НЕ ДОБАВЛЕНЫ — НАРОЧНО. `FRAME_KINDS` и `CMD_KINDS`
+// выбираются по сиду, и на них ПРИШПИЛЕНЫ перепрогоны находок (Z2, Z3, I11): любой новый элемент сдвигает выбор
+// для тех же сидов, и записанный сценарий начинает мерить что-то другое (замер: Z2 перестал слать зачарование,
+// а I11 — открывать сундук). Поэтому печати проверяются НАЦЕЛЕННЫМИ случаями в конце файла, где вид кадра и вид
+// команды названы явно, а честный путь — через `FORGE_CMDS` (его пул на перепрогоны не влияет).
 type CmdKind = TownCommand['cmd'];
 const CMD_KINDS: readonly CmdKind[] = [
   'buy', 'sell', 'forgeUpgrade', 'forgeReroll', 'forgeSalvage', 'forgeRepair', 'craft', 'forgeEnchant', 'forgeSketch', 'depositMaterials',
@@ -385,7 +393,11 @@ const HONEST_CMDS: readonly (readonly [number, CmdKind])[] = [
   [1, 'depositMaterials'], [1, 'forgeRepair'], [1, 'salvage'],
 ];
 /** ⭐ E2E 29.09: кузница честного — в своём темпе (`pace` 800 мс под лимитом кузницы): ковка по журналу, эскиз, зачарование, разбор (I10). */
-const FORGE_CMDS: readonly (readonly [number, CmdKind])[] = [[3, 'craft'], [1, 'forgeSketch'], [2, 'forgeEnchant'], [2, 'forgeSalvage']];
+const FORGE_CMDS: readonly (readonly [number, CmdKind])[] = [
+  [3, 'craft'], [1, 'forgeSketch'], [2, 'forgeEnchant'], [2, 'forgeSalvage'],
+  // ⭐⭐ Ф5-6′: печати у кузнеца — под тем же лимитом темпа, что ковка (`FORGE_RATE_CMDS`).
+  [2, 'sealReforge'],
+];
 
 type HonestAct =
   | { a: 'enter'; p: number } | { a: 'joinFriend' } | { a: 'ping' } | { a: 'runStatus' } | { a: 'leave' }
@@ -395,6 +407,10 @@ type HonestAct =
   /** `walk` — ⭐ 13.10 (I11): сперва подойти к ближайшему ЗАКРЫТОМУ сундуку (как честный клиент к подсказке [E]); случайная модель ставит его
    *  всегда (раньше команда уходила от входа и сервер её молча отклонял — сундуки в прогонах не открывались), старые повторы без поля — как было. */
   | { a: 'chest'; walk?: true }
+  /** ⭐⭐ Ф5-6′ (23.10): подойти к АЛТАРЮ метки и послать кадр `altar` со связкой из сумки (`pick` — что вставить). */
+  | { a: 'altar'; pick: number }
+  /** ⭐ Ф5-6′: открыть герою РЕКОРД ГЛУБИНЫ (иначе спуск зажимается ко входу, и метки — а значит алтаря — нет). */
+  | { a: 'record'; depth: number }
   | { a: 'reconnect'; mode: Mode; p: number }
   | { a: 'flap'; mode: Mode; p: number }
   /** ⭐ R15-04: связь пропала на `sec` секунд без закрытия сокета — клиент копил ввод (`hz`), TCP отдал всё разом. */
@@ -711,6 +727,16 @@ class Run {
         for (let i = 0; i < 3; i++) addToInventory(s.inventory, fuzzItem(gear, 'consumable'), cfg.get('balance').inventory);
         const mat = cfg.get('craft-materials').find((m) => m.enabled !== false);
         if (mat) addToInventory(s.inventory, materialItem(mat, 5, uuidv7()), cfg.get('balance').inventory, cfg.get('balance').inventory.materialStack);
+        // ⭐⭐ Ф5-6′: ПЕЧАТИ В СУМКЕ И РЕКОРД ГЛУБИНЫ — иначе команда кузнеца и кадр алтаря отсекаются на
+        // «печатей нет» и до самих правил (связка, ворота ступени, ключ заявки) фаззер не доходит ни разу.
+        const tier0 = cfg.get('balance').seals.tiers[0]!.id;
+        for (const def of liveSealDefs(cfg).slice(0, 3)) {
+          const seal = buildSeal(cfg, def.id, tier0, 6, uuidv7());
+          if (seal) addToInventory(s.inventory, seal, cfg.get('balance').inventory, cfg.get('balance').seals.stackMax);
+        }
+        // ⚠ Рекорд глубины НЕ ставим: он открывает старт с метки (`startDepth: 18` честного кадра), а это другой
+        // этаж — и пришпиленный перепрогон I11 (открытый сундук) переставал находить сундук вовсе. Поэтому
+        // перековка у фаззерных героев упирается в ворота ступени (это тоже путь), а успехом идёт ПЕРЕКАТ.
         db.chars.set(id, { userId: a.user, data: s, version: 1 });
       }
       if (!db.stash.has(a.user)) {
@@ -1218,8 +1244,9 @@ class Run {
         if (!me || me.room.area !== 'town') return;
         this.pace(s, 2000);
         const biome = cfg.get('biomes').find((b) => b.enabled !== false)?.id;
-        const tpl = cfg.get('run-templates').find((t) => t.enabled !== false)?.id;
-        await this.honestSend(s, act.alt ? { t: 'descend' } : { t: 'descend', difficultyId: 'normal', runConfig: { biomeId: biome, templateId: tpl, modifiers: [] } }, () => null);
+        // ⭐ 14.10 (Г3, правка 7): честный спуск тоже просит метку — иначе старт С МЕТКИ в большом прогоне не
+        // случался ни разу. Глубина с запасом вперёд (18): зажим по рекордам сведёт её к разрешённому сам.
+        await this.honestSend(s, act.alt ? { t: 'descend' } : { t: 'descend', difficultyId: 'normal', startDepth: 18, runConfig: { biomeId: biome, modifiers: [] } }, () => null);
         return;
       }
       case 'return': {
@@ -1244,6 +1271,43 @@ class Run {
         if (walk) me.p.pos = { ...near.pos };   // ⭐ 13.10 (I11): дошёл до сундука, как честный клиент к подсказке [E]
         this.pace(s, 500);
         await this.honestSend(s, act.a === 'lever' ? { t: 'lever', leverId: near.id } : { t: 'chest', chestId: near.id }, () => null);
+        return;
+      }
+      // ⭐⭐ Ф5-6′ (23.10, находка ревизии): КАДР АЛТАРЯ ОБЯЗАН ДОЙТИ ДО ТЕЛА `altarPick`. Прежний нацеленный
+      // случай шёл в ГОРОДЕ, и сервер отбрасывал кадр первой же строкой (`area !== 'dungeon'`): ни близость, ни
+      // гнёзда, ни права, ни трата не проверялись проводом ни разу. Поэтому шаг ведёт героя НОГАМИ: точка алтаря —
+      // та же, что сервер кладёт в кадр этажа (`spawn + 64` по X), и дальше честный кадр со связкой из сумки.
+      // ⭐ Ф5-6′: рекорд глубины — и в живом сейве, и в копии базы (комната пишет сейв своим, база — источник
+      // следующего входа). ⚠ Только для НАЦЕЛЕННЫХ случаев: в общем сиде героев рекорда нет, он открывает старт
+      // с метки и сдвигает пришпиленные перепрогоны (Z2, I11).
+      case 'record': {
+        const diff = cfg.get('difficulties').find((d) => d.enabled !== false)!.id;
+        if (me) me.p.save.difficultyProgress = { ...(me.p.save.difficultyProgress ?? {}), [diff]: act.depth };
+        for (const id of s.acct?.heroes ?? []) {
+          const row = db.chars.get(id);
+          if (row) (row.data as { difficultyProgress?: Record<string, number> }).difficultyProgress = { [diff]: act.depth };
+        }
+        return;
+      }
+      case 'altar': {
+        if (!me || me.room.area !== 'dungeon') return;
+        const w = me.room.session.world;
+        me.p.pos = { x: w.spawn.x + 64, y: w.spawn.y };
+        const bag = (me.p.save.inventory ?? []).filter((i) => i.kind === 'seal' && i.sealId);
+        const seals: Record<string, number> = {};
+        if (bag.length) {
+          const it = bag[act.pick % bag.length]!;
+          seals[`${it.sealId}@${it.sealTier ?? ''}`] = 1;
+        }
+        this.pace(s, 500);
+        await this.honestSend(s, { t: 'altar', seals }, () => null);
+        // ⚠ Итог читаем ИЗ ЖИВОГО СЕЙВА и кладём в счётчики прогона: журнал слота хранит кадры без тел, а
+        // автосейв до конца прогона мог не случиться — иначе «кадр дошёл до тела» нечем подтвердить.
+        const after = me.p.save as { seen?: string[]; run?: { segment?: { seals?: Record<string, number> } } };
+        if (after.seen?.includes('altar')) this.stats.set('altar: отметка «видел»', (this.stats.get('altar: отметка «видел»') ?? 0) + 1);
+        if (after.run?.segment) this.stats.set('altar: отрезок поставлен', (this.stats.get('altar: отрезок поставлен') ?? 0) + 1);
+        const paid = Object.keys(after.run?.segment?.seals ?? {});
+        if (paid.length) this.stats.set(`altar: оплачено ${paid.length}`, (this.stats.get(`altar: оплачено ${paid.length}`) ?? 0) + 1);
         return;
       }
       case 'reconnect': {
@@ -1405,6 +1469,21 @@ class Run {
       case 'respecPassives': return { cmd: 'respecPassives', maxGold: save.gold };
       case 'respecSkills': return { cmd: 'respecSkills', maxGold: save.gold };
       case 'depositMaterials': return town ? { cmd: 'depositMaterials' } : null;
+      // ⭐⭐ Ф5-6′: ПЕЧАТИ У КУЗНЕЦА. Честный клиент собирает связку из того, что лежит в сумке: `need` штук одной
+      // ступени на перековку или ровно одну на перекат. Ключ заявки — как у ковки (повтор не должен списать дважды).
+      case 'sealReforge': {
+        if (!town) return null;
+        const seals = inv.filter((i) => i.kind === 'seal' && i.sealId);
+        const it = nth(seals);
+        if (!it) return null;
+        const key = `${it.sealId}@${it.sealTier ?? ''}`;
+        const reroll = pick % 3 === 0;
+        const need = cfg.get('balance').seals.reforge.need;
+        return {
+          cmd: 'sealReforge', seals: { [key]: reroll ? 1 : need }, ...(reroll ? { op: 'reroll' as const } : {}),
+          nonce: `seal-${pick.toString(16).padStart(8, '0')}`, maxGold: save.gold,
+        };
+      }
       case 'forgeRepair': case 'forgeUpgrade': case 'forgeReroll': {
         if (!town) return null;
         const it = nth([...Object.values(save.equipment).filter((x): x is Item => !!x), ...inv.filter((i) => i.slot)]);
@@ -1470,7 +1549,17 @@ class Run {
         const plan = (me?.room as unknown as { runPlan?: { nodes: { id: string; edges: { to: string }[] }[] } } | undefined)?.runPlan;
         const node = plan?.nodes.find((n) => n.id === me?.room.runNodeId);
         if (w && node?.edges.length && r.chance(0.5)) return { t: 'descend', targetNodeId: r.pick(node.edges).to };
-        return r.chance(0.5) ? { t: 'descend' } : { t: 'descend', difficultyId: r.pick(['normal', 'nightmare', 'hell', 'x']), runConfig: { biomeId: 'crypt', templateId: 'default', modifiers: ['m1', 'm2'] } };
+        // ⭐ 14.10 (Г3, правка 7): `startDepth` — новое поле провода (старт с метки). Читать его начали ВСЕ слои
+        // (схема кадра → `RoomManager` → `Room.startDepthOf` → окно голосования → окно слоёв генератора), а фаззер шлал кадр
+        // БЕЗ него — то есть всю эту цепь не трогал ни разу. 1e9, 0, минус и дробь в пуле не «чит», а замер:
+        // зажим обязан свести их к разрешённому по сейвам (или отсечь схемой), а не уронить комнату.
+        // Г4: 2^53 и `MAX_SAFE_INTEGER` ДОБАВЛЕНЫ в пул. Схема кадра их пропускает (это конечные числа), а
+        // дальше они идут в `Math.floor`/`Math.min` зажима и в ИМЯ УЗЛА (`n{глубина}_0`): за 2^53 `Number` врёт, и
+        // два разных числа дали бы одно имя (та же грабля, что у 15 цифр в `runNodeDepth`). Нечисло в это поле
+        // подкладывают мутации (`mutateFrame` -> `anyValue`) — им и проверять схему.
+        const startDepth = r.pick([1, 3, 18, 60, 1e9, 2 ** 53, Number.MAX_SAFE_INTEGER, 0, -5, 1.5]);
+        this.stats.set(`поле startDepth=${startDepth}`, (this.stats.get(`поле startDepth=${startDepth}`) ?? 0) + 1);
+        return r.chance(0.5) ? { t: 'descend', startDepth } : { t: 'descend', difficultyId: r.pick(['normal', 'nightmare', 'hell', 'x']), startDepth, runConfig: { biomeId: 'crypt', modifiers: ['m1', 'm2'] } };
       }
       case 'vote': return { t: 'vote', accept: r.chance(0.5) };
       case 'lever': return { t: 'lever', leverId: r.int(8) };
@@ -1478,6 +1567,19 @@ class Run {
       case 'arena': return { t: 'arena' };
       case 'return': return { t: 'return' };
       case 'leave': return { t: 'leave' };
+      // ⚠ БЕЗ ПОЛЕЙ ОСОЗНАННО: разрешение считает комната (`Room.finish` → `canLeave`), подкладывать в кадр нечего;
+      // лишние ключи сюда добавят мутации (`mutateFrame`) — именно они проверяют, что схема их отбрасывает.
+      case 'finish': return { t: 'finish' };
+      // ⭐⭐ Ф5-6′: СВЯЗКА ПЕЧАТЕЙ — то, что лежит в сумке (иначе кадр отсекается раньше интересного), иногда
+      // с выдуманным ключом и чужими числами: разбор связки обязан отбросить её ЦЕЛИКОМ, не списав ничего.
+      case 'altar': {
+        const me = this.me(s);
+        const held = (me?.p.save.inventory ?? []).filter((i) => i.kind === 'seal' && i.sealId);
+        const seals: Record<string, number> = {};
+        for (const it of held.slice(0, 1 + r.int(3))) seals[`${it.sealId}@${it.sealTier ?? ''}`] = r.chance(0.8) ? 1 : r.int(4);
+        if (!Object.keys(seals).length || r.chance(0.3)) seals[r.pick(['нет-вида@t1', 'swarming@нет-ступени', '@', 'swarming'])] = r.int(3);
+        return { t: 'altar', seals };
+      }
     }
   }
 
@@ -1544,6 +1646,10 @@ class Run {
         break;
       }
     }
+    // Г4: ПОКРЫТИЕ ВИДОВ МУСОРНЫХ КАДРОВ (`DM_FUZZ_STATS=1`). «Кадр есть в пуле» само по себе не значит, что он
+    // ДОХОДИТ до мутаций и потока: вид выбирается взвешенно, и ветка могла бы не выпадать вовсе. Считается один раз
+    // на операцию (у потока кадров сотни — их число тут не нужно, оно в `amp`).
+    if (frames.length) this.stats.set(`мусор ${frames[0]!.kind}`, (this.stats.get(`мусор ${frames[0]!.kind}`) ?? 0) + 1);
     // Оракул судит то, что увидит игра, — текст ПОСЛЕ транспорта (uWS снимает BOM, непарный суррогат клиент кодирует как U+FFFD).
     const allInvalid = frames.every((f) => (f.raw !== undefined ? !contractValid(onWire(s.mode, f.raw)) : s.mode === 'uws' || !contractValid(Buffer.from(f.bytes!).toString())));
     const before = allInvalid && !this.racing ? this.digest() : undefined;
@@ -2044,7 +2150,7 @@ function genPartyOps(r: Prng, len: number): Op[] {
       }
       case 'vote': ops.push(maybeRace(r.chance(0.6)
         ? { k: 'honest', s: r.pick(honest), act: r.weighted<HonestAct>([[3, { a: 'descend', alt: r.chance(0.5) }], [3, { a: 'return' }], [1, { a: 'arena' }], [1, { a: 'chest', walk: true }], [1, { a: 'lever' }]]) }
-        : { k: 'junk', s: r.pick([2, 3]), junk: { j: 'valid', base: r.pick(['vote', 'vote', 'descend', 'return', 'arena'] as const), seed: r.fork() } })); break;
+        : { k: 'junk', s: r.pick([2, 3]), junk: { j: 'valid', base: r.pick(['vote', 'vote', 'descend', 'return', 'arena', 'finish'] as const), seed: r.fork() } })); break;
       case 'input': ops.push({ k: 'honest', s: r.pick(honest), act: { a: 'input', n: r.range(1, 20), hz: r.chance(0.5) ? 30 : 60, press: r.pick([0, 0, 1, 3] as const), mv: r.int(16) } }); break;
       case 'wait': ops.push({ k: 'wait', ms: r.pick([50, 200, 1000, 3000, 12_000]) }); break;
       case 'tick': ops.push({ k: 'tick', n: r.pick([1, 5, 30]) }); break;
@@ -2180,6 +2286,43 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
   it('B3-V2 (ws): вход из очереди соединения, закрытого за поток (4008), не садит игрока на мёртвый сокет', async () => {
     expect(i9(await runOps(V2_OPS, 40014))).toEqual([]);
   });
+  // Г4 (14.10): ЗАМЕР ПОКРЫТИЯ НАШЁЛ ДЫРУ. `finish` и `descend` доходили до МУТАЦИЙ (за прогон по умолчанию
+  // `mutate:finish` 3, `mutate:descend` 15) и до годных по форме, а до ПОТОКА — ни разу: вид базы для потока
+  // выбирается взвешенно из `FRAME_KINDS`, и на эти два за 32 сида он не выпал (13 видов потока из 16, замер
+  // `DM_FUZZ_STATS=1`). Поток — не то же, что мутация: он проверяет бакеты частоты, очередь кадров соединения и
+  // повторное применение САМОГО СИЛЬНОДЕЙСТВУЮЩЕГО действия забега (`finish` — единственная дверь к `finishRun`:
+  // снимает забег у ВСЕЙ пати, включая копию ждущего реконнекта, и хоронит сбежавшего из боя). Поэтому поток этими
+  // двумя — ФИКСИРОВАННОЙ последовательностью, а не надеждой на взвешенный бросок: покрытие больше не зависит от сида.
+  it('Г4: ПОТОК кадров `finish` и `descend` (со стартовой меткой) — ни броска, ни призрака, ни двойного снятия забега', async () => {
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 311 } },
+      { k: 'open', s: 2, mode: 'uws', ip: 0 },
+      { k: 'junk', s: 2, junk: { j: 'valid', base: 'joinCode', seed: 0x64a1 } },
+      // Поток спусков из ГОРОДА: каждый кадр несёт `startDepth` из пула (1e9, 2^53, минус, дробь) — зажим обязан
+      // свести их к разрешённому по сейвам пати, а не уронить комнату и не увести её на этаж, которого нет.
+      { k: 'junk', s: 2, junk: { j: 'flood', base: 'descend', n: 50, seed: 0x64a2, mutate: false } },
+      { k: 'junk', s: 2, junk: { j: 'flood', base: 'descend', n: 50, seed: 0x64a3, mutate: true } },
+      { k: 'honest', s: 0, act: { a: 'descend', alt: false } },
+      // Поток «Завершить» ИЗ ПОДЗЕМЕЛЬЯ (у слота 2 забег комнаты честного) — и мутированный, и как есть.
+      { k: 'junk', s: 2, junk: { j: 'flood', base: 'finish', n: 50, seed: 0x64a4, mutate: false } },
+      { k: 'junk', s: 2, junk: { j: 'flood', base: 'finish', n: 50, seed: 0x64a5, mutate: true } },
+      // И тот же поток от чужого аккаунта, которому забег не принадлежит вовсе.
+      { k: 'open', s: 3, mode: 'ws', ip: 3 },
+      { k: 'junk', s: 3, junk: { j: 'valid', base: 'join', seed: 0x64a6 } },
+      { k: 'junk', s: 3, junk: { j: 'flood', base: 'finish', n: 50, seed: 0x64a7, mutate: true } },
+      { k: 'junk', s: 3, junk: { j: 'flood', base: 'descend', n: 50, seed: 0x64a8, mutate: false } },
+    ], 0x640101);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    // Г4: ДОКАЗАТЕЛЬСТВО ДОСТИЖИМОСТИ — утверждением, а не надеждой: сводный отчёт `DM_FUZZ_STATS=1` считает
+    // только основной прогон по сидам, и дыра покрытия в нём не видна. Снимут поток из этой последовательности —
+    // тест упадёт здесь, а не станет молча зелёным.
+    const kinds = [...run.stats.keys()].filter((k) => k.startsWith('мусор '));
+    expect(kinds, 'поток `finish` дошёл').toContain('мусор flood:finish');
+    expect(kinds, 'поток `descend` дошёл').toContain('мусор flood:descend');
+    console.log(`
+Г4 ПОКРЫТИЕ ПОТОКА: ${kinds.sort().join(', ')}`);
+  });
   it('B3-V2 (ws): медленный читатель закрыт (1013) — игрок снят сразу, а не по концу рукопожатия закрытия', async () => {
     expect(i9(await runOps([
       { k: 'open', s: 3, mode: 'ws', ip: 3, slow: true },
@@ -2293,6 +2436,63 @@ describe.skipIf(!!process.env.DM_FUZZ_REPLAY)('⭐ B3: фаззер проток
     expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
     expect(run.slots[0]?.frames.some((f) => f.t === 'error' && f.f?.code === 'rate'), 'честному отказали лимитом — путь пройден').toBe(true);
   });
+  /**
+   * ⭐⭐ Ф5-6′ (23.10): ПЕЧАТИ ЧЕРЕЗ ПРОВОД — нацеленно, без сдвига случайных пулов.
+   *
+   * Что здесь проверяется сверх юнит-сторожей: КАДР АЛТАРЯ со связкой (первое поле-словарь в проводе) под
+   * мутациями, команда кузнеца с полем `op` и её ключ заявки, и главное — что ни один из этих путей не теряет
+   * печати и не роняет комнату. Инварианты — общие для всего файла (их считает `runOps`).
+   */
+  it('⭐⭐ Ф5-6′: перекат печати и кадр алтаря — команда исполняется, мутации отвергаются, печати целы', async () => {
+    /** Сколько печатей ШТУКАМИ лежит у честного героя (в базе мока — она же источник сейва комнаты). */
+    const seals = (): number => {
+      const save = db.chars.get('h1')?.data as { inventory?: Item[] } | undefined;
+      return (save?.inventory ?? []).filter((i) => i.kind === 'seal').reduce((s, i) => s + (i.count ?? 1), 0);
+    };
+    // ⚠ Сев героев идёт ВНУТРИ прогона (`runOps` чистит базу и засевает заново), поэтому «до» — не замер, а
+    // ЗНАЕМОЕ ЧИСЛО сева: три живых вида по шесть печатей (см. блок сева выше).
+    const SEEDED = 3 * 6;
+    // ⚠ Рекорд глубины открывается ШАГОМ (`record`), а не правкой базы до прогона: `runOps` чистит и засевает
+    // героев заново, и правка «снаружи» просто теряется.
+    const run = await runOps([
+      { k: 'open', s: 0, mode: 'ws', ip: 0 },
+      { k: 'honest', s: 0, act: { a: 'enter', p: 1 } },
+      { k: 'honest', s: 0, act: { a: 'record', depth: 60 } },
+      // Перекат: ровно одна печать за золото — единственный обмен печатей, не упирающийся в ворота ступени.
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'sealReforge', pick: 3 } },
+      // Перековка: её ворота ступени (`gateByRecord`) проверяются рекордом, который мы только что открыли.
+      { k: 'honest', s: 0, act: { a: 'cmd', cmd: 'sealReforge', pick: 4 } },
+      // Кадр алтаря В ГОРОДЕ: алтаря там нет вовсе — сервер обязан отказать молча.
+      { k: 'junk', s: 0, junk: { j: 'valid', base: 'altar', seed: 991 } },
+      // ⭐⭐ А теперь ПО-ЧЕСТНОМУ: спуск на метку (`startDepth` из кадра) и подход к алтарю ногами.
+      { k: 'honest', s: 0, act: { a: 'descend', alt: false } },
+      { k: 'honest', s: 0, act: { a: 'altar', pick: 0 } },
+      { k: 'honest', s: 0, act: { a: 'altar', pick: 1 } },
+      // И он же, искажённый: мусорные ключи связки, дробные и отрицательные штуки, `__proto__`, поток кадров.
+      { k: 'junk', s: 0, junk: { j: 'mutate', base: 'altar', seed: 4242 } },
+      { k: 'junk', s: 0, junk: { j: 'mutate', base: 'altar', seed: 777 } },
+      { k: 'junk', s: 0, junk: { j: 'flood', base: 'altar', n: 8, seed: 31337, mutate: true } },
+      { k: 'junk', s: 0, junk: { j: 'valid', base: 'altar', seed: 12345 } },
+    ], 560);
+    expect(run.violations.map((v) => `#${v.op} ${v.key}: ${v.detail}`)).toEqual([]);
+    const ok = run.slots[0]?.frames.filter((f) => f.t === 'cmdResult' && f.f?.cmd === 'sealReforge') ?? [];
+    expect(ok.length, 'оба обмена печатей доехали до сервера и получили итог').toBeGreaterThanOrEqual(2);
+    // ⚠ Рекорд открыт шагом `record`, поэтому ВОРОТА СТУПЕНИ здесь не срабатывают: обмены проходят, и это
+    // правильный путь для протокольного сторожа (отказы правил стерегут юнит-тесты и `room.sealReforge.test.ts`).
+    expect(ok.some((f) => f.f?.ok === true), 'ни один обмен печатей не прошёл вовсе').toBe(true);
+    // ⭐⭐ Тело `altarPick` ДОЛЖНО было исполниться: отметка «видел алтарь» ставится сервером по факту решения
+    // игрока, и это самый дешёвый признак, что кадр дошёл не до первой строки, а до конца.
+    // ⭐⭐ Тело `altarPick` ОБЯЗАНО было исполниться: сервер ставит отметку «видел алтарь» по ФАКТУ
+    // решения игрока — самый дешёвый признак, что кадр дошёл не до первой строки (город/метка/близость/права), а до конца.
+    expect(run.stats.get('altar: отметка «видел»') ?? 0,
+      'кадр алтаря не дошёл до тела `altarPick` (проверь спуск на метку и подход к алтарю)').toBeGreaterThan(0);
+    expect(run.stats.get('altar: отрезок поставлен') ?? 0, 'отрезок не поставился ни разу').toBeGreaterThan(0);
+    // Печати не могли размножиться: перекат — одна за одну, вставленные уходят из сумки, прочее отказ.
+    expect(seals(), 'печатей стало БОЛЬШЕ сева — связка или перекат печатают их из воздуха').toBeLessThanOrEqual(SEEDED);
+    expect(seals(), 'печати исчезли все — отказы не должны ничего списывать').toBeGreaterThan(0);
+    console.log(`Ф5-6′ ПРОВОД АЛТАРЯ: отметок ${run.stats.get('altar: отметка «видел»') ?? 0}, отрезков ${run.stats.get('altar: отрезок поставлен') ?? 0}, обменов печатей ${ok.length}`);
+  });
+
   it('контроль: те же последовательности на uWS — закрытие окончательно, нарушений нет', async () => {
     const uws = (ops: Op[]): Op[] => ops.map((o) => (o.k === 'open' ? { ...o, mode: 'uws' } : o));
     expect(i9(await runOps(uws(V1_OPS), 7))).toEqual([]);

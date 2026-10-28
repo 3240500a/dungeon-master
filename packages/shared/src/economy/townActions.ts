@@ -23,6 +23,7 @@ import { addToWallet, availableMaterials, bagCopy, canAffordBoth, carriedMateria
 import type { AccountStash } from '../types/stash.js';
 import type { TownCommand } from '../session/netTypes.js';
 import { uuidv7 } from '../formulas/uuid.js';
+import { canRerollSeal, parseSealKey, reforgeSeals, rerollSeal, sealReforgeRules, sealRerollCost, SEAL_REFORGE_REPEAT } from './seals.js';   // Ф5-6/Ф5-6′: перековка и перекат печатей
 
 /**
  * АВТОРИТЕТНЫЕ операции города над `SaveState` (магазин/экип/распределение) — чистые,
@@ -60,6 +61,8 @@ export function priceRaised(gold: number, maxGold: number | undefined): ActionRe
  */
 export const CONFIG_CONSENT_CMDS: ReadonlySet<TownCommand['cmd']> = new Set<TownCommand['cmd']>([
   'sell', 'forgeUpgrade', 'forgeReroll', 'forgeRepair', 'forgeSalvage', 'craft', 'forgeEnchant', 'forgeSketch', 'salvage', 'forgeExchange',
+  // Ф5-6: исход перековки рисуется по конфигу (`need`, ступени, пошлина) — значит и согласие на него нужно.
+  'sealReforge',
 ]);
 
 /**
@@ -255,6 +258,10 @@ export function shopItemValue(reg: ConfigRegistry, item: Item): number {
   return estimate(reg, item, tierPremium(reg, item));
 }
 export function shopSellPrice(reg: ConfigRegistry, item: Item): number {
+  // ⭐⭐ Ф5-1: ПЕЧАТЬ НЕ ПРОДАЁТСЯ ВОВСЕ (цена 0 → `sellItem` откажет). Иначе у её цены появился бы
+  // второй смысл — золото, и часть топлива отрезка стала бы доходом БЕЗ боя, то есть той самой дырой,
+  // из-за которой катаная схема печатей и была отвергнута («оптимально не драться»).
+  if (item.kind === 'seal') return 0;
   // ⭐ Сырьё — ПОШТУЧНО по `craft-materials.sellPrice` (сорта I–V: 1 · 2 · 5 · 10 · 15, эссенция 5 — D4, дешевле вещи, из которой вышли). До этого стек шёл по
   // формуле вещи — 7 золота за стек любой длины и любой ступени: стек из одной ржавой железки стоил как семь,
   // а сотня булата — как та же одна. Отсюда же меряются инварианты «не прачечная» (цена сырья = его продажа).
@@ -391,9 +398,110 @@ export function buyItem(reg: ConfigRegistry, save: SaveState, item: Item, maxGol
   return { ok: true };
 }
 
+/**
+ * ⭐⭐ Ф5-6 (17.10): ПЕРЕКОВАТЬ ПЕЧАТИ У КУЗНЕЦА — отдать N одной ступени, получить одну выше.
+ *
+ * Приём PoE2 (Reforging Bench) и ЕДИНСТВЕННАЯ дверь для накопленного мусора: замер круга
+ * (`economy/sealYield.test.ts`) даёт ≈ 37 печатей прихода на 14 расхода, и без перековки излишек
+ * просто лежал бы в сумке.
+ *
+ * ⚠ ПОРЯДОК ПРОВЕРОК ТОТ ЖЕ, ЧТО У ОБМЕНА: согласие на цену СНАЧАЛА — иначе старое окно
+ * (другая пошлина, другое `need`) получило бы «не хватает» вместо «Цена изменилась» и не перечитало конфиг.
+ */
+/**
+ * ⭐⭐ 23.10: КЛЮЧИ ЗАЯВОК ОБМЕНА ПЕЧАТЕЙ — В СУНДУКЕ (`AccountStash.sealNonces`), по виду обмена.
+ *
+ * ⚠ Вид обмена входит в ЗАПИСАННЫЙ ключ, а не только в ключ комнаты: повтор переката не должен получать
+ * «уже исполнено» от перековки с тем же `nonce` (и наоборот) — у них разные правила и разная цена.
+ * ⚠ Ключ хранится в том же формате, что ковочный (`{n, uid}`), и чистится тем же `normalizeCraftNonces`:
+ * валидные, без повторов, последние 32.
+ */
+function sealNonceKey(nonce: string, op: 'u' | 'r'): string {
+  return `${op}-${nonce}`;
+}
+
+function sealNonceSeen(stash: AccountStash | null, nonce: string, op: 'u' | 'r'): boolean {
+  if (!stash) return false;
+  const key = sealNonceKey(nonce, op);
+  return normalizeCraftNonces(stash.sealNonces).some((e) => e.n === key);
+}
+
+function sealNonceWrite(stash: AccountStash | null, nonce: string, op: 'u' | 'r', uid: string): void {
+  if (!stash) return;
+  const key = sealNonceKey(nonce, op);
+  stash.sealNonces = [...normalizeCraftNonces(stash.sealNonces), { n: key, uid }].slice(-CRAFT_NONCES_KEEP);
+}
+
+export function sealReforge(
+  reg: ConfigRegistry, save: SaveState, stash: AccountStash | null, picks: Record<string, number>, rng: Rng, maxGold?: number, nonce?: string,
+): ActionResult & { summary?: string } {
+  const raised = priceRaised(sealReforgeRules(reg).goldCost, maxGold);
+  if (raised) return raised;
+  // ⭐⭐ 23.10 (находка ревизии): КЛЮЧ ЗАЯВКИ ПРОВЕРЯЕТСЯ И ПИШЕТСЯ ЗДЕСЬ — ТОЙ ЖЕ ТРАНЗАКЦИЕЙ, что обмен
+  // (как у ковки). Память комнаты осталась быстрым кешем, но правду держит сундук: вытеснение по счёту и
+  // «исход фиксации неизвестен» больше не дают сжечь печати второй раз.
+  const seen = nonce ? sealNonceSeen(stash, nonce, 'u') : null;
+  if (seen) return { ok: true, summary: SEAL_REFORGE_REPEAT };
+  // ⚠ Рекорд — ЛУЧШИЙ по тирам: ворота ступени спрашивают «видел ли такую глубину вообще»,
+  // а не «в этом ли тире»: лестница печатей одна на всю игру (`tiers[].minDepth` — глубина, не тир).
+  const record = Object.values(save.difficultyProgress ?? {})
+    .reduce((m, d) => (typeof d === 'number' && Number.isFinite(d) ? Math.max(m, Math.floor(d)) : m), 0);
+  // ⭐⭐ Решение владельца 17.10: ЗАПАС — СУМКА И СУНДУК (как у подъёма тира и обмена).
+  // ⚠ Сундук может быть `null` (не прочитался) — тогда работаем только сумкой: так же поступает обмен (R2-34),
+  // и окно об этом говорит. Тише отказать, чем списать из половины запаса.
+  const tabs = stash?.tabs;
+  const res = reforgeSeals(reg, save.inventory, picks, save.gold, dimsOf(reg), rng, uuidv7, record, tabs);
+  if (!res.ok) return { ok: false, reason: res.reason };
+  const spent = Object.values(picks).reduce((s, n) => s + (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0), 0);
+  save.inventory = res.inventory;
+  save.gold = res.gold;
+  if (res.tabs && stash) stash.tabs = res.tabs;
+  if (nonce) sealNonceWrite(stash, nonce, 'u', res.item.uid);
+  return { ok: true, summary: `Перековка: отдано печатей ${spent} → ${res.item.name}` };
+}
+
+/**
+ * ⭐⭐ Ф5-6′ (23.10): ПЕРЕКАТИТЬ ВИД ПЕЧАТИ — одна печать, та же ступень, другой вид, цена золотом.
+ *
+ * Перековка отвечает на «мусора много, силы мало», перекат — на «сила нужная, вид не тот»: после решения
+ * владельца перековка даёт СЛУЧАЙНЫЙ вид, и без переката игрок с «Погоней III» вместо нужных «Стойких III»
+ * может только отдать её в перековку втроём, то есть заплатить силой за смену вида.
+ *
+ * ⚠ Запас — та же пара «сумка И СУНДУК» и та же транзакция, что у перековки: это одна команда провода.
+ */
+export function sealReroll(
+  reg: ConfigRegistry, save: SaveState, stash: AccountStash | null, picks: Record<string, number>, rng: Rng, maxGold?: number, nonce?: string,
+): ActionResult & { summary?: string } {
+  // ⚠ Ключ заявки — до всего прочего и в своём виде обмена (`r`): повтор переката не должен попасть в ключи
+  // перековки и наоборот (у них разные правила и разная цена).
+  if (nonce && sealNonceSeen(stash, nonce, 'r')) return { ok: true, summary: SEAL_REFORGE_REPEAT };
+  // ⚠ Согласие на цену — ПО ПЛАНУ ОБМЕНА, а не по первому ключу словаря (23.10, находка ревизии): пошлина
+  // растёт множителем ступени, и «первый ключ» в заявке из нескольких ключей — не та печать, которую спишут.
+  // Сначала считаем план (он же проверяет «ровно одна печать»), потом сверяем согласие с ЕГО ценой.
+  const plan = canRerollSeal(reg, save.inventory, picks, save.gold, stash?.tabs);
+  if (!plan.ok) {
+    // ⚠ Цену окна сверяем ДАЖЕ на отказе: устаревшее окно должно получить «Цена изменилась» и перечитать
+    // конфиг, а не «не хватает золота» (тот же порядок, что у обмена и перековки).
+    const tierId = Object.keys(picks).length === 1 ? parseSealKey(Object.keys(picks)[0]!)?.tierId : undefined;
+    const raisedOnFail = tierId ? priceRaised(sealRerollCost(reg, tierId), maxGold) : null;
+    return raisedOnFail ?? { ok: false, reason: plan.reason };
+  }
+  const raised = priceRaised(plan.plan.gold, maxGold);
+  if (raised) return raised;
+  const res = rerollSeal(reg, save.inventory, picks, save.gold, dimsOf(reg), rng, uuidv7, stash?.tabs);
+  if (!res.ok) return { ok: false, reason: res.reason };
+  save.inventory = res.inventory;
+  save.gold = res.gold;
+  if (res.tabs && stash) stash.tabs = res.tabs;
+  if (nonce) sealNonceWrite(stash, nonce, 'r', res.item.uid);
+  return { ok: true, summary: `Перекат: вышла ${res.item.name}` };
+}
+
 export function sellItem(reg: ConfigRegistry, save: SaveState, uid: string, minGold?: number): ActionResult {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
+  // Ф5-1: печать не товар — отказ СЛОВАМИ, а не «цена упала»: игрок должен понять, что это правило.
+  if (save.inventory[idx]!.kind === 'seal') return { ok: false, reason: 'Печать не продаётся — её тратят на алтаре' };
   const price = shopSellPrice(reg, save.inventory[idx]!);
   const dropped = priceDropped(price, minGold);
   if (dropped) return dropped;

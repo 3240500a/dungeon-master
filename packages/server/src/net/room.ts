@@ -1,19 +1,21 @@
 import { randomUUID, randomInt, randomFillSync, randomBytes, createHash, createHmac } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
-  GameSession, spawnPacksEl, floorChallengeLevel, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
+  GameSession, spawnPacksEl, runModBuffs, liveModStats, type RunSegment, floorChallengeLevel, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, pickRunModifiers, generateFloorFor, resolveMonsterPool, effectiveLevel,
   itemFromBaseId, createRng, rngFrom, rollShopGear,
-  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, forgeExchange, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
+  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, forgeExchange, sealReforge, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, moveToBelt, moveInventoryItem, setBinding,
+  sealReroll,   // Ф5-6′: перекат вида печати — та же команда провода, другое правило обмена
   craftAction, enchantAction, sketchAction, fullJournal, legacyGateOpen, serverMaterialsConsent, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
   stashMove, stashDims, stashTabCount,
+  mergeRunBuffs, sealBuffs, sealDef, sealFitsBiome, sealLive, sealTierMul, sealSlots, sealBundleSize, spendSeals, parseSealKey, SEAL_REFORGE_REPEAT,   // Ф5-1…Ф5-3: печати отрезка
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor, pruneBoardQuests,
-  isDifficultyUnlocked, applyDeathPenalty, parseTownCommand, PRICE_CHANGED, CONFIG_CONSENT_CMDS, configChanged, buildChanged,
-  noteNodeId, sameRun, runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord, mergeNodeState, isDotKind, activeAbilityOf,
+  isDifficultyUnlocked, waypointStart, isWaypoint, depthRecordOf, nextWaypointAfter, WAYPOINT_DEPTH_LIMIT, applyDeathPenalty, parseTownCommand, PRICE_CHANGED, CONFIG_CONSENT_CMDS, configChanged, buildChanged,
+  noteNodeId, sameRun, runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord, mergeNodeState, noteVisited, runNodeDepth, runNodeLane, RUN_NODES_MAX, isDotKind, activeAbilityOf,
   hasLineOfSight, findPath, worldToCell, playerSnapshot, PROTOCOL_VERSION, findFree, cellFree, bodyOf, putBody, arenaReturn, arenaAwayBody, keepLaterCooldowns, vitalsForSave, savedCooldowns,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
-  type DecorObject, type RunConfig, type RunPlan, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
+  type DecorObject, type RunConfig, type RunPlan, type RunWindow, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
   type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
@@ -69,7 +71,9 @@ export function sessionRng(): Rng {
 export function runLedgerKey(cfg: RunConfig): string {
   if (typeof cfg.id === 'string' && cfg.id.length > 0 && cfg.id.length <= 64) return `id:${cfg.id}`;
   const mods = [...(Array.isArray(cfg.modifiers) ? cfg.modifiers : [])].sort().join('\u0001');
-  return `seed:${createHash('sha1').update([cfg.seed, cfg.templateId, cfg.biomeId, cfg.tier, mods].join('\u0000')).digest('hex')}`;
+  // ⚠ Ф1 (16.10): `templateId` из ключа убран вместе с шаблонами. Свод СТАРЫХ забегов, у которых ключа `id` ещё
+  // нет, осиротеет (ключ посчитается иначе) — это записи узлов уже брошенных забегов, игрок их не видит.
+  return `seed:${createHash('sha1').update([cfg.seed, cfg.biomeId, cfg.tier, mods].join('\u0000')).digest('hex')}`;
 }
 /**
  * ⭐ R14-10: ПЛАН ЗАБЕГА НА СЕРВЕРЕ — ЭТАЖИ УЗЛОВ ОТ СЕКРЕТА ЗАБЕГА. `generateRunPlan` сеет этаж узла от сида забега (`nodeSeed`), а граф —
@@ -78,9 +82,14 @@ export function runLedgerKey(cfg: RunConfig): string {
  * каждый узел развилки и шёл туда, где сундуки богаче. У забега с ключом этажей (`RunConfig.floorKey`, 128 бит, только у сервера) сид
  * этажа — HMAC ключа и id узла: ни граф, ни свой этаж (его сид подбирается по раскладке) о соседнем не говорят ничего. Забег без ключа
  * (начат раньше) — прежние этажи: продолжение не меняет уже пройденное.
+ *
+ * ⭐⭐ 13.10 (Г2): `window` — ОКНО СЛОЁВ графа (глубины включительно). Спуск бесконечен, плана «целиком» больше нет:
+ * комната держит окно вокруг узла, на котором стоит (`Room.windowAt`), и пересобирает его, уходя за край
+ * (`enterNode`). Этажи от окна НЕ зависят — сид узла считается от его id (`nodeSeed`, с ключом забега — HMAC), а не
+ * от того, каким окном узел построен.
  */
-export function runPlanOf(reg: ConfigRegistry, run: RunConfig): RunPlan {
-  const plan = generateRunPlan(reg, run);
+export function runPlanOf(reg: ConfigRegistry, run: RunConfig, window?: RunWindow): RunPlan {
+  const plan = generateRunPlan(reg, run, undefined, window);
   const key = run.floorKey;
   if (typeof key === 'string' && key.length >= 16 && key.length <= 128) {
     for (const n of plan.nodes) n.floorSpec = { ...n.floorSpec, seed: (createHmac('sha256', key).update(n.id).digest().readUInt32BE(0) >>> 1) || 1 };
@@ -238,7 +247,9 @@ type TxOutcome = CmdOutcome & { unchanged?: boolean };
 type TxResult = CmdOutcome & { early?: boolean };
 
 /** D12: команды со своим лимитом частоты — каждая стоит броска, генерации и записи в базу (эскиз — чтения и записи сундука). */
-const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', 'forgeSalvage', 'salvage', 'forgeSketch', 'forgeExchange']);
+const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', 'forgeSalvage', 'salvage', 'forgeSketch', 'forgeExchange',
+  'sealReforge',   // Ф5-6: стоит броска (режим `sameTier`) и записи сейва — под тем же лимитом, что ковка
+]);
 /**
  * ⭐ R12-13: команды, читающие сундук аккаунта из базы (`withAccount` и открыть сундук), — под потолком чтений сундука на аккаунт
  * (`limits.stashRead`). Новая команда через `withAccount` — сюда же.
@@ -246,8 +257,18 @@ const FORGE_RATE_CMDS: ReadonlySet<string> = new Set(['craft', 'forgeEnchant', '
 const STASH_READ_CMDS: ReadonlySet<string> = new Set([
   'stashOpen', 'stashMove', 'depositMaterials', 'forgeUpgrade', 'forgeRepair', 'forgeReroll', 'forgeSalvage', 'craft', 'forgeEnchant', 'forgeSketch',
   'forgeExchange',
+  'sealReforge',   // ⭐ 17.10: перековка берёт печати и из сундука — значит читает его из базы
 ]);
 /** D13: отказ ковки и зачарования, пока кузнец не открыт (`balance.craft.live`). Разбор работает и так. */
+/**
+ * ⭐ 17.10: Радиус работы с алтарём отрезка на СЕРВЕРЕ. У клиента интерактив с радиусом 42; серверу даём тот же
+ * запас, что сундуку (56), чтобы честный игрок не получал отказ из-за полклетки рассинхрона.
+ */
+const ALTAR_USE_R = 56;
+
+/** ⭐ Ф5-6: сколько ключей заявок перековки помнит комната. Повтор приходит вскоре за оригиналом, а не через час. */
+const SEAL_NONCES_KEEP = 64;
+
 const CRAFT_CLOSED = 'Кузнец ещё не куёт';
 /**
  * D1: флаг разработчика — ворота журнала кузнеца открыты для проверок ковки (в базу не пишется ничего:
@@ -267,6 +288,7 @@ if (craftJournalNote) console.warn(`[room] ${craftJournalNote}`);
 const TRANSACTED_CMDS: ReadonlySet<string> = new Set([
   'forgeUpgrade', 'forgeRepair', 'forgeReroll', 'forgeSalvage', 'depositMaterials', 'stashMove', 'stashOpen',
   'craft', 'forgeEnchant', 'forgeSketch', 'forgeExchange',
+  'sealReforge',   // ⭐ 17.10: сейв и сундук — одной записью
 ]);
 /**
  * Команды, которые меняют МИР рядом с сейвом (земля, сущность игрока). Откат одного сейва после
@@ -349,6 +371,8 @@ const SOLO_HINT = 'Пати не идёт. Можно продолжить за�
 const FAR_FIGHT = 'Сначала выйдите из боя — или подойдите к выходу';
 /** ⭐ R14-02: спуск (завершение финала), позванный пати без живых подключённых (тот же код `far`). */
 const DEAD_PARTY = 'Живых в пати нет — дальше идти некому: ждите напарника или уходите в город';
+/** ⭐ 14.10 (Г3, правка 7): «Завершить забег» нажато не в подземелье (город, арена) — отказ со словами, см. `finish`. */
+const FINISH_NOT_IN_RUN = 'Завершить забег можно только в подземелье — у портала привала или у точки входа; из города забег закрывает «Забросить» в лобби';
 /** Код закрытия сокета, чья сессия потеряла право писать (R1-01): клиент уходит в лобби и входит заново — из базы. */
 const WS_STALE = 4009;
 /**
@@ -367,12 +391,6 @@ export function runElsewhereMsg(code: string): string {
 const INPUT_STALE_TICKS = 10;
 /** R4-06: сколько героев помнит комната «какими ушли» — карта не растёт от потока входов-выходов. */
 const LEFT_MAX = 64;
-/**
- * ⭐ R7-02: насколько герой может быть сильнее узла, заселённого раньше без него, чтобы глубина узла шла ему в прогресс
- * сложности. Меньше шага между тирами (5): честный напарник, чуть выросший, счёт получает; основной на узле альта — нет.
- */
-const NODE_POWER_SLACK = 3;
-
 /**
  * Итог записи сейва (R2-08, R2-09).
  *  • `ok` — записано;
@@ -705,7 +723,10 @@ function carried(save: SaveState, k: Carry): SaveState {
 }
 
 /** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
-type AltarConfig = { biomeId?: string; templateId?: string; modifiers?: string[] };
+// ⚠ Ф7 (17.10): у выбора городского портала остался ТОЛЬКО биом. Модификаторы сняты и с провода, и из типа:
+// с Ф5 их место заняли ПЕЧАТИ на алтаре метки — за предмет и только на один отрезок. Оставь поле в типе —
+// и первый же внутренний вызов смог бы вернуть бесплатные модификаторы на весь забег незаметно.
+type AltarConfig = { biomeId?: string };
 
 /**
  * ⭐ R9-08: ЧТО НАЧНЁТ СПУСК ИЗ ГОРОДА — это видит окно голосования (`voteStart`), и начнётся ровно это (`checkVote`). `resume` —
@@ -713,17 +734,30 @@ type AltarConfig = { biomeId?: string; templateId?: string; modifiers?: string[]
  * забега. Нет `resume` — новый забег: тир проверен зовущему (R7-06), остальное — решённый выбор алтаря (`altarOf`).
  */
 interface DescendPlan {
-  difficultyId: string; templateId: string; biomeId: string; modifiers: string[];
+  difficultyId: string; biomeId: string; modifiers: string[];
+  /**
+   * ⭐⭐ 14.10 (Г3, В2): глубина, с которой начнётся НОВЫЙ забег, — УЖЕ зажатая по рекордам пати (`startDepthOf`).
+   * Поля нет у продолжения (`resume`): там глубину называет `resume.depth`, а указатель забега свой.
+   */
+  startDepth?: number;
   resume?: { charId: string; name: string; depth: number };
 }
-/** R9-08: глубина узла забега по его id (`n<глубина>_<полоса>`, `generateRunPlan`) — без регенерации графа. */
+/**
+ * R9-08: глубина узла забега по его id (`n<глубина>_<полоса>`, `generateRunPlan`) — без регенерации графа. Не имя узла
+ * вовсе — 0 (годно для окна: `windowAt(0)` даёт первый слой).
+ * ⭐⭐ 13.10 (Г2, Р5): разбор имени — один на всех (`runNodeDepth` из `nodeState.ts`): по нему же режут окно списки сейва.
+ */
 function nodeDepthOf(nodeId: string | undefined): number {
-  const m = /^n(\d+)_/.exec(nodeId ?? '');
-  return m ? Number(m[1]) : 0;
+  return Math.max(0, runNodeDepth(nodeId));
 }
-/** R9-08: то же ли начнёт спуск, что показано в окне: всё, что окно называет. */
+/**
+ * R9-08: то же ли начнёт спуск, что показано в окне: всё, что окно называет.
+ * ⭐ Г3 (В2): И СТАРТОВАЯ ГЛУБИНА — тоже. Она считается по рекордам ВСЕЙ пати (`startDepthOf`), то есть меняется от
+ * входа и выхода участника: без неё пати голосовала бы за 18-й этаж, а вошедший в это окно напарник с мелким
+ * рекордом молча уводил бы её на 1-й.
+ */
 function planKey(p: DescendPlan): string {
-  return JSON.stringify([p.difficultyId, p.templateId, p.biomeId, p.modifiers, p.resume?.charId ?? null, p.resume?.depth ?? null]);
+  return JSON.stringify([p.difficultyId, p.biomeId, p.modifiers, p.startDepth ?? null, p.resume?.charId ?? null, p.resume?.depth ?? null]);
 }
 
 /**
@@ -876,6 +910,12 @@ export class Room implements Tickable {
   /** Тир текущего (или прошлого) забега. R7-06: сам по себе ничего не открывает — новый забег сверяет его с зовущим. */
   private difficultyId = 'normal';
   private area: 'town' | 'dungeon' | 'arena' = 'town';
+  /**
+   * ⭐⭐ Ф4 (16.10, решение владельца): ОПЛАЧЕННЫЙ ОТРЕЗОК — «модификаторы действуют ДО СЛЕДУЮЩЕЙ МЕТКИ, а не на
+   * весь забег». Живёт у КОМНАТЫ (забег общий), в сейвы кладётся копией, чтобы пережить уход в город и
+   * продолжение: иначе пати, вернувшаяся порталом, получила бы отрезок даром или потеряла оплаченный.
+   */
+  private segment?: RunSegment;
   private depth = 0;
   /** PvP-арена: точки спавна (противоположные концы) + возрождения по pid, deadline'ы возрождения (serverTime). */
   private arenaSpawns: { x: number; y: number }[] = [];
@@ -897,6 +937,18 @@ export class Room implements Tickable {
   /** Статика игрока, разосланная последней (R1-11): неизменившуюся рассылать незачем. */
   private peerSent = new Map<string, string>();
   private wipeAt = 0; // момент авто-возврата в город после вайпа пати (монотонно, R15-06; 0 = не запланирован)
+  /** ⭐ Ф5-6: исполненные заявки перековки (`charId:nonce`) — чтобы повтор после обрыва не сжёг печати второй раз. */
+  private readonly sealNonces = new Set<string>();
+  /**
+   * ⭐⭐ Решение владельца 17.10: ВЛАДЕЛЕЦ ЗАБЕГА (`charId` того, кто его начал) — ТОЛЬКО ОН НАСТРАИВАЕТ ОТРЕЗОК.
+   *
+   * Отрезок один на пати и платится печатями ОДНОГО игрока; без владельца любой спутник мог настроить его за
+   * всех. Право — у того, кто забег начал (спуском из города) или чей забег продолжили (`resumeRun`).
+   *
+   * ⚠ Ушёл владелец — алтарь открывается остальным: иначе пати, потерявшая его на реконнекте, осталась бы с
+   * умолчаниями до конца круга, а это наказание за чужой обрыв связи.
+   */
+  private runStarter?: string;
   /** ⭐ R12-07: момент ухода в город пати, в которой подключены только мёртвые (`checkStranded`; монотонно, R15-06); 0 = не запланирован. */
   private strandAt = 0;
   /** ⭐ R13-01: назначенный возврат ждёт отвалившегося посреди боя — срок грейса, а не `STRAND_RETURN_MS` (`checkStranded`). */
@@ -918,6 +970,12 @@ export class Room implements Tickable {
   /** R8-08: `by` и цель спуска (`targetNodeId`/`targetNodeType`) — чтобы вошедший посреди голосования получил его окно. */
   private vote: {
     kind: 'descend' | 'town' | 'arena'; by: string; diffId?: string; targetNodeId?: string; targetNodeType?: string; finish?: boolean;
+    /**
+     * ⭐ Г3 (В2): глубина КАК ЕЁ ПОПРОСИЛИ в кадре (сырая, незажатая). Хранится именно сырой, потому что разрешение
+     * пересчитывается на каждой сверке «окно ≡ исход» (`checkVote`): состав пати между окном и исходом меняется, и
+     * зажатое число пришлось бы пересчитывать из самого себя.
+     */
+    wantDepth?: number;
     /** ⭐ R9-08: спуск из города — что он начнёт (показано в окне голосования). */
     runCfg?: AltarConfig; plan?: DescendPlan; yes: Set<string>; no: Set<string>;
     /**
@@ -1270,12 +1328,11 @@ export class Room implements Tickable {
     const cfg = this.runConfig;
     if (!cfg) return;
     if (save.run?.config && sameRun(save.run.config, cfg)) {
-      const spread = foldRunRecords(this.ledger, runRecords(save.run, cfg));
+      const spread = foldRunRecords(this.ledger, runRecords(save.run, cfg), this.runNodeId ?? undefined);
       const st = this.nodeState;
       if (st && this.depthOf(save.run.currentNodeId) < this.depthOf(st.id)) {
         save.run.currentNodeId = st.id;
-        const was = Array.isArray(save.run.visited) ? save.run.visited : [];
-        save.run.visited = was.includes(st.id) ? was : [...was, st.id];
+        save.run.visited = noteVisited(save.run.visited, st.id);   // ⭐ Г2 (Р5): окном самых глубоких
       }
       putRunRecords(save.run, this.ledger.values());
       if (spread) {
@@ -1285,14 +1342,113 @@ export class Room implements Tickable {
       return;
     }
     if (!save.run && this.area === 'dungeon' && this.runNodeId) {
-      save.run = { templateId: cfg.templateId, config: cfg, currentNodeId: this.runNodeId, visited: [this.runNodeId] };
+      save.run = { config: cfg, currentNodeId: this.runNodeId, visited: [this.runNodeId] };
       putRunRecords(save.run, this.ledger.values());
     }
   }
 
-  /** Глубина узла текущего забега (−1 — не узел этого плана). */
+  /**
+   * Глубина узла забега (−1 — не имя узла вовсе).
+   * ⭐⭐ 13.10 (Г2): читается ИЗ ИМЕНИ (`n<глубина>_<полоса>`, `nodeDepthOf`), а не поиском в плане: план — ОКНО
+   * слоёв, и указатель напарника (или свой, из сейва) законно лежит за его краем. Поиском в плане такой указатель
+   * давал −1, и «самый глубокий в комнате» (`resumeRun`) выбирался бы из одного окна — продолжение тянуло пати назад.
+   */
   private depthOf(nodeId: string | undefined): number {
-    return this.runPlan?.nodes.find((n) => n.id === nodeId)?.depth ?? -1;
+    return runNodeDepth(nodeId);
+  }
+
+  /**
+   * ⭐⭐ 13.10 (Г2): ОКНО СЛОЁВ ВОКРУГ ГЛУБИНЫ — столько комната и держит в `runPlan`. Вперёд — `lookahead` слоёв
+   * (`balance.dungeonAccess`): столько развилок видит карта забега. Весь граф не строится — его нет (спуск бесконечен).
+   */
+  private windowAt(depth: number): RunWindow {
+    const from = Math.max(1, depth || 1);
+    return { from, to: from + Math.max(1, this.cfg.get('balance').dungeonAccess.lookahead) };
+  }
+
+  /**
+   * ⭐⭐ 13.10 (Г2): ОКНО СКОЛЬЗИТ ЗА УЗЛОМ — доращивается на каждый вход, а не раз в `lookahead` этажей.
+   *
+   * ⚠ ПОЧЕМУ ЭТО БАГ, А НЕ ЭКОНОМИЯ. Пересборка шла ТОЛЬКО когда узла в плане нет (`enterNode`), а окно строится
+   * «от текущей глубины вперёд» — значит каждый (lookahead+1)-й этаж окно кончалось РОВНО на том узле, где стоит пати:
+   * заглядывания вперёд 0 слоёв. Подписи выходов развилки берут тип цели из плана (`client/modules/run/runExits.ts`:
+   * `plan.nodes.find` за краем окна даёт undefined) — и на каждом третьем этаже обе ветки подписывались «Спуститься
+   * глубже», то есть ветка выбиралась ВСЛЕПУЮ (возврат беды C-10). Замер: «этажей с нулевым заглядыванием вперёд:
+   * 4 из 14». Цена доращивания замерена и смешна: 0,007 мс на слой на глубине 500 000 против 0,010 мс на первом
+   * (сид слоя — от глубины, Р1, поэтому глубина её не двигает) — лениться не на чём (`room.g2window.test.ts`).
+   *
+   * ⚠ ПЛАН НЕ ПЕРЕСОЗДАЁТСЯ, А ДОСТРАИВАЕТСЯ ВПЕРЁД. Сид слоя — от глубины (Р1), поэтому пересборка дала бы РОВНО
+   * те же узлы: разница только в цене и в том, что узел, на котором стоит комната, остаётся ТЕМ ЖЕ ОБЪЕКТОМ (его
+   * читают подписи выходов и сверка цели голосования, пока окно живёт). Слои за спиной отбрасываются (их не держит
+   * и `windowAt`): иначе кадр `runPlan` рос бы на узел за этаж, а вверх дороги нет (R4-04).
+   * ⚠⚠ 14.10 (Г3, В5): прежде тут стояло «а это правило» — потому что поверх узла жили РУКОТВОРНЫЕ терминальные
+   * узлы серверных тестов (`makeTerminal`, `diveToTerminal`), стерёгшие ветку «выходов нет → портал → завершить
+   * забег». Ветки больше нет (`Room.finish`), помощников — тоже, и правилом это считать незачем.
+   */
+  private growWindow(depth: number): void {
+    const plan = this.runPlan;
+    if (!plan || !this.runConfig || depth <= 0) return;
+    const lookahead = Math.max(1, this.cfg.get('balance').dungeonAccess.lookahead);
+    let have = depth;
+    for (const n of plan.nodes) if (n.depth > have) have = n.depth;
+    const to = depth + lookahead;
+    // Слои глубже уже построенного — только недостающие (их узлы от окна не зависят: сид слоя — от глубины, Р1).
+    if (have < to) plan.nodes.push(...runPlanOf(this.cfg, this.runConfig, { from: have + 1, to }).nodes);
+    if (plan.nodes.some((n) => n.depth < depth)) plan.nodes = plan.nodes.filter((n) => n.depth >= depth);
+  }
+
+  /**
+   * ⭐⭐ 14.10 (Г4): УЗЕЛ ПО ИМЕНИ — И ВХОД В УЗЕЛ НЕ БЫВАЕТ ТУПИКОМ. Имени, которого в окне плана нет, отвечает узел
+   * ТОЙ ЖЕ ГЛУБИНЫ с ближайшей полосой (а слоя нет вовсе — начало окна), и это ЕДИНСТВЕННЫЙ выход из `enterNode` без
+   * входа куда-нибудь.
+   *
+   * ⚠⚠ ЗАМЕР 14.10 (ЧТО БЫЛО ДО ПРАВИЛА). Здесь стоял `find(...)` и `if (!node) return;` — молчаливый выход. Живая
+   * `Room`, забег солистом, указатель `n4_1` (полоса 1 — живой шаблон «Короткая вылазка» даёт слои ширины 1–2), уход в
+   * город ПАРКУЕТ забег, после чего хозяин сужает забег правкой конфига (`run-templates[].width` → `{min:1,max:1}` —
+   * ровно та ручка, которой правят забег в редакторе, и она живая):
+   *   «Продолжить» → голосование ПРОШЛО (`voteEnd{passed:true}` разослан), область town, узел не сменился,
+   *   окно плана `n4_0, n5_0, n6_0` — полосы 1 в нём больше нет. Второй, третий заход — то же самое.
+   * То есть герой НАВСЕГДА запирался в городе с припаркованным забегом: «Продолжить» молчит, «Завершить» вне
+   * подземелья отказывает (`finish` → `FINISH_NOT_IN_RUN`), и единственным выходом оставалось «Забросить» — ШТРАФ
+   * СМЕРТИ за правку конфига. Это ровно то «правка конфига не отнимает заработанного», от чего сторожит R9-05.
+   * Побочно `resumeRun` успевал ВЗЯТЬ забег на комнату (`takeRun`) и уйти молча: строка забега в кластере оставалась
+   * за комнатой, стоящей в городе, и «Продолжить» соседней ноды получал отказ «забег в другой комнате».
+   *
+   * ⚠ ПОЧЕМУ ЗАЖИМ ПОЛОСЫ, А НЕ ОТКАЗ И НЕ СНЯТИЕ ЗАБЕГА. Полосу выбирает не игрок, а план: ширина слоя — бросок
+   * живого конфига (`generateRunPlan.layerWidth`: шаблон `width.min/max`, а на метке и боссе — 1), поэтому правка
+   * шаблона, каденции метки (`waypointStep`) или лестницы боссов ЗАКОННО сужает слой, на котором кто-то стоит. Глубина же
+   * — ЗАРАБОТАННОЕ (её стережёт `WAYPOINT_DEPTH_LIMIT` и шаг прогресса), и менять её тут нельзя: на ней держатся
+   * уровень монстров (`floorMonsterLevel`), награда и рекорд. Отсюда правило: ГЛУБИНА — КАК В ИМЕНИ, ПОЛОСА —
+   * БЛИЖАЙШАЯ СУЩЕСТВУЮЩАЯ. Снятие забега (как у негодной ФОРМЫ имени, `runUnusable`) отняло бы пройденный этаж за
+   * чужую правку; отказ кадром оставил бы тупик, только с текстом.
+   *
+   * ⚠ НОВОГО ОБХОДА ЭТО НЕ ДАЁТ. Соседняя полоса той же глубины — узел той же силы (уровень монстров решает одна
+   * глубина, Г1) и может оказаться непройденным: его сундук и босс встанут целыми, а `!revisit` даст шаг прогресса.
+   * Но выбрать себе полосу игрок не может ни кадром (`descend` принимает только ребро текущего узла), ни сейвом (его
+   * пишет сервер): чтобы попасть сюда, нужна правка конфига хозяином или правка строки базы в обход сервера — а
+   * имеющий её и так вписал бы ЛЮБУЮ существующую полосу. Зато без правила такой же сейв давал не «лишний сундук», а
+   * запертого героя.
+   *
+   * ИНЦИДЕНТ: строкой и счётчиком (`saveRepaired`) — тем же, которым Г4 кричит о починке указателя входом
+   * (`RoomManager.repairDepth`): это она и есть, только позже и с другой причиной. Глушитель не нужен — починка
+   * ложится в сейв первой же записью, поэтому строк не больше, чем припаркованных героев в сузившемся слое.
+   */
+  private nodeFor(nodeId: string): RunPlan['nodes'][number] | undefined {
+    const plan = this.runPlan;
+    if (!plan) return undefined;
+    const exact = plan.nodes.find((n) => n.id === nodeId);
+    if (exact) return exact;
+    const depth = nodeDepthOf(nodeId);
+    const lane = Math.max(0, runNodeLane(nodeId));
+    const layer = plan.nodes.filter((n) => n.depth === depth);
+    // Ближайшая полоса; при равном расстоянии — меньшая (`<`, а не `<=`): выбор обязан быть одним у всей пати.
+    const near = layer.length
+      ? layer.reduce((best, n) => (Math.abs(n.lane - lane) < Math.abs(best.lane - lane) ? n : best))
+      : plan.nodes.find((n) => n.id === plan.startId) ?? plan.nodes[0];
+    if (!near) return undefined;   // окна нет вовсе — собирать нечего (в живой игре не бывает: `windowAt` даёт слой всегда)
+    counters.saveRepaired++;
+    console.error(`[room ${this.code}] ИНЦИДЕНТ: указатель забега ${JSON.stringify(nodeId)} вне окна плана (слой глубины ${depth} сузила правка конфига — ширина шаблона, каденция метки, босс — либо строку сейва правили в обход сервера) → вход в ${near.id}: глубина та же, полоса ближайшая`);
+    return near;
   }
 
   /** Сейвы участников ЭТОГО забега: подключённых и (`away`) ждущих реконнекта. */
@@ -2396,6 +2552,56 @@ export class Room implements Tickable {
       case 'forgeReroll': return this.withAccount(c, pid, 'forge', (st) => forgeReroll(this.cfg, save, command.uid, townRng(), command.maxGold, walletOf(st), serverMaterialsConsent(command.maxMaterials)), { subject: command.uid, guard });
       // D6: разбор у кузнеца пишет журнал аккаунта и доливает не влезшее в сумку сырьё в сундук —
       // значит сейв и сундук одной транзакцией. Скованное переплавляется — в журнале вещей это `melt` (D9).
+      /**
+       * ⭐⭐ Ф5-6/Ф5-6′: ОБМЕН ПЕЧАТЕЙ У КУЗНЕЦА — одна команда на два обмена (`op`: перековка 3→1 и перекат вида).
+       *
+       * ⚠ 23.10: прежний абзац здесь обещал «без `withAccount`, значит и вне `STASH_READ_CMDS`/`TRANSACTED_CMDS`» —
+       * это устарело решением владельца 17.10 (запас печатей = СУМКА И СУНДУК) и расходилось с кодом восемью
+       * строками ниже. Чтобы следующий обмен проверялся по СПИСКУ, а не по памяти, перечислим всё, во что команда
+       * обязана входить:
+       *   • место — город (`SCOPE` в `guard.ts`): верстак стоит у кузнеца;
+       *   • темп — `FORGE_RATE_CMDS`: обмен стоит броска и записи, как ковка;
+       *   • согласие на конфиг — `CONFIG_CONSENT_CMDS` (`cfgRev`/`build`): цена и правила могли уехать;
+       *   • чтение сундука — `STASH_READ_CMDS`: запас печатей лежит и там;
+       *   • транзакция — `TRANSACTED_CMDS` + `withAccount`: сейв, сундук и КЛЮЧ ЗАЯВКИ пишутся одной записью;
+       *   • причина журнала — `forgeSeal` (аудит знает все `forge*`).
+       *
+       * Бросок — `townRng()`, тот же, что у разбора и ковки: вид результата (`sameTier` у перековки, другой вид у
+       * переката) решает СЕРВЕР, иначе «случайный вид» стал бы целевым бесплатно.
+       */
+      case 'sealReforge': {
+        // ⭐⭐ ПОВТОР ЗАЯВКИ НЕ СПИСЫВАЕТ ДВАЖДЫ. Дедуп соединения (`CommandDedup`) живёт в `Client` и
+        // заводится заново на каждый вход: обрыв → возврат → повтор старой заявки сжигал бы ещё три печати, и
+        // игрок этого не увидит (копии неотличимы). Ключуем по ПЕРСОНАЖУ (`charId` стабилен при реконнекте).
+        //
+        // ⚠ Цена решения названа прямо: память КОМНАТЫ. Умрёт комната — ключи уйдут с ней; но вместе с ней уйдёт и
+        // несохранённая перековка (откат в безопасную сторону), а сохранённую игрок увидит в сумке и не будет повторять.
+        // ⚠ 23.10 (находка ревизии): ВИД ОБМЕНА — ЧАСТЬ КЛЮЧА. Перековка и перекат делят одну память ключей, и
+        // без `op` повтор с тем же ключом, но другим видом обмена получал «уже исполнено» НЕ ИСПОЛНИВШИСЬ.
+        const key = command.nonce ? `${save.charId}:${command.op === 'reroll' ? 'r' : 'u'}:${command.nonce}` : null;
+        if (key && this.sealNonces.has(key)) return { ok: true, summary: SEAL_REFORGE_REPEAT };
+        // ⚠ Через `withAccount`: запас печатей — сумка И СУНДУК (решение владельца 17.10), а сундук —
+        // общий на аккаунт и живёт в базе: его и сейв надо писать ОДНОЙ транзакцией (D7/D8), иначе падение
+        // между записями дало бы печать и в сундуке, и в сумке. Причина журнала — `forgeSeal` (аудит знает `forge*`).
+        // ⭐⭐ 23.10 (Ф5-6′): ОДНА КОМАНДА — ДВА ОБМЕНА. `up` поднимает ступень, `reroll` меняет вид за золото;
+        // общее у них всё, кроме правила обмена, — и место, и лимит, и ключ заявки, и одна транзакция с сундуком.
+        // ⚠⚠ 23.10 (находка ревизии): ПРАВДУ О КЛЮЧЕ ДЕРЖИТ СУНДУК, А НЕ КОМНАТА. Ключ проверяется и пишется
+        // ВНУТРИ действия, той же транзакцией, что обмен (как у ковки): память комнаты выше — быстрый кеш,
+        // который экономит чтение базы, но не решает. До правки она решала, и двойное списание давали два
+        // пути: вытеснение ключа по счёту (64 обмена в комнате) и фиксация с неизвестным исходом.
+        const out = await this.withAccount(c, pid, 'forgeSeal',
+          (st) => (command.op === 'reroll'
+            ? sealReroll(this.cfg, save, st, command.seals, townRng(), command.maxGold, command.nonce)
+            : sealReforge(this.cfg, save, st, command.seals, townRng(), command.maxGold, command.nonce)), { guard });
+        if (out.ok && key) {
+          this.sealNonces.add(key);
+          if (this.sealNonces.size > SEAL_NONCES_KEEP) {
+            const first = this.sealNonces.values().next();
+            if (!first.done) this.sealNonces.delete(first.value);
+          }
+        }
+        return out;
+      }
       case 'forgeSalvage': return this.withAccount(c, pid, salvageReason(save, command.uid), (st) => forgeSalvage(this.cfg, save, st, command.uid, townRng(), command.minYield, command.avgYield), { subject: command.uid, guard });
       // Разбор на месте разрешён где угодно (`guard` не держит его в городе): смысл в том и есть —
       // переработать трофей, не возвращаясь. В городе им пользоваться незачем, кузница выгоднее.
@@ -2544,7 +2750,7 @@ export class Room implements Tickable {
   // ── Голосование за спуск ────────────────────────────────────────────────────
   // Из города: старт/резюм забега (можно выбрать сложность-тир). В подземелье: спуск по РЕБРУ
   // графа (targetNodeId — выбор ветки на развилке); на финале (нет рёбер) — завершение забега.
-  descend(pid: string, difficultyId?: string, targetNodeId?: string, runConfig?: AltarConfig): void {
+  descend(pid: string, difficultyId?: string, targetNodeId?: string, runConfig?: AltarConfig, startDepth?: number): void {
     if (this.refuseFrozen(pid)) return;
     // ⭐ D1: В ГОРОДЕ СПУСК ВПРАВЕ ПОЗВАТЬ ЛЮБОЙ — и когда слот голосования занят АРЕНОЙ, на которую он «за» не ответил: его спуск — его «нет» ей
     // (голос арены закрыт), и открывается спуск. Раньше отказ «идёт голосование» (R8-08) шёл и тут: держатель забега, открывающий арену заново на
@@ -2558,10 +2764,11 @@ export class Room implements Tickable {
       const held = this.parkedRunBusy();
       if (held) { this.tellRunElsewhere(pid, held); return; }
       const diffId = this.validDifficulty(pid, difficultyId);
-      // ⭐ R9-08: окно голосования говорит, что начнётся (тир, шаблон, биом, модификаторы, продолжение чьего забега).
+      // ⭐ R9-08: окно голосования говорит, что начнётся (тир, шаблон, биом, модификаторы, стартовая метка, продолжение чьего забега).
       // ⭐ D1: голос вне подземелья — со сроком `VOTE_TIMEOUT_MS`: молчащий напарник спуск не держит (`voteExpired`).
       this.vote = {
-        kind: 'descend', by: pid, diffId, runCfg: runConfig, plan: this.descendPlan(diffId, runConfig), yes: new Set([pid]), no: new Set(), until: this.voteUntil(),
+        kind: 'descend', by: pid, diffId, runCfg: runConfig, wantDepth: startDepth,
+        plan: this.descendPlan(diffId, runConfig, startDepth), yes: new Set([pid]), no: new Set(), until: this.voteUntil(),
       };
       this.broadcast(this.voteStartFrame(this.vote));
     } else {
@@ -2572,35 +2779,72 @@ export class Room implements Tickable {
       // `enterFloor` оживлял на новом узле полным (с финала — завершение забега): «штраф одной смерти, забег цел» вместо вайпа (R13-02).
       // Уход такой пати — в город (`return` мёртвого, R13-02) или возвратом застрявших по сроку (`checkStranded`).
       if (this.stranded()) { this.tellFar(pid, DEAD_PARTY); return; }
-      // ⭐ R3-01: СПУСК — ОТ ВЫХОДА, ЗАВЕРШЕНИЕ — ОТ ПОРТАЛА ФИНАЛА. Раньше проверялись только голосование и пауза, и
+      // ⭐ R3-01: СПУСК — ОТ ВЫХОДА. Раньше проверялись только голосование и пауза, и
       // модифицированный клиент спускался прямо с точки входа через полторы секунды после каждого этажа: двадцать этажей
       // за полминуты, ни одного рычага и двери, а `enterNode` писал прогресс сложности — тиры открывались без единого
       // пройденного этажа, квесты «достичь этажа» закрывались, глубокие сундуки сыпали добычу. Рядом с выходом должен
-      // стоять тот, кто зовёт; остальные голосуют откуда угодно, если на них не идёт монстр (R5-04, `canDescend`), а
-      // завершение финала — только у портала или мёртвыми (R5-04, как уход в город).
+      // стоять тот, кто зовёт; остальные голосуют откуда угодно, если на них не идёт монстр (R5-04, `canDescend`).
+      // ⚠⚠ 14.10 (Г3, В5): ВЕТКИ «УЗЕЛ БЕЗ ВЫХОДОВ → ПОРТАЛ → ЗАВЕРШИТЬ ЗАБЕГ» ЗДЕСЬ БОЛЬШЕ НЕТ. С Г2 спуск
+      // бесконечен и узлов без рёбер генератор не ставит ни на какой глубине — ветка была недостижима, а стерегли её
+      // рукотворные терминальные узлы восьми серверных тестов (сторожа мёртвого кода зелены всегда). Её правила живы
+      // и переехали на явную просьбу игрока — `Room.finish` (кадр `finish`, цена та же: `canLeave`).
       const near = (at: { x: number; y: number } | undefined): boolean => this.stands(pid, at);
-      if (node.edges.length === 0) {
-        // Финал — «завершить забег» (портал в город).
-        if (!this.decor.some((d) => d.kind === 'portal' && near(d))) { this.tellFar(pid, FAR_PORTAL); return; }
-        // ⭐ R23-02: и в подземелье — со сроком: к нему молчащие голос не держат (`voteReady`).
-        this.vote = { kind: 'descend', by: pid, finish: true, yes: new Set([pid]), no: new Set(), until: this.voteUntil() };
-        this.broadcast(this.voteStartFrame(this.vote));
-      } else {
-        // Выход i ведёт по ребру i (контракт генератора: выходов столько же, сколько рёбер). Ветку выбрал — стоять у её
-        // выхода; не выбрал (или прислал не ребро) — ребро того выхода, у которого стоит.
-        const exits = this.session.world.exits ?? [];
-        const chosen = targetNodeId ? node.edges.findIndex((e) => e.to === targetNodeId) : -1;
-        const idx = chosen >= 0 ? (near(exits[chosen]) ? chosen : -1) : exits.findIndex((e, i) => i < node.edges.length && near(e));
-        if (idx < 0) { this.tellFar(pid, FAR_EXIT); return; }
-        const target = node.edges[idx]!.to;
-        if (this.runClash(pid, false)) { this.tellBlocked(pid, 'run'); return; }   // R4-25
-        const tnode = this.runPlan!.nodes.find((n) => n.id === target);
-        this.vote = {
-          kind: 'descend', by: pid, targetNodeId: target, targetNodeType: tnode?.type, yes: new Set([pid]), no: new Set(), until: this.voteUntil(),   // R23-02
-        };
-        this.broadcast(this.voteStartFrame(this.vote));
-      }
+      // Выход i ведёт по ребру i (контракт генератора: выходов столько же, сколько рёбер). Ветку выбрал — стоять у её
+      // выхода; не выбрал (или прислал не ребро) — ребро того выхода, у которого стоит.
+      const exits = this.session.world.exits ?? [];
+      const chosen = targetNodeId ? node.edges.findIndex((e) => e.to === targetNodeId) : -1;
+      const idx = chosen >= 0 ? (near(exits[chosen]) ? chosen : -1) : exits.findIndex((e, i) => i < node.edges.length && near(e));
+      if (idx < 0) { this.tellFar(pid, FAR_EXIT); return; }
+      const target = node.edges[idx]!.to;
+      if (this.runClash(pid, false)) { this.tellBlocked(pid, 'run'); return; }   // R4-25
+      // ⭐ Г2: цель может лежать за краем окна — её слой строится отдельно (один слой, цена та же: Р1), иначе
+      // окно голосования каждые `lookahead` этажей молчало бы о том, куда ведёт («Бой»/«Босс»/«Привал»).
+      const td = nodeDepthOf(target);
+      const tnode = this.runPlan!.nodes.find((n) => n.id === target)
+        ?? (td > 0 && this.runConfig ? runPlanOf(this.cfg, this.runConfig, { from: td, to: td }).nodes.find((n) => n.id === target) : undefined);
+      this.vote = {
+        kind: 'descend', by: pid, targetNodeId: target, targetNodeType: tnode?.type, yes: new Set([pid]), no: new Set(), until: this.voteUntil(),   // R23-02
+      };
+      this.broadcast(this.voteStartFrame(this.vote));
     }
+    this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
+    this.checkVote();
+  }
+  /**
+   * ⭐⭐ 14.10 (Г3, В5): «ЗАВЕРШИТЬ ЗАБЕГ» — ЕДИНСТВЕННЫЙ ПУТЬ К `finishRun`, И ОН ЯВНЫЙ.
+   *
+   * ⚠ ПОЧЕМУ ЭТО ПОЯВИЛОСЬ. До Г2 забег кончался финалом — узлом без рёбер, где портал завершал забег сам. С Г2 спуск
+   * бесконечен, и узлов без рёбер генератор не ставит НИ НА КАКОЙ ГЛУБИНЕ: в живой игре завершить забег стало нельзя
+   * вовсе (уход в город его ПАРКУЕТ), а правила завершения стерегли рукотворные терминальные узлы в тестах — то есть
+   * зелёные всегда. Правила нужные: забег снимается у ВСЕХ, включая копию ждущего реконнекта (R3-05), истечение
+   * грейса после этого — не смерть, а сбежавший из боя отключением похоронен (R4-14, `buryFled` внутри `finishRun`).
+   * Теперь к ним ведёт та же дверь, которой пользуется игрок.
+   *
+   * ⚠ «В ГОРОД» И «ЗАВЕРШИТЬ» — ДВА РАЗНЫХ ДЕЙСТВИЯ С ОДНОГО ПОРТАЛА (В4): первое оставляет `save.run` (продолжить
+   * можно с того же узла), второе снимает его. Цена поэтому одна и та же — стоять там, откуда разрешён уход
+   * (`canLeave`: портал узла, точка входа; мёртвому — откуда угодно), и правило одно: «за» судит тем же `canLeave`
+   * (`voteBlock`), а не своей проверкой.
+   */
+  finish(pid: string): void {
+    if (this.refuseFrozen(pid)) return;
+    // ⭐ 14.10 (Г3, правка 7): ОТКАЗ ВНЕ ПОДЗЕМЕЛЬЯ — КАДРОМ, А НЕ МОЛЧАНИЕМ. В городе забег завершает лобби
+    // («Забросить», кадр `abandon`), на арене завершать нечего — но здесь стоял ГОЛЫЙ `return`: панель «Карта забега»
+    // после ухода в город остаётся на странице (`core/app.ts` обнуляет `run` только в `forgetSession`), и кнопка
+    // «Завершить забег» в городе нажималась впустую: ни голосования, ни ошибки, ни подсказки.
+    // ⚠ ПОЧЕМУ И КАДР, И ПРЯТАНИЕ КНОПКИ (`runMapPanel`), А НЕ ОДНО ИЗ ДВУХ: прятание — удобство
+    // ОДНОГО клиента (человек не жмёт то, чего нельзя), а кадр — правда для ВСЕХ (Unity, прежние
+    // сборки, самодельные клиенты) и он же держит правило, если кнопку когда-нибудь снова покажут в городе.
+    // Код — `far`, тот же, что у остальных отказов этой двери (`tellFar`): клиенты уже умеют показать его
+    // строкой, а новый код потребовал бы правки каждого клиента ради того же смысла «здесь нельзя».
+    if (this.area !== 'dungeon') { this.tellFar(pid, FINISH_NOT_IN_RUN); return; }
+    if (this.votePending(pid) || !this.voteAllowed(pid)) return;
+    // ⭐ R14-02: пати без живых подключённых вперёд не идёт и сама забег не закрывает — её уводит `return` мёртвого
+    // (R13-02) или возврат застрявших по сроку (`checkStranded`). Иначе труп у портала закрывал бы забег за пати.
+    if (this.stranded()) { this.tellFar(pid, DEAD_PARTY); return; }
+    if (!this.canLeave(pid)) { this.tellFar(pid, FAR_PORTAL); return; }
+    // ⭐ R23-02: и в подземелье — со сроком: к нему молчащие голос не держат (`voteReady`).
+    this.vote = { kind: 'descend', by: pid, finish: true, yes: new Set([pid]), no: new Set(), until: this.voteUntil() };
+    this.broadcast(this.voteStartFrame(this.vote));
     this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
     this.checkVote();
   }
@@ -2615,7 +2859,8 @@ export class Room implements Tickable {
       ...(v.targetNodeId !== undefined ? { targetNodeId: v.targetNodeId } : {}),
       ...(v.targetNodeType !== undefined ? { targetNodeType: v.targetNodeType } : {}),
       ...(v.finish ? { finish: true as const } : {}),
-      ...(p ? { difficultyId: p.difficultyId, templateId: p.templateId, biomeId: p.biomeId, modifiers: [...p.modifiers] } : {}),
+      ...(p ? { difficultyId: p.difficultyId, biomeId: p.biomeId, modifiers: [...p.modifiers] } : {}),
+      ...(p?.startDepth !== undefined ? { startDepth: p.startDepth } : {}),   // ⭐ Г3 (В2): «окно ≡ исход» и по глубине
       ...(p?.resume ? { resume: { host: p.resume.name, depth: p.resume.depth } } : {}),
     };
   }
@@ -2623,7 +2868,7 @@ export class Room implements Tickable {
    * ⭐ R9-08: что начнёт спуск из города сейчас: продолжение забега первого, у кого он припаркован (R4-25, как `checkVote`), —
    * с самого глубокого указателя этого забега в комнате (как `resumeRun`); иначе — новый забег в тире `diffId` по выбору алтаря.
    */
-  private descendPlan(diffId: string | undefined, alt: AltarConfig | undefined): DescendPlan {
+  private descendPlan(diffId: string | undefined, alt: AltarConfig | undefined, want?: number): DescendPlan {
     const host = this.parkedHost();
     const run = host?.run;
     if (host && run?.config) {
@@ -2634,11 +2879,30 @@ export class Room implements Tickable {
       }
       const c = run.config;
       return {
-        difficultyId: c.tier, templateId: c.templateId, biomeId: c.biomeId, modifiers: Array.isArray(c.modifiers) ? [...c.modifiers] : [],
+        difficultyId: c.tier, biomeId: c.biomeId, modifiers: Array.isArray(c.modifiers) ? [...c.modifiers] : [],
         resume: { charId: host.charId, name: host.name, depth },
       };
     }
-    return { difficultyId: diffId ?? this.difficultyId, ...this.altarOf(alt) };
+    const tier = diffId ?? this.difficultyId;
+    return { difficultyId: tier, ...this.altarOf(alt), startDepth: this.startDepthOf(tier, want) };
+  }
+  /**
+   * ⭐⭐ 14.10 (Г3, В2/В3): С КАКОЙ ГЛУБИНЫ НАЧНЁТСЯ НОВЫЙ ЗАБЕГ. Разрешение считает СЕРВЕР — по рекордам тира в
+   * сейвах всех, кто уходит (`waypointStart`: самая глубокая метка, открытая у КАЖДОГО, но не глубже запрошенной;
+   * ничего не подошло — 1-й этаж). Кадр `want` только ОГРАНИЧИВАЕТ сверху, поэтому подложить глубину нельзя в
+   * принципе: мусор и `1e9` в кадре дают не глубину читера, а зажатый рекордом старт.
+   *
+   * ⚠ ПО СЕЙВАМ `clients`, А НЕ ПО ЖДУЩИМ РЕКОННЕКТА: уходит в забег тот, кто здесь (то же правило у `tierOpenHere`,
+   * C-12). Отставшему метки открываются НОГАМИ — его `difficultyProgress` растёт на каждом новом входе (`enterNode`),
+   * и в следующий раз пати стартует глубже (В3, решение владельца).
+   */
+  private startDepthOf(tierId: string, want: number | undefined): number {
+    // ⭐⭐ Г8-2: метка — МЕСТО В ПОЛОСЕ (цикл 20), поэтому разрешение считается тем же циклом, что и список меток
+    // алтаря и строка HUD. Один шов: разойдись числа — алтарь показал бы метку, которой сервер не даст.
+    const access = this.cfg.get('balance').dungeonAccess;
+    const records: (Record<string, number> | undefined)[] = [];
+    for (const pid of this.clients.keys()) records.push(this.session.world.players[pid]?.save.difficultyProgress);
+    return waypointStart(records, tierId, access.portalsAt, access.contentCycle, want);
   }
   /**
    * ⭐ R8-08: голосование уже идёт — новый переход не начинается, а зовущему, кто ещё не ответил, — кадр `error` с кодом `vote`.
@@ -2780,6 +3044,122 @@ export class Room implements Tickable {
     if (c) this.send(c.ws, { t: 'error', code: 'run', msg: RUN_CLASH });
   }
   /** Игрок дёрнул рычаг: сессия открывает его дверь (если рядом) → броадкаст всем. */
+  /**
+   * ⭐⭐ Ф4 (16.10, решение владельца): АЛТАРЬ НА ЭТАЖЕ-МЕТКЕ. «Каждый раз надо с этажа вейпоинта начинать и алтарь
+   * делать там, а не в городе»; модификаторы действуют ДО СЛЕДУЮЩЕЙ МЕТКИ.
+   *
+   * ⚠ ПОЧЕМУ ПРОВЕРКИ ИМЕННО ТАКИЕ. Кадр приходит от клиента, значит решает СЕРВЕР:
+   *  • алтарь есть только в подземелье и только НА МЕТКЕ (`isWaypoint` — тот же шов, что у портала и у списка
+   *    стартов): иначе игрок настраивал бы забег с любого этажа;
+   *  • выбор проходит через `pickRunModifiers` с ЖИВЫМИ статами из конфига — дубли, выключенный контент и благо
+   *    без опасности отбрасываются тем же правилом, что в городе;
+   *  • отрезок считается ОТ ГЛУБИНЫ МЕТКИ, а не от кадра: `from` — следующий этаж, `to` — следующая метка
+   *    (`nextWaypointAfter`). Подложить границы нельзя — их в кадре нет вовсе.
+   */
+  /**
+   * ⭐⭐ Ф5-3 (17.10): АЛТАРЬ МЕТКИ — ВСТАВИТЬ ПЕЧАТИ НА ОТРЕЗОК. Сам заход бесплатен (решение
+   * владельца 16.10): пустая связка = «идти как есть» и тоже снимает прежний отрезок.
+   *
+   * ⚠⚠ ВСЁ ИЛИ НИЧЕГО. Не хватило печатей или гнёзд — не списывается ничего и отрезок не меняется:
+   * частично оплаченная связка была бы «заплатил и не получил».
+   *
+   * ⚠ ПЛАТИТ ТОТ, КТО НАЖАЛ (из СВОЕЙ сумки), а действует на всю пати — отрезок один на всех (другие
+   * правила коопа — открытый вопрос плана, Ф5-5).
+   */
+  /**
+   * ⭐⭐ 17.10: ОТРЕЗОК ПРИНИМАЕТСЯ, ТОЛЬКО ЕСЛИ ОН ЭТОГО ЗАБЕГА. Личность забега — `RunConfig.id` (R9-01). Нет
+   * личности (сейв старше правки, сим, редактор) — отрезок считается чужим: потерять одну оплату один раз честнее,
+   * чем раздавать бесплатные печати каждому следующему забегу.
+   */
+  private ownSegment(seg: RunSegment | undefined, cfg: RunConfig | undefined): RunSegment | undefined {
+    if (!seg || !cfg?.id || seg.runId !== cfg.id) return undefined;
+    if (!(seg.to >= seg.from && seg.from >= 1)) return undefined;
+    return seg;
+  }
+
+  /**
+   * ⭐⭐ 17.10: ГДЕ СТОИТ АЛТАРЬ ЭТОГО ЭТАЖА — ОДНО МЕСТО НА СЕРВЕРЕ. Его читают и кадр этажа
+   * (клиент рисует интерактив), и проверка близости на оплате: две копии точки рассогласовались бы
+   * при первой же правке смещения, и игрок видел бы подсказку, которая не работает.
+   */
+  private altarSpot(): { x: number; y: number } | null {
+    if (this.area !== 'dungeon') return null;
+    const acc = this.cfg.get('balance').dungeonAccess;
+    if (!isWaypoint(this.depth, acc.portalsAt, acc.contentCycle)) return null;
+    const sp = this.session.world.spawn;
+    return { x: sp.x + 64, y: sp.y };   // две клетки (TILE 32) в сторону — [E] не спорит с порталом возврата
+  }
+
+  /**
+   * ⭐⭐ 17.10: ПРАВО НАСТРОЙКИ ОТРЕЗКА. Владелец забега — пока он здесь; ушёл — алтарь открыт остальным
+   * (наказывать пати за чужой обрыв нельзя). Соло-забег без владельца (старый сейв, сим) — открыт.
+   */
+  private mayTuneSegment(pid: string): boolean {
+    const owner = this.runStarter;
+    if (!owner) return true;
+    const mine = this.session.world.players[pid]?.save.charId;
+    if (mine === owner) return true;
+    for (const id of this.clients.keys()) if (this.session.world.players[id]?.save.charId === owner) return false;
+    return true;   // владельца в комнате нет — решают оставшиеся
+  }
+
+  altarPick(pid: string, picks?: Record<string, number>): void {
+    if (this.refuseFrozen(pid)) return;
+    if (this.area !== 'dungeon' || !this.clients.has(pid)) return;
+    const access = this.cfg.get('balance').dungeonAccess;
+    const depth = this.depth;
+    if (!isWaypoint(depth, access.portalsAt, access.contentCycle)) return;   // алтарь стоит только на метке
+    const p = this.session.world.players[pid];
+    if (!p) return;
+    // ⭐⭐ 17.10 (правка по ревизии): БЛИЗОСТЬ СЧИТАЕТ СЕРВЕР — как у рычага и сундука. Радиус 42 жил только в
+    // клиенте, и правленый клиент настраивал отрезок из любой точки этажа-метки, не подходя к алтарю.
+    const altar = this.altarSpot();
+    if (!altar || !this.session.canUseAt(pid, altar, ALTAR_USE_R)) return;
+    // ⭐⭐ Решение владельца 17.10: НАСТРАИВАЕТ ТОЛЬКО ТОТ, КТО НАЧАЛ ЗАБЕГ (пока он в комнате).
+    if (!this.mayTuneSegment(pid)) return;
+    // ⭐⭐ ОПЛАЧЕННОЕ НЕ ОТМЕНЯЕТСЯ ЗАДАРОМ. Замер ревизии: в коопе любой участник мог нажать «идти как есть» и
+    // молча сжечь уже вставленные четыре печати соседа (altarPick просто перезаписывал отрезок). Пока связка
+    // этой метки оплачена, алтарь на ней закрыт — и для соло («промахнулся второй раз»), и для пати.
+    // ⚠ Отказ МОЛЧА, как у рычага и сундука (кадр `altar` — не команда города, и `cmdResult` ему не ответ):
+    // игроку об этом говорит ОКНО — оно видит оплаченный отрезок в сейве и не предлагает вторую оплату.
+    const cur = this.segment;
+    if (cur && cur.from === depth + 1 && Object.keys(cur.seals).length > 0) return;
+    const want: Record<string, number> = {};
+    for (const [key, n] of Object.entries(picks ?? {})) {
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const parsed = parseSealKey(key);
+      if (!parsed) return;                                      // мусорный ключ — кадр целиком отвергаем
+      const def = sealDef(this.cfg, parsed.sealId);
+      if (!def || !sealLive(this.cfg, def) || sealTierMul(this.cfg, parsed.tierId) <= 0) return;   // мёртвый вид/ступень
+      // ⭐⭐ 23.10 (Ф5-6′): ЧУЖОЙ БИОМ НЕ ВСТАВЛЯЕТСЯ. Без этого привязка была бы только фильтром дропа:
+      // печать пещер вставлялась в крипте, списывалась из сумки и НЕ ДЕЙСТВОВАЛА (`sealBuffs` её пропускает) — то есть
+      // игрок платил и не получал ничего, ровно как при выключенной механике до правки ревизии.
+      if (!sealFitsBiome(def, this.session.world.biomeId)) return;
+      want[key] = Math.floor(n);
+    }
+    const size = sealBundleSize(want);
+    if (size > sealSlots(this.cfg, p.save.difficultyProgress?.[this.difficultyId] ?? 0)) return;   // гнёзд не хватает
+    if (size > 0) {
+      const left = spendSeals(p.save.inventory, want);
+      if (!left) return;                                        // печатей в сумке нет — ничего не тронуто
+      p.save.inventory = left;
+    }
+    const to = nextWaypointAfter(depth, access.portalsAt, access.contentCycle);
+    // ⭐ Рассылка — следствие ИЗМЕНЕНИЯ, а не вызова: пустой кадр на пустом отрезке не обязан стоить комнате
+    // полного сейва каждому (потолок кадров — 80/с на соединение, а `saveUpdate` несёт весь SaveState).
+    if (!size && cur && cur.from === depth + 1 && cur.to === to && !Object.keys(cur.seals).length) return;
+    this.segment = { runId: this.runConfig?.id, from: depth + 1, to, seals: want };
+    // ⭐⭐ Ф6 (17.10): ПЕРВЫЙ ЗАХОД ОБЪЯСНЯЕТ — и больше не мешается. Отметку ставит сервер по ФАКТУ
+    // решения игрока (даже если решение — «идти как есть»: окно он уже прочитал), а не клиент своим кадром.
+    if (!p.save.seen?.includes('altar')) p.save.seen = [...(p.save.seen ?? []), 'altar'];
+    // Отрезок общий у пати: он лежит в сейве каждого, чтобы пережить уход в город и продолжение забега.
+    for (const id of this.clients.keys()) {
+      const run = this.session.world.players[id]?.save.run;
+      if (run) run.segment = { ...(this.segment.runId ? { runId: this.segment.runId } : {}), from: this.segment.from, to: this.segment.to, seals: { ...want } };
+    }
+    for (const id of this.clients.keys()) this.sendSave(id);
+  }
+
   pullLever(pid: string, leverId: number): void {
     if (this.refuseFrozen(pid)) return;
     const doorId = this.session.openLever(pid, leverId);
@@ -3279,7 +3659,7 @@ export class Room implements Tickable {
       // спуск продолжил бы ЕГО забег в ЕГО тире, а окно у всех говорило «новый забег» (или наоборот). Такое — не переход, а отмена:
       // позвать заново, и новое окно покажет правду.
       if (this.vote.kind === 'descend' && this.area === 'town' && this.vote.plan
-        && planKey(this.vote.plan) !== planKey(this.descendPlan(this.vote.diffId, this.vote.runCfg))) {
+        && planKey(this.vote.plan) !== planKey(this.descendPlan(this.vote.diffId, this.vote.runCfg, this.vote.wantDepth))) {
         this.endVote();
         this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });
         return;
@@ -3313,7 +3693,8 @@ export class Room implements Tickable {
         if (v.diffId) this.difficultyId = v.diffId; // тир забега
         const host = this.parkedHost();   // R4-25: забег первого, у кого он припаркован, — не молча новый поверх
         if (host?.run?.config) { this.resumeFromLedger(host, v); return; } // продолжить незавершённый забег (R9-01: со сводом из базы)
-        this.startRun(v.runCfg);
+        // ⭐ Г3 (В2): глубина — ИЗ ПЛАНА, то есть ровно та, что показало окно (сверка `planKey` выше её уже сверила).
+        this.startRun(v.runCfg, v.plan?.startDepth, v.by);   // ⭐ 17.10: право настройки отрезка — у позвавшего спуск
         return;
       }
       if (v.finish) { this.finishRun(); return; } // финал → город + завершение
@@ -3326,39 +3707,52 @@ export class Room implements Tickable {
 
   // ── Жизненный цикл забега (v2) ───────────────────────────────────────────────
   /**
-   * Стартовый RunConfig. По умолчанию — первый включённый биом/шаблон + текущий тир. Выбор алтаря
-   * (`cfg`) переопределяет биом/шаблон/модификаторы, но ТОЛЬКО валидными включёнными значениями
-   * (анти-чит: клиент не может подсунуть выключенный/несуществующий контент).
+   * Стартовый RunConfig. По умолчанию — первый включённый биом + текущий тир. Выбор алтаря (`cfg`) переопределяет
+   * биом и модификаторы, но ТОЛЬКО валидными включёнными значениями (анти-чит: клиент не может подсунуть
+   * выключенный/несуществующий контент). ⚠ Ф1 (16.10): форма забега шаблоном больше не выбирается — она одна на
+   * игру (`balance.dungeonAccess`), и подменить её кадром нельзя в принципе.
    */
   private buildRunConfig(cfg?: AltarConfig): RunConfig {
-    const { templateId, biomeId, modifiers } = this.altarOf(cfg);
+    const { biomeId, modifiers } = this.altarOf(cfg);
     // Свежий сид на КАЖДЫЙ новый забег (this.seed — сид РУМА/сима, один на сессию → все забеги были одинаковыми).
     const runSeed = randomSeed();   // D10: сид забега решает этажи и дроп — не по часам
     // ⭐ R9-01: личность забега — ключ его свода записей в базе (`runLedgerKey`): копии участников она не делит, а объединяет.
     // ⭐ R14-10: ключ этажей — сиды этажей узлов (`runPlanOf`); клиенту не уходит, как и сид.
-    return { templateId, biomeId, tier: this.difficultyId, seed: runSeed, modifiers, id: randomUUID(), floorKey: randomBytes(16).toString('hex') };
+    return { biomeId, tier: this.difficultyId, seed: runSeed, modifiers, id: randomUUID(), floorKey: randomBytes(16).toString('hex') };
   }
   /**
-   * Выбор алтаря → шаблон, биом и модификаторы нового забега — ТОЛЬКО валидными включёнными значениями (анти-чит: клиент не
+   * Выбор алтаря → биом и модификаторы нового забега — ТОЛЬКО валидными включёнными значениями (анти-чит: клиент не
    * может подсунуть выключенный/несуществующий контент). R9-08: то же решение видит окно голосования (`descendPlan`).
    */
-  private altarOf(cfg?: AltarConfig): { templateId: string; biomeId: string; modifiers: string[] } {
+  private altarOf(cfg?: AltarConfig): { biomeId: string; modifiers: string[] } {
     const biomes = this.cfg.get('biomes').filter((b) => b.enabled !== false);
-    const tpls = this.cfg.get('run-templates').filter((t) => t.enabled !== false);
     const biome = biomes.find((b) => b.id === cfg?.biomeId) ?? biomes[0] ?? this.cfg.get('biomes')[0]!;
-    const tpl = tpls.find((t) => t.id === cfg?.templateId) ?? tpls[0] ?? this.cfg.get('run-templates')[0];
-    // Модификаторы: только включённые, scope:'run', (если шаблон ограничивает) из allowedModifiers — и ⭐ R8-12 действующие,
-    // каждый один раз, благо — в паре с опасностью (`pickRunModifiers`, то же правило у плана). Кадр проверяет схема
-    // менеджера (R1-19); здесь — вторая линия: выбор алтаря едет из кадра, и не-массив в нём ронял старт забега ПОСЛЕ
-    // «голосование прошло» — пати видела успех, а спуска не было (правило отбрасывает не-массив и не-строки).
-    const modifiers = pickRunModifiers(this.cfg.get('run-modifiers'), tpl?.allowedModifiers, cfg?.modifiers);
-    return { templateId: tpl?.id ?? 'default', biomeId: biome.id, modifiers };
+    // ⚠⚠ Ф7 (17.10): МОДИФИКАТОРЫ ИЗ ГОРОДА НЕ БЕРУТСЯ ВОВСЕ — всегда пусто.
+    //
+    // До Ф5 выбор города был безвредным: `effects` никто не читал. После Ф5-0 они ДЕЙСТВУЮТ, и тот же
+    // набор «опасность + благо», за который на алтаре платят печатью и только НА ОДИН ОТРЕЗОК, приходил
+    // бы из кадра спуска ДАРОМ и СРАЗУ НА ВЕСЬ ЗАБЕГ — то есть печати были бы налогом для тех, кто играет честно.
+    // Закрыто ПРАВИЛОМ: поля нет в схеме кадра, и сервер его не спрашивает даже если оно приедет.
+    // Забеговые модификаторы остались собственностью СЕРВЕРА и редактора (предпросмотр плана) — не клиента.
+    return { biomeId: biome.id, modifiers: [] };
   }
-  /** Начать новый забег: RunConfig (с выбором алтаря) → RunPlan → первый узел. */
-  private startRun(cfg?: AltarConfig): void {
+  /**
+   * Начать новый забег: RunConfig (с выбором алтаря) → RunPlan → первый узел.
+   * ⭐⭐ 14.10 (Г3, В2): `startDepth` — метка старта, УЖЕ зажатая (`startDepthOf` → план голосования). Здесь она
+   * только приводится к целому ≥ 1: вызов без неё (внутренний, `enterNode` без плана) — вход в спуск, как раньше.
+   * `startId` окна — `n{from}_0` (`generateRunPlan`), поэтому глубина старта задаётся одним окном.
+   */
+  private startRun(cfg?: AltarConfig, startDepth?: number, by?: string): void {
     this.captureLedger();   // R9-01: свод прошлого забега комнаты — в базу, прежде чем комната его забудет
+    // ⭐⭐ 17.10 (правка по ревизии): ОТРЕЗОК — СОБСТВЕННОСТЬ ЗАБЕГА, А НЕ КОМНАТЫ. Замер нашёл круг: оплатил на
+    // метке 3 → портал в город (это НЕ `endRun`, забег лишь припаркован) → новый забег с метки 3 — и `enterNode(4)`
+    // накладывал ту же оплаченную связку на этажи нового забега, бесконечно. Снимается здесь же, где меняется
+    // `runConfig`: один шов на забег вместе с `ledger`/`runPlan`.
+    this.segment = undefined;
+    this.runStarter = by ? this.session.world.players[by]?.save.charId : undefined;   // ⭐ 17.10: владелец забега
     this.runConfig = this.buildRunConfig(cfg);
-    this.runPlan = runPlanOf(this.cfg, this.runConfig);   // R14-10: этажи — от ключа забега
+    const from = Math.max(1, Math.floor(Number.isFinite(startDepth) ? startDepth! : 1));
+    this.runPlan = runPlanOf(this.cfg, this.runConfig, this.windowAt(from));   // R14-10: этажи — от ключа забега; Г2: окно слоёв
     this.ledger.clear();
     this.takeRun();   // ⭐ V2: новый забег (личность — свежая) — этой комнаты
     this.enterNode(this.runPlan.startId);
@@ -3373,7 +3767,16 @@ export class Room implements Tickable {
     if (!this.runConfig || !sameRun(this.runConfig, save.run.config)) { this.captureLedger(); this.ledger.clear(); }   // R9-01
     this.runConfig = save.run.config;
     this.difficultyId = save.run.config.tier;
-    this.runPlan = runPlanOf(this.cfg, save.run.config);   // R14-10
+    // ⭐⭐ 17.10 (правка по ревизии): ОПЛАЧЕННЫЙ ОТРЕЗОК ПОДНИМАЕТСЯ ИЗ СЕЙВА. `enterNode` его туда кладёт («чтобы
+    // пережить уход в город и продолжение забега»), но читателя не было: комната умерла (все вышли, нода слилась) →
+    // «Продолжить» → отрезок пропал, печати списаны и ничего не дали. Берём ЗДЕСЬ, одним швом с `config` и
+    // указателем, и только СВОЙ (`runId`): отрезок другого забега не применяется никогда.
+    this.segment = this.ownSegment(save.run.segment, save.run.config);
+    // ⭐ 17.10: продолжают ЧЕЙ-ТО забег — владельцем остаётся он (его сейв принёс и план, и указатель).
+    this.runStarter = save.run.starter ?? save.charId;
+    // ⭐⭐ 13.10 (Г2): окно — от указателя, с которого продолжаем (его глубина читается из имени узла, без графа):
+    // забег мог уйти на любую глубину, и слоя 1 в плане больше нет (как и самого «плана целиком»).
+    this.runPlan = runPlanOf(this.cfg, save.run.config, this.windowAt(nodeDepthOf(save.run.currentNodeId)));   // R14-10
     this.takeRun();   // ⭐ V2: зовущие сверили, что забег не идёт в другой комнате (`resumeFromLedger`, `RoomManager.join`)
     let nid = this.depthOf(save.run.currentNodeId) >= 0 ? save.run.currentNodeId : this.runPlan.startId;
     for (const s of this.runSaves()) if (this.depthOf(s.run.currentNodeId) > this.depthOf(nid)) nid = s.run.currentNodeId;
@@ -3398,6 +3801,18 @@ export class Room implements Tickable {
     const key = runLedgerKey(run);
     const charId = host.charId;
     const voters = new Set(this.clients.keys());
+    // ⭐⭐ 14.10: ОКНО СВОДА — ВОКРУГ ГЛУБИНЫ, С КОТОРОЙ ПРОДОЛЖИМ (самый глубокий указатель этого забега в комнате —
+    // ровно то, что выберет `resumeRun` и что показывает `descendPlan`). Чтение свода режется по глубине СПРАШИВАЮЩЕГО
+    // (`getRunLedger`): без этого комната, стоящая на мелком узле, получала окно напарника, ушедшего на сотню этажей
+    // вперёд, — записи СВОЕГО узла в нём не было, и узел собирался свежим (сундук цел, босс жив — возврат R4-01).
+    // ⚠ Глубина — СЫРАЯ (`depthOf` → `runNodeDepth`, −1 у не-имени), а не зажатая в ноль: у сейва с порченым
+    // указателем окно «вокруг 0» было бы ПУСТЫМ (узлов глубины 0 нет), и узел собрался бы свежим. −1 для
+    // `getRunLedger` значит «глубину не знаю» — то есть прежнее поведение, от самой глубокой записи.
+    let atDepth = this.depthOf(host.run!.currentNodeId);
+    for (const c of this.clients.values()) {
+      const r = this.session.world.players[c.pid]?.save.run;
+      if (r?.config && sameRun(r.config, run)) atDepth = Math.max(atDepth, this.depthOf(r.currentNodeId));
+    }
     // ⭐ V2: забег идёт в другой комнате этой ноды — не продолжение, а отказ (голос мог пройти раньше, чем та вошла).
     const busyNow = this.hooks.runBusy?.(key, this);
     if (busyNow) { this.broadcast({ t: 'error', code: 'run', msg: runElsewhereMsg(busyNow), roomCode: busyNow }); return; }   // R18-04: и кодом
@@ -3420,7 +3835,7 @@ export class Room implements Tickable {
         // ждала слива чужого свода (медленная база — десятки секунд), и взятие, легшее позже её отпуска, всё это время держало строку забега за
         // ушедшей комнатой: «Продолжить» соседней ноды получал отказ с её кодом. Ушедшая уже в ожидании свода отдаёт взятое сама (`roomGone`).
         if (!this.frozen && this.clients.size > 0 && await runLedgerDrain(key, this)) {
-          stored = await getRunLedger(key);
+          stored = await getRunLedger(key, RUN_NODES_MAX, atDepth);
           const own = this.ledgerOut.get(key);
           if (own) stored = [...stored, ...own.values()];
         }
@@ -3470,8 +3885,9 @@ export class Room implements Tickable {
         const r = this.session.world.players[c.pid]?.save.run;
         if (!r?.config || !sameRun(r.config, run)) continue;
         const all = new Map<string, RunNodeState>();
-        foldRunRecords(all, runRecords(r, r.config));
-        if (foldRunRecords(all, stored)) putRunRecords(r, all.values());
+        // ⭐ Г2 (Р5): запись узла указателя этого сейва из окна записей не вытесняется (продолжаем-то с него).
+        foldRunRecords(all, runRecords(r, r.config), r.currentNodeId);
+        if (foldRunRecords(all, stored, r.currentNodeId)) putRunRecords(r, all.values());
       }
     }
     return this.resumeRun(h);
@@ -3494,6 +3910,13 @@ export class Room implements Tickable {
       if (s?.run && (!cfg || !s.run.config || sameRun(s.run.config, cfg))) s.run = undefined;
     }
     this.runConfig = null; this.runPlan = null; this.runNodeId = null;
+    // ⭐⭐ Ф5-5 (17.10, решение владельца 16.10): СМЕРТЬ СЖИГАЕТ ВСТАВЛЕННОЕ — отрезок уходит
+    // вместе с забегом. Без этой строки поле комнаты пережило бы вайп и приложилось к ЭТАЖАМ НОВОГО
+    // ЗАБЕГА (границы те же по глубине) — то есть сгоревшая связка продолжила бы действовать бесплатно.
+    //
+    // ⚠ В КООПЕ СЖИГАЕТ ВАЙП, А НЕ ОДНА СМЕРТЬ: отрезок один на пати, и гибель одного стирала бы
+    // плату остальных (остальные кооп-правила печатей — открытый вопрос плана). Соло вайп и есть смерть.
+    this.segment = undefined;
     this.nodeState = null; this.spawnIdx.clear(); this.ledger.clear();
     this.dropRun();   // ⭐ V2: забег окончен — его больше никто не держит
   }
@@ -3634,8 +4057,20 @@ export class Room implements Tickable {
     this.endVote();   // R8-03: область сменилась — открытое голосование не про неё
     this.settleLingers();   // R13-03: тела ушедших посреди боя на новый этаж не переходят
     if (!this.runPlan || !this.runConfig) { this.startRun(); return; }
-    const node = this.runPlan.nodes.find((n) => n.id === nodeId);
+    // ⭐⭐ 13.10 (Г2): УШЛИ ЗА КРАЙ ОКНА — ОКНО ПЕРЕСОБИРАЕТСЯ от глубины узла. Рёбра последнего слоя окна смотрят
+    // за его край (иначе край был бы тупиком без выходов, см. `generateRunPlan`), и спуск по такому ребру приходит
+    // сюда с узлом, которого в плане ещё нет. Этажи от этого не меняются: сид узла — от его id, не от окна.
+    // ⭐⭐ А узел В ОКНЕ — ПОВОД ОКНО ДОРАСТИТЬ (`growWindow`): иначе каждый (lookahead+1)-й этаж оказывался последним
+    // слоем плана, и подписи выходов развилки теряли тип цели (C-10). Уже стоящий план при этом сохраняется.
+    const outside = !this.runPlan.nodes.some((n) => n.id === nodeId);
+    if (outside) this.runPlan = runPlanOf(this.cfg, this.runConfig, this.windowAt(nodeDepthOf(nodeId)));
+    else this.growWindow(nodeDepthOf(nodeId));
+    const node = this.nodeFor(nodeId);
     if (!node) return;
+    // ⭐⭐ 14.10 (Г4): ДАЛЬШЕ ВСЁ — ПРО УЗЕЛ, В КОТОРЫЙ ВОШЛИ, а не про присланное имя: зажим полосы (`nodeFor`) ЧИНИТ
+    // указатель сейва первой же записью ниже (`s.run.currentNodeId`), и свод, окно `visited` и кадр `runPlan` обязаны
+    // называть один и тот же узел — иначе комната вела бы запись одного, а сейв помнил другой.
+    nodeId = node.id;
     const runCfg = this.runConfig;
     // ⭐ K1: ПРОДОЛЖЕНИЕ — НЕ СМЕНА ЭТАЖА. Узел собирают заново (`resumeRun`: из города, «Продолжить» в новой комнате), и кто погиб в этом
     // забеге и с тех пор не жил (`run.deadAt`: его комната этаж не меняла — упала, слита, а он вошёл сюда уже потом), встаёт на нём мёртвым
@@ -3650,7 +4085,8 @@ export class Room implements Tickable {
     // ⭐ R4-01, R4-04: записи — из сейвов ВСЕХ участников этого забега здесь (и ждущих реконнекта), до того, как цикл ниже
     // перепишет им указатель.
     let folded = false;
-    for (const s of this.runSaves(true)) if (foldRunRecords(this.ledger, runRecords(s.run, runCfg))) folded = true;
+    // ⭐ Г2 (Р5): окно записей режется вокруг узла, в который входим, — его запись (её комната ведёт по ссылке) не вытесняется.
+    for (const s of this.runSaves(true)) if (foldRunRecords(this.ledger, runRecords(s.run, runCfg), nodeId)) folded = true;
     const kept = this.ledger.get(nodeId);
     let bare = false;
     if (!kept) for (const s of this.runSaves(true)) if (visitedNode(s.run, runCfg, nodeId)) { bare = true; break; }
@@ -3672,13 +4108,48 @@ export class Room implements Tickable {
     // (⭐ 08.10: факелы с шагом, ниши дальних стен, костры — опцией генерации, не через FloorSpec: `runPlan` прежний) + преграды декора
     const { layout, obstacles } = generateFloorFor(this.cfg, node.floorSpec, biome);
     this.decor = layout.decor;
+    // ⭐⭐ 14.10 (Г3, В4): НА МЕТКЕ ПОРТАЛ В ГОРОД ЕСТЬ ВСЕГДА — ЭТО ПРАВИЛО, А НЕ УДАЧА ДАННЫХ. Сегодня портал кладёт
+    // геометрия привала (`townFloor`: один портал у входа, по конструкции), но МЕТКА — ЧИСТАЯ ФУНКЦИЯ ГЛУБИНЫ
+    // (`isWaypoint`), и именно по ней сервер разрешает старт забега (В2) и считает «до метки N этажей» (В6). У биома
+    // без rest-этажа привала на этой глубине не будет вовсе (данные: сторож `run/waypointData.test.ts` и
+    // предупреждение редактора), и старт с метки открылся бы на боевом этаже — без выхода назад живому (`canLeave`
+    // пустил бы его только с точки входа, а портала узла нет). Поэтому доливаем портал к точке входа: уйти в город
+    // (или завершить забег) с метки можно всегда. Узел, которому портал дал генератор, не трогаем.
+    // ⭐ 14.10 (Г3, правка 7): ОДИН ШАГ НА УЗЕЛ и двух его читателей: портал привала (строка ниже) и потолок
+    // прибавки прогресса сложности (цикл сейвов ниже). Приведение к целому — общим швом (`waypointStepOf`), не своё.
+    // ⭐ Г8-3: места порталов — СПИСОК полосы (`portalsAt`), и этим же списком считается прибавка прогресса ниже.
+    const access = this.cfg.get('balance').dungeonAccess;
+    if (isWaypoint(node.depth, access.portalsAt, access.contentCycle) && !this.decor.some((d) => d.kind === 'portal')) {
+      this.decor = [...this.decor, { ...layout.spawn, kind: 'portal' }];
+    }
     this.rooms = layout.rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));   // ⭐ 08.10: прямоугольники комнат — клиенту (пробы отражений)
     const pool = resolveMonsterPool(biome, node.depth);
-    // Продолжение заселяет той же мощью, что первый вход: от неё зависят броски генератора, и номера убитых иначе
-    // указывали бы на других монстров (вырос в городе — и босс «ожил» под чужим номером).
+    // ⭐ 13.10 (Г1): заселение мощь УЖЕ НЕ ЧИТАЕТ — уровень монстра решает одна глубина узла, и броски генератора от мощи
+    // не зависят. `el` записи узла остаётся: по нему идут ворота прогресса сложности (ниже) и воспроизводимость записи.
     const el = kept?.el ?? this.partyLevel();
     const rng = createRng((node.floorSpec.seed >>> 0) || 1);
-    const spawned = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
+    // ⭐⭐ 15.10 (Г6, кооп): ЧИСЛО ИГРОКОВ — из комнаты (`clients`), а не из мира: заселение идёт ДО того, как в мир
+    // попадут сущности. Жирнее за каждого лишнего делает только ЖИЗНЬ (`balance.coop`), поток `rng` тот же — узел
+    // остаётся чистой функцией сида и глубины (Г2), меняется ровно одно число у готового монстра.
+    // ⭐⭐ Ф4 (16.10): ОТРЕЗОК НАКЛАДЫВАЕТСЯ НА ЭТАЖ. План забега остаётся чистой функцией сида (его узлы
+    // регенерятся из сейва), а выбор алтаря — ОВЕРЛЕЙ поверх узлов внутри [from..to]. Вышли за `to` — отрезок
+    // снимается здесь же: это единственное место, через которое проходит каждый вход в узел.
+    if (this.segment && node.depth > this.segment.to) this.segment = undefined;
+    // ⭐⭐ Ф5-3 (17.10): на этажах отрезка действует СВЯЗКА ПЕЧАТЕЙ (с потолками по типу свойства).
+    const segSeals = this.segment && node.depth >= this.segment.from && node.depth <= this.segment.to ? this.segment.seals : undefined;
+    const floorMods = node.floorSpec.modifiers;
+    // ⭐⭐ Ф5-0 (16.10): модификаторы узла доезжают до ЗАСЕЛЕНИЯ — пачки крупнее, монстры живучее/злее/быстрее.
+    // ⚠ Заселение и награда обязаны видеть ОДИН и тот же набор: здесь он складывается один раз, и тот же `segSeals`
+    // уходит в сессию ниже — иначе монстры были бы злее, а награда осталась прежней.
+    // ⚠⚠ 23.10 (находка ревизии): БИОМ ЭТАЖА — ТРЕТЬИМ АРГУМЕНТОМ, как в `GameSession.enterFloor`. Без него
+    // заселение считало связку БЕЗ привязки к биому, а награда — С ней: две стороны одной печати расходились, и
+    // печать, привязанная к чужому биому, делала этаж опаснее, не делая его богаче (или наоборот после правки
+    // данных). Один шов — один ответ: аргумент тот же, что у сессии (`biome.id` этого узла).
+    const spawned = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, pool, node.floorSpec.packDensity, node.floorSpec.floorId, Math.max(1, this.clients.size), node.bossRank,
+      mergeRunBuffs(
+        runModBuffs(this.cfg.get('run-modifiers'), floorMods, liveModStats(this.cfg)),
+        sealBuffs(this.cfg, segSeals, biome.id),
+      ));
     // R4-04: пройденный без записи — взят целиком: ни заселения, ни сундуков; двери рычагов открыты.
     const killed = new Set(bare ? spawned.map((_, i) => i) : (kept?.killed ?? []).filter((i) => i < spawned.length));
     const alive: number[] = [];
@@ -3694,7 +4165,10 @@ export class Room implements Tickable {
       doors: layout.doors, levers: layout.levers.map((l) => (pulled.has(l.id) ? { ...l, used: true } : l)),
       // Уровень этажа — по ПОЛНОМУ заселению: убитый босс не опускает ступень нетронутых сундуков.
       floorLevel: spawned.reduce((m, sp) => Math.max(m, sp.def.level), 0),
-      runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: biome.id,
+      runNodeId: nodeId, runNodeType: node.type, floorModifiers: floorMods, biomeId: biome.id,
+      // Ф5-3: та же связка, что ушла в заселение — награда и опасность из одного источника.
+      segmentSeals: segSeals,
+      runId: this.runConfig?.id,   // ⭐ 17.10: личность забега — в сид потока печатей (повтор места — не копия награды)
     });
     for (const pid of stillDead) { const p = this.session.world.players[pid]; if (p) { p.alive = false; p.hp = 0; } }   // K1: этаж их оживил — нет
     // Мир заселён ровно списком `monsters` и в его порядке — отсюда номер заселения каждой сущности.
@@ -3720,26 +4194,86 @@ export class Room implements Tickable {
       const s = this.session.world.players[pid]!.save;
       // R4-25: чужой забег спуском не переписывается — голос с ним не засчитывается (`runClash`); здесь его нет.
       const prev = s.run?.config && sameRun(s.run.config, runCfg) ? s.run : undefined;
-      const was = prev?.visited ?? [];
-      const visited = was.includes(nodeId) ? was : [...was, nodeId];   // продолжение узла не множит его в списке
+      // Продолжение узла его в списке не множит; ⭐ Г2 (Р5): список — ОКНО самых глубоких (`noteVisited`): в бесконечном
+      // спуске он рос бы на запись за этаж — навсегда и в каждой записи сейва в Postgres.
+      const visited = noteVisited(prev?.visited, nodeId);
       // ⭐ R4-04: указатель НЕ УЕЗЖАЕТ НАЗАД — ушедший дальше (вошёл к пати, стоящей раньше) остаётся на своём узле.
       const ahead = !!prev && this.depthOf(prev.currentNodeId) > node.depth;
       // ⭐ R8-04: мощь героя в этом забеге — не ниже той, что он уже показывал в нём (`peak`, см. `notePeak`).
       const power = Math.max(this.heroPower(s, gear.get(c.userId)), runPeak(prev));
       s.run = {
-        templateId: runCfg.templateId, config: runCfg, currentNodeId: ahead ? prev!.currentNodeId : nodeId, visited, peak: power,
+        config: runCfg, currentNodeId: ahead ? prev!.currentNodeId : nodeId, visited, peak: power,
+        // ⭐⭐ Ф4 (16.10): ОТРЕЗОК ОБЯЗАН БЫТЬ В ЛИТЕРАЛЕ. `s.run` пересобирается здесь ЦЕЛИКОМ на каждом входе в
+        // узел, и любое поле, которого нет в этих скобках, молча теряется на первом же спуске — так и было бы с
+        // оплаченным отрезком, если дописать его «куда-нибудь рядом».
+        ...(this.segment
+          ? { segment: { ...(this.segment.runId ? { runId: this.segment.runId } : {}), from: this.segment.from, to: this.segment.to, seals: { ...this.segment.seals } } }
+          : {}),
+        ...(this.runStarter ? { starter: this.runStarter } : {}),   // ⭐ 17.10: окно сравнит со своим charId
         ...(stillDead.has(pid) ? { deadAt: nodeId } : {}),   // K1: лежит здесь мёртвым — и метка здесь
       };
       putRunRecords(s.run, this.ledger.values());
-      // ⭐ R7-02: узел, заселённый раньше под героев слабее этого (альт один прошёл дальше, основной вошёл по коду), глубиной в
-      // прогресс сложности ему не идёт: её открывают монстры по ЕГО мощи. Новый узел заселяется по сильнейшему (`partyLevel`) —
-      // там запрет не срабатывает ни у кого; следующий новый узел откроет ему глубину честно.
+      // ⭐⭐ 14.10 (Г3, правка 7): ПРОГРЕСС СЛОЖНОСТИ РАСТЁТ НЕ БОЛЬШЕ ЧЕМ НА ОДИН ШАГ МЕТКИ ЗА ВХОД В НОВЫЙ
+      // УЗЕЛ. Решение владельца дословно: «если они начали с 20 этажа, то открывается у всех ПОСТЕПЕННО, кроме
+      // тех, у кого открыто, и им надо добежать туда НОГАМИ всем — тогда протяжка по вейпоинтам будет дольше, и
+      // это нормально». То есть протащить игрока глубоко МОЖНО (как в D2 тащили на Ад), но метка даром не достаётся.
+      //
+      // ⚠ ЗАЧЕМ ЭТО, ЕСЛИ СТАРТ УЖЕ ЗАЖАТ (`startDepthOf` → `waypointStart`): ЗАЖИМ ОБХОДИТСЯ ПОРЯДКОМ
+      // ДЕЙСТВИЙ. Замер 14.10 нашёл два открытых пути, и оба идут МИМО `startDepthOf`:
+      //  (а) ВХОД ПО КОДУ в комнату, которая УЖЕ стоит на 60-м этаже: `RoomManager.join` → `addPlayer` садит входящего
+      //      независимо от области и глубины (перед ним только `MAX_PARTY` и `runClashOn`), а `startDepthOf` зовётся ТОЛЬКО
+      //      из `descendPlan` (ветка нового забега из города) — замер: новичок с рекордом 0 после ОДНОГО этажа
+      //      ногами получал рекорд 61, то есть соло-старт 60;
+      //  (б) ПРОДОЛЖЕНИЕ ЧУЖОГО припаркованного забега (`resumeFromLedger` → `resumeRun`) идёт мимо `startRun(cfg, startDepth)`
+      //      и мимо `startDepthOf`: в окне голосования только `resume.depth`, и пати входит на глубину указателя
+      //      хозяина — замер: новичок с рекордом 0 попал на 61 и после одного этажа имел 62.
+      // Закрывать каждую дверь своей проверкой значило бы ЗАПРЕТИТЬ КАРРИ (а владелец его разрешил явно) и завести
+      // столько правил, сколько дверей. Правило здесь ОДНО и чинит оба пути сразу — оба пишут прогресс ЭТОЙ строкой.
+      //
+      // ЧИСЛА. Шаг — `balance.dungeonAccess.waypointStep` (тот же, что у каденции привала и у самих меток,
+      // `isWaypoint`: ОДНО число на всё). Обычный спуск НЕ ЗАТРОНУТ: глубина растёт на 1 за этаж, а потолок прибавки — 3,
+      // он никогда не связывает. Протащенному с рекордом 0 на 60-й ноги открывают 3 → 6 → 9 …: меткой 60 он
+      // владеет лишь пройдя двадцать этажей ногами — это и есть «протяжка дольше, и это нормально». Вниз прогресс
+      // не едет никогда (`Math.max` с прежним): ни возврат на мелкий узел, ни карри в обратную сторону.
+      //
+      // ⚠⚠ ЗДЕСЬ СТОЯЛО ВТОРОЕ УСЛОВИЕ `power <= el + NODE_POWER_SLACK` (R7-02), И ОНО БЫЛО МЁРТВЫМ — снято.
+      // Ложным оно не могло стать ни для кого: `!revisit ⟹ !kept ⟹ el = partyLevel()` — максимум мощи по тем же
+      // `runHeroes()`, а `power` считается по тому же пулу снаряжения и тому же `peak`, значит `power <= el` ВСЕГДА (и запас 3
+      // ни разу не понадобился). Отличаться `el` может только у узла С ЗАПИСЬЮ (`kept?.el`), а такой вход — `revisit`, и до
+      // сравнения дело не доходило. Переделать его в «мощь ВХОДЯЩЕГО против мощи, с которой узел записан РАНЬШЕ»
+      // нельзя по той же причине: такое сравнение осмысленно ТОЛЬКО на повторном входе, а повторный вход прогресса
+      // не пишет вовсе (R8-02 ниже) — условие осталось бы мёртвым, только с видом работающего. Поэтому запрет теперь
+      // держат двое и только они: `!revisit` и ШАГ. Запись мощи узла (`RunNodeState.el`) осталась: она держит
+      // воспроизводимость свода, а не эти ворота.
       // ⭐ R8-02: и только НОВЫЙ вход — как квесты «достичь этажа» ниже (R3-10). Продолжение припаркованного забега возвращает на
       // пройденный узел, и глубину получали все, кто в комнате: свежий герой входил к хозяину глубокого забега, «Продолжить»
       // вдвоём, оба к порталу — и глубина 10 «normal» (а с ней «hard») открыта без единого боя, а забег хозяина цел для
       // следующего. Честному она уже засчитана первым входом.
-      if (!revisit && power <= el + NODE_POWER_SLACK) {
-        s.difficultyProgress[this.difficultyId] = Math.max(s.difficultyProgress[this.difficultyId] ?? 0, node.depth);
+      if (!revisit) {
+        // ⚠⚠ РЕКОРД РАСТЁТ НЕ БОЛЬШЕ ЧЕМ НА ШАГ МЕТКИ ЗА ВХОД — решение владельца: «открывается у всех
+        // ПОСТЕПЕННО, и им надо добежать туда НОГАМИ всем». Протащить героя глубоко МОЖНО (как в D2
+        // тащили на Ад), но метка даром не достаётся. Без потолка прибавки зажим пати обходился
+        // ПОРЯДКОМ ДЕЙСТВИЙ пятью путями (замер): вход по коду в комнату на 60-м этаже, альт того же
+        // аккаунта, вход посреди голосования, смерть на глубине и продолжение ЧУЖОГО забега — всюду
+        // рекорд новичка прыгал с 0 до 61 за ОДИН вход. С шагом — 3, и до метки 60 ему идти двадцать этажей.
+        // Обычный спуск правило НЕ ТРОГАЕТ: глубина растёт на 1 за этаж, а потолок прибавки — шаг (3),
+        // он не связывает никогда. Сторожа: `room.g3carry.test.ts` и инвариант `8-progress-leap` фаззера коопа.
+        // ⚠ Рекорд берётся ОБЩИМ ШВОМ (`depthRecordOf`), а не сырым из сейва: нечисловая строка из базы
+        // давала СКЛЕЙКУ (`'60' + 3 = '603'`) и потолок пропадал совсем — сейв из Postgres схему не проходит.
+        // ⚠⚠ ЗАПИСЬ ЗАЖАТА ТЕМ ЖЕ ПОТОЛКОМ, ЧТО ЧТЕНИЕ. Без этого рекорд перерастал `WAYPOINT_DEPTH_LIMIT`
+        // НОГАМИ, и следующий же вход «чинил» честно заработанное: замер — рекорд 10 000 → 10 001 → 10 002,
+        // а `RoomManager.repairDepth` потом сводил его к 10 000 И СНИМАЛ честно припаркованный забег
+        // (указатель `n10002_0` глубже потолка доверия), выдавая два ИНЦИДЕНТА про «правку базы в обход
+        // сервера» за свои же ноги. Одно число обязано значить одно: 10 000 — потолок и доверия к строке,
+        // и ПОДДЕРЖИВАЕМОГО мира (это 33 прицела владельца, а hp монстра перестаёт влезать в кадр уже
+        // около 1284-го этажа — `session/wire.ts`). Чистая формула уровня по-прежнему без потолка.
+        // ⭐⭐ Г8-3 (15.10): ПОТОЛОК ПРИБАВКИ — СЛЕДУЮЩАЯ МЕТКА, А НЕ ЧИСЛО ШАГА. Места порталов стоят неровно
+        // (…18, 20, 23…), и фиксированное число давало бы то половину шага, то полтора. Правило словами то же —
+        // «за вход открывается не больше ОДНОЙ метки», — и теперь оно так и считается (`nextWaypointAfter`).
+        const was = depthRecordOf(s.difficultyProgress, this.difficultyId);
+        const cap = nextWaypointAfter(was, access.portalsAt, access.contentCycle);
+        const grown = Math.max(was, Math.min(node.depth, cap));
+        s.difficultyProgress[this.difficultyId] = Math.min(WAYPOINT_DEPTH_LIMIT, grown);
       }
       // ⚠ R3-10: «достичь этажа» — только НОВЫЙ вход. Продолжение припаркованного забега (свой или хозяина комнаты)
       // возвращает на пройденный узел, и квест с доски, принятый в городе, закрывался бы спуском мгновенно. R4-04: и узел,
@@ -5199,9 +5733,14 @@ export class Room implements Tickable {
     return pid ? this.session.world.players[pid]?.save : undefined;
   }
   /**
-   * ⭐ R6-27: МОЩЬ УЗЛА — ПО СИЛЬНЕЙШЕМУ ГЕРОЮ ЗАБЕГА: подключённых и ждущих реконнекта этого же забега. Раньше — по первому
-   * в комнате: комнату заводил свежий альт 1-го уровня, основной входил по коду — и проходил этажи открытия сложностей
-   * (прогресс сложности растёт у всех) против монстров, заселённых под альта, собирая их множители золота и находок.
+   * ⭐ R6-27: МОЩЬ УЗЛА — ПО СИЛЬНЕЙШЕМУ ГЕРОЮ ЗАБЕГА: подключённых и ждущих реконнекта этого же забега.
+   * ⚠⚠ 13.10 (Г1): это уже НЕ «по кому заселён этаж» — уровень монстров решает одна глубина (`floorMonsterLevel`).
+   * Мощь узла осталась мерой ВХОДА для ЗАПИСИ узла (`RunNodeState.el`) и воспроизводимости свода.
+   * ⚠ 14.10 (Г3, правка 7): ВОРОТ ПРОГРЕССА `power <= el + NODE_POWER_SLACK` БОЛЬШЕ НЕТ — они были мёртвым
+   * условием (на новом узле `el` — этот же максимум, значит `power <= el` всегда). Прогресс держат `!revisit` и
+   * шаг метки за вход (`enterNode`).
+   * История: раньше мощь брали по первому в комнате — комнату заводил свежий альт 1-го уровня, основной входил по коду
+   * и проходил этажи открытия сложностей против монстров, заселённых под альта, собирая их множители золота и находок.
    * Ждущие реконнекта — в счёте: иначе основной отключался бы перед спуском и возвращался на узел, заселённый под альта.
    * ⭐ R7-02: и по тому, что герой МОЖЕТ надеть (`heroPower`), а не по надетому в эту секунду.
    */
@@ -5219,11 +5758,14 @@ export class Room implements Tickable {
   }
   /**
    * ⭐ R8-04: ЗАМЕР МОЩИ ГЕРОЯ В ЕГО ЗАБЕГЕ — после каждой его успешной команды, которая могла её поднять (`PEAK_CMDS`: надел,
-   * улучшил надетое). Узел заселяется по тому, что герои несут в момент входа (`partyLevel`), а снаряжение между узлами ходит
-   * по героям аккаунта: основной отдавал его альту с другим припаркованным забегом, альт уходил в грейс (он не «этого забега» —
-   * в счёт не шёл) или из комнаты вовсе, и каждый новый узел заселялся под голого основного — до `gearMax` уровней слабее, с
-   * прогрессом сложности; а на узле альт возвращал снаряжение. Теперь забег помнит наибольшую мощь героя в нём (`run.peak`):
-   * новый узел — не слабее неё. Мерка — надетое: воспользоваться снаряжением, не надев его, нельзя (сумку меряет вход в узел).
+   * улучшил надетое). Мощь ВХОДА в узел пишется по тому, что герои несут в этот момент (`partyLevel` → `RunNodeState.el`), а
+   * снаряжение между узлами ходит по героям аккаунта: основной отдавал его альту с другим припаркованным забегом, альт уходил
+   * в грейс (он не «этого забега» — в счёт не шёл) или из комнаты вовсе, и каждый новый узел ЗАПИСЫВАЛСЯ под голого основного —
+   * до `gearMax` уровней слабее, с прогрессом сложности; а на узле альт возвращал снаряжение. Теперь забег помнит наибольшую
+   * мощь героя в нём (`run.peak`), и запись узла — не ниже неё.
+   * ⚠⚠ 13.10 (Г1): «узел ЗАСЕЛЯЕТСЯ по этой мощи» — ИСТОРИЯ: уровень монстров решает одна глубина (`floorMonsterLevel`), и
+   * занижение мощи даёт теперь не слабых монстров, а дешёвую запись узла — то есть лишнюю глубину в прогрессе сложности.
+   * Мерка — надетое: воспользоваться снаряжением, не надев его, нельзя (сумку меряет вход в узел).
    * Новый забег начинает с нуля: честный герой, продавший снаряжение между забегами, ничего не замечает.
    */
   private notePeak(save: SaveState): void {
@@ -5235,10 +5777,12 @@ export class Room implements Tickable {
   /**
    * Герои забега здесь: все подключённые и ждущие реконнекта этого же забега — с аккаунтом каждого (R6-27, R7-02).
    * ⭐ R10-08: кроме ждущих, чей забег пати уже увела в город (`safe`, R7-03): такой — «вышел из города», его забег припаркован, и
-   * мощь новых узлов по нему не считается, как по любому вышедшему. Раньше он шёл в счёт весь грейс (умолчание — час): сильный
-   * напарник спокойно закрыл вкладку, слабый вернулся в город — и его «Продолжить» (а оно идёт прежде нового забега) заселяло каждый
-   * новый узел под отсутствующего. Вернётся — на узел, заселённый без него, ровно как вход по коду после выхода из города (R7-02:
-   * глубины за такой узел ему нет); следующий новый узел — снова по нему. Отключившийся на ЭТОМ этаже (не `safe`) — в счёте (R6-27).
+   * мощь новых узлов (`partyLevel` → записанная `el`) по нему не считается, как по любому вышедшему. Раньше он шёл в счёт весь грейс
+   * (умолчание — час): сильный напарник спокойно закрыл вкладку, слабый вернулся в город — и его «Продолжить» (а оно идёт прежде
+   * нового забега) писало каждый новый узел по отсутствующему. Вернётся — на узел, записанный без него, ровно как вход по коду после
+   * выхода из города (R7-02: глубины за такой узел ему нет); следующий новый узел — снова по нему. Отключившийся на ЭТОМ этаже
+   * (не `safe`) — в счёте (R6-27). ⚠ 13.10 (Г1): «заселяло узел под отсутствующего» — история: монстров решает глубина, речь о
+   * ЗАПИСИ мощи входа, по которой идут ворота прогресса сложности.
    */
   private runHeroes(): { save: SaveState; userId: string }[] {
     const out: { save: SaveState; userId: string }[] = [];
@@ -5256,6 +5800,8 @@ export class Room implements Tickable {
    * аккаунта здесь (`pool`, передача вещей в своём аккаунте разрешена, R2-02). Раньше считалось надетое в эту секунду, а
    * снять и надеть можно где угодно: «снял всё в городе — спустился — надел в подземелье» заселяло узел до `gearMax` уровней
    * слабее (ровно запас «кошмара»), и так каждый новый узел.
+   * ⚠ 13.10 (Г1): то «заселяло» — про ПРЕЖНИЙ закон; сегодня это число решает не монстров, а записанную мощь входа
+   * (`RunNodeState.el`) и ворота прогресса сложности, поэтому честность замера нужна по-прежнему.
    */
   private heroPower(save: SaveState, pool: readonly Item[] | undefined): number {
     return effectiveLevel(save, this.cfg.get('balance').power, pool ?? [], this.cfg.get('item-tiers')).total;   // R12-09: и ступень вещей
@@ -5263,9 +5809,20 @@ export class Room implements Tickable {
   private currentFloorInit(): FloorInit {
     // Арена рендерится клиентом как обычный этаж (грид+спавн), поэтому area → 'dungeon'.
     const f = floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor, this.area === 'dungeon' ? this.rooms : undefined);
-    // ⭐ R8-10: строке «вызов ур.» — уровень, по которому узел заселён (мощь узла, а не мера клиента по своему надетому).
+    // ⭐ 13.10 (Г1): строке HUD — УРОВЕНЬ МОНСТРОВ ЭТАЖА, тот же, по которому узел заселён. Считается от глубины,
+    // мощь узла (`st.el`) в него не входит; поле едет с сервера, потому что источник истины по этажу — он.
     const st = this.area === 'dungeon' ? this.nodeState : null;
-    if (st) { f.difficultyId = this.difficultyId; f.challengeLevel = floorChallengeLevel(this.cfg, st.el, this.difficultyId, this.depth); }
+    if (st) { f.difficultyId = this.difficultyId; f.challengeLevel = floorChallengeLevel(this.cfg, this.difficultyId, this.depth); }
+    // ⭐⭐ Ф4 (16.10): АЛТАРЬ СТОИТ НА ЭТАЖЕ-МЕТКЕ. Точка — в двух клетках от спавна, чтобы [E] не спорил с
+    // порталом возврата (он на самом спавне): два интерактива в одной точке дали бы игроку случайный из двух.
+    // ⚠ Решает сервер: он один знает, метка ли это, и он же проверит кадр — клиент рисует, но не разрешает.
+    if (this.area === 'dungeon') {
+      const acc = this.cfg.get('balance').dungeonAccess;
+      if (isWaypoint(this.depth, acc.portalsAt, acc.contentCycle)) {
+        const sp = this.session.world.spawn;
+        f.altar = this.altarSpot()!;   // ⭐ 17.10: ОДНА точка на сервер (её же проверяет `altarPick`)
+      }
+    }
     return f;
   }
   /** Статика игрока для кадра `peerInfo` (Ф1.1). */
