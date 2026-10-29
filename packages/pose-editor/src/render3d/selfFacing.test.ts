@@ -24,30 +24,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const src = (f: string): string => render3dSrc(f);
 
 describe('свой фейсинг', () => {
-  it('⭐⭐ СВОЯ КУКЛА НЕ РИСУЕТСЯ ФЕЙСИНГОМ ИЗ СНАПШОТА', () => {
-    // ⚠ Мутация «вернуть `mine.facing` в вызов привода» валит это — а именно так и было.
-    const s = src('online3d.ts');
-    const call = /driveActor\(self,[^;]*?\);/s.exec(s);
-    expect(call, 'вызов привода своей куклы не найден — тест устарел').not.toBe(null);
-    expect(/mine\.facing/.test(call![0]), '⚠ своя кукла снова рисуется ЭХОМ сервера').toBe(false);
-    expect(/myFacing/.test(call![0]), '⚠ своя кукла рисуется не предсказанным углом').toBe(true);
-  });
-
-  it('⚠ ПОД СТАНОМ ФЕЙСИНГ ВЕДЁТ СЕРВЕР — иначе оглушённый крутится за мышью', () => {
-    // Сервер под станом ввод игнорирует (`if (input && !stunned)`), значит предсказывать нечего.
-    expect(/mine\.stun\s*\|\|\s*!myFacingInit/.test(src('online3d.ts')),
-      '⚠ пропала пересинхронизация фейсинга под станом').toBe(true);
-  });
-
-  it('⚠ ОТПРАВЛЯЕМ РОВНО ТО, ЧТО НАРИСОВАЛИ — один источник', () => {
-    // Второй расчёт в отправке (`pumpInput`, L2: сэмплер общий с 2D) означал бы, что игрок видит один угол, а сервер
-    // получает другой: кадр и отправка идут с разной частотой.
-    const s = src('online3d.ts');
-    const send = /function pumpInput\(dt: number\): void \{[\s\S]*?\n  \}/.exec(s);
-    expect(send, 'pumpInput не найден — тест устарел').not.toBe(null);
-    expect(/const facing = myFacingInit \? myFacing/.test(send![0]), '⚠ фейсинг считается второй раз').toBe(true);
-  });
-
+  // ⭐ С11 (29.10): веб-игры (`online3d.ts`) больше нет — её сторож снят; игру стережёт unity_check (сборка без типов планировщика).
   it('⭐ предсказанный угол идёт РОВНО в прицел, без отставания', () => {
     // Чистая часть: `facingFrom` с живым прицелом обязана дать точный угол на цель, а не сглаженный.
     const px = 100, pz = -50;

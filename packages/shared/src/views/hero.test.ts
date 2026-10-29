@@ -46,7 +46,8 @@ interface Golden {
   compare: { case: number; input: CraftInput; ok: boolean; crafted?: boolean; item?: Item; cards?: Record<string, J>; rows?: J[] }[];
   tree: { case: number; nodes: Record<string, J>[]; edges: Record<string, J>[]; labels: Record<string, J>[]; header: string }[];
 }
-const G = JSON.parse(readFileSync(new URL('../../../client/src/modules/progression/__golden__/unity_stats.json', import.meta.url), 'utf8')) as Golden;
+// ⭐ С11: эталон листа героя заморожен рядом (выход веб-клиента на теге `web-client-final`) — регрессия вида сервера
+const G = JSON.parse(readFileSync(new URL('./__fixtures__/unity_stats.json', import.meta.url), 'utf8')) as Golden;
 
 /** Реестр конфига эталона (поверх встроенного) + таблицы случая (`patch` — капы класса брони и т.п.). */
 function registry(patch?: Record<string, unknown>): ConfigRegistry {

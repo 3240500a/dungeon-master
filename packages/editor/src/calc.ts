@@ -1,12 +1,12 @@
 import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, microFightStats, type MicroFightStats, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType, shapeFoundWeapon } from '@dm/shared';
 import { followHarness, makeHarness } from './gameHarness.js';
-import type { App } from '@dm/client/core/app.js';
-import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
-import { characterPanel } from '@dm/client/modules/progression/panels.js';
-import { inventoryPanel } from '@dm/client/modules/inventory/inventoryPanel.js';
-import { renderPassiveTree } from '@dm/client/modules/skills-passive/treeView.js';
+import type { App } from './game/core/app.js';
+import type { DomUi, Panel } from './game/ui/domUi.js';
+import { characterPanel } from './game/modules/progression/panels.js';
+import { inventoryPanel } from './game/modules/inventory/inventoryPanel.js';
+import { renderPassiveTree } from './game/modules/skills-passive/treeView.js';
 import { devFetch } from '@dm/pose-editor/devAuth.js';
-import { skillsPanel } from '@dm/client/modules/skills/skillsPanel.js';
+import { skillsPanel } from './game/modules/skills/skillsPanel.js';
 
 /**
  * Вкладка «Калькулятор» — планировщик персонажа 1:1 с игрой: реальные панели (стат-лист `characterPanel`,

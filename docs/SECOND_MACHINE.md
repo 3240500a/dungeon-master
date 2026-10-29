@@ -47,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File tools\deploy\setup-workstation.ps1 -Adm
 . .\tools\deploy\local.env.ps1     # подключить ключ (в каждой новой консоли)
 
 npm run dev                        # игра + поз-редактор
-#   игра:          http://localhost:5173/game3d.html
+#   игра:          Unity (веб-клиента нет — С11, тег web-client-final)
 #   поз-редактор:  http://localhost:5173/pose-editor.html
 npm run editor                     # редактор конфигов: http://localhost:5174
 npm run anim-ai:stub               # шим генерации анимаций (заглушка, движок не нужен)

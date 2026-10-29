@@ -66,27 +66,7 @@ describe('планировщик вырезан из игры', () => {
    * Это единственная проверка, которую нельзя обмануть: типы можно привести, поле можно дописать сбоку,
    * а вот путь в графе модулей либо есть, либо нет. Именно он отвечает на «выкинет ли сборка класс».
    */
-  it('⭐⭐ ИЗ `online3d.ts` НЕ ДОСТИЖИМ `stepPlanner.ts`', () => {
-    const files = render3dFiles();   // ⭐ С3: игра — в веб-клиенте, кукла и редактор — в поз-редакторе
-    const seen = new Set<string>(), path2 = new Map<string, string>();
-    const walk = (f: string): void => {
-      if (seen.has(f) || !files.has(f)) return;
-      seen.add(f);
-      for (const next of render3dImports(SRC(f))) {
-        if (!seen.has(next)) path2.set(next, f);
-        walk(next);
-      }
-    };
-    walk('online3d.ts');
-    // Цепочку печатаем ЦЕЛИКОМ: «достижим» без пути — бесполезное сообщение, искать пришлось бы руками.
-    const chain: string[] = [];
-    for (let f: string | undefined = 'stepPlanner.ts'; f; f = path2.get(f)) { chain.push(f); if (chain.length > 40) break; }
-    expect(seen.has('stepPlanner.ts'),
-      '⚠⚠ планировщик снова достижим из игры: ' + chain.reverse().join(' → ')).toBe(false);
-    expect(seen.has('poseRuntime.ts'), 'контроль: обход графа работает').toBe(true);
-    expect(seen.has('gaitKnobs.ts'), 'контроль: ручки игре нужны').toBe(true);
-  });
-
+  // ⭐ С11 (29.10): веб-игры (`online3d.ts`) больше нет — её сторож снят; игру стережёт unity_check (сборка без типов планировщика).
   it('⭐ И ОБРАТНО: запекатель с редактором планировщик ВИДЯТ (иначе печь будет нечем)', () => {
     expect(SRC('bakePlayer.ts').includes("from './stepPlanner.js'"), 'кукла запекания').toBe(true);
     expect(SRC('clipBake.ts').includes("from './bakePlayer.js'"), 'запекатель').toBe(true);

@@ -16,12 +16,16 @@ import type { ConfigKey } from '../config/schemas.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..', '..');
 
-/** Пути эталонов: веб-копии (их пишут генераторы); обмен живёт только в Unity — читается оттуда, нет — тест пропускается. */
+/**
+ * Пути эталонов. ⭐ С11 (29.10): эталоны веб-окон ЗАМОРОЖЕНЫ в `__fixtures__` (выход веб-клиента на теге `web-client-final`): веб-клиента и
+ * портов правил Unity больше нет, вид сервера — сам источник, а файлы держат прежнее поведение окон как регрессию. Обмен живёт только в
+ * Unity — читается оттуда, нет — тест пропускается.
+ */
 export const GOLDEN = {
-  town: join(ROOT, 'packages/client/src/modules/town/__golden__/unity_town.json'),
-  panels: join(ROOT, 'packages/client/src/modules/town/__golden__/unity_panels.json'),
+  town: join(HERE, '__fixtures__', 'unity_town.json'),
+  panels: join(HERE, '__fixtures__', 'unity_panels.json'),
   salvage: join(ROOT, 'packages/shared/src/economy/__golden__/unity_salvage.json'),
-  stats: join(ROOT, 'packages/client/src/modules/progression/__golden__/unity_stats.json'),
+  stats: join(HERE, '__fixtures__', 'unity_stats.json'),
   exchange: join(ROOT, '..', 'ashes of the past', 'Ashes of the past', 'Assets', 'DM', 'UI', 'Tests', 'unity_exchange_golden.json'),
 } as const;
 

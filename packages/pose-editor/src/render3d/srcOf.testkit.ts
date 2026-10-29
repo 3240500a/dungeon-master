@@ -3,16 +3,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * ⭐ С3 (29.10): ИСХОДНИК `render3d` ДЛЯ СТОРОЖЕЙ-ПО-ТЕКСТУ. Поз-редактор уехал в свой пакет (`packages/pose-editor/src/render3d`), а
- * веб-стенд игры остался в `packages/client/src/render3d` — сторожа, читающие соседний файл по имени («в `online3d.ts` нет планировщика»,
- * «редактор зовёт тот же шов»), берут его отсюда: сперва из поз-редактора, потом из веб-клиента.
+ * ⭐ С3 (29.10): ИСХОДНИК `render3d` ДЛЯ СТОРОЖЕЙ-ПО-ТЕКСТУ («редактор зовёт тот же шов») — по имени файла из поз-редактора.
+ * ⭐ С11 (29.10): веб-стенда игры (`packages/client/src/render3d`) больше нет (тег `web-client-final`) — искать больше негде.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DIRS = [HERE, join(HERE, '../../../client/src/render3d')];
+const DIRS = [HERE];
 
 export function render3dSrc(name: string): string {
   for (const d of DIRS) { const p = join(d, name); if (existsSync(p)) return readFileSync(p, 'utf8'); }
-  throw new Error(`render3d: нет файла ${name} ни в поз-редакторе, ни в веб-клиенте`);
+  throw new Error(`render3d: нет файла ${name} в поз-редакторе`);
 }
 
 /** Имена `.ts` (кроме тестов) обеих папок `render3d`. */

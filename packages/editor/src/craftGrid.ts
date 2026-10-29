@@ -3,7 +3,7 @@ import {
   keyVariantsByBase, matchWhen, meltReturn, partById, typesRow, variantsFor, rollAffixes, createRng,
   type ConfigRegistry, type CraftInput, type Item, type PartSet, type SaveState, type CraftSlot, type WeaponPart,
 } from '@dm/shared';
-import { cardWith } from '@dm/client/modules/town/craftPanel.js';
+import { cardWith } from './game/modules/town/craftPanel.js';
 import { craftDataRev, fightCheck, sandboxHero, type CraftSandbox } from './craft.js';
 
 /**

@@ -1,11 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["vite/client", "phaser"],
+    "types": ["vite/client"],
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@dm/client/*": ["../client/src/*"],
       "@dm/pose-editor/*": ["../pose-editor/src/*"]
     }
   },

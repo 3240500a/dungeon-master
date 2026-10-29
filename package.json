@@ -7,17 +7,15 @@
     "packages/shared",
     "packages/craft-mesh",
     "packages/pose-editor",
-    "packages/client",
     "packages/server",
     "packages/editor"
   ],
   "scripts": {
     "dev": "concurrently -n pose,server -c cyan,magenta \"npm:dev:pose\" \"npm:dev:server\"",
     "dev:pose": "npm run dev -w @dm/pose-editor",
-    "dev:client": "npm run dev -w @dm/client",
     "dev:server": "npm run dev -w @dm/server",
     "editor": "npm run dev -w @dm/editor",
-    "build": "npm run build -w @dm/shared && npm run build -w @dm/client",
+    "build": "npm run build -w @dm/shared",
     "start": "tsx packages/server/src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",

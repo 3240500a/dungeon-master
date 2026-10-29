@@ -6,7 +6,7 @@
 
 ## Пакеты
 - `packages/shared` — типы, формулы, события, реестр конфигов (общий фундамент).
-- `packages/client` — Phaser 3 + Vite (игра).
+- ~~`packages/client`~~ — веб-клиент удалён (С11, 29.10.2026; тег `web-client-final`). Игровой клиент — Unity (отдельный репозиторий).
 - `packages/server` — Node + Express (сейвы/аккаунты; Postgres — с Ф2, до этого SQLite).
 - `packages/editor` — HTML-редактор конфигов.
 

@@ -144,19 +144,7 @@ describe('«только клипы»: планировщика нет', () => {
     expect([...attacks]).toContain('hit_test');
   });
 
-  it('⭐⭐ ИГРА ХОДИТ ТОЛЬКО КЛИПАМИ: перекрытие ставится безусловно, галки «бег клипами» в настройках клиента нет', () => {
-    // Решение автора (19.09): «степ-планер из игры убираем полностью… остаётся только в поз-редакторе». `online3d` не
-    // собирается в node (рендерер, DOM), поэтому проводка стережётся по исходнику — как у остальных швов редактора.
-    const src = (f: string): string => render3dSrc(f);
-    const game = src('online3d.ts');
-    expect(game, '⚠ игра обязана включать «только клипы» сама, а не по галке').toMatch(/^\s*setLocoMixOverride\(1\);/m);
-    expect(game, '⚠ перекрытие снова зависит от настройки игрока').not.toMatch(/setLocoMixOverride\((?!1\))/);
-    expect(game).not.toContain('onLocoClips');
-    const settings = src('settings3d.ts');
-    expect(settings, '⚠ галка «бег клипами (иначе StepPlanner)» вернулась в настройки клиента').not.toContain('onLocoClips');
-    expect(settings).not.toMatch(/type = 'checkbox'[^\n]*loco/i);
-  });
-
+  // ⭐ С11 (29.10): веб-игры (`online3d.ts`) больше нет — её сторож снят; игру стережёт unity_check (сборка без типов планировщика).
   /**
    * ⭐⭐ КУКЛА БЕЗ НАБОРА — НОВЫЙ КОНТРАКТ (Э13б).
    *

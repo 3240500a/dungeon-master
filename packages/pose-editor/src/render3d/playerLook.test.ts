@@ -95,9 +95,9 @@ describe('чем именно «коробило ноги» — замер, а �
 });
 
 describe('сторож: оба хоста строят куклу ОДНИМ разбором', () => {
-  const GAME = 'online3d.ts', TEST = 'testTab.ts';
+  const TEST = 'testTab.ts';   // ⭐ С11: веб-игры (`online3d.ts`) больше нет — кукла игры строится в Unity
 
-  for (const f of [GAME, TEST]) {
+  for (const f of [TEST]) {
     it(`${f} зовёт resolvePlayerLook`, () => {
       expect(src(f)).toContain('resolvePlayerLook');
     });

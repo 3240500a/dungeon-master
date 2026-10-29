@@ -22,8 +22,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
-      // Калькулятор переиспользует реальные панели игры (@dm/client) — «одна истина» по статам.
-      '@dm/client': resolve(__dirname, '../client/src'),
+      // ⭐ С11 (29.10): панели калькулятора (бывший веб-клиент) живут в самом редакторе — `src/game/`, псевдоним не нужен.
       '@dm/pose-editor': resolve(__dirname, '../pose-editor/src'),   // ⭐ С3: вход инструментов (devAuth), модели, кит графиков
     },
   },

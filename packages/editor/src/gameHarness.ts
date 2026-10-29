@@ -4,12 +4,12 @@ import {
   migrateRetiredInSave,
   type AccountStash, type SaveState, type TownCommand,
 } from '@dm/shared';
-import { App } from '@dm/client/core/app.js';
-import { GameState } from '@dm/client/core/gameState.js';
-import { setItemLabelResolvers } from '@dm/client/modules/inventory/itemView.js';
-import { materialNote } from '@dm/client/modules/inventory/materialsModel.js';
-import { setDamageTypeMeta } from '@dm/client/core/damageTypes.js';
-import { setRarityMeta } from '@dm/client/modules/loot/rarity.js';
+import { App } from './game/core/app.js';
+import { GameState } from './game/core/gameState.js';
+import { setItemLabelResolvers } from './game/modules/inventory/itemView.js';
+import { materialNote } from './game/modules/inventory/materialsModel.js';
+import { setDamageTypeMeta } from './game/core/damageTypes.js';
+import { setRarityMeta } from './game/modules/loot/rarity.js';
 
 /**
  * Мост «редактор → реальная игра»: строит настоящий `App` (@dm/client) + `GameState` из сейва, чтобы

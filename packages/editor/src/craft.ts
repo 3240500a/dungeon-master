@@ -3,14 +3,14 @@ import {
   emptyJournal, shapeFoundWeapon,
   type CraftJournal, type Item, type SaveState, type StatModifier,
 } from '@dm/shared';
-import type { App } from '@dm/client/core/app.js';
-import { craftWindow, cardWith, type CraftWindowState, initialCraftState } from '@dm/client/modules/town/craftPanel.js';
+import type { App } from './game/core/app.js';
+import { craftWindow, cardWith, type CraftWindowState, initialCraftState } from './game/modules/town/craftPanel.js';
 import { sandboxHost } from './craftSandboxHost.js';
 import { followHarness, makeHarness } from './gameHarness.js';
 import { renderCraftGrid } from './craftGrid.js';
 import { renderCraftCatalog } from './craftCatalog.js';
 import { renderCraftBlades } from './craftBlades.js';
-import { weaponPreview3d } from '@dm/client/modules/town/craftPreview3d.js';
+import { weaponPreview3d } from './game/modules/town/craftPreview3d.js';
 
 /**
  * Вкладка «🔨 Ковка» — ПРОТОТИП ковки оружия из деталей (docs/CRAFT_WEAPONS.md) на настоящих данных.

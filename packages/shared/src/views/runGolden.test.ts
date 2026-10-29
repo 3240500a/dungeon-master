@@ -15,12 +15,12 @@ import type { RunPlan } from '../dungeon/run/types.js';
  * «<>»), жирные куски и цвет предупреждения; смерть — окно/спрятано/плашка/состояние по шагам; карта — шапка, размер, узлы,
  * полоса этажей, рёбра; наблюдение — фокус, подпись, Tab. Разделы `camera` и `wallFade` — отрисовка, их здесь нет намеренно.
  *
- * ⚠ Эталон лежит у веб-клиента (`client/src/modules/run/__golden__`) и в Unity; shared без них обязан собираться и проверяться —
- * поэтому файла нет — сторож молча пропускается, а не падает.
+ * ⭐ С11 (29.10): эталон ЗАМОРОЖЕН здесь (`__fixtures__/unity_run_ui.json`, выход веб-окон на теге `web-client-final`): веб-клиента и портов
+ * Unity больше нет, вид сервера — сам источник; файл держит прежнее поведение окон как регрессию. Нет файла — сторож пропускается.
  */
 
 const CANDIDATES = [
-  '../../../client/src/modules/run/__golden__/unity_run_ui.json',
+  './__fixtures__/unity_run_ui.json',
 ];
 const goldenPath = CANDIDATES.map((rel) => fileURLToPath(new URL(rel, import.meta.url))).find((p) => existsSync(p));
 const g = goldenPath ? JSON.parse(readFileSync(goldenPath, 'utf8')) as Golden : null;

@@ -2,7 +2,7 @@ import {
   craftAction, createRng, enchantAction, fullJournal, sketchAction,
   type AccountStash, type ConfigRegistry, type Item, type SaveState,
 } from '@dm/shared';
-import type { CraftHost } from '@dm/client/modules/town/craftPanel.js';
+import type { CraftHost } from './game/modules/town/craftPanel.js';
 import type { CraftSandbox } from './craft.js';
 
 // Хозяин окна ковки песочницы — отдельным модулем без DOM и без `@dm/client` в рантайме: иначе правило «песочница
