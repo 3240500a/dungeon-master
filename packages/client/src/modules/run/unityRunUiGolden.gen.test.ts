@@ -34,11 +34,12 @@ import { LEGEND_TYPES, MAP_GEOM, runMapView } from './runMapLayout.js';
 // ⭐⭐ Г8-3: раскладку ЦЕПИ МЕТОК на алтаре эталон ЗОВЁТ, а не копирует (как раскладку карты забега с Г5).
 import { altarChainView, BOSS_RANK_MARK } from '../town/altarMapLayout.js';
 import { cameraCfg, camElevation, placeCamera, camZoom, camDir } from '@dm/pose-editor/render3d/cameraRig.js';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: render3d — в двух пакетах
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string): string => readFileSync(join(HERE, rel), 'utf8');
-const ONLINE3D = read('../../render3d/online3d.ts');
-const ENV3D = read('../../render3d/env3d.ts');
+const ONLINE3D = render3dSrc('online3d.ts');
+const ENV3D = render3dSrc('env3d.ts');
 const RUNMAP = read('./runMapPanel.ts');
 
 /** Строки исходников, повторённые ниже копией. Нет строки — правило веба поменялось: обновить копию, эталон и порт Unity. */

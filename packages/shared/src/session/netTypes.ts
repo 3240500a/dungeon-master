@@ -14,6 +14,13 @@ import type { ClientMonsterDef } from './serialize.js';
 import type { Interactable } from './interactables.js';
 
 /**
+ * ⭐ С2/С4–С6 (29.10): ВИДЫ, КОТОРЫЕ СЕРВЕР СЧИТАЕТ ОКНАМ КЛИЕНТА (кадр `view`): лист героя с набранными очками, меню вещи, верстак кузницы,
+ * прилавок, обмен сырья, алтарь и окно портала, алтарь метки, перековка печатей, ковка. Клиент формул не держит — только показ.
+ */
+export const VIEW_KINDS = ['hero', 'item', 'bench', 'shop', 'exchange', 'portal', 'segment', 'reforge', 'craft'] as const;
+export type ViewKind = typeof VIEW_KINDS[number];
+
+/**
  * ⭐ С9 (29.10): ЛИМИТЫ ЧАСТОТЫ КОМАНД — как их держит сервер (`server/net/rateLimit.ts`, `room.ts`). Бакет — [ёмкость всплеска, токенов в секунду].
  * `town` платит каждая команда, `forge` — ещё и команды из `forgeCmds`, `stash` — из `stashCmds`. Клиент по ним не шлёт команду, которой
  * сервер ответил бы «Слишком часто» (отказ на месте, токены сервера целы); своей копии таблицы у клиента нет.
@@ -298,7 +305,8 @@ export type ClientFrame =
   // (грейс-комната из подземелья); roomCode — вход к другу. Реконнект — только явным resume.
   // ⭐ D1: solo (с resume) — «Продолжить без пати»: голос за продолжение забега в комнате, что его держит вне подземелья, не прошёл (кадр
   // `error{code:'vote', solo:true}`) — держатель забег отпускает, герой продолжает его в своей комнате (docs/MULTIPLAYER.md, правило общего забега).
-  | { t: 'join'; roomCode?: string; token: string; charId: string; fresh?: boolean; resume?: boolean; solo?: boolean }
+  // ⭐ С8: `lang` — язык интерфейса игрока: на нём сервер собирает тексты видов (имена вещей, подсказки, отказы).
+  | { t: 'join'; roomCode?: string; token: string; charId: string; fresh?: boolean; resume?: boolean; solo?: boolean; lang?: string }
   // Есть ли у персонажа незавершённый забег (грейс-комната)? Ответ решает: модалка «Продолжить/
   // Забросить» или обычное лобби. Комнату не создаёт.
   | { t: 'runStatus'; token: string; charId: string }
@@ -331,6 +339,9 @@ export type ClientFrame =
   | { t: 'chest'; chestId: number }
   | { t: 'vote'; accept: boolean }
   | { t: 'leave' }
+  // ⭐ С2/С4–С6 (29.10): ЗАПРОС ВИДА — модель окна, посчитанная сервером (`VIEW_KINDS`): цены, выходы, причины отказа, превью, лист героя.
+  // `args` — то, что выбрал игрок (вещь, вкладка, набранные очки…); их форму проверяет комната по виду. Ответ — кадр `view` с тем же `id`.
+  | { t: 'view'; id: number; kind: ViewKind; args?: Record<string, unknown> }
   // Замер задержки: клиент шлёт ping с id, сервер сразу эхо-pong тем же id → клиент считает RTT.
   // Бонусом — keepalive (не даёт прокси уронить простаивающее соединение).
   | { t: 'ping'; id: number };
@@ -439,6 +450,10 @@ export type ServerFrame =
    * Старый кадр `error` на отказ остаётся — его читают прежние клиенты.
    */
   | { t: 'cmdResult'; id?: number; cmd: string; ok: boolean; reason?: string; uid?: string; unlocked?: string[]; summary?: string }
+  // ⭐ С2/С4–С6: ответ на запрос вида — модель окна (`view`) или отказ (`reason`). Модель — JSON полями моделей окон клиента.
+  | { t: 'view'; id: number; kind: ViewKind; ok: boolean; view?: unknown; reason?: string }
+  // ⭐ С2: лист героя — сервер шлёт сам, когда он поменялся (сейв, экипировка, ауры и стойки, уровень). Клиент статов не считает.
+  | { t: 'hero'; view: unknown }
   /**
    * Отказ. ⭐ C-05, C-08: `roomCode` — у отказа «Продолжить», чей забег ведёт другая комната (V2): `run` — она на другой ноде кластера, `full` —
    * в её пати нет мест. Клиент идёт по нему к ноде держателя (`join { resume }` там) или показывает лобби с этим кодом, а не только строку.

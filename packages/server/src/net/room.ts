@@ -16,8 +16,9 @@ import {
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type RunWindow, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
-  type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits,
-  monsterDefView, floorInteractables, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
+  type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits, type ViewKind,
+  monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
+  type LastTarget, type PendingAttrs, type HeroFloor, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -742,6 +743,12 @@ interface Client {
   inputSeen: boolean;
   /** R4-20: тиков с последнего кадра ввода. */
   inputAge: number;
+  /** ⭐ С2 (29.10): последний разосланный лист героя (`hero`) — тем же текстом второй раз не шлём. */
+  heroSent?: string;
+  /** ⭐ С2: ауры и стойки, с которыми ушёл последний лист героя. */
+  heroToggles?: string;
+  /** ⭐ С8 (29.10): язык интерфейса игрока (`join.lang`, включённый в `locales`; иначе — источник) — на нём сервер собирает тексты видов. */
+  lang?: string;
   /**
    * ⭐ С0 (29.10): каст ПРОШЛОГО пришедшего кадра, как его прислал клиент. Тогл (аура, стойка) срабатывает по ФРОНТУ нажатия, и фронт
    * видит сервер: тот же каст тогла и в следующем кадре — удержание клавиши, не новое нажатие. Раньше сервер верил, что клиент шлёт каст
@@ -1013,6 +1020,11 @@ export class Room implements Tickable {
   private roomDelta = new SnapshotDelta();
   /** Монстры, чьи определения комната уже разослала. Сбрасывается на смене этажа. */
   private known = new Set<number>();
+  /**
+   * ⭐ С2 (29.10): ПОСЛЕДНЯЯ ЦЕЛЬ ГЕРОЯ — монстр, по которому он последним попал (имя, меткость, уклонение): лист героя считает по ней шанс
+   * попасть и уклониться. Раньше её помнил клиент (по событиям `hit` и определениям монстров), теперь — сервер, по своим ударам.
+   */
+  private lastTargets = new Map<string, LastTarget>();
   /** ⭐ С-аудит F1: монстры, которые сейчас в виде комнаты (`roomView`; гистерезис выхода). Сбрасывается на смене этажа. */
   private inView = new Set<number>();
   /** ⭐ С-аудит F5: открытые пати куски этажа (`chunkKey`) и сетка, к которой они относятся (сменилась сетка — этаж другой, куски заново). */
@@ -1294,6 +1306,7 @@ export class Room implements Tickable {
       ...(build ? { build } : {}), cfgRev: this.cfg.revision(), gameRev: this.cfg.gameRevision(), ...(cooldowns ? { cooldowns } : {}),
       limits: CMD_LIMITS(),   // ⭐ С9
     });
+    this.pushHero(pid);   // ⭐ С2: лист героя — сразу со входом
     // Сундук с журналом — сразу: кузница по нему решает, что открыто. ⚠ Переезд старого кошелька сейва в
     // сундук аккаунта делает менеджер ДО входа (R1-06): здесь, уже в живой комнате, его откат после неудачной
     // записи возвращал бы и всё, что игрок успел сделать за время ожидания базы (бросил вещь — она и на земле,
@@ -4254,6 +4267,7 @@ export class Room implements Tickable {
     if (folded) this.markLedger();
     this.markLedger(nodeId);
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
+    for (const id of this.clients.keys()) this.pushHero(id);   // ⭐ С2: строка HUD — по новой области
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast({ t: 'runPlan', plan: clientPlan(this.runPlan), currentNodeId: nodeId });   // R14-10: без сидов
@@ -4523,6 +4537,7 @@ export class Room implements Tickable {
       ensureMainQuest(this.cfg, save);
     }
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
+    for (const id of this.clients.keys()) this.pushHero(id);   // ⭐ С2: строка HUD — по новой области
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast(this.shopFrame());
@@ -4566,6 +4581,7 @@ export class Room implements Tickable {
       i++;
     }
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
+    for (const id of this.clients.keys()) this.pushHero(id);   // ⭐ С2: строка HUD — по новой области
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
   }
@@ -4787,6 +4803,8 @@ export class Room implements Tickable {
       if (c.input.dodge || c.input.useBelt !== undefined) { const { dodge: _d, useBelt: _u, ...held } = c.input; c.input = held; }
       if (c.input.cast != null && this.isToggleNode(c.input.cast)) c.input = { ...c.input, cast: null };
     }
+    // ⭐ С2: ауры и стойки сменились (тогл в тике) — лист героя заново (тем же текстом не уйдёт: `pushHero` сверяет).
+    for (const [id, c] of this.clients) { const t = this.session.world.players[id]?.toggles.join('|'); if (t !== undefined && t !== c.heroToggles) { c.heroToggles = t; this.pushHero(id); } }
     counters.ticks++;
     if (this.lingering.size && !halted) this.tickLingers();   // R13-03: тела ушедших посреди боя — погибли, отбились, срок вышел
     // Снапшот шлём по СВОЕЙ частоте (Ф1.5) и только на последнем шаге пачки догона (Ф0.2):
@@ -4820,6 +4838,7 @@ export class Room implements Tickable {
     for (const e of events) {
       if (e.type === 'gold' || e.type === 'xp' || e.type === 'levelup' || e.type === 'item-picked' || e.type === 'materials') touched.add(e.playerId);
       this.observe(e);   // Ф3.2: наблюдения о поведении, на саму игру не влияют
+      if (e.type === 'hit' && e.target === 'monster' && e.by && e.hit) this.noteTarget(e.by, Number(e.id));   // ⭐ С2: цель для листа героя
       if (this.noteNode(e)) nodeChanged = true;   // R4-01: убитые и открытое — в запись узла
       if (e.type === 'monster-died' && e.by) this.track(e.by, 'kill', e.def.id, touched, quest);
       // R4-26: своё выброшенное и поднятое снова «собранным» не считается — иначе «собрать N» закрывала одна вещь.
@@ -4831,6 +4850,39 @@ export class Room implements Tickable {
     if (events.length || quest.length) this.broadcastEvents(quest.length ? [...events, ...quest] : events);
     if (saves) for (const pid of touched) this.sendSave(pid);
     if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
+  }
+
+  /** ⭐ С8: язык интерфейса игрока — только включённый язык таблицы `locales`; прочее — язык-источник (поле снимается). */
+  setLang(pid: string, lang: string | undefined): void {
+    const c = this.clients.get(pid);
+    if (!c) return;
+    const ok = typeof lang === 'string' && localeLangs(this.cfg.get('locales') as Locales | undefined, { enabledOnly: true }).includes(lang);
+    if (ok) c.lang = lang; else delete c.lang;
+  }
+
+  /**
+   * ⭐ С2/С4–С6 (29.10): ЗАПРОС ВИДА — модель окна, посчитанная сервером теми же функциями, которыми исполняются команды (цена вида = цена
+   * команды). Отказ — строкой (`reason`); частота — на аккаунт (`limits.viewReq`). Вид ничего не меняет: ни сейва, ни мира, ни базы.
+   */
+  viewRequest(pid: string, id: number, kind: ViewKind, args: Record<string, unknown> | undefined): void {
+    const c = this.clients.get(pid);
+    if (!c || this.frozen) return;
+    const answer = (out: { ok: boolean; view?: unknown; reason?: string }): void => this.send(c.ws, { t: 'view', id, kind, ...out });
+    if (!limits.viewReq.take(c.userId)) { answer({ ok: false, reason: 'Слишком часто' }); return; }
+    const p = this.session.world.players[pid];
+    if (!p) { answer({ ok: false, reason: 'Нет персонажа' }); return; }
+    let out: { ok: boolean; view?: unknown; reason?: string };
+    try { out = this.viewOf(pid, kind, args ?? {}); }
+    catch (e) { console.error(`[room ${this.code}] вид «${kind}» игрока ${p.save.charId} упал:`, e); out = { ok: false, reason: 'Ошибка сервера' }; }
+    answer(out);
+  }
+
+  /** ⭐ С2/С4–С6: вид `kind` игрока `pid` по выбору окна `args`. Каждый вид — функция `shared/views`, её же зовёт редактор. */
+  private viewOf(pid: string, kind: ViewKind, args: Record<string, unknown>): { ok: boolean; view?: unknown; reason?: string } {
+    switch (kind) {
+      case 'hero': return this.heroView(pid, args);
+      default: return { ok: false, reason: `Вид «${kind}» сервер ещё не считает` };
+    }
   }
 
   /** ⭐ С7: отказ команды станции города, если герой не у своей станции (`STATION_CMDS`); `null` — можно. Вне города — не судит (SCOPE). */
@@ -6051,6 +6103,74 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (c && p) this.send(c.ws, { t: 'saveUpdate', save: clientSave(p.save) });   // R14-10: без сида забега
+    this.pushHero(pid);   // ⭐ С2: сейв сменился — и лист героя
+  }
+
+  /**
+   * ⭐ С2 (29.10): ЛИСТ ГЕРОЯ — СЕРВЕР ШЛЁТ САМ (кадр `hero`): статы целиком (`heroNumbers` — те же моды, что бьют: гир, класс брони, древо и
+   * сет-бонус древа, мастерства, полуторное со щитом, ауры и стойки), блок атрибутов мастера, строка HUD и полоса опыта. Клиент статов не
+   * считает (раньше — порт правил на ~1 100 строк, и его лист врал для полуторного со щитом и сет-бонуса древа). Тем же текстом второй раз
+   * не шлётся: зовут на каждый сейв, смену аур и стоек и смену области.
+   */
+  private pushHero(pid: string): void {
+    const c = this.clients.get(pid);
+    const p = this.session.world.players[pid];
+    if (!c || !p) return;
+    const save = p.save;
+    const bal = this.cfg.get('balance');
+    const xp = xpProgress(save.level, save.xp, bal.xpTable);
+    const view = {
+      numbers: heroNumbers(this.cfg, save, p.toggles),
+      master: masterBlock(this.cfg, save, p.toggles),
+      hudInfo: hudInfo(this.cfg, save, this.heroFloor()),
+      xp,
+      toggles: [...p.toggles],
+    };
+    const text = JSON.stringify(view);
+    if (text === c.heroSent) return;
+    c.heroSent = text;
+    this.send(c.ws, { t: 'hero', view });
+  }
+
+  /** ⭐ С2: где герой — для строки HUD («этаж · тир · монстры ур.»), как её считает сервер. */
+  private heroFloor(): HeroFloor {
+    const dungeon = this.area === 'dungeon';
+    return {
+      area: dungeon ? 'dungeon' : 'town',
+      depth: this.session.world.depth,
+      difficultyId: this.difficultyId,
+      challengeLevel: dungeon ? floorChallengeLevel(this.cfg, this.difficultyId, this.depth) : null,
+    };
+  }
+
+  /** ⭐ С2: последняя цель героя `by` — монстр `id` (имя, меткость, уклонение — его определения). */
+  private noteTarget(by: string, id: number): void {
+    const m = this.session.world.monsters.find((x) => x.id === id);
+    if (m) this.lastTargets.set(by, { name: m.def.name, accuracy: m.def.accuracy, evade: m.def.evade });
+  }
+
+  /**
+   * ⭐ С2: вид `hero` — лист персонажа (`part: 'sheet'`, с набранными, но не применёнными очками `pending` — превью «+Δ») или древо скилов
+   * (`part: 'tree'`). Набранное — целые ≥ 0 по атрибутам, сумма — не больше свободных очков (лишнее — отказ, а не обрезка: окно его не пошлёт).
+   */
+  private heroView(pid: string, args: Record<string, unknown>): { ok: boolean; view?: unknown; reason?: string } {
+    const p = this.session.world.players[pid]!;
+    if (args.part === 'tree') return { ok: true, view: skillTreeView(this.cfg, p.save) };
+    if (args.part !== 'sheet') return { ok: false, reason: 'Неверный запрос вида' };
+    const pending: PendingAttrs = {};
+    let sum = 0;
+    const raw = args.pending;
+    if (raw !== undefined) {
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, reason: 'Неверный запрос вида' };
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (!(ATTRIBUTES as readonly string[]).includes(k) || typeof v !== 'number' || !Number.isInteger(v) || v < 0) return { ok: false, reason: 'Неверный запрос вида' };
+        pending[k as keyof PendingAttrs] = v; sum += v;
+      }
+    }
+    if (sum > p.save.unspentAttributePoints) return { ok: false, reason: 'Столько свободных очков нет' };
+    const blocks = sheetView(this.cfg, p.save, p.toggles, { hp: p.hp, mana: p.mana, stamina: p.stamina },
+      { lastTarget: this.lastTargets.get(pid) ?? null, pending });
+    return { ok: true, view: { blocks } };
   }
   /** Шлёт клиенту полный слепок его аккаунт-сундука из базы (на stashOpen и на входе). */
   private async sendStash(pid: string): Promise<void> {

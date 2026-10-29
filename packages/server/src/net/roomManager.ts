@@ -803,6 +803,7 @@ export class RoomManager {
       case 'lever': conn.room.pullLever(conn.pid, frame.leverId); break;
       case 'chest': conn.room.openChest(conn.pid, frame.chestId); break;
       case 'vote': conn.room.castVote(conn.pid, frame.accept); break;
+      case 'view': conn.room.viewRequest(conn.pid, frame.id, frame.kind, frame.args); break;   // ⭐ С2/С4–С6: модель окна — от сервера
       case 'leave': this.onClose(ws); break;
     }
   }
@@ -865,7 +866,7 @@ export class RoomManager {
       if (!ws.open) return;   // ⭐ B3-V2: соединение закрыли, пока вход ждал базу, — на мёртвый сокет не садим
       const graceRoom = this.graceByChar.get(frame.charId);
       if (graceRoom) {
-        this.seat(ws, save.charId, graceRoom.reconnect(ws, userId, save, version), graceRoom);
+        this.seat(ws, save.charId, graceRoom.reconnect(ws, userId, save, version), graceRoom, frame.lang);
         return;
       }
       if (save.run) {
@@ -917,7 +918,7 @@ export class RoomManager {
         if (holder) {
           if (holder.seatsTaken(frame.charId) >= MAX_PARTY) { ws.send(JSON.stringify({ ...ROOM_FULL, roomCode: holder.code })); return; }
           this.endDeadRun(save, holder);   // ⭐ K1: пати забега в городе — погибший входит к ней без забега (её спуск оживит его вместе с ней)
-          this.seat(ws, save.charId, holder.addPlayer(ws, userId, save, version), holder);
+          this.seat(ws, save.charId, holder.addPlayer(ws, userId, save, version), holder, frame.lang);
           return;
         }
         if (elsewhere) {
@@ -998,7 +999,7 @@ export class RoomManager {
     // (C-04) — закрыть вкладку посреди боя и уйти «Соло» (или дождаться города либо спуска пати) стоило ноль, запаркованный на один этаж забег
     // был страховкой от любого боя. Проверка — вплотную к входу (без ожиданий между ней и `addPlayer`): комната сменить область не успеет.
     if (room.runClashOn(save)) { ws.send(JSON.stringify(RUN_CLASH_JOIN)); return; }
-    this.seat(ws, save.charId, room.addPlayer(ws, userId, save, version), room);
+    this.seat(ws, save.charId, room.addPlayer(ws, userId, save, version), room, frame.lang);
   }
 
   /**
@@ -1023,8 +1024,9 @@ export class RoomManager {
    * Проверка `ws.open` перед входом этого не ловит: закрывает сама отправка кадров входа. Оба транспорта. ⭐ R18-01: закрытие из отправки
    * транспорт отдаёт `onClose` микрозадачей (после входа) — снятие здесь всё равно сразу, а позднее `onClose` находит соединение уже снятым.
    */
-  private seat(ws: GameConn, charId: string, pid: string, room: Room): void {
+  private seat(ws: GameConn, charId: string, pid: string, room: Room, lang?: string): void {
     this.conns.set(ws, { pid, room });
+    room.setLang(pid, lang);   // ⭐ С8: язык интерфейса — для текстов видов
     this.live.set(charId, ws);
     if (!ws.open) this.onClose(ws);
   }

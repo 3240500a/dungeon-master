@@ -69,7 +69,7 @@ type Store = Record<string, unknown> & { pe_clips: RawClip[] };
 // ⭐ С3 (29.10): эталоны анимации живут с поз-редактором (`packages/pose-editor/src/render3d/__golden__`)
 const GOLD = join(HERE, '../../../pose-editor/src/render3d/__golden__');
 const SNAP = JSON.parse(readFileSync(join(GOLD, 'unity_anim_content.json'), 'utf8')) as { stand: Store };
-const CORE = JSON.parse(readFileSync(join(HERE, '..', '..', 'public', 'mocap', 'mocap_core.json'), 'utf8')) as RawClip[];
+const CORE = JSON.parse(readFileSync(join(HERE, '../../../pose-editor/public/mocap/mocap_core.json'), 'utf8')) as RawClip[];   // ⭐ С3: мокап — у поз-редактора
 const RIG = JSON.parse(readFileSync(join(GOLD, 'unity_rig.json'), 'utf8')) as {
   atlas: { look: { profile?: Record<string, number>; boneScale?: Record<string, number>; boneOffsets?: Record<string, number[]> } }[];
 };

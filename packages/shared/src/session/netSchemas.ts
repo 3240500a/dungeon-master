@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CRAFT_NONCE_RE, MATERIAL_STEPS } from '../formulas/craft.js';
 import { normalizeAngle } from '../world/fastMath.js';
-import type { ClientFrame, TownCommand } from './netTypes.js';
+import { VIEW_KINDS, type ClientFrame, type TownCommand } from './netTypes.js';
 import type { PlayerInput } from './session.js';
 import {
   ALLOC_ATTR_MAX, WIRE_BELT_SLOTS, WIRE_CELL_MAX, WIRE_DIFFICULTY_ID_MAX, WIRE_EXCHANGE_MAX, WIRE_FINISH_ROWS, WIRE_ID_MAX, WIRE_MATERIALS_MAX,
@@ -233,6 +233,7 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('join'), token, charId, roomCode: frameText(ROOM_CODE_LEN).optional(), fresh: z.boolean().optional(), resume: z.boolean().optional(),
     solo: z.boolean().optional(),   // ⭐ D1: «Продолжить без пати» (с `resume`)
+    lang: frameText(16).optional(),   // ⭐ С8: язык интерфейса игрока — на нём сервер собирает тексты видов (нет такого языка — источник)
   }),
   z.object({ t: z.literal('runStatus'), token, charId }),
   z.object({ t: z.literal('abandon'), token, charId }),
@@ -274,6 +275,8 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('chest'), chestId: z.number().int().min(0) }),
   z.object({ t: z.literal('vote'), accept: z.boolean() }),
   z.object({ t: z.literal('leave') }),
+  // ⭐ С2/С4–С6: запрос вида. `args` — только форма записи (ключи и размер держит потолок кадра); что в них допустимо, судит комната по виду.
+  z.object({ t: z.literal('view'), id: z.number().int().nonnegative(), kind: z.enum(VIEW_KINDS), args: z.record(z.unknown()).optional() }),
   z.object({ t: z.literal('ping'), id: z.number().int() }),
 ]);
 

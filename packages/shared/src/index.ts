@@ -10,3 +10,4 @@ export * from './dungeon/index.js';
 export * from './sim/index.js';
 export * from './validation/save.js';
 export * from './i18n/index.js';
+export * from './views/index.js';   // ⭐ С2/С4–С6: модели окон, которые считает сервер

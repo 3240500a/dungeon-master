@@ -29,6 +29,7 @@ import {
 } from '@dm/shared';
 import { forgeableFamilies, initialCraftState, normalizeCraftState, type CraftWindowState } from './craftPanel.js';
 import { craftSig, wireInput, CRAFT_UNKNOWN } from './craftHost.js';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: render3d — в двух пакетах
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string): string => readFileSync(join(HERE, rel), 'utf8');
@@ -38,9 +39,9 @@ const TAB = read('./forgeCraftTab.ts');
 const FORGE = read('./forgePanel.ts');
 const APP = read('../../core/app.ts');
 const DMG = read('../../core/damageTypes.ts');
-const RUNTIME = read('../../render3d/poseRuntime.ts');
-const LAYERS = read('../../render3d/poseLayers.ts');
-const WEAPON3D = read('../../render3d/weapon3d.ts');
+const RUNTIME = render3dSrc('poseRuntime.ts');
+const LAYERS = render3dSrc('poseLayers.ts');
+const WEAPON3D = render3dSrc('weapon3d.ts');
 
 /** Строки исходников, повторённые ниже копией. Нет строки — правило веба поменялось: обновить копию, эталон и порт Unity. */
 const SRC: [string, string][] = [

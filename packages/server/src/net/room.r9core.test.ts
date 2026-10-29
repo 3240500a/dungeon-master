@@ -203,6 +203,9 @@ describe('⭐ R9-06: добитое статусом ушедшего — доб
       const w = inner(A.room).session.world;
       const m = w.monsters.find((x) => x.alive)!;
       const idx = inner(A.room).spawnIdx.get(m.id)!;
+      // ⭐ F2 (29.10): события — только в виде комнаты; первый живой монстр этажа бывает за его краем (этаж случайный) → рядом с A
+      const me = w.players[A.pid]!.pos;
+      m.pos = { x: me.x + 100, y: me.y };
       m.hp = 0.5;
       m.debuffs.poison = { stacks: 1, maxStacks: 1, expiresAt: w.timeMs + 60_000, mag: 50, mag2: 0 };
       m.dotBy = { poison: b };
