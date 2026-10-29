@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { localStorageContent, applyGaitConfig, loadTwistStates, loadFootLift, setLocoMixOverride, TURN_ACCEL_SEC, WARP_ACCEL_SEC, type PoseContent, type GXKnobs, type TwistStates } from './poseRuntime.js';
-import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
-import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS } from './clipBake.js';
-import { type Clip } from './clipModel.js';
+import { buildHumanoid, type Humanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { localStorageContent, applyGaitConfig, loadTwistStates, loadFootLift, setLocoMixOverride, TURN_ACCEL_SEC, WARP_ACCEL_SEC, type PoseContent, type GXKnobs, type TwistStates } from '@dm/pose-editor/render3d/poseRuntime.js';
+import { BakePlayer } from '@dm/pose-editor/render3d/bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
+import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS } from '@dm/pose-editor/render3d/clipBake.js';
+import { type Clip } from '@dm/pose-editor/render3d/clipModel.js';
 import { makeNetInterp } from './netInterp.js';
-import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from './driveActor.js';
-import { facingFrom, AIM_DEAD } from './playerInput.js';
-import { pelvisHeading } from './pelvisFrame.js';
-import { GAIT, POSE, GAIT_BASE, POSE_BASE } from './gaitKnobs.js';
+import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from '@dm/pose-editor/render3d/driveActor.js';
+import { facingFrom, AIM_DEAD } from '@dm/pose-editor/render3d/playerInput.js';
+import { pelvisHeading } from '@dm/pose-editor/render3d/pelvisFrame.js';
+import { GAIT, POSE, GAIT_BASE, POSE_BASE } from '@dm/pose-editor/render3d/gaitKnobs.js';
 import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
 
 /**

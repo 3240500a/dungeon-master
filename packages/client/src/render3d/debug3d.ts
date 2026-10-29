@@ -11,7 +11,7 @@
  */
 import * as THREE from 'three';
 import { Cell, TILE, type Grid } from '@dm/shared';
-import { WALL_H } from './env3d.js';
+import { WALL_H } from '@dm/pose-editor/render3d/env3d.js';
 import { isTextEntry } from '../ui/typingGuard.js';
 
 export type DebugLayer = 'colliders' | 'vision' | 'attack' | 'ai' | 'facing' | 'labels';

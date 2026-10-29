@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { App } from '../core/app.js';
 import { makeButton } from './ui/button.js';
-import { listCharacters, deleteCharacter, type CharacterSummary } from '../modules/auth/authApi.js';
+import { listCharacters, deleteCharacter, type CharacterSummary } from '@dm/pose-editor/modules/auth/authApi.js';
 import { signOut } from '../modules/auth/signOut.js';
 import { FONT_TITLE } from '../ui/kit.js';
 import { reflowOnFontsReady } from './ui/fonts.js';

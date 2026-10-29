@@ -51,24 +51,26 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeStand } from './parityHarness.js';
-import { buildHumanoid, type Humanoid } from './humanoid.js';
+import { buildHumanoid, type Humanoid } from '@dm/pose-editor/render3d/humanoid.js';
 import {
   PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadTwistStates, setLocoMixOverride, emptyGrid, resetSwingSnapshot,
   type GXKnobs, type GamePoseContent,
-} from './poseRuntime.js';
-import { GAIT, ASYM, COMBAT } from './gaitKnobs.js';
-import { BASE_GAIT_CHAR, locoPhaseU, bakedLocoSpeed } from './locoBlend.js';
-import { pickAttack, ATTACK_VARY } from './attackPick.js';
-import { type Pose, type Clip, type MarkEvent } from './clipModel.js';
-import { groundFeet } from './footIk.js';
-import { mulberry32 } from './idleFidget.js';
+} from '@dm/pose-editor/render3d/poseRuntime.js';
+import { GAIT, ASYM, COMBAT } from '@dm/pose-editor/render3d/gaitKnobs.js';
+import { BASE_GAIT_CHAR, locoPhaseU, bakedLocoSpeed } from '@dm/pose-editor/render3d/locoBlend.js';
+import { pickAttack, ATTACK_VARY } from '@dm/pose-editor/render3d/attackPick.js';
+import { type Pose, type Clip, type MarkEvent } from '@dm/pose-editor/render3d/clipModel.js';
+import { groundFeet } from '@dm/pose-editor/render3d/footIk.js';
+import { mulberry32 } from '@dm/pose-editor/render3d/idleFidget.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 type RawClip = { name: string; character: string; weapon: string; loop: boolean; keys: { t: number; pose: Pose }[]; [k: string]: unknown };
 type Store = Record<string, unknown> & { pe_clips: RawClip[] };
-const SNAP = JSON.parse(readFileSync(join(HERE, '__golden__', 'unity_anim_content.json'), 'utf8')) as { stand: Store };
+// ⭐ С3 (29.10): эталоны анимации живут с поз-редактором (`packages/pose-editor/src/render3d/__golden__`)
+const GOLD = join(HERE, '../../../pose-editor/src/render3d/__golden__');
+const SNAP = JSON.parse(readFileSync(join(GOLD, 'unity_anim_content.json'), 'utf8')) as { stand: Store };
 const CORE = JSON.parse(readFileSync(join(HERE, '..', '..', 'public', 'mocap', 'mocap_core.json'), 'utf8')) as RawClip[];
-const RIG = JSON.parse(readFileSync(join(HERE, '__golden__', 'unity_rig.json'), 'utf8')) as {
+const RIG = JSON.parse(readFileSync(join(GOLD, 'unity_rig.json'), 'utf8')) as {
   atlas: { look: { profile?: Record<string, number>; boneScale?: Record<string, number>; boneOffsets?: Record<string, number[]> } }[];
 };
 
@@ -862,7 +864,7 @@ describe('эталон G2 локомоции, поворотов и действ
       rigs: RIGS, groundBones: GROUND_BONES,
       scenarios,
     };
-    const dir = join(HERE, '__golden__');
+    const dir = GOLD;
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'unity_anim_g2.json'), JSON.stringify(golden));
   }, 240_000);

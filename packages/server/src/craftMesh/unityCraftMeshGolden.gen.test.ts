@@ -27,7 +27,7 @@ import {
 import { craftMeshRev, craftMeshTables } from './service.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, '../../../client/src/render3d/__golden__/unity_craftmesh.json');
+const OUT = join(HERE, '__golden__/unity_craftmesh.json');   // ⭐ С3: у своего продюсера (было — в веб-клиенте)
 
 const reg = new ConfigRegistry();
 reg.loadAll();

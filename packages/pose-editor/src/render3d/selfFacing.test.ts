@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { facingFrom } from './playerInput.js';
+import { render3dSrc } from './srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ СВОЙ ФЕЙСИНГ РИСУЕТСЯ ПРЕДСКАЗАННЫМ, А НЕ ЭХОМ СЕРВЕРА.
@@ -20,7 +21,7 @@ import { facingFrom } from './playerInput.js';
  * Единственное исключение — оглушение: там ввод не проходит, и ведёт сервер.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src = (f: string): string => readFileSync(join(HERE, f), 'utf8');
+const src = (f: string): string => render3dSrc(f);
 
 describe('свой фейсинг', () => {
   it('⭐⭐ СВОЯ КУКЛА НЕ РИСУЕТСЯ ФЕЙСИНГОМ ИЗ СНАПШОТА', () => {

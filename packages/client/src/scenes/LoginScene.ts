@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { App } from '../core/app.js';
-import { login, register } from '../modules/auth/authApi.js';
+import { login, register } from '@dm/pose-editor/modules/auth/authApi.js';
 import { FONT_TITLE } from '../ui/kit.js';
 
 /**

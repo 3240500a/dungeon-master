@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { buildMaterial, type MaterialCfg, type TextureCfg } from '@dm/client/render3d/assetCache.js';
+import { buildMaterial, type MaterialCfg, type TextureCfg } from '@dm/pose-editor/render3d/assetCache.js';
 
 /** Форма записи текстуры/материала = config-секции textures/materials (канон URP Lit, см. schemas.ts). */
 export type TexCfg = TextureCfg;

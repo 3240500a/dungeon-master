@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ ОСТАТОЧНЫЕ КАНАЛЫ ПЛАНИРОВЩИКА (Э14): опора, окно, трасса, мёртвые ручки.
@@ -8,7 +9,7 @@ import * as path from 'node:path';
  * После вырезания планировщика в игре осталось несколько мест, где он ещё «числился источником».
  * Часть из них врала МОЛЧА, и это хуже отсутствия: панель, по которой ищут причину, называла не тот слой.
  */
-const SRC = (f: string): string => readFileSync(path.join(__dirname, f), 'utf8');
+const SRC = (f: string): string => render3dSrc(f);
 const RT = SRC('poseRuntime.ts');
 
 describe('каналы опоры и трасса', () => {

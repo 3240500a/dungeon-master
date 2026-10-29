@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { signOut } from './signOut.js';
-import type { AuthSession } from './authApi.js';
+import type { AuthSession } from '@dm/pose-editor/modules/auth/authApi.js';
 
 /**
  * ⭐ R11-15: ВЫХОД ИЗ АККАУНТА — ОДИН ШОВ ДЛЯ 2D И ВЕБ-3D (`signOut`): сессия гаснет на сервере (`POST /api/logout`), вход

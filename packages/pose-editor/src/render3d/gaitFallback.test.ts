@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { localStorageContent } from './poseRuntime.js';
 import { BASE_GAIT_CHAR, locoClipNames } from './locoBlend.js';
 import type { Clip } from './clipModel.js';
+import { render3dSrc } from './srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ ДОНОР НАБОРА ХОДА — И У ИГРОКОВ ТОЖЕ.
@@ -78,7 +79,7 @@ describe('донор набора хода', () => {
   });
 
   it('⚠⚠ ИГРОКИ СОБИРАЮТСЯ С ДОНОРОМ ПОХОДКИ (это и была дыра)', () => {
-    const src = readFileSync(path.join(__dirname, 'gamePlayerDoll.ts'), 'utf8');
+    const src = render3dSrc('gamePlayerDoll.ts');
     const i = src.indexOf('const content = opts.classId');
     expect(i, '⚠ сборка контента куклы не найдена').toBeGreaterThan(0);
     const line = src.slice(i, i + 260);
@@ -89,7 +90,7 @@ describe('донор набора хода', () => {
   });
 
   it('имя донора — ОДНО на игроков и монстров, литералов не осталось', () => {
-    const on3d = readFileSync(path.join(__dirname, 'online3d.ts'), 'utf8');
+    const on3d = render3dSrc('online3d.ts');
     expect(on3d.includes("gaitFallback: BASE_GAIT_CHAR"), 'монстры берут ту же константу').toBe(true);
     expect(on3d.includes("gaitFallback: 'warrior'"), '⚠ литерал донора вернулся — второе место правды').toBe(false);
   });

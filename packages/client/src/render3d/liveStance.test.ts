@@ -8,10 +8,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { resolveStancePose, type StanceLookup } from './poseLayers.js';
-import { PosePlayer, emptyGrid, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { resolveStancePose, type StanceLookup } from '@dm/pose-editor/render3d/poseLayers.js';
+import { PosePlayer, emptyGrid, type PoseContent, type UpperPose } from '@dm/pose-editor/render3d/poseRuntime.js';
 import { makeStand } from './parityHarness.js';
-import type { Pose } from './clipModel.js';
+import type { Pose } from '@dm/pose-editor/render3d/clipModel.js';
 
 /** Безоружная база: «дышит» — грудь, шея, ноги и таз ходят по синусу. */
 const liveBase = (t: number): Pose => ({

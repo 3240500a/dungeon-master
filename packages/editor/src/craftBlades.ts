@@ -552,7 +552,7 @@ async function loadFiles(files: File[], parts: RawPart[]): Promise<void> {
   // Загрузчик моделей (FBX тяжёлый) — только когда он понадобился, а не в стартовом бандле редактора.
   let parse: ((buf: ArrayBuffer, ext: string) => Promise<THREE.Object3D>) | null = null;
   let importErr = '';
-  try { parse = (await import('@dm/client/render3d/modelAssets.js')).parseModel; } catch (e) { importErr = e instanceof Error ? e.message : String(e); }
+  try { parse = (await import('@dm/pose-editor/render3d/modelAssets.js')).parseModel; } catch (e) { importErr = e instanceof Error ? e.message : String(e); }
   for (let i = 0; i < files.length; i++) {
     const f = files[i]!, p = fresh[i]!;
     const ext = f.name.toLowerCase().split('.').pop() ?? '';

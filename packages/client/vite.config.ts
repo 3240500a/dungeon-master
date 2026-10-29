@@ -38,6 +38,7 @@ export default defineConfig(({ command }) => ({
   resolve: {
     alias: {
       '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
+      '@dm/pose-editor': resolve(__dirname, '../pose-editor/src'),   // ⭐ С3: поз-редактор и модули, которые веб-стенд берёт у него
     },
   },
   define: {
@@ -56,13 +57,12 @@ export default defineConfig(({ command }) => ({
   build: {
     rollupOptions: {
       input: {
-        game3d: resolve(__dirname, 'game3d.html'),
-        poseEditor: resolve(__dirname, 'pose-editor.html'),
+        game3d: resolve(__dirname, 'game3d.html'),   // ⭐ С3: поз-редактор — свой пакет (`packages/pose-editor`)
       },
     },
   },
   server: {
-    port: 5173,
+    port: 5175,   // ⭐ С3: 5173 — у поз-редактора (`packages/pose-editor`); веб-клиент не поддерживается
     host: LAN,
     proxy: {
       '/api': API,

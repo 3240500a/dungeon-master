@@ -7,6 +7,7 @@ export default defineConfig({
       // Как в `packages/editor/vite.config.ts`: мост редактора (`gameHarness.ts`) берёт настоящие панели и `App` игры из
       // исходников клиента — без этого его не проверить в node (R7-15).
       '@dm/client': fileURLToPath(new URL('./packages/client/src', import.meta.url)),
+      '@dm/pose-editor': fileURLToPath(new URL('./packages/pose-editor/src', import.meta.url)),   // ⭐ С3
     },
   },
   test: {

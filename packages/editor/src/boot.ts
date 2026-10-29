@@ -9,7 +9,7 @@
  * (fetch конфига, первый `render()`). Отдельный boot — единственное место, где можно встать ДО этого.
  * Тот же приём, что у поз-редактора (`render3d/pose-editor-boot.ts`).
  */
-import { ensureAdmin } from '@dm/client/devAuth.js';
+import { ensureAdmin } from '@dm/pose-editor/devAuth.js';
 
 void (async (): Promise<void> => {
   // `null` = сервер не поднят. Не запираем: без сервера редактор всё равно показывает встроенные

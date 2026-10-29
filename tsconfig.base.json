@@ -18,7 +18,8 @@
     "paths": {
       "@dm/shared": ["packages/shared/src/index.ts"],
       "@dm/shared/*": ["packages/shared/src/*"],
-      "@dm/craft-mesh": ["packages/craft-mesh/src/index.ts"]
+      "@dm/craft-mesh": ["packages/craft-mesh/src/index.ts"],
+      "@dm/pose-editor/*": ["packages/pose-editor/src/*"]
     }
   }
 }

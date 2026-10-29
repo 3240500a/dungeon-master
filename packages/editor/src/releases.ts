@@ -10,7 +10,7 @@
  *  • Кнопки «В бету», «Выпустить» (процент 1..100), «Откатить», подъём раскатки, версии клиента — каждая через `window.confirm` с текстом
  *    «что будет» из плана; заведомый отказ (правило сервера) показывается сразу, без подтверждения. После действия список перечитывается.
  */
-import { devFetch } from '@dm/client/devAuth.js';
+import { devFetch } from '@dm/pose-editor/devAuth.js';
 import {
   AUTO_CHANNEL, LIST_LIMIT, actorText, badgesOf, buildModel, clientText, fmtTime, loadList, originOf, parsePercentInput, planClients,
   planPromote, planRollback, releaseLine, rolloutText, runPlan, short,

@@ -81,7 +81,7 @@ class MemStorage {
 
 // ── Сервер-подделка ──────────────────────────────────────────────────────────────────────────────
 const posts: { url: string; body: unknown }[] = [];
-vi.mock('@dm/client/devAuth.js', () => ({
+vi.mock('@dm/pose-editor/devAuth.js', () => ({
   devFetch: async (url: string, init: RequestInit): Promise<Response> => {
     posts.push({ url, body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body });
     if (url.startsWith('/api/dev/assets/')) {

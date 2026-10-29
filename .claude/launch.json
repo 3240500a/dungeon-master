@@ -2,16 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "client",
+      "name": "pose-editor",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
         "run",
-        "dev:client"
+        "dev:pose"
       ],
       "port": 5173
     },
     {
-      "name": "client-running",
+      "name": "pose-editor-running",
       "url": "http://localhost:5173",
       "port": 5173
     },

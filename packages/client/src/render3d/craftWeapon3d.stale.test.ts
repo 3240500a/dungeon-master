@@ -18,9 +18,9 @@ vi.mock('@dm/craft-mesh', () => {
   throw new TypeError('Failed to fetch dynamically imported module: https://game.example/assets/forgeCraftTab-KtW2feJZ.js');
 });
 // env3d тянет DOM/GLTFLoader — руке оружия он не нужен (как в craftWeapon3d.test.ts).
-vi.mock('./env3d.js', () => ({ WALL_H: 96 }));
+vi.mock('@dm/pose-editor/render3d/env3d.js', () => ({ WALL_H: 96 }));
 
-import { applyCraftLooks, loadCraftMeshLib } from './craftWeapon3d.js';
+import { applyCraftLooks, loadCraftMeshLib } from '@dm/pose-editor/render3d/craftWeapon3d.js';
 import { App } from '../core/app.js';
 import { PROTOCOL_STALE } from '../net/versionGate.js';
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { buildHumanoid } from './humanoid.js';
-import { localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
-import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
-import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
-import { clipPoseAt, type Clip, type Pose } from './clipModel.js';
+import { buildHumanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from '@dm/pose-editor/render3d/poseRuntime.js';
+import { BakePlayer } from '@dm/pose-editor/render3d/bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
+import { bakeGaitToClip, GAIT_PRESETS } from '@dm/pose-editor/render3d/clipBake.js';
+import { clipPoseAt, type Clip, type Pose } from '@dm/pose-editor/render3d/clipModel.js';
 import { makeStand, arcDeg, jumpDeg, poseErrorDeg, footDrift, meanPose, quantile, GROUPS, HARNESS_GX, DEG } from './parityHarness.js';
 
 /**

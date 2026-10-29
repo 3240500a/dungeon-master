@@ -9,7 +9,7 @@
  *    картинка в слоте. У картинки — подпись, статус (нет / черновик / утверждён), ★ главный, ← → порядок, ✕ убрать из списка
  *    (файл на сервере остаётся), клик — крупно. Нет сервера или прав — текст ошибки в слоте, вкладка работает дальше.
  */
-import { devFetch } from '@dm/client/devAuth.js';
+import { devFetch } from '@dm/pose-editor/devAuth.js';
 import {
   ARTBOOK_DIR, IMG_STATUSES, STATUS_LABEL, addImage, coverOf, editText, imageContentType, keepEdit, mainOf, moveImage,
   removeImage, resetText, setMain, slotImages, slotKey, slotState, textState, updateImage, uploadId, uploadProblem, getAt,

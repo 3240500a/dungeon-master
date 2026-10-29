@@ -7,7 +7,7 @@
  */
 
 import { createMaterialPreview, type MaterialPreview, type MatCfg, type TexCfg } from './materialPreview.js';
-import { devFetch } from '@dm/client/devAuth.js';   // заливка ассетов — инструментальный роут: нужен токен админа
+import { devFetch } from '@dm/pose-editor/devAuth.js';   // заливка ассетов — инструментальный роут: нужен токен админа
 
 let activeMatPreview: MaterialPreview | undefined;   // одна превью-сфера за раз (гасим прошлый WebGL-контекст при пересборке панели)
 

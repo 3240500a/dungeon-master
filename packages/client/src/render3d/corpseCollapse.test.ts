@@ -5,13 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 // env3d тянет DOM/GLTFLoader — физмиру от него нужна только высота стены (как в kinematicDrive.test.ts).
-vi.mock('./env3d.js', () => ({ WALL_H: 96 }));
+vi.mock('@dm/pose-editor/render3d/env3d.js', () => ({ WALL_H: 96 }));
 
-import { initPhysics, PhysWorld, jolt, type RagdollHandle } from './ragdoll.js';
-import type { HumanoidRagdoll } from './humanoidRagdoll.js';
-import type { Humanoid } from './humanoid.js';
-import { makeHumanoidDoll } from './gamePlayerDoll.js';
-import { driveActor, type DriveState } from './driveActor.js';
+import { initPhysics, PhysWorld, jolt, type RagdollHandle } from '@dm/pose-editor/render3d/ragdoll.js';
+import type { HumanoidRagdoll } from '@dm/pose-editor/render3d/humanoidRagdoll.js';
+import type { Humanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { makeHumanoidDoll } from '@dm/pose-editor/render3d/gamePlayerDoll.js';
+import { driveActor, type DriveState } from '@dm/pose-editor/render3d/driveActor.js';
 import { corpseStart, corpseFrame, collapseCorpses, CORPSE_FALL_SEC, type Corpse } from './corpseCollapse.js';
 
 /**

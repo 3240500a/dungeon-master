@@ -16,10 +16,10 @@
  */
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
-import { openBakeSource, bakeFromSource, type BakeSource } from '../packages/client/src/render3d/clipBaker.js';
-import { isStaticBake, stitchLocoClip } from '../packages/client/src/render3d/clipImport.js';
-import { matchMocapSet, type MocapTake } from '../packages/client/src/render3d/mocapSetMap.js';
-import type { Clip } from '../packages/client/src/render3d/clipModel.js';
+import { openBakeSource, bakeFromSource, type BakeSource } from '../packages/pose-editor/src/render3d/clipBaker.js';
+import { isStaticBake, stitchLocoClip } from '../packages/pose-editor/src/render3d/clipImport.js';
+import { matchMocapSet, type MocapTake } from '../packages/pose-editor/src/render3d/mocapSetMap.js';
+import type { Clip } from '../packages/pose-editor/src/render3d/clipModel.js';
 import { readRootYawCurves, sampleCurve, type RootYawCurve } from './fbxRootCurve.js';
 
 const DIR = process.env['MAP_DIR']
@@ -32,7 +32,7 @@ const OUT = process.cwd();
  * поэтому перезалив обязан быть дешёвым: набор перепекается часто, и «старый клип остался рядом»
  * уже стоил владельцу вечера.
  */
-const PUB = path.join(OUT, 'packages', 'client', 'public', 'mocap');
+const PUB = path.join(OUT, 'packages', 'pose-editor', 'public', 'mocap');   // ⭐ С3: статика поз-редактора
 const D = 180 / Math.PI;
 
 /**

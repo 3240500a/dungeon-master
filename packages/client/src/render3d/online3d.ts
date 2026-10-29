@@ -11,28 +11,28 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, weaponLookOf, weaponLookSig, type WeaponLook, type ConfigRegistry, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
-import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
-import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
-import { BASE_GAIT_CHAR } from './locoBlend.js';   // ⭐ донор набора хода — ОДНО имя на игроков и монстров
-import { markSfx, shakeForMark, burstForMark, playHitSound, earShot } from './animSfx.js';
-import { setLocoMixOverride } from './poseRuntime.js';   // галка «бег клипами» из настроек клиента   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
-import { makeCamShake } from './camShake.js';
+import { initPhysics, PhysWorld, type RagdollHandle } from '@dm/pose-editor/render3d/ragdoll.js';
+import { makeGamePlayerDoll, makeHumanoidDoll } from '@dm/pose-editor/render3d/gamePlayerDoll.js';
+import { BASE_GAIT_CHAR } from '@dm/pose-editor/render3d/locoBlend.js';   // ⭐ донор набора хода — ОДНО имя на игроков и монстров
+import { markSfx, shakeForMark, burstForMark, playHitSound, earShot } from '@dm/pose-editor/render3d/animSfx.js';
+import { setLocoMixOverride } from '@dm/pose-editor/render3d/poseRuntime.js';   // галка «бег клипами» из настроек клиента   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
+import { makeCamShake } from '@dm/pose-editor/render3d/camShake.js';
 import { makeNetInterp } from './netInterp.js';
-import { cameraCfg, placeCamera, applyLens, camZoom, camDir } from './cameraRig.js';   // ⭐ камера из конфига, одна формула с вкладкой «Тест»   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
-import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
-import { driveActor } from './driveActor.js';
+import { cameraCfg, placeCamera, applyLens, camZoom, camDir } from '@dm/pose-editor/render3d/cameraRig.js';   // ⭐ камера из конфига, одна формула с вкладкой «Тест»   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
+import { createLayerTraceView, type LayerTraceView } from '@dm/pose-editor/render3d/layerTraceView.js';
+import { driveActor } from '@dm/pose-editor/render3d/driveActor.js';
 import { corpseStart, collapseCorpses } from './corpseCollapse.js';   // ⭐ смерть + коллапс-луп трупов: падение (и за окном) → запекание лежащего
 import { cullActor } from './windowCull.js';   // ⭐ окно-culling живого монстра: сон/пробуждение (спящему — часы нокдауна)
-import { moveFromKeys, facingFrom, aimOnGround, aimTmp } from './playerInput.js';
+import { moveFromKeys, facingFrom, aimOnGround, aimTmp } from '@dm/pose-editor/render3d/playerInput.js';
 import { gameKeyDown, gameKeyUp } from './gameKeys.js';   // R11-16: галка ⚙ в фокусе клавиш игры не глотает
-import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
-import type { BodyProfile, BoneScale } from './bodyProfile.js';
-import { loadRagdollConfig } from './humanoidRagdoll.js';
-import { charFor, monsterCharId } from './chars3d.js';
-import { Vfx } from './vfx.js';
+import { resolvePlayerLook, type ClassLook } from '@dm/pose-editor/render3d/modelSkin.js';
+import type { BodyProfile, BoneScale } from '@dm/pose-editor/render3d/bodyProfile.js';
+import { loadRagdollConfig } from '@dm/pose-editor/render3d/humanoidRagdoll.js';
+import { charFor, monsterCharId } from '@dm/pose-editor/render3d/chars3d.js';
+import { Vfx } from '@dm/pose-editor/render3d/vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, propTune, loadEnvKitFromObjects, type Torch, type EnvKit, type EnvSpec, type PropSpec } from './env3d.js';
-import { getMaterial } from './assetCache.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, propTune, loadEnvKitFromObjects, type Torch, type EnvKit, type EnvSpec, type PropSpec } from '@dm/pose-editor/render3d/env3d.js';
+import { getMaterial } from '@dm/pose-editor/render3d/assetCache.js';
 import { removeProp } from './propDispose.js';
 import { clearGroup, rebuildEnvLayer } from './envLayer.js';
 import { projMesh, dropMesh } from './projDropMeshes.js';

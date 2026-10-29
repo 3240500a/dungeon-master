@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from '@dm/shared';
-import { buildDiffers } from './staleBuild.js';
+import { buildDiffers } from '@dm/pose-editor/net/staleBuild.js';
 
 /**
  * ⭐ D3: ОДНО РУКОПОЖАТИЕ ВЕРСИЙ — ОДНО ПРАВИЛО «ВКЛАДКА СТАРШЕ СЕРВЕРА» НА ОБА ВЕБ-КЛИЕНТА.

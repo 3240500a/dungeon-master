@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { POSE_KEYS, WIPE_SPARED } from '@dm/client/render3d/poseServer.js';
+import { POSE_KEYS, WIPE_SPARED } from '@dm/pose-editor/render3d/poseServer.js';
 import { POSE_EXCLUDED } from '../../../server/src/content/releaseManifest.js';
 import { EMPTY_ARTBOOK, addImage, editText, normalizeArtbook, type ArtbookDoc } from './model.js';
 
@@ -11,7 +11,7 @@ import { EMPTY_ARTBOOK, addImage, editText, normalizeArtbook, type ArtbookDoc } 
 const posted: Record<string, unknown>[] = [];
 let server: { doc?: ArtbookDoc; rev: number; down: boolean; status?: number };
 
-vi.mock('@dm/client/devAuth.js', () => ({
+vi.mock('@dm/pose-editor/devAuth.js', () => ({
   devFetch: async (url: string, init: RequestInit): Promise<Response> => {
     if (server.down) throw new Error('сеть');
     if (server.status) return new Response('{}', { status: server.status });

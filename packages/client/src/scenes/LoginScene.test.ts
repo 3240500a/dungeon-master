@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LoginScene } from './LoginScene.js';
-import { login, register } from '../modules/auth/authApi.js';
+import { login, register } from '@dm/pose-editor/modules/auth/authApi.js';
 
 /**
  * ⭐ R13-15: 2D-ВХОД — ОДИН ЗАПРОС НА ОДНУ ПОПЫТКУ. Флаг «запрос в пути» был только у кнопки (`go.disabled`: отключённая
@@ -17,7 +17,7 @@ vi.mock('phaser', () => ({
     Scenes: { Events: { SHUTDOWN: 'shutdown' } },
   },
 }));
-vi.mock('../modules/auth/authApi.js', () => ({ login: vi.fn(), register: vi.fn() }));
+vi.mock('@dm/pose-editor/modules/auth/authApi.js', () => ({ login: vi.fn(), register: vi.fn() }));
 
 const loginMock = vi.mocked(login);
 const registerMock = vi.mocked(register);

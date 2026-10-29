@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { cameraCfg, camElevation, camDir, placeCamera, applyLens, camZoom, CAMERA_FALLBACK } from './cameraRig.js';
 import { CAM_AZ } from './playerInput.js';
+import { render3dSrc } from './srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ КАМЕРА — ОДИН ИСТОЧНИК НА ИГРУ И НА ВКЛАДКУ «ТЕСТ».
@@ -17,7 +18,7 @@ import { CAM_AZ } from './playerInput.js';
  * конфиг ведёт себя бит в бит как раньше, и вторая копия чисел не заводится снова.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src = (f: string): string => readFileSync(join(HERE, f), 'utf8');
+const src = (f: string): string => render3dSrc(f);
 
 describe('камера из конфига', () => {
   it('⭐⭐ ПУСТОЙ КОНФИГ — ПРЕЖНИЕ ЧИСЛА БИТ В БИТ', () => {

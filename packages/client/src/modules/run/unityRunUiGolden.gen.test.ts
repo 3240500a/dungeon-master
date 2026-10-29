@@ -33,7 +33,7 @@ import { RUN_NODE_COLOR, runNodeLabel, bossLadderText } from './runLabels.js';
 import { LEGEND_TYPES, MAP_GEOM, runMapView } from './runMapLayout.js';
 // ⭐⭐ Г8-3: раскладку ЦЕПИ МЕТОК на алтаре эталон ЗОВЁТ, а не копирует (как раскладку карты забега с Г5).
 import { altarChainView, BOSS_RANK_MARK } from '../town/altarMapLayout.js';
-import { cameraCfg, camElevation, placeCamera, camZoom, camDir } from '../../render3d/cameraRig.js';
+import { cameraCfg, camElevation, placeCamera, camZoom, camDir } from '@dm/pose-editor/render3d/cameraRig.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string): string => readFileSync(join(HERE, rel), 'utf8');

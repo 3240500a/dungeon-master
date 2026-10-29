@@ -3,7 +3,7 @@ import type { ClassDef } from '@dm/shared';
 import { App } from '../core/app.js';
 import { makeButton } from './ui/button.js';
 import { listClasses } from '../modules/classes/index.js';
-import { createCharacter } from '../modules/auth/authApi.js';
+import { createCharacter } from '@dm/pose-editor/modules/auth/authApi.js';
 import { FONT_TITLE } from '../ui/kit.js';
 import { reflowOnFontsReady } from './ui/fonts.js';
 

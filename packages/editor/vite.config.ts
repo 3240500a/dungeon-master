@@ -24,6 +24,7 @@ export default defineConfig({
       '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
       // Калькулятор переиспользует реальные панели игры (@dm/client) — «одна истина» по статам.
       '@dm/client': resolve(__dirname, '../client/src'),
+      '@dm/pose-editor': resolve(__dirname, '../pose-editor/src'),   // ⭐ С3: вход инструментов (devAuth), модели, кит графиков
     },
   },
   server: {

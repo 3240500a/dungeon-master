@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildHumanoid } from './humanoid.js';
 import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
+import { render3dSrc } from './srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ВНЕШНОСТЬ КУКЛЫ — ОДИН ШОВ НА ИГРУ И НА ВКЛАДКУ «ТЕСТ».
@@ -19,7 +20,7 @@ import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
  * шва, как код, поэтому ниже стоит сторож и на них.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src = (f: string): string => readFileSync(join(HERE, f), 'utf8');
+const src = (f: string): string => render3dSrc(f);
 
 /** Офсеты «как из ФБХ»: голени и стопы разведены в стороны — это и есть splay бинда. */
 const SPLAYED = (): Record<string, [number, number, number]> => ({

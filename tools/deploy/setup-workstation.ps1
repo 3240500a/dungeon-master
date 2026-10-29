@@ -97,7 +97,7 @@ if ($SkipFirewall) {
     Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Protocol TCP `
       -LocalPort @("$AnimPort", '5173', '5174') -Profile Private,Domain | Out-Null
-    Say 'ok' "открыты TCP $AnimPort (шим), 5173 (клиент), 5174 (редактор конфигов) — Private и Domain"
+    Say 'ok' "открыты TCP $AnimPort (шим), 5173 (поз-редактор), 5174 (редактор конфигов) — Private и Domain"
   }
 }
 
@@ -127,7 +127,7 @@ $ips = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notl
 Write-Host "`n=== Готово ===" -ForegroundColor Cyan
 Write-Host "  Адреса этой машины: $($ips -join ', ')"
 Write-Host "  1) . .\tools\deploy\local.env.ps1     — подключить ключ"
-Write-Host "  2) npm run dev                        — игра и поз-редактор (http://localhost:5173/pose-editor.html)"
+Write-Host "  2) npm run dev                        — сервер и поз-редактор (http://localhost:5173/pose-editor.html)"
 Write-Host "  3) npm run editor                     — редактор конфигов (http://localhost:5174)"
 Write-Host "  4) npm run anim-ai:stub               — шим генерации (проверка канала без движка)"
 Write-Host "  Работа с другой машины: DM_API=http://<адрес>:3001 DM_LAN=1 npm run dev"

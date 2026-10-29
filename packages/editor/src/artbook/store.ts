@@ -13,7 +13,7 @@
  *
  * Сервера нет / прав нет — работаем на локальной копии, в шапке честная надпись; ничего не падает.
  */
-import { devFetch } from '@dm/client/devAuth.js';
+import { devFetch } from '@dm/pose-editor/devAuth.js';
 import { EMPTY_ARTBOOK, canonArtbook, mergeArtbook, normalizeArtbook, type ArtbookDoc } from './model.js';
 
 export const LS_KEY = 'pe_artbook';

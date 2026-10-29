@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
 import { BakePlayer } from './bakePlayer.js';
+import { render3dSrc, render3dFiles, render3dImports } from './srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ ПЛАНИРОВЩИК ВЫРЕЗАН ИЗ ИГРЫ — И ЭТО ДОКАЗЫВАЕТ ТИП, А НЕ ДИСЦИПЛИНА.
@@ -16,7 +17,7 @@ import { BakePlayer } from './bakePlayer.js';
  * игровой куклы его нет ВООБЩЕ. Сторож проверяет именно это — по объекту и по графу импортов.
  */
 const DIR = __dirname;
-const SRC = (f: string): string => readFileSync(path.join(DIR, f), 'utf8');
+const SRC = (f: string): string => render3dSrc(f);
 const GX = { armDown: 1.35, elbowBend: 0.25 };
 const mk = <T,>(C: new (...a: never[]) => T): T =>
   new (C as unknown as new (...a: unknown[]) => T)(
@@ -66,13 +67,12 @@ describe('планировщик вырезан из игры', () => {
    * а вот путь в графе модулей либо есть, либо нет. Именно он отвечает на «выкинет ли сборка класс».
    */
   it('⭐⭐ ИЗ `online3d.ts` НЕ ДОСТИЖИМ `stepPlanner.ts`', () => {
-    const files = new Set(readdirSync(DIR).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts')));
+    const files = render3dFiles();   // ⭐ С3: игра — в веб-клиенте, кукла и редактор — в поз-редакторе
     const seen = new Set<string>(), path2 = new Map<string, string>();
     const walk = (f: string): void => {
       if (seen.has(f) || !files.has(f)) return;
       seen.add(f);
-      for (const m of SRC(f).matchAll(/from '\.\/([A-Za-z0-9_.-]+)\.js'/g)) {
-        const next = m[1]! + '.ts';
+      for (const next of render3dImports(SRC(f))) {
         if (!seen.has(next)) path2.set(next, f);
         walk(next);
       }

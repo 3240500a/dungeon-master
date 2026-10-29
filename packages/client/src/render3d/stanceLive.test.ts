@@ -16,10 +16,10 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { emptyGrid, setStancePelvisOverride, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { emptyGrid, setStancePelvisOverride, type PoseContent, type UpperPose } from '@dm/pose-editor/render3d/poseRuntime.js';
 import { makeStand } from './parityHarness.js';
-import { GAIT, GAIT_BASE } from './gaitKnobs.js';
-import type { Pose } from './clipModel.js';
+import { GAIT, GAIT_BASE } from '@dm/pose-editor/render3d/gaitKnobs.js';
+import type { Pose } from '@dm/pose-editor/render3d/clipModel.js';
 
 afterEach(() => { Object.assign(GAIT, GAIT_BASE); setStancePelvisOverride(null); });
 

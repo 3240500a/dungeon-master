@@ -296,7 +296,7 @@ Write-Host "`n=== Дальше ===" -ForegroundColor Cyan
 if ($null -ne $dmDst) {
   Write-Host "  1) Новое окно PowerShell в $dmDst :"
   Write-Host '       . .\tools\deploy\local.env.ps1 ; npm run dev'
-  Write-Host '     игра http://localhost:5173/game3d.html · поз-редактор http://localhost:5173/pose-editor.html · конфиги: npm run editor'
+  Write-Host '     поз-редактор http://localhost:5173/pose-editor.html · конфиги: npm run editor · играют Unity'
   Write-Host "  2) Claude Code: открыть папку $dmDst — память уже на месте"
 }
 if ($null -ne $unityDst -and (Test-Path $unityDst)) {

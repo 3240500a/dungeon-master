@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ПРОВОДКА ПРАВКИ КАДРА В `pose-editor.ts` — сторож СТРУКТУРЫ (как `onionOwner.test.ts`).
@@ -10,7 +11,7 @@ import { dirname, join } from 'node:path';
  * функциях. Здесь — что редактор зовёт ИМЕННО их и в нужных местах: кадровый цикл редактора тянет DOM и физику,
  * поведенческий тест там невозможен, а каждый из этих регрессов уже случался ровно так — копией кода рядом.
  */
-const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'pose-editor.ts'), 'utf8');
+const SRC = render3dSrc('pose-editor.ts');
 
 /** Тело функции/стрелки по фигурным скобкам — от заголовка до парной `}`. */
 function bodyAt(from: number, what: string): string {
@@ -265,7 +266,7 @@ describe('⭐ предпросмотр корня (галки «корень: п
     expect(SRC).toMatch(/kk\.pose = seedMotionChannels\(get\(\), c, kk\.t\)/);
   });
   it('меш модели ведётся МИРОВЫМ корнем манекена (`poseModelsTab.driveAsm`)', () => {
-    const M = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'poseModelsTab.ts'), 'utf8');
+    const M = render3dSrc('poseModelsTab.ts');
     const m = /function driveAsm\([^)]*\): void \{[\s\S]*?\n {2}\}/.exec(M);
     expect(m).toBeTruthy();
     const b = m![0];

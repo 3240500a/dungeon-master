@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ConfigRegistry, newBotSave } from '@dm/shared';
 import { forgePanel } from './forgePanel.js';
-import { onStaleBuild } from '../../net/staleBuild.js';
+import { onStaleBuild } from '@dm/pose-editor/net/staleBuild.js';
 
 /**
  * ⭐ R10-12: ОКНО КОВКИ ПОСЛЕ ДЕПЛОЯ — «ПЕРЕЗАГРУЗИТЕ», А НЕ «ПЕРЕКЛЮЧИ ВКЛАДКУ».

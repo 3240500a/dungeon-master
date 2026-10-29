@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gameKeyDown, gameKeyUp } from './gameKeys.js';
 import { mountSettings } from './settings3d.js';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐ R11-16: ГАЛКА И ПОЛЗУНОК НАСТРОЕК (⚙) В ФОКУСЕ — НЕ ПОЛЕ ВВОДА. Игрок в подземелье открыл ⚙, щёлкнул «Тени от факелов» или
@@ -174,7 +175,7 @@ describe('⭐ R11-16: клавиши игры веб-3D при галке или
 
   it('R12-15, сторож: КАЖДАЯ клавиша, которую читает игра веб-3D (ход, действия, пояс), при элементе ⚙ в фокусе отменена', () => {
     const HERE = dirname(fileURLToPath(import.meta.url));
-    const read = (f: string): string => readFileSync(join(HERE, f), 'utf8');
+    const read = (f: string): string => render3dSrc(f);
     const codes = new Set<string>();
     for (const f of ['online3d.ts', 'playerInput.ts']) for (const m of read(f).matchAll(/keys\.has\('(\w+)'\)/g)) codes.add(m[1]!);
     for (const m of read(join('..', 'ui', 'beltBar.ts')).matchAll(/'(Digit\d)'/g)) codes.add(m[1]!);
@@ -220,13 +221,13 @@ describe('⭐ R11-16: клавиши игры веб-3D при галке или
 
   it('веб-3D слушает клавиши игры этими обработчиками (своей проверки «любой input — поле» нет)', () => {
     const HERE = dirname(fileURLToPath(import.meta.url));
-    const SRC = readFileSync(join(HERE, 'online3d.ts'), 'utf8');
+    const SRC = render3dSrc('online3d.ts');
     expect(SRC).toMatch(/addEventListener\('keydown', \(e\) => gameKeyDown\(e, document\.activeElement, keys\)\);/);
     expect(SRC).toMatch(/addEventListener\('keyup', \(e\) => gameKeyUp\(e, document\.activeElement, keys\)\);/);
     expect(SRC, 'было: `t instanceof HTMLInputElement` — любой input').not.toMatch(/instanceof HTMLInputElement|tagName === 'INPUT'/);
     // Те же клавиши страницы (F3 отладки, пояс 1–4, хоткеи окон) — то же правило «поля».
     for (const f of ['debug3d.ts', join('..', 'ui', 'beltBar.ts'), join('..', 'ui', 'domUi.ts')]) {
-      const s = readFileSync(join(HERE, f), 'utf8');
+      const s = render3dSrc(f);
       expect(s, `${f}: «поле» решает isTextEntry`).not.toMatch(/instanceof HTMLInputElement|tagName === 'INPUT'/);
       expect(s, f).toMatch(/isTextEntry\(/);
     }

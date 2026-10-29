@@ -5,7 +5,7 @@
  * `app.pendingCharId` готовы — дальше `online3d` подключается к миру. Игра только онлайн (оффлайна нет).
  */
 import type { App } from '../core/app.js';
-import { login, register, listCharacters, createCharacter, deleteCharacter, type CharacterSummary } from '../modules/auth/authApi.js';
+import { login, register, listCharacters, createCharacter, deleteCharacter, type CharacterSummary } from '@dm/pose-editor/modules/auth/authApi.js';
 import { signOut } from '../modules/auth/signOut.js';
 import { listClasses } from '../modules/classes/index.js';
 

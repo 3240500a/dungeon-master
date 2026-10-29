@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ ТИП `UpperPose` ОБЯЗАН БЫТЬ ОДИН — И ЭТО НЕ ЧИСТОПЛЮЙСТВО.
@@ -20,7 +21,7 @@ import * as path from 'node:path';
  * получить ложное «всё в порядке».
  */
 const DIR = __dirname;
-const SRC = (f: string): string => readFileSync(path.join(DIR, f), 'utf8');
+const SRC = (f: string): string => render3dSrc(f);
 
 describe('UpperPose: один тип на редактор и игру', () => {
   it('⭐⭐ У РЕДАКТОРА НЕТ СВОЕГО `interface UpperPose`', () => {

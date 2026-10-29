@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { buildHumanoid } from './humanoid.js';
-import { localStorageContent, emptyGrid, setLocoMixOverride, resetSwingSnapshot, applyShieldOverlay, type PoseContent, type UpperPose } from './poseRuntime.js';
-import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
-import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
-import { TWO_HANDED } from './poseLayers.js';
-import { blendArmKey, swingRefOf, meanPose, clearSwingRefCache } from './armBlend.js';
-import { lookupItemSwing, swingDefault, readSwingStore, ARM_BONE_OF, TWO_HANDED_ITEMS, type SwingStore } from './layerWeights.js';
+import { buildHumanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, resetSwingSnapshot, applyShieldOverlay, type PoseContent, type UpperPose } from '@dm/pose-editor/render3d/poseRuntime.js';
+import { BakePlayer } from '@dm/pose-editor/render3d/bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
+import { bakeGaitToClip, GAIT_PRESETS } from '@dm/pose-editor/render3d/clipBake.js';
+import { TWO_HANDED } from '@dm/pose-editor/render3d/poseLayers.js';
+import { blendArmKey, swingRefOf, meanPose, clearSwingRefCache } from '@dm/pose-editor/render3d/armBlend.js';
+import { lookupItemSwing, swingDefault, readSwingStore, ARM_BONE_OF, TWO_HANDED_ITEMS, type SwingStore } from '@dm/pose-editor/render3d/layerWeights.js';
 import { makeStand, arcDeg, poseErrorDeg, GROUPS, HARNESS_GX, DEG } from './parityHarness.js';
-import { clipPoseAt, type Clip, type Pose } from './clipModel.js';
+import { clipPoseAt, type Clip, type Pose } from '@dm/pose-editor/render3d/clipModel.js';
 
 /**
  * ⭐⭐ МАХ РУК: ЯКОРЬ + АДДИТИВНАЯ ДЕЛЬТА, КЛЮЧ — ПРЕДМЕТ В РУКЕ.

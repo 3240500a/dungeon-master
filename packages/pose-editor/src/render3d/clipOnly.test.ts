@@ -11,6 +11,7 @@ import { clipDur, type Clip } from './clipModel.js';
 import { GAIT } from './gaitKnobs.js';
 import { SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_REV } from './poseRuntime.js';
+import { render3dSrc } from './srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * ⭐⭐ РЕЖИМ «ТОЛЬКО КЛИПЫ» — репетиция клиента без StepPlanner.
@@ -146,7 +147,7 @@ describe('«только клипы»: планировщика нет', () => {
   it('⭐⭐ ИГРА ХОДИТ ТОЛЬКО КЛИПАМИ: перекрытие ставится безусловно, галки «бег клипами» в настройках клиента нет', () => {
     // Решение автора (19.09): «степ-планер из игры убираем полностью… остаётся только в поз-редакторе». `online3d` не
     // собирается в node (рендерер, DOM), поэтому проводка стережётся по исходнику — как у остальных швов редактора.
-    const src = (f: string): string => readFileSync(path.join(__dirname, f), 'utf8');
+    const src = (f: string): string => render3dSrc(f);
     const game = src('online3d.ts');
     expect(game, '⚠ игра обязана включать «только клипы» сама, а не по галке').toMatch(/^\s*setLocoMixOverride\(1\);/m);
     expect(game, '⚠ перекрытие снова зависит от настройки игрока').not.toMatch(/setLocoMixOverride\((?!1\))/);

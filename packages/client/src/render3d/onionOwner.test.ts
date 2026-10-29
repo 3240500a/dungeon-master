@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { render3dSrc } from '@dm/pose-editor/render3d/srcOf.testkit.js';   // ⭐ С3: исходник соседа — из поз-редактора или веб-клиента
 
 /**
  * У ВИДИМОСТИ ПРИЗРАКОВ КАДРОВ — РОВНО ОДИН ХОЗЯИН.
@@ -22,7 +23,7 @@ import { dirname, join } from 'node:path';
  * отмеченные кадры. Сторож переписан на пул: показ идёт через `onionVisible`, и звать его может только
  * `updateOnion`. Чистая часть (выбор кадров, оттенок, кэш оседания) — `onionPick.test.ts`.
  */
-const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'pose-editor.ts'), 'utf8');
+const SRC = render3dSrc('pose-editor.ts');
 
 /** Тело функции по ПАРНЫМ скобкам (однострочная тоже): [начало заголовка; закрывающая `}`]. */
 function bodyOf(name: string): { from: number; to: number } {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeStubBvh } from './stubBvh.js';
-import { autoBoneMap, boneMapReport, OUR_BONES } from '../../packages/client/src/render3d/retarget3d.js';
+import { autoBoneMap, boneMapReport, OUR_BONES } from '../../packages/pose-editor/src/render3d/retarget3d.js';
 
 /** Имена суставов из секции HIERARCHY — ровно то, что увидит `BVHLoader`, а за ним `autoBoneMap`. */
 const jointNames = (bvh: string): string[] =>

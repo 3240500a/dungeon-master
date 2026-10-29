@@ -1,0 +1,26 @@
+{
+  "name": "@dm/pose-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Поз-редактор и стенд анимаций (Three.js + Jolt): клипы, импорт мокапа, риг, хваты. Пишет /api/dev/pose сервера; Unity их читает.",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dm/craft-mesh": "*",
+    "@dm/shared": "*",
+    "jolt-physics": "^1.1.0",
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.171.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

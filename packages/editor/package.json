@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@dm/craft-mesh": "*",
+    "@dm/pose-editor": "*",
     "@dm/shared": "*",
     "marked": "^18.0.9",
     "three": "^0.171.0",

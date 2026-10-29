@@ -8,9 +8,9 @@
  * руки (наружу) и зеркалится для правой. Персонаж смотрит в +Z, вверх +Y.
  */
 import * as THREE from 'three';
-import type { Humanoid } from './humanoid.js';
-import { limbNaturalPole, fadeSwivel, type ArmPoleFn } from './limbIk.js';
-import { solveLimbChain, hingePlaneSwivel, type LimbEnv, type LimbChain } from './limbSolve.js';
+import type { Humanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { limbNaturalPole, fadeSwivel, type ArmPoleFn } from '@dm/pose-editor/render3d/limbIk.js';
+import { solveLimbChain, hingePlaneSwivel, type LimbEnv, type LimbChain } from '@dm/pose-editor/render3d/limbSolve.js';
 
 type V3 = [number, number, number];
 export interface ArmPath { name: string; closed: boolean; frames: number; keys: V3[]; loops?: number }

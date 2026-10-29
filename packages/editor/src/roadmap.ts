@@ -9,7 +9,7 @@
  * публикуется — он выгружается файлом или текстом (HTML / Steam / Discord), см. `roadmapPublic.ts`. Правило Ф12 при этом соблюдается: сервер не затирает локальное
  * молча — при расхождении показываем, что серверная копия свежее, и забрать её можно кнопкой.
  */
-import { devFetch } from '@dm/client/devAuth.js';
+import { devFetch } from '@dm/pose-editor/devAuth.js';
 import {
   COUNTERS, WHO_LABEL, EMPTY_ROADMAP, newId, shortDate,
   itemProgress, remainingOf, milestoneProgress, totalProgress, statusOf, activeIndex, currentOf, isCounter,

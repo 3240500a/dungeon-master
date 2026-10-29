@@ -2,13 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 
 // humanoidRagdoll тянет Jolt через ragdoll.ts (wasm + DOM) — стенду нужны только пределы.
-vi.mock('./ragdoll.js', () => ({ jolt: () => { throw new Error('jolt is not available in node'); } }));
+vi.mock('@dm/pose-editor/render3d/ragdoll.js', () => ({ jolt: () => { throw new Error('jolt is not available in node'); } }));
 
-import { buildHumanoid } from './humanoid.js';
-import { limitViewForBone, registerExtraLimits } from './humanoidRagdoll.js';
-import { extraLimitView } from './jointLimits.js';
-import { clampLocalToLimit } from './jointClamp.js';
-import { armPoleAnatomical, armPoleLegacy } from './limbIk.js';
+import { buildHumanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { limitViewForBone, registerExtraLimits } from '@dm/pose-editor/render3d/humanoidRagdoll.js';
+import { extraLimitView } from '@dm/pose-editor/render3d/jointLimits.js';
+import { clampLocalToLimit } from '@dm/pose-editor/render3d/jointClamp.js';
+import { armPoleAnatomical, armPoleLegacy } from '@dm/pose-editor/render3d/limbIk.js';
 import { runArm, runArmSuite, ARM_PATHS, type ArmRunOpts, type ArmPath } from './armIkHarness.js';
 
 /**

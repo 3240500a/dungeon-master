@@ -2,7 +2,7 @@
  *  затем запуск полностью онлайнового клиента (`online3d`): авторизация → выбор персонажа → мир из снапшотов.
  *  Никаких локальных сессий — единая истина сервер, как в 2D-клиенте.
  *  Тело в async-IIFE (не top-level await): иначе прод-таргет es2020 не собирает. */
-import { syncPoseFromServer, syncConfigFromServer } from './poseServer.js';
+import { syncPoseFromServer, syncConfigFromServer } from '@dm/pose-editor/render3d/poseServer.js';
 
 void (async (): Promise<void> => {
   // ⚠ БЕЗ `compareBodies`: игра серверное тело в рабочую копию не пишет и спорить о нём не умеет, а сверка тянула бы

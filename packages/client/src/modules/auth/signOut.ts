@@ -1,5 +1,5 @@
 import type { App } from '../../core/app.js';
-import { logout } from './authApi.js';
+import { logout } from '@dm/pose-editor/modules/auth/authApi.js';
 
 /**
  * ⭐ R11-15: ВЫХОД ИЗ АККАУНТА — ОДИН ДЛЯ 2D И ВЕБ-3D. Сессия гаснет НА СЕРВЕРЕ (`POST /api/logout` удаляет её), а не только

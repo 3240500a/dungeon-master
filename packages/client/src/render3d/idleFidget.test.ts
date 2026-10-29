@@ -1,10 +1,10 @@
 /** Планировщик редких вставок в покой: расписание, огибающая, прерывание. */
 import { describe, it, expect } from 'vitest';
-import { makeFidgetState, stepIdleBreak, pickFidget, mulberry32, type FidgetState } from './idleFidget.js';
-import { IDLE_BREAK_DEF, readAnimCfg, type FidgetCfg } from './animConfig.js';
-import { blendTwo, emptyGrid, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { makeFidgetState, stepIdleBreak, pickFidget, mulberry32, type FidgetState } from '@dm/pose-editor/render3d/idleFidget.js';
+import { IDLE_BREAK_DEF, readAnimCfg, type FidgetCfg } from '@dm/pose-editor/render3d/animConfig.js';
+import { blendTwo, emptyGrid, type PoseContent, type UpperPose } from '@dm/pose-editor/render3d/poseRuntime.js';
 import { makeStand } from './parityHarness.js';
-import type { Pose } from './clipModel.js';
+import type { Pose } from '@dm/pose-editor/render3d/clipModel.js';
 
 const F = (clip: string, weight = 1, blend = 0.25): FidgetCfg => ({ clip, weight, blend, scope: 'base' });
 const POOL = [F('a'), F('b'), F('c')];

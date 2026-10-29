@@ -5,7 +5,7 @@ import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
 import { characterPanel } from '@dm/client/modules/progression/panels.js';
 import { inventoryPanel } from '@dm/client/modules/inventory/inventoryPanel.js';
 import { renderPassiveTree } from '@dm/client/modules/skills-passive/treeView.js';
-import { devFetch } from '@dm/client/devAuth.js';
+import { devFetch } from '@dm/pose-editor/devAuth.js';
 import { skillsPanel } from '@dm/client/modules/skills/skillsPanel.js';
 
 /**

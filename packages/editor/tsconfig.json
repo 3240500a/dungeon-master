@@ -5,7 +5,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@dm/client/*": ["../client/src/*"]
+      "@dm/client/*": ["../client/src/*"],
+      "@dm/pose-editor/*": ["../pose-editor/src/*"]
     }
   },
   "include": ["src"]

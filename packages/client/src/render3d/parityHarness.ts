@@ -17,10 +17,10 @@
  * эталон берётся ровно на той же фазе — иначе замер покажет расхождение там, где его нет (это сдвиг во времени).
  */
 import * as THREE from 'three';
-import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, emptyGrid, setLocoMixOverride, type GXKnobs, type PoseContent } from './poseRuntime.js';
-import { locoPhaseU } from './locoBlend.js';
-import { clipPoseAt, type Clip, type Pose } from './clipModel.js';
+import { buildHumanoid, type Humanoid } from '@dm/pose-editor/render3d/humanoid.js';
+import { PosePlayer, emptyGrid, setLocoMixOverride, type GXKnobs, type PoseContent } from '@dm/pose-editor/render3d/poseRuntime.js';
+import { locoPhaseU } from '@dm/pose-editor/render3d/locoBlend.js';
+import { clipPoseAt, type Clip, type Pose } from '@dm/pose-editor/render3d/clipModel.js';
 
 export const DEG = 180 / Math.PI;
 /** Ручки ретаргета по умолчанию — те же, с которыми работают все стенды и запекатель. */

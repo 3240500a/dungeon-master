@@ -8,9 +8,9 @@ import { setDamageTypeMeta } from './damageTypes.js';
 import { setRarityMeta } from '../modules/loot/rarity.js';
 import { NetClient } from '../net/netClient.js';
 import { CmdReplies, type CmdReply } from '../net/cmdReplies.js';
-import { clientBuild, onStaleBuild, watchChunkErrors } from '../net/staleBuild.js';
+import { clientBuild, onStaleBuild, watchChunkErrors } from '@dm/pose-editor/net/staleBuild.js';
 import { PROTOCOL_STALE, REFUSAL_REPEAT_MS, VersionGate, type ConfigRead } from '../net/versionGate.js';
-import type { AuthSession } from '../modules/auth/authApi.js';
+import type { AuthSession } from '@dm/pose-editor/modules/auth/authApi.js';
 import type { GameLog } from '../ui/gameLog.js';
 
 /** R4-24: предел повтора отказа в логе (и «перезагрузите» на отказ) — живёт у правила версий (`net/versionGate.ts`, D3). */

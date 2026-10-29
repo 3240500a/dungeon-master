@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ConfigRegistry } from '@dm/shared';
 import { ClassSelectScene } from './ClassSelectScene.js';
-import { createCharacter } from '../modules/auth/authApi.js';
+import { createCharacter } from '@dm/pose-editor/modules/auth/authApi.js';
 
 /**
  * ⭐ R9-15: 2D-СОЗДАНИЕ ПЕРСОНАЖА ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК СЦЕНЫ. Phaser держит ОДИН экземпляр сцены на всю страницу:
@@ -18,7 +18,7 @@ vi.mock('phaser', () => ({
     Scenes: { Events: { SHUTDOWN: 'shutdown' } },
   },
 }));
-vi.mock('../modules/auth/authApi.js', () => ({ createCharacter: vi.fn() }));
+vi.mock('@dm/pose-editor/modules/auth/authApi.js', () => ({ createCharacter: vi.fn() }));
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
 const create = vi.mocked(createCharacter);

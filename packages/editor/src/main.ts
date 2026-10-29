@@ -13,7 +13,7 @@ import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
 import { renderSkillBuildPage } from './skillBuild.js';
-import { devFetch } from '@dm/client/devAuth.js';   // инструментальные роуты требуют роли admin
+import { devFetch } from '@dm/pose-editor/devAuth.js';   // инструментальные роуты требуют роли admin
 import { renderRoadmapPage } from './roadmap.js';
 import { renderReleasesPage } from './releases.js';
 import { renderCraftPage, type CraftIo } from './craft.js';

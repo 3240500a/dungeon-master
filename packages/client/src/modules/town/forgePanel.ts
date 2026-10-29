@@ -7,7 +7,7 @@ import { renderShopGrid } from './shopGrid.js';
 import { forgeBench } from './forgeBench.js';
 import { forgeExchangeView } from './forgeExchangeView.js';
 import type { ExchangeSel } from './forgeExchange.js';
-import { markStaleBuild, reloadPage } from '../../net/staleBuild.js';
+import { markStaleBuild, reloadPage } from '@dm/pose-editor/net/staleBuild.js';
 
 /** Модуль вкладки «Ковка» — грузится один раз на страницу, при первом открытии вкладки. */
 type CraftTab = typeof import('./forgeCraftTab.js');
