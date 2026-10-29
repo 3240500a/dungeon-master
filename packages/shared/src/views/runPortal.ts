@@ -51,6 +51,8 @@ export interface RunAltarChainMap {
   nodes: RunChainNode[]; links: RunChainLink[]; dividers: RunChainDivider[];
   width: number; height: number; r: number; cycle: number; record: number; openCount: number; pick: number;
   start: string; hidden: string | null; hiddenMarks: number[];
+  /** ⭐ С6: подписи скрытых меток (`runHiddenMarkTitle`) — по одной на `hiddenMarks`: своего правила у окна нет. */
+  hiddenTitles: string[];
 }
 /** C# `AltarStart`. */
 export interface RunAltarStart { depth: number; line: string; note: string }
@@ -124,12 +126,12 @@ export function runChainMap(
   const map: RunAltarChainMap = {
     nodes: [], links: [], dividers: [],
     width: G.width, height: 0, r: G.r, cycle: c, record: rec, openCount: marks.length, pick,
-    start: '', hidden: null, hiddenMarks: [],
+    start: '', hidden: null, hiddenMarks: [], hiddenTitles: [],
   };
 
   const all = [...marks].sort((a, b) => a - b);
   const skip = Math.max(0, all.length - G.maxMarks);
-  for (let i = 0; i < skip; i++) map.hiddenMarks.push(all[i]!);
+  for (let i = 0; i < skip; i++) { map.hiddenMarks.push(all[i]!); map.hiddenTitles.push(runHiddenMarkTitle(all[i]!)); }
 
   const cx = G.width / 2;
   for (let i = skip; i < all.length; i++) {

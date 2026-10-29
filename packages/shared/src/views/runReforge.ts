@@ -194,9 +194,11 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
  * (`dm.Stash == null`). Модель C# их не несёт — им нужны два новых поля DTO (`fee`, `source`, см. отчёт), а до того их можно
  * класть в кадр рядом с моделью.
  */
-export function runReforgeHead(reg: ConfigRegistry, view: RunReforgeModel, stashLoaded: boolean): { fee: string | null; source: string | null } {
+export function runReforgeHead(reg: ConfigRegistry, view: RunReforgeModel, stashLoaded: boolean): { fee: string | null; feeGold: number; source: string | null } {
   const cost = sealReforgeRules(reg).goldCost;
   return {
+    // ⭐ С6: пошлина числом — согласие команды (`maxGold`): дороже сервер не возьмёт
+    feeGold: cost,
     fee: cost > 0 ? `Пошлина кузнеца: ${cost} золота` : null,
     source: !stashLoaded ? RUN_REFORGE_TEXT.noStash : !view.off && view.cards.length > 0 ? RUN_REFORGE_TEXT.source : null,
   };

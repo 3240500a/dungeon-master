@@ -120,11 +120,11 @@ describe('С-views: вкладка перековки (ReforgeCheck)', () => {
     const st = stashOf([['swarming', 't1', 2]]);
     const card = find(runReforgeView(r, bagOnly, st), 'swarming@t1')!;
     expect([card.carried, card.can]).toEqual([3, true]);
-    expect(runReforgeHead(r, runReforgeView(r, bagOnly, null), false)).toEqual({ fee: null, source: RUN_REFORGE_TEXT.noStash });
-    expect(runReforgeHead(r, runReforgeView(r, bagOnly, st), true)).toEqual({ fee: null, source: RUN_REFORGE_TEXT.source });
+    expect(runReforgeHead(r, runReforgeView(r, bagOnly, null), false)).toEqual({ fee: null, feeGold: 0, source: RUN_REFORGE_TEXT.noStash });
+    expect(runReforgeHead(r, runReforgeView(r, bagOnly, st), true)).toEqual({ fee: null, feeGold: 0, source: RUN_REFORGE_TEXT.source });
     const paid = cfg('sameKind', { goldCost: 300 });
-    expect(runReforgeHead(paid, runReforgeView(paid, save(40, 0), stashOf([])), true)).toEqual({ fee: 'Пошлина кузнеца: 300 золота', source: null });
-    expect(runReforgeHead(paid, runReforgeView(paid, save(40, 0), st), true)).toEqual({ fee: 'Пошлина кузнеца: 300 золота', source: RUN_REFORGE_TEXT.source });
+    expect(runReforgeHead(paid, runReforgeView(paid, save(40, 0), stashOf([])), true)).toEqual({ fee: 'Пошлина кузнеца: 300 золота', feeGold: 300, source: null });
+    expect(runReforgeHead(paid, runReforgeView(paid, save(40, 0), st), true)).toEqual({ fee: 'Пошлина кузнеца: 300 золота', feeGold: 300, source: RUN_REFORGE_TEXT.source });
   });
 
   it('привязка к биому — отдельные карточки, каждая считает только своё', () => {

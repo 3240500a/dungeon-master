@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import type { GameConn } from './conn.js';
 import {
-  ConfigRegistry, newCharacterSave, heroNumbers, respecView, socketsView, bindView, materialsView, runReforgeView, townCommandSchema,
+  ConfigRegistry, newCharacterSave, heroNumbers, respecView, socketsView, bindView, materialsView, runReforgeView, townCommandSchema, allocPassive,
   type ServerFrame, type SaveState, type Item,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
@@ -119,6 +119,28 @@ describe('⭐ С4/С6: виды города и забега — от серве
     expect(q.view).toHaveProperty('active');
   });
 
+  it('древо мастерства (С4): «можно» вида = «можно» команды `allocPassive` на каждом узле, цена вида = её согласие', () => {
+    const { room, ws, pid, save } = setup();
+    const tree = cfg.get('mastery-tree');
+    save.masteries[tree.entryNodes[0]!] = 1;
+    save.unspentMasteryPoints = 3; save.gold = 1_000_000; save.level = 20;
+    room.viewRequest(pid, 900, 'hero', { part: 'mastery' });
+    const v = ws.all('view').find((f) => f.id === 900)!;
+    expect(v.ok).toBe(true);
+    const nodes = (v.view as { nodes: { id: string; clickable: boolean; refusal: string | null; cost: number | null; state: string }[] }).nodes;
+    expect(nodes.length).toBe(tree.nodes.length);
+    let yes = 0;
+    for (const n of nodes) {
+      const clone = structuredClone(save);
+      const r = allocPassive(cfg, clone, n.id, n.cost ?? undefined);
+      expect(r.ok, `узел ${n.id}: вид ${n.clickable && !n.refusal ? 'пускает' : `«${n.refusal}»`}, команда ${r.ok ? 'пускает' : `«${r.reason}»`}`).toBe(n.clickable && n.refusal === null);
+      if (!r.ok) expect(r.reason).toBe(n.refusal);
+      if (r.ok) yes++;
+    }
+    expect(yes, 'есть доступные узлы').toBeGreaterThan(0);
+    expect(nodes.some((n) => n.state === 'closed')).toBe(true);
+  });
+
   it('вещь: меню, подсказки, пупсик, сырьё; чужой или кривой uid — отказ, подсказки — только того, что игроку показано', () => {
     const { room, ws, pid, save } = setup();
     const ask = asker(room, ws, pid);
@@ -134,6 +156,10 @@ describe('⭐ С4/С6: виды города и забега — от серве
     const tips = (ask('item', { part: 'tips', uids: [...uids, 'чужая-вещь'] }).view as { tips: Record<string, unknown> }).tips;
     expect(Object.keys(tips).sort(), 'все свои — есть, чужой — нет').toEqual([...uids].sort());
     expect(ask('item', { part: 'tips', uids: new Array(401).fill('x') }).ok, 'потолок запроса').toBe(false);
+    const all = (ask('item', { part: 'tips' }).view as { tips: Record<string, unknown> }).tips;
+    expect(Object.keys(all).sort(), 'без uids — всё показанное игроку').toEqual(expect.arrayContaining(uids));
+    const ex = ask('exchange', { from: (save.inventory.find((it) => it.kind === 'material') ?? { materialId: null }).materialId ?? null });
+    expect(ex.ok).toBe(true);
     if (worn[0]) {
       const eq = ask('item', { part: 'equip', uid: worn[0].uid, cell: 'weapon' });
       expect(eq.ok).toBe(true);

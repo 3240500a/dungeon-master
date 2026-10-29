@@ -12,7 +12,7 @@
     "castSpeed": 2.04,
     "critChance": 0.05,
     "critMultiplier": 1.5,
-    "armor": 24,
+    "armor": 24.72,
     "armorPen": 0,
     "moveSpeed": 84,
     "attackMoveMult": 0.4,
@@ -83,7 +83,7 @@
    "reserveMana": 0,
    "reserveStamina": 0
   },
-  "master": "Уровень: 12 · Опыт: 0\nУрон: 5–12 · Броня: 24 · Крит: 5%\nHP: 345 · Мана: 281",
+  "master": "Уровень: 12 · Опыт: 0\nУрон: 5–12 · Броня: 25 · Крит: 5%\nHP: 345 · Мана: 281",
   "hudInfo": "Ур. 12  ·  город  ·  Золото 5000  ·  Очки: атр 3 / скилл 0",
   "xp": {
    "into": 0,
@@ -240,9 +240,9 @@
      {
       "cells": [
        "Броня",
-       "24"
+       "25"
       ],
-      "tip": "Снижает получаемый физический урон. Сейчас: −21% (armor/(armor+30+5×ур.атакующего))."
+      "tip": "Снижает получаемый физический урон. Сейчас: −22% (armor/(armor+30+5×ур.атакующего))."
      },
      {
       "cells": [
@@ -574,9 +574,9 @@
      {
       "cells": [
        "Броня",
-       "24"
+       "25"
       ],
-      "tip": "Снижает получаемый физический урон. Сейчас: −21% (armor/(armor+30+5×ур.атакующего))."
+      "tip": "Снижает получаемый физический урон. Сейчас: −22% (armor/(armor+30+5×ур.атакующего))."
      },
      {
       "cells": [
@@ -10616,12 +10616,12 @@
     "refusal": null
    },
    "masteries": {
-    "ranks": 0,
-    "fee": 0,
-    "refusal": "Мастерства не вложены"
+    "ranks": 1,
+    "fee": 80,
+    "refusal": null
    },
    "nodeCosts": {
-    "p-str": 160,
+    "p-str": 320,
     "p-dex": 160,
     "p-vit": 160,
     "p-int": 160,
@@ -10966,7 +10966,8 @@
       "• kill zombie: 0/5"
      ],
      "reward": "148 зол., ~15% ур. опыта, предмет",
-     "rival": null
+     "rival": null,
+     "canTurnIn": false
     },
     {
      "questId": "main-1-clear-crypt",
@@ -10977,7 +10978,8 @@
       "• kill zombie: 0/5"
      ],
      "reward": "100 зол., ~12% ур. опыта",
-     "rival": null
+     "rival": null,
+     "canTurnIn": false
     }
    ],
    "board": [
@@ -10990,7 +10992,8 @@
       "• kill zombie: 0/5"
      ],
      "reward": "148 зол., ~15% ур. опыта, предмет",
-     "rival": null
+     "rival": null,
+     "canTurnIn": false
     },
     {
      "questId": "rnd_rnd-delve_mubbs7i81",
@@ -11001,7 +11004,8 @@
       "• reach-floor: 0/3"
      ],
      "reward": "136 зол., ~14% ур. опыта",
-     "rival": null
+     "rival": null,
+     "canTurnIn": false
     }
    ]
   },
@@ -11011,6 +11015,7 @@
     {
      "id": "b-sword1h-a1",
      "name": "Град ударов",
+     "element": "physical",
      "open": 2,
      "filled": 1,
      "label": "Град ударов 1/2",
@@ -11021,11 +11026,17 @@
        "price": "+5 маны",
        "insertId": "ins-flame-edge",
        "rank": 0,
+       "tip": {
+        "name": "Пламенное лезвие",
+        "desc": "Треть урона скила добавляется огнём сверх обычного состава.",
+        "cooldownMult": 1.1
+       },
        "options": [
         {
          "label": "✕ Вынуть",
          "insertId": null,
-         "price": null
+         "price": null,
+         "tip": null
         }
        ]
       },
@@ -11035,6 +11046,7 @@
        "price": null,
        "insertId": null,
        "rank": 0,
+       "tip": null,
        "options": []
       }
      ],
@@ -11046,7 +11058,9 @@
       "resource": "stamina",
       "extraPool": null,
       "extraAmount": 0,
-      "procs": 0
+      "procs": 0,
+      "resourceText": "выносл.",
+      "extraPoolText": null
      }
     }
    ]
@@ -11097,6 +11111,7102 @@
      "abbrev": "Гр",
      "element": "physical",
      "fits": false
+    }
+   ]
+  },
+  "mastery": {
+   "nodes": [
+    {
+     "id": "p-str",
+     "x": 0,
+     "y": -60,
+     "name": "Сила (вход)",
+     "notable": false,
+     "entry": true,
+     "rank": 1,
+     "maxRank": 1,
+     "state": "alloc",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Максимальный ранг",
+     "tip": "<b>Сила (вход)</b>\nНачало веера ветвей атрибута «Сила».\nранг 1/1 · макс. ранг\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-dex",
+     "x": -60,
+     "y": 0,
+     "name": "Ловкость (вход)",
+     "notable": false,
+     "entry": true,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "avail",
+     "clickable": true,
+     "cost": 160,
+     "refusal": null,
+     "tip": "<b>Ловкость (вход)</b>\nНачало веера ветвей атрибута «Ловкость».\nранг 0/1 · след. ранг: 160 зол. + 1 очко\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-vit",
+     "x": 60,
+     "y": 0,
+     "name": "Живучесть (вход)",
+     "notable": false,
+     "entry": true,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "avail",
+     "clickable": true,
+     "cost": 160,
+     "refusal": null,
+     "tip": "<b>Живучесть (вход)</b>\nНачало веера ветвей атрибута «Живучесть».\nранг 0/1 · след. ранг: 160 зол. + 1 очко\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-int",
+     "x": 0,
+     "y": 60,
+     "name": "Интеллект (вход)",
+     "notable": false,
+     "entry": true,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "avail",
+     "clickable": true,
+     "cost": 160,
+     "refusal": null,
+     "tip": "<b>Интеллект (вход)</b>\nНачало веера ветвей атрибута «Интеллект».\nранг 0/1 · след. ранг: 160 зол. + 1 очко\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-str-bulwark-n0",
+     "x": -21,
+     "y": -87,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "avail",
+     "clickable": true,
+     "cost": 100,
+     "refusal": null,
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/4 · след. ранг: 100 зол. + 1 очко\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-str-bulwark-n1",
+     "x": -42,
+     "y": -114,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-str-bulwark-d0l1",
+     "x": -60,
+     "y": -145,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/4\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-str-bulwark-d0r1",
+     "x": -79,
+     "y": -128,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/4\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-str-bulwark-d0l2",
+     "x": -74,
+     "y": -175,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-str-bulwark-d0r2",
+     "x": -93,
+     "y": -160,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/4\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-str-bulwark-d0m",
+     "x": -117,
+     "y": -189,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/4\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-str-bulwark-d1l1",
+     "x": -110,
+     "y": -233,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-str-bulwark-d1r1",
+     "x": -141,
+     "y": -208,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-str-bulwark-d1l2",
+     "x": -137,
+     "y": -255,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/3\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-str-bulwark-d1r2",
+     "x": -156,
+     "y": -240,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-str-bulwark-d1m",
+     "x": -167,
+     "y": -274,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-str-bulwark-d2l1",
+     "x": -173,
+     "y": -313,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/3\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-str-bulwark-d2r1",
+     "x": -204,
+     "y": -289,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-str-bulwark-d2l2",
+     "x": -200,
+     "y": -335,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-str-bulwark-d2r2",
+     "x": -219,
+     "y": -321,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/3\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-str-bulwark-d2m",
+     "x": -230,
+     "y": -355,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-str-bulwark-note",
+     "x": -251,
+     "y": -382,
+     "name": "Несокрушимость",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Несокрушимость</b>\n+6.6% к «броня», +6.6% к «здоровье».\nранг 0/1\n<color=#88ffdd>+7% armor, +7% maxHp</color>"
+    },
+    {
+     "id": "p-str-crush-n0",
+     "x": -8,
+     "y": -93,
+     "name": "Стойкость к прерыв. 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "avail",
+     "clickable": true,
+     "cost": 100,
+     "refusal": null,
+     "tip": "<b>Стойкость к прерыв. 3%</b>\nМалый узел: 3% к «стойкость к прерыв.» за ранг.\nранг 0/4 · след. ранг: 100 зол. + 1 очко\n<color=#88ffdd>+0.03 interruptResist</color>"
+    },
+    {
+     "id": "p-str-crush-n1",
+     "x": -16,
+     "y": -126,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-crush-d0l1",
+     "x": -5,
+     "y": -164,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-crush-d0r1",
+     "x": -36,
+     "y": -157,
+     "name": "Стойкость к прерыв. 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 3%</b>\nМалый узел: 3% к «стойкость к прерыв.» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 interruptResist</color>"
+    },
+    {
+     "id": "p-str-crush-d0l2",
+     "x": -21,
+     "y": -195,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-crush-d0r2",
+     "x": -45,
+     "y": -189,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-crush-d0m",
+     "x": -41,
+     "y": -225,
+     "name": "Стойкость к прерыв. 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 3%</b>\nМалый узел: 3% к «стойкость к прерыв.» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 interruptResist</color>"
+    },
+    {
+     "id": "p-str-crush-d1l1",
+     "x": -30,
+     "y": -263,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-crush-d1r1",
+     "x": -69,
+     "y": -253,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-crush-d1l2",
+     "x": -46,
+     "y": -294,
+     "name": "Стойкость к прерыв. 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 3%</b>\nМалый узел: 3% к «стойкость к прерыв.» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 interruptResist</color>"
+    },
+    {
+     "id": "p-str-crush-d1r2",
+     "x": -69,
+     "y": -288,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-crush-d1m",
+     "x": -66,
+     "y": -324,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-crush-d2l1",
+     "x": -55,
+     "y": -362,
+     "name": "Стойкость к прерыв. 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 3%</b>\nМалый узел: 3% к «стойкость к прерыв.» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 interruptResist</color>"
+    },
+    {
+     "id": "p-str-crush-d2r1",
+     "x": -93,
+     "y": -352,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-crush-d2l2",
+     "x": -71,
+     "y": -393,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-crush-d2r2",
+     "x": -94,
+     "y": -387,
+     "name": "Стойкость к прерыв. 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 3%</b>\nМалый узел: 3% к «стойкость к прерыв.» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 interruptResist</color>"
+    },
+    {
+     "id": "p-str-crush-d2m",
+     "x": -90,
+     "y": -423,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-crush-note",
+     "x": -99,
+     "y": -456,
+     "name": "Тяжёлая длань",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Тяжёлая длань</b>\n+6.6% к «стойкость к прерыв.», +6.6% к «наложение статусов».\nранг 0/1\n<color=#88ffdd>+0.066 interruptResist, +0.066 ailmentPct</color>"
+    },
+    {
+     "id": "p-str-heavy-n0",
+     "x": 8,
+     "y": -93,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "avail",
+     "clickable": true,
+     "cost": 100,
+     "refusal": null,
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/4 · след. ранг: 100 зол. + 1 очко\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-n1",
+     "x": 16,
+     "y": -126,
+     "name": "Физ. урон 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2.5%</b>\nМалый узел: 2.5% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d0l1",
+     "x": 40,
+     "y": -156,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-heavy-d0r1",
+     "x": 14,
+     "y": -162,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d0l2",
+     "x": 45,
+     "y": -189,
+     "name": "Физ. урон 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2.5%</b>\nМалый узел: 2.5% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d0r2",
+     "x": 21,
+     "y": -195,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-heavy-d0m",
+     "x": 41,
+     "y": -225,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d1l1",
+     "x": 69,
+     "y": -253,
+     "name": "Физ. урон 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2.5%</b>\nМалый узел: 2.5% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d1r1",
+     "x": 30,
+     "y": -263,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-heavy-d1l2",
+     "x": 69,
+     "y": -288,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d1r2",
+     "x": 46,
+     "y": -294,
+     "name": "Физ. урон 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2.5%</b>\nМалый узел: 2.5% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d1m",
+     "x": 66,
+     "y": -324,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-heavy-d2l1",
+     "x": 93,
+     "y": -352,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d2r1",
+     "x": 55,
+     "y": -362,
+     "name": "Физ. урон 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2.5%</b>\nМалый узел: 2.5% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d2l2",
+     "x": 94,
+     "y": -387,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-heavy-d2r2",
+     "x": 71,
+     "y": -393,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-d2m",
+     "x": 90,
+     "y": -423,
+     "name": "Физ. урон 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2.5%</b>\nМалый узел: 2.5% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 physPct</color>"
+    },
+    {
+     "id": "p-str-heavy-note",
+     "x": 99,
+     "y": -456,
+     "name": "Разрушение",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Разрушение</b>\n+4.4% к «физ. урон», +2.6% к «урон».\nранг 0/1\n<color=#88ffdd>+0.044000000000000004 physPct, +0.026400000000000003 damagePct</color>"
+    },
+    {
+     "id": "p-str-heavy-key",
+     "x": 107,
+     "y": -489,
+     "name": "★ Берсерк",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>★ Берсерк</b>\nКейстон: +15% к «физ. урон», +10% к «скор. атаки», −15% к «броня».\nранг 0/1\n<color=#88ffdd>+0.15 physPct, +10% attackSpeed, +-15% armor</color>"
+    },
+    {
+     "id": "p-str-holyfire-n0",
+     "x": 21,
+     "y": -87,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "avail",
+     "clickable": true,
+     "cost": 100,
+     "refusal": null,
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/4 · след. ранг: 100 зол. + 1 очко\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-n1",
+     "x": 42,
+     "y": -114,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d0l1",
+     "x": 79,
+     "y": -128,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d0r1",
+     "x": 59,
+     "y": -147,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d0l2",
+     "x": 93,
+     "y": -160,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d0r2",
+     "x": 74,
+     "y": -175,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d0m",
+     "x": 115,
+     "y": -190,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d1l1",
+     "x": 148,
+     "y": -212,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d1r1",
+     "x": 123,
+     "y": -225,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d1l2",
+     "x": 156,
+     "y": -240,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d1r2",
+     "x": 137,
+     "y": -255,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d1m",
+     "x": 167,
+     "y": -274,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d2l1",
+     "x": 204,
+     "y": -289,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d2r1",
+     "x": 173,
+     "y": -313,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d2l2",
+     "x": 219,
+     "y": -321,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d2r2",
+     "x": 200,
+     "y": -335,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-str-holyfire-d2m",
+     "x": 230,
+     "y": -355,
+     "name": "Физ. урон 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 1.8%</b>\nМалый узел: 1.8% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 physPct</color>"
+    },
+    {
+     "id": "p-str-holyfire-note",
+     "x": 251,
+     "y": -382,
+     "name": "Кара Света",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Кара Света</b>\n+5.5% к «урон огнём», +4% к «физ. урон».\nранг 0/1\n<color=#88ffdd>+0.05500000000000001 firePct, +0.0396 physPct</color>"
+    },
+    {
+     "id": "p-vit-regen-n0",
+     "x": 81,
+     "y": -30,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/4\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-n1",
+     "x": 116,
+     "y": -39,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/4\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d0l1",
+     "x": 147,
+     "y": -58,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-regen-d0r1",
+     "x": 132,
+     "y": -75,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/4\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d0l2",
+     "x": 178,
+     "y": -68,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/4\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d0r2",
+     "x": 165,
+     "y": -88,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-regen-d0m",
+     "x": 199,
+     "y": -98,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/4\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d1l1",
+     "x": 239,
+     "y": -101,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d1r1",
+     "x": 216,
+     "y": -133,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-regen-d1l2",
+     "x": 262,
+     "y": -127,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d1r2",
+     "x": 248,
+     "y": -146,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d1m",
+     "x": 283,
+     "y": -156,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-regen-d2l1",
+     "x": 322,
+     "y": -159,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d2r1",
+     "x": 299,
+     "y": -192,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d2l2",
+     "x": 345,
+     "y": -185,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-regen-d2r2",
+     "x": 332,
+     "y": -205,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-d2m",
+     "x": 366,
+     "y": -215,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-regen-note",
+     "x": 394,
+     "y": -234,
+     "name": "Второе дыхание",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Второе дыхание</b>\n+11% к «реген HP», +11% к «реген маны».\nранг 0/1\n<color=#88ffdd>+11% hpRegen, +11% manaRegen</color>"
+    },
+    {
+     "id": "p-vit-life-n0",
+     "x": 99,
+     "y": -14,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-n1",
+     "x": 127,
+     "y": -13,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/4\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-life-d0l1",
+     "x": 164,
+     "y": -3,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d0r1",
+     "x": 162,
+     "y": -29,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d0l2",
+     "x": 196,
+     "y": -14,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/4\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-life-d0r2",
+     "x": 191,
+     "y": -38,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d0m",
+     "x": 227,
+     "y": -32,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d1l1",
+     "x": 264,
+     "y": -19,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-life-d1r1",
+     "x": 256,
+     "y": -59,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d1l2",
+     "x": 296,
+     "y": -34,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d1r2",
+     "x": 291,
+     "y": -57,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-life-d1m",
+     "x": 327,
+     "y": -52,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d2l1",
+     "x": 364,
+     "y": -39,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d2r1",
+     "x": 357,
+     "y": -78,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-life-d2l2",
+     "x": 396,
+     "y": -53,
+     "name": "Здоровье 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 2.5%</b>\nМалый узел: 2.5% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d2r2",
+     "x": 391,
+     "y": -77,
+     "name": "Здоровье 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Здоровье 3%</b>\nМалый узел: 3% к «здоровье» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxHp</color>"
+    },
+    {
+     "id": "p-vit-life-d2m",
+     "x": 427,
+     "y": -71,
+     "name": "Реген HP 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген HP 5%</b>\nМалый узел: 5% к «реген HP» за ранг.\nранг 0/3\n<color=#88ffdd>+5% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-life-note",
+     "x": 461,
+     "y": -78,
+     "name": "Живучесть",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Живучесть</b>\n+6.6% к «здоровье», +11% к «реген HP».\nранг 0/1\n<color=#88ffdd>+7% maxHp, +11% hpRegen</color>"
+    },
+    {
+     "id": "p-vit-barrier-n0",
+     "x": 99,
+     "y": 14,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/4\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-vit-barrier-n1",
+     "x": 126,
+     "y": 16,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/4\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-d0l1",
+     "x": 154,
+     "y": 44,
+     "name": "Стойкость к прерыв. 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 2.5%</b>\nМалый узел: 2.5% к «стойкость к прерыв.» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 interruptResist</color>"
+    },
+    {
+     "id": "p-vit-barrier-d0r1",
+     "x": 165,
+     "y": 21,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/4\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-vit-barrier-d0l2",
+     "x": 189,
+     "y": 45,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/4\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-d0r2",
+     "x": 195,
+     "y": 21,
+     "name": "Стойкость к прерыв. 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 2.5%</b>\nМалый узел: 2.5% к «стойкость к прерыв.» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 interruptResist</color>"
+    },
+    {
+     "id": "p-vit-barrier-d0m",
+     "x": 225,
+     "y": 41,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/4\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-vit-barrier-d1l1",
+     "x": 253,
+     "y": 69,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-d1r1",
+     "x": 263,
+     "y": 30,
+     "name": "Стойкость к прерыв. 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 2.5%</b>\nМалый узел: 2.5% к «стойкость к прерыв.» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 interruptResist</color>"
+    },
+    {
+     "id": "p-vit-barrier-d1l2",
+     "x": 288,
+     "y": 69,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/3\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-vit-barrier-d1r2",
+     "x": 294,
+     "y": 46,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-d1m",
+     "x": 324,
+     "y": 66,
+     "name": "Стойкость к прерыв. 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 2.5%</b>\nМалый узел: 2.5% к «стойкость к прерыв.» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 interruptResist</color>"
+    },
+    {
+     "id": "p-vit-barrier-d2l1",
+     "x": 352,
+     "y": 93,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/3\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-vit-barrier-d2r1",
+     "x": 362,
+     "y": 55,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-d2l2",
+     "x": 387,
+     "y": 94,
+     "name": "Стойкость к прерыв. 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стойкость к прерыв. 2.5%</b>\nМалый узел: 2.5% к «стойкость к прерыв.» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 interruptResist</color>"
+    },
+    {
+     "id": "p-vit-barrier-d2r2",
+     "x": 393,
+     "y": 71,
+     "name": "Броня 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Броня 3%</b>\nМалый узел: 3% к «броня» за ранг.\nранг 0/3\n<color=#88ffdd>+3% armor</color>"
+    },
+    {
+     "id": "p-vit-barrier-d2m",
+     "x": 423,
+     "y": 90,
+     "name": "Блок 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Блок 2%</b>\nМалый узел: 2% к «блок» за ранг.\nранг 0/3\n<color=#88ffdd>+2% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-note",
+     "x": 456,
+     "y": 99,
+     "name": "Латная воля",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Латная воля</b>\n+6.6% к «броня», +4.4% к «блок».\nранг 0/1\n<color=#88ffdd>+7% armor, +4% blockChance</color>"
+    },
+    {
+     "id": "p-vit-barrier-key",
+     "x": 489,
+     "y": 107,
+     "name": "★ Несокрушимый",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>★ Несокрушимый</b>\nКейстон: +15% к «здоровье», +15% к «броня», −10% к «скор. движения».\nранг 0/1\n<color=#88ffdd>+15% maxHp, +15% armor, +-10% moveSpeed</color>"
+    },
+    {
+     "id": "p-vit-resist-n0",
+     "x": 84,
+     "y": 31,
+     "name": "Сопр. огню 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. огню 2%</b>\nМалый узел: 2% к «сопр. огню» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resFire</color>"
+    },
+    {
+     "id": "p-vit-resist-n1",
+     "x": 114,
+     "y": 42,
+     "name": "Сопр. холоду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. холоду 2%</b>\nМалый узел: 2% к «сопр. холоду» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resCold</color>"
+    },
+    {
+     "id": "p-vit-resist-d0l1",
+     "x": 128,
+     "y": 79,
+     "name": "Сопр. молнии 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. молнии 2%</b>\nМалый узел: 2% к «сопр. молнии» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resLightning</color>"
+    },
+    {
+     "id": "p-vit-resist-d0r1",
+     "x": 144,
+     "y": 64,
+     "name": "Сопр. яду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. яду 2%</b>\nМалый узел: 2% к «сопр. яду» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resPoison</color>"
+    },
+    {
+     "id": "p-vit-resist-d0l2",
+     "x": 152,
+     "y": 100,
+     "name": "Сопр. огню 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. огню 2%</b>\nМалый узел: 2% к «сопр. огню» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resFire</color>"
+    },
+    {
+     "id": "p-vit-resist-d0r2",
+     "x": 171,
+     "y": 79,
+     "name": "Сопр. холоду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. холоду 2%</b>\nМалый узел: 2% к «сопр. холоду» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resCold</color>"
+    },
+    {
+     "id": "p-vit-resist-d0m",
+     "x": 194,
+     "y": 105,
+     "name": "Сопр. молнии 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. молнии 2%</b>\nМалый узел: 2% к «сопр. молнии» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 resLightning</color>"
+    },
+    {
+     "id": "p-vit-resist-d1l1",
+     "x": 208,
+     "y": 141,
+     "name": "Сопр. яду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. яду 2%</b>\nМалый узел: 2% к «сопр. яду» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resPoison</color>"
+    },
+    {
+     "id": "p-vit-resist-d1r1",
+     "x": 233,
+     "y": 110,
+     "name": "Сопр. огню 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. огню 2%</b>\nМалый узел: 2% к «сопр. огню» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resFire</color>"
+    },
+    {
+     "id": "p-vit-resist-d1l2",
+     "x": 240,
+     "y": 156,
+     "name": "Сопр. холоду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. холоду 2%</b>\nМалый узел: 2% к «сопр. холоду» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resCold</color>"
+    },
+    {
+     "id": "p-vit-resist-d1r2",
+     "x": 255,
+     "y": 137,
+     "name": "Сопр. молнии 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. молнии 2%</b>\nМалый узел: 2% к «сопр. молнии» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resLightning</color>"
+    },
+    {
+     "id": "p-vit-resist-d1m",
+     "x": 274,
+     "y": 167,
+     "name": "Сопр. яду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. яду 2%</b>\nМалый узел: 2% к «сопр. яду» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resPoison</color>"
+    },
+    {
+     "id": "p-vit-resist-d2l1",
+     "x": 289,
+     "y": 204,
+     "name": "Сопр. огню 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. огню 2%</b>\nМалый узел: 2% к «сопр. огню» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resFire</color>"
+    },
+    {
+     "id": "p-vit-resist-d2r1",
+     "x": 313,
+     "y": 173,
+     "name": "Сопр. холоду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. холоду 2%</b>\nМалый узел: 2% к «сопр. холоду» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resCold</color>"
+    },
+    {
+     "id": "p-vit-resist-d2l2",
+     "x": 321,
+     "y": 219,
+     "name": "Сопр. молнии 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. молнии 2%</b>\nМалый узел: 2% к «сопр. молнии» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resLightning</color>"
+    },
+    {
+     "id": "p-vit-resist-d2r2",
+     "x": 335,
+     "y": 200,
+     "name": "Сопр. яду 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. яду 2%</b>\nМалый узел: 2% к «сопр. яду» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resPoison</color>"
+    },
+    {
+     "id": "p-vit-resist-d2m",
+     "x": 355,
+     "y": 230,
+     "name": "Сопр. огню 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Сопр. огню 2%</b>\nМалый узел: 2% к «сопр. огню» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 resFire</color>"
+    },
+    {
+     "id": "p-vit-resist-note",
+     "x": 382,
+     "y": 251,
+     "name": "Стихийный оплот",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Стихийный оплот</b>\n+4.4% к «сопр. огню», +4.4% к «сопр. холоду».\nранг 0/1\n<color=#88ffdd>+0.044000000000000004 resFire, +0.044000000000000004 resCold</color>"
+    },
+    {
+     "id": "p-int-mana-n0",
+     "x": 38,
+     "y": 78,
+     "name": "Мана 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Мана 3%</b>\nМалый узел: 3% к «мана» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-int-mana-n1",
+     "x": 67,
+     "y": 98,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/4\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-int-mana-d0l1",
+     "x": 78,
+     "y": 127,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-mana-d0r1",
+     "x": 98,
+     "y": 108,
+     "name": "Мана 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Мана 3%</b>\nМалый узел: 3% к «мана» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-int-mana-d0l2",
+     "x": 100,
+     "y": 149,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/4\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-int-mana-d0r2",
+     "x": 127,
+     "y": 129,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-mana-d0m",
+     "x": 133,
+     "y": 167,
+     "name": "Мана 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Мана 3%</b>\nМалый узел: 3% к «мана» за ранг.\nранг 0/4\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-int-mana-d1l1",
+     "x": 135,
+     "y": 219,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-int-mana-d1r1",
+     "x": 175,
+     "y": 195,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-mana-d1l2",
+     "x": 152,
+     "y": 247,
+     "name": "Мана 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Мана 3%</b>\nМалый узел: 3% к «мана» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-int-mana-d1r2",
+     "x": 182,
+     "y": 221,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-int-mana-d1m",
+     "x": 167,
+     "y": 274,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-mana-d2l1",
+     "x": 173,
+     "y": 313,
+     "name": "Мана 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Мана 3%</b>\nМалый узел: 3% к «мана» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-int-mana-d2r1",
+     "x": 204,
+     "y": 289,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-int-mana-d2l2",
+     "x": 200,
+     "y": 335,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-mana-d2r2",
+     "x": 219,
+     "y": 321,
+     "name": "Мана 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Мана 3%</b>\nМалый узел: 3% к «мана» за ранг.\nранг 0/3\n<color=#88ffdd>+3% maxMana</color>"
+    },
+    {
+     "id": "p-int-mana-d2m",
+     "x": 230,
+     "y": 355,
+     "name": "Реген маны 5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Реген маны 5%</b>\nМалый узел: 5% к «реген маны» за ранг.\nранг 0/3\n<color=#88ffdd>+5% manaRegen</color>"
+    },
+    {
+     "id": "p-int-mana-note",
+     "x": 251,
+     "y": 382,
+     "name": "Поток маны",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Поток маны</b>\n+6.6% к «мана», +11% к «реген маны».\nранг 0/1\n<color=#88ffdd>+7% maxMana, +11% manaRegen</color>"
+    },
+    {
+     "id": "p-int-poison-n0",
+     "x": 34,
+     "y": 101,
+     "name": "Урон ядом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон ядом 2.5%</b>\nМалый узел: 2.5% к «урон ядом» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 poisonPct</color>"
+    },
+    {
+     "id": "p-int-poison-n1",
+     "x": 45,
+     "y": 121,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-poison-d0l1",
+     "x": 42,
+     "y": 159,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-poison-d0r1",
+     "x": 62,
+     "y": 139,
+     "name": "Урон ядом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон ядом 2.5%</b>\nМалый узел: 2.5% к «урон ядом» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 poisonPct</color>"
+    },
+    {
+     "id": "p-int-poison-d0l2",
+     "x": 59,
+     "y": 182,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-poison-d0r2",
+     "x": 79,
+     "y": 164,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-poison-d0m",
+     "x": 83,
+     "y": 209,
+     "name": "Урон ядом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон ядом 2.5%</b>\nМалый узел: 2.5% к «урон ядом» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 poisonPct</color>"
+    },
+    {
+     "id": "p-int-poison-d1l1",
+     "x": 69,
+     "y": 252,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-poison-d1r1",
+     "x": 92,
+     "y": 243,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-poison-d1l2",
+     "x": 74,
+     "y": 286,
+     "name": "Урон ядом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон ядом 2.5%</b>\nМалый узел: 2.5% к «урон ядом» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 poisonPct</color>"
+    },
+    {
+     "id": "p-int-poison-d1r2",
+     "x": 96,
+     "y": 278,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-poison-d1m",
+     "x": 97,
+     "y": 314,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-poison-d2l1",
+     "x": 91,
+     "y": 353,
+     "name": "Урон ядом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон ядом 2.5%</b>\nМалый узел: 2.5% к «урон ядом» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 poisonPct</color>"
+    },
+    {
+     "id": "p-int-poison-d2r1",
+     "x": 128,
+     "y": 339,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-poison-d2l2",
+     "x": 111,
+     "y": 382,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-poison-d2r2",
+     "x": 133,
+     "y": 373,
+     "name": "Урон ядом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон ядом 2.5%</b>\nМалый узел: 2.5% к «урон ядом» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 poisonPct</color>"
+    },
+    {
+     "id": "p-int-poison-d2m",
+     "x": 134,
+     "y": 409,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-poison-note",
+     "x": 146,
+     "y": 441,
+     "name": "Зараза",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Зараза</b>\n+5.5% к «урон ядом», +6.6% к «наложение статусов».\nранг 0/1\n<color=#88ffdd>+0.05500000000000001 poisonPct, +0.066 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-lightning-n0",
+     "x": 12,
+     "y": 105,
+     "name": "Урон молнией 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон молнией 2.5%</b>\nМалый узел: 2.5% к «урон молнией» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 lightningPct</color>"
+    },
+    {
+     "id": "p-int-lightning-n1",
+     "x": 13,
+     "y": 128,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-d0l1",
+     "x": 3,
+     "y": 163,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-lightning-d0r1",
+     "x": 25,
+     "y": 149,
+     "name": "Урон молнией 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон молнией 2.5%</b>\nМалый узел: 2.5% к «урон молнией» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 lightningPct</color>"
+    },
+    {
+     "id": "p-int-lightning-d0l2",
+     "x": 2,
+     "y": 196,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-d0r2",
+     "x": 32,
+     "y": 196,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-lightning-d0m",
+     "x": 24,
+     "y": 227,
+     "name": "Урон молнией 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон молнией 2.5%</b>\nМалый узел: 2.5% к «урон молнией» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 lightningPct</color>"
+    },
+    {
+     "id": "p-int-lightning-d1l1",
+     "x": 9,
+     "y": 259,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-d1r1",
+     "x": 34,
+     "y": 262,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-lightning-d1l2",
+     "x": 5,
+     "y": 298,
+     "name": "Урон молнией 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон молнией 2.5%</b>\nМалый узел: 2.5% к «урон молнией» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 lightningPct</color>"
+    },
+    {
+     "id": "p-int-lightning-d1r2",
+     "x": 29,
+     "y": 297,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-d1m",
+     "x": 19,
+     "y": 331,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-lightning-d2l1",
+     "x": 1,
+     "y": 367,
+     "name": "Урон молнией 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон молнией 2.5%</b>\nМалый узел: 2.5% к «урон молнией» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 lightningPct</color>"
+    },
+    {
+     "id": "p-int-lightning-d2r1",
+     "x": 41,
+     "y": 364,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-d2l2",
+     "x": 12,
+     "y": 400,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-lightning-d2r2",
+     "x": 36,
+     "y": 398,
+     "name": "Урон молнией 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон молнией 2.5%</b>\nМалый узел: 2.5% к «урон молнией» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 lightningPct</color>"
+    },
+    {
+     "id": "p-int-lightning-d2m",
+     "x": 26,
+     "y": 433,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-note",
+     "x": 28,
+     "y": 467,
+     "name": "Гроза",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Гроза</b>\n+5.5% к «урон молнией», +4.4% к «скор. каста».\nранг 0/1\n<color=#88ffdd>+0.05500000000000001 lightningPct, +4% castSpeed</color>"
+    },
+    {
+     "id": "p-int-lightning-key",
+     "x": 31,
+     "y": 501,
+     "name": "★ Перегрузка",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>★ Перегрузка</b>\nКейстон: +8% к «урон», +12% к «скор. каста», −15% к «мана».\nранг 0/1\n<color=#88ffdd>+0.08 damagePct, +12% castSpeed, +-15% maxMana</color>"
+    },
+    {
+     "id": "p-int-cold-n0",
+     "x": -8,
+     "y": 93,
+     "name": "Урон холодом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон холодом 2.5%</b>\nМалый узел: 2.5% к «урон холодом» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 coldPct</color>"
+    },
+    {
+     "id": "p-int-cold-n1",
+     "x": -15,
+     "y": 126,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-cold-d0l1",
+     "x": -39,
+     "y": 153,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-cold-d0r1",
+     "x": -17,
+     "y": 164,
+     "name": "Урон холодом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон холодом 2.5%</b>\nМалый узел: 2.5% к «урон холодом» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 coldPct</color>"
+    },
+    {
+     "id": "p-int-cold-d0l2",
+     "x": -56,
+     "y": 183,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-cold-d0r2",
+     "x": -29,
+     "y": 193,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-cold-d0m",
+     "x": -56,
+     "y": 219,
+     "name": "Урон холодом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон холодом 2.5%</b>\nМалый узел: 2.5% к «урон холодом» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 coldPct</color>"
+    },
+    {
+     "id": "p-int-cold-d1l1",
+     "x": -72,
+     "y": 251,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-cold-d1r1",
+     "x": -42,
+     "y": 256,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-cold-d1l2",
+     "x": -76,
+     "y": 290,
+     "name": "Урон холодом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон холодом 2.5%</b>\nМалый узел: 2.5% к «урон холодом» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 coldPct</color>"
+    },
+    {
+     "id": "p-int-cold-d1r2",
+     "x": -42,
+     "y": 295,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-cold-d1m",
+     "x": -67,
+     "y": 326,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-cold-d2l1",
+     "x": -88,
+     "y": 354,
+     "name": "Урон холодом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон холодом 2.5%</b>\nМалый узел: 2.5% к «урон холодом» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 coldPct</color>"
+    },
+    {
+     "id": "p-int-cold-d2r1",
+     "x": -49,
+     "y": 363,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-cold-d2l2",
+     "x": -88,
+     "y": 389,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-cold-d2r2",
+     "x": -65,
+     "y": 394,
+     "name": "Урон холодом 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон холодом 2.5%</b>\nМалый узел: 2.5% к «урон холодом» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 coldPct</color>"
+    },
+    {
+     "id": "p-int-cold-d2m",
+     "x": -84,
+     "y": 424,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-cold-note",
+     "x": -92,
+     "y": 458,
+     "name": "Ледяное касание",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Ледяное касание</b>\n+5.5% к «урон холодом», +4.4% к «скор. каста».\nранг 0/1\n<color=#88ffdd>+0.05500000000000001 coldPct, +4% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-n0",
+     "x": -31,
+     "y": 95,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-int-fire-n1",
+     "x": -53,
+     "y": 114,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-d0l1",
+     "x": -82,
+     "y": 137,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-fire-d0r1",
+     "x": -65,
+     "y": 151,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-int-fire-d0l2",
+     "x": -113,
+     "y": 152,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-d0r2",
+     "x": -88,
+     "y": 175,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-fire-d0m",
+     "x": -114,
+     "y": 187,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-int-fire-d1l1",
+     "x": -133,
+     "y": 216,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-d1r1",
+     "x": -108,
+     "y": 229,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-fire-d1l2",
+     "x": -149,
+     "y": 254,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-int-fire-d1r2",
+     "x": -117,
+     "y": 273,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-d1m",
+     "x": -136,
+     "y": 296,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-fire-d2l1",
+     "x": -170,
+     "y": 315,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-int-fire-d2r1",
+     "x": -136,
+     "y": 335,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-d2l2",
+     "x": -180,
+     "y": 348,
+     "name": "Урон 1.2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон 1.2%</b>\nМалый узел: 1.2% к «урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.012 damagePct</color>"
+    },
+    {
+     "id": "p-int-fire-d2r2",
+     "x": -160,
+     "y": 360,
+     "name": "Урон огнём 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 2.5%</b>\nМалый узел: 2.5% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.025 firePct</color>"
+    },
+    {
+     "id": "p-int-fire-d2m",
+     "x": -187,
+     "y": 384,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-fire-note",
+     "x": -204,
+     "y": 413,
+     "name": "Пиромания",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Пиромания</b>\n+5.5% к «урон огнём», +4.4% к «скор. каста».\nранг 0/1\n<color=#88ffdd>+0.05500000000000001 firePct, +4% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-n0",
+     "x": -31,
+     "y": 78,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-hex-n1",
+     "x": -70,
+     "y": 93,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-d0l1",
+     "x": -108,
+     "y": 96,
+     "name": "Урон огнём 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 1.8%</b>\nМалый узел: 1.8% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.018 firePct</color>"
+    },
+    {
+     "id": "p-int-hex-d0r1",
+     "x": -93,
+     "y": 118,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-hex-d0l2",
+     "x": -136,
+     "y": 109,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/4\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-d0r2",
+     "x": -122,
+     "y": 130,
+     "name": "Урон огнём 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 1.8%</b>\nМалый узел: 1.8% к «урон огнём» за ранг.\nранг 0/4\n<color=#88ffdd>+0.018 firePct</color>"
+    },
+    {
+     "id": "p-int-hex-d0m",
+     "x": -162,
+     "y": 137,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/4\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-hex-d1l1",
+     "x": -184,
+     "y": 167,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-d1r1",
+     "x": -159,
+     "y": 196,
+     "name": "Урон огнём 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 1.8%</b>\nМалый узел: 1.8% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 firePct</color>"
+    },
+    {
+     "id": "p-int-hex-d1l2",
+     "x": -200,
+     "y": 200,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-hex-d1r2",
+     "x": -176,
+     "y": 223,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-d1m",
+     "x": -202,
+     "y": 242,
+     "name": "Урон огнём 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 1.8%</b>\nМалый узел: 1.8% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 firePct</color>"
+    },
+    {
+     "id": "p-int-hex-d2l1",
+     "x": -241,
+     "y": 250,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-hex-d2r1",
+     "x": -214,
+     "y": 280,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-d2l2",
+     "x": -261,
+     "y": 279,
+     "name": "Урон огнём 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Урон огнём 1.8%</b>\nМалый узел: 1.8% к «урон огнём» за ранг.\nранг 0/3\n<color=#88ffdd>+0.018 firePct</color>"
+    },
+    {
+     "id": "p-int-hex-d2r2",
+     "x": -245,
+     "y": 296,
+     "name": "Наложение статусов 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Наложение статусов 3%</b>\nМалый узел: 3% к «наложение статусов» за ранг.\nранг 0/3\n<color=#88ffdd>+0.03 ailmentPct</color>"
+    },
+    {
+     "id": "p-int-hex-d2m",
+     "x": -278,
+     "y": 310,
+     "name": "Скор. каста 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. каста 2%</b>\nМалый узел: 2% к «скор. каста» за ранг.\nранг 0/3\n<color=#88ffdd>+2% castSpeed</color>"
+    },
+    {
+     "id": "p-int-hex-note",
+     "x": -303,
+     "y": 333,
+     "name": "Скорая порча",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скорая порча</b>\n+6.6% к «наложение статусов», +4.4% к «скор. каста».\nранг 0/1\n<color=#88ffdd>+0.066 ailmentPct, +4% castSpeed</color>"
+    },
+    {
+     "id": "p-dex-pierce-n0",
+     "x": -81,
+     "y": 25,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-dex-pierce-n1",
+     "x": -111,
+     "y": 46,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/4\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-pierce-d0l1",
+     "x": -157,
+     "y": 44,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-pierce-d0r1",
+     "x": -134,
+     "y": 67,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-dex-pierce-d0l2",
+     "x": -179,
+     "y": 55,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/4\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-pierce-d0r2",
+     "x": -165,
+     "y": 83,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-pierce-d0m",
+     "x": -202,
+     "y": 93,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/4\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-dex-pierce-d1l1",
+     "x": -244,
+     "y": 77,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-pierce-d1r1",
+     "x": -238,
+     "y": 101,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-pierce-d1l2",
+     "x": -282,
+     "y": 86,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-dex-pierce-d1r2",
+     "x": -273,
+     "y": 108,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-pierce-d1m",
+     "x": -308,
+     "y": 111,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-pierce-d2l1",
+     "x": -348,
+     "y": 106,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-dex-pierce-d2r1",
+     "x": -331,
+     "y": 143,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-pierce-d2l2",
+     "x": -375,
+     "y": 127,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-pierce-d2r2",
+     "x": -366,
+     "y": 149,
+     "name": "Физ. урон 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Физ. урон 2%</b>\nМалый узел: 2% к «физ. урон» за ранг.\nранг 0/3\n<color=#88ffdd>+0.02 physPct</color>"
+    },
+    {
+     "id": "p-dex-pierce-d2m",
+     "x": -402,
+     "y": 152,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-pierce-note",
+     "x": -433,
+     "y": 166,
+     "name": "Пробойник",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Пробойник</b>\n+4.4% к «физ. урон», +6.6% к «меткость».\nранг 0/1\n<color=#88ffdd>+0.044000000000000004 physPct, +7% accuracy</color>"
+    },
+    {
+     "id": "p-dex-agile-n0",
+     "x": -93,
+     "y": 8,
+     "name": "Уклонение 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Уклонение 3%</b>\nМалый узел: 3% к «уклонение» за ранг.\nранг 0/4\n<color=#88ffdd>+3% evade</color>"
+    },
+    {
+     "id": "p-dex-agile-n1",
+     "x": -129,
+     "y": 10,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/4\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d0l1",
+     "x": -163,
+     "y": -1,
+     "name": "Скор. атаки 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 1.8%</b>\nМалый узел: 1.8% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d0r1",
+     "x": -158,
+     "y": 23,
+     "name": "Уклонение 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Уклонение 3%</b>\nМалый узел: 3% к «уклонение» за ранг.\nранг 0/4\n<color=#88ffdd>+3% evade</color>"
+    },
+    {
+     "id": "p-dex-agile-d0l2",
+     "x": -199,
+     "y": -3,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/4\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d0r2",
+     "x": -194,
+     "y": 25,
+     "name": "Скор. атаки 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 1.8%</b>\nМалый узел: 1.8% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d0m",
+     "x": -230,
+     "y": 6,
+     "name": "Уклонение 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Уклонение 3%</b>\nМалый узел: 3% к «уклонение» за ранг.\nранг 0/4\n<color=#88ffdd>+3% evade</color>"
+    },
+    {
+     "id": "p-dex-agile-d1l1",
+     "x": -265,
+     "y": -13,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d1r1",
+     "x": -263,
+     "y": 27,
+     "name": "Скор. атаки 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 1.8%</b>\nМалый узел: 1.8% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d1l2",
+     "x": -298,
+     "y": -4,
+     "name": "Уклонение 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Уклонение 3%</b>\nМалый узел: 3% к «уклонение» за ранг.\nранг 0/3\n<color=#88ffdd>+3% evade</color>"
+    },
+    {
+     "id": "p-dex-agile-d1r2",
+     "x": -297,
+     "y": 20,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d1m",
+     "x": -332,
+     "y": 9,
+     "name": "Скор. атаки 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 1.8%</b>\nМалый узел: 1.8% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d2l1",
+     "x": -367,
+     "y": -9,
+     "name": "Уклонение 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Уклонение 3%</b>\nМалый узел: 3% к «уклонение» за ранг.\nранг 0/3\n<color=#88ffdd>+3% evade</color>"
+    },
+    {
+     "id": "p-dex-agile-d2r1",
+     "x": -365,
+     "y": 31,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d2l2",
+     "x": -400,
+     "y": 0,
+     "name": "Скор. атаки 1.8%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 1.8%</b>\nМалый узел: 1.8% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-d2r2",
+     "x": -399,
+     "y": 24,
+     "name": "Уклонение 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Уклонение 3%</b>\nМалый узел: 3% к «уклонение» за ранг.\nранг 0/3\n<color=#88ffdd>+3% evade</color>"
+    },
+    {
+     "id": "p-dex-agile-d2m",
+     "x": -434,
+     "y": 13,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-agile-note",
+     "x": -468,
+     "y": 14,
+     "name": "Танцующий клинок",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Танцующий клинок</b>\n+6.6% к «уклонение», +3.3% к «скор. движения».\nранг 0/1\n<color=#88ffdd>+7% evade, +3% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-precision-n0",
+     "x": -92,
+     "y": -13,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-precision-n1",
+     "x": -123,
+     "y": -25,
+     "name": "Множ. крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Множ. крита 3%</b>\nМалый узел: 3% к «множ. крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-d0l1",
+     "x": -147,
+     "y": -57,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/4\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-precision-d0r1",
+     "x": -160,
+     "y": -31,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-precision-d0l2",
+     "x": -182,
+     "y": -62,
+     "name": "Множ. крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Множ. крита 3%</b>\nМалый узел: 3% к «множ. крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-d0r2",
+     "x": -191,
+     "y": -40,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/4\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-precision-d0m",
+     "x": -218,
+     "y": -64,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/4\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-precision-d1l1",
+     "x": -242,
+     "y": -95,
+     "name": "Множ. крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Множ. крита 3%</b>\nМалый узел: 3% к «множ. крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-d1r1",
+     "x": -257,
+     "y": -58,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-precision-d1l2",
+     "x": -276,
+     "y": -100,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-precision-d1r2",
+     "x": -285,
+     "y": -78,
+     "name": "Множ. крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Множ. крита 3%</b>\nМалый узел: 3% к «множ. крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-d1m",
+     "x": -312,
+     "y": -102,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-precision-d2l1",
+     "x": -336,
+     "y": -133,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-precision-d2r1",
+     "x": -351,
+     "y": -96,
+     "name": "Множ. крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Множ. крита 3%</b>\nМалый узел: 3% к «множ. крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-d2l2",
+     "x": -371,
+     "y": -138,
+     "name": "Меткость 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Меткость 3%</b>\nМалый узел: 3% к «меткость» за ранг.\nранг 0/3\n<color=#88ffdd>+3% accuracy</color>"
+    },
+    {
+     "id": "p-dex-precision-d2r2",
+     "x": -380,
+     "y": -116,
+     "name": "Шанс крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шанс крита 3%</b>\nМалый узел: 3% к «шанс крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critChance</color>"
+    },
+    {
+     "id": "p-dex-precision-d2m",
+     "x": -407,
+     "y": -140,
+     "name": "Множ. крита 3%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Множ. крита 3%</b>\nМалый узел: 3% к «множ. крита» за ранг.\nранг 0/3\n<color=#88ffdd>+3% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-note",
+     "x": -438,
+     "y": -153,
+     "name": "Смертельная точность",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Смертельная точность</b>\n+6.6% к «шанс крита», +6.6% к «множ. крита».\nранг 0/1\n<color=#88ffdd>+7% critChance, +7% critMultiplier</color>"
+    },
+    {
+     "id": "p-dex-precision-key",
+     "x": -470,
+     "y": -166,
+     "name": "★ Идеальный удар",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>★ Идеальный удар</b>\nКейстон: +12% к «шанс крита», +15% к «множ. крита», −10% к «здоровье».\nранг 0/1\n<color=#88ffdd>+12% critChance, +15% critMultiplier, +-10% maxHp</color>"
+    },
+    {
+     "id": "p-dex-swift-n0",
+     "x": -80,
+     "y": -31,
+     "name": "Скор. атаки 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2%</b>\nМалый узел: 2% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-n1",
+     "x": -96,
+     "y": -58,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/4\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d0l1",
+     "x": -117,
+     "y": -96,
+     "name": "Скор. атаки 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2.5%</b>\nМалый узел: 2.5% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+3% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d0r1",
+     "x": -129,
+     "y": -77,
+     "name": "Скор. атаки 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2%</b>\nМалый узел: 2% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d0l2",
+     "x": -135,
+     "y": -123,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/4\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d0r2",
+     "x": -159,
+     "y": -94,
+     "name": "Скор. атаки 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2.5%</b>\nМалый узел: 2.5% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+3% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d0m",
+     "x": -182,
+     "y": -118,
+     "name": "Скор. атаки 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 4,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2%</b>\nМалый узел: 2% к «скор. атаки» за ранг.\nранг 0/4\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d1l1",
+     "x": -193,
+     "y": -156,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d1r1",
+     "x": -221,
+     "y": -127,
+     "name": "Скор. атаки 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2.5%</b>\nМалый узел: 2.5% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+3% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d1l2",
+     "x": -223,
+     "y": -174,
+     "name": "Скор. атаки 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2%</b>\nМалый узел: 2% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d1r2",
+     "x": -240,
+     "y": -157,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d1m",
+     "x": -256,
+     "y": -189,
+     "name": "Скор. атаки 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2.5%</b>\nМалый узел: 2.5% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+3% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d2l1",
+     "x": -266,
+     "y": -227,
+     "name": "Скор. атаки 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2%</b>\nМалый узел: 2% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d2r1",
+     "x": -294,
+     "y": -198,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d2l2",
+     "x": -296,
+     "y": -245,
+     "name": "Скор. атаки 2.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2.5%</b>\nМалый узел: 2.5% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+3% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d2r2",
+     "x": -313,
+     "y": -228,
+     "name": "Скор. атаки 2%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. атаки 2%</b>\nМалый узел: 2% к «скор. атаки» за ранг.\nранг 0/3\n<color=#88ffdd>+2% attackSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-d2m",
+     "x": -329,
+     "y": -260,
+     "name": "Скор. движения 1.5%",
+     "notable": false,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 3,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Скор. движения 1.5%</b>\nМалый узел: 1.5% к «скор. движения» за ранг.\nранг 0/3\n<color=#88ffdd>+2% moveSpeed</color>"
+    },
+    {
+     "id": "p-dex-swift-note",
+     "x": -353,
+     "y": -283,
+     "name": "Шквал",
+     "notable": true,
+     "entry": false,
+     "rank": 0,
+     "maxRank": 1,
+     "state": "closed",
+     "clickable": false,
+     "cost": null,
+     "refusal": "Недоступный вход или нет смежного узла",
+     "tip": "<b>Шквал</b>\n+4.4% к «скор. атаки», +3.3% к «скор. движения».\nранг 0/1\n<color=#88ffdd>+4% attackSpeed, +3% moveSpeed</color>"
+    }
+   ],
+   "edges": [
+    {
+     "a": "p-str",
+     "b": "p-str-bulwark-n0",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-n0",
+     "b": "p-str-bulwark-n1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-n1",
+     "b": "p-str-bulwark-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-n1",
+     "b": "p-str-bulwark-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0l1",
+     "b": "p-str-bulwark-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0r1",
+     "b": "p-str-bulwark-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0l2",
+     "b": "p-str-bulwark-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0r2",
+     "b": "p-str-bulwark-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0m",
+     "b": "p-str-bulwark-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0m",
+     "b": "p-str-bulwark-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1l1",
+     "b": "p-str-bulwark-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1r1",
+     "b": "p-str-bulwark-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1l2",
+     "b": "p-str-bulwark-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1r2",
+     "b": "p-str-bulwark-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1m",
+     "b": "p-str-bulwark-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1m",
+     "b": "p-str-bulwark-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d2l1",
+     "b": "p-str-bulwark-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d2r1",
+     "b": "p-str-bulwark-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d2l2",
+     "b": "p-str-bulwark-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d2r2",
+     "b": "p-str-bulwark-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d2m",
+     "b": "p-str-bulwark-note",
+     "both": false
+    },
+    {
+     "a": "p-str",
+     "b": "p-str-crush-n0",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-n0",
+     "b": "p-str-crush-n1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-n1",
+     "b": "p-str-crush-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-n1",
+     "b": "p-str-crush-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0l1",
+     "b": "p-str-crush-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0r1",
+     "b": "p-str-crush-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0l2",
+     "b": "p-str-crush-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0r2",
+     "b": "p-str-crush-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0m",
+     "b": "p-str-crush-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0m",
+     "b": "p-str-crush-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1l1",
+     "b": "p-str-crush-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1r1",
+     "b": "p-str-crush-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1l2",
+     "b": "p-str-crush-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1r2",
+     "b": "p-str-crush-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1m",
+     "b": "p-str-crush-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1m",
+     "b": "p-str-crush-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d2l1",
+     "b": "p-str-crush-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d2r1",
+     "b": "p-str-crush-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d2l2",
+     "b": "p-str-crush-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d2r2",
+     "b": "p-str-crush-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d2m",
+     "b": "p-str-crush-note",
+     "both": false
+    },
+    {
+     "a": "p-str",
+     "b": "p-str-heavy-n0",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-n0",
+     "b": "p-str-heavy-n1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-n1",
+     "b": "p-str-heavy-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-n1",
+     "b": "p-str-heavy-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0l1",
+     "b": "p-str-heavy-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0r1",
+     "b": "p-str-heavy-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0l2",
+     "b": "p-str-heavy-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0r2",
+     "b": "p-str-heavy-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0m",
+     "b": "p-str-heavy-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0m",
+     "b": "p-str-heavy-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1l1",
+     "b": "p-str-heavy-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1r1",
+     "b": "p-str-heavy-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1l2",
+     "b": "p-str-heavy-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1r2",
+     "b": "p-str-heavy-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1m",
+     "b": "p-str-heavy-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1m",
+     "b": "p-str-heavy-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d2l1",
+     "b": "p-str-heavy-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d2r1",
+     "b": "p-str-heavy-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d2l2",
+     "b": "p-str-heavy-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d2r2",
+     "b": "p-str-heavy-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d2m",
+     "b": "p-str-heavy-note",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-note",
+     "b": "p-str-heavy-key",
+     "both": false
+    },
+    {
+     "a": "p-str",
+     "b": "p-str-holyfire-n0",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-n0",
+     "b": "p-str-holyfire-n1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-n1",
+     "b": "p-str-holyfire-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-n1",
+     "b": "p-str-holyfire-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0l1",
+     "b": "p-str-holyfire-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0r1",
+     "b": "p-str-holyfire-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0l2",
+     "b": "p-str-holyfire-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0r2",
+     "b": "p-str-holyfire-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0m",
+     "b": "p-str-holyfire-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0m",
+     "b": "p-str-holyfire-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1l1",
+     "b": "p-str-holyfire-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1r1",
+     "b": "p-str-holyfire-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1l2",
+     "b": "p-str-holyfire-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1r2",
+     "b": "p-str-holyfire-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1m",
+     "b": "p-str-holyfire-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1m",
+     "b": "p-str-holyfire-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d2l1",
+     "b": "p-str-holyfire-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d2r1",
+     "b": "p-str-holyfire-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d2l2",
+     "b": "p-str-holyfire-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d2r2",
+     "b": "p-str-holyfire-d2m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d2m",
+     "b": "p-str-holyfire-note",
+     "both": false
+    },
+    {
+     "a": "p-vit",
+     "b": "p-vit-regen-n0",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-n0",
+     "b": "p-vit-regen-n1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-n1",
+     "b": "p-vit-regen-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-n1",
+     "b": "p-vit-regen-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0l1",
+     "b": "p-vit-regen-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0r1",
+     "b": "p-vit-regen-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0l2",
+     "b": "p-vit-regen-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0r2",
+     "b": "p-vit-regen-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0m",
+     "b": "p-vit-regen-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0m",
+     "b": "p-vit-regen-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1l1",
+     "b": "p-vit-regen-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1r1",
+     "b": "p-vit-regen-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1l2",
+     "b": "p-vit-regen-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1r2",
+     "b": "p-vit-regen-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1m",
+     "b": "p-vit-regen-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1m",
+     "b": "p-vit-regen-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d2l1",
+     "b": "p-vit-regen-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d2r1",
+     "b": "p-vit-regen-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d2l2",
+     "b": "p-vit-regen-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d2r2",
+     "b": "p-vit-regen-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d2m",
+     "b": "p-vit-regen-note",
+     "both": false
+    },
+    {
+     "a": "p-vit",
+     "b": "p-vit-life-n0",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-n0",
+     "b": "p-vit-life-n1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-n1",
+     "b": "p-vit-life-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-n1",
+     "b": "p-vit-life-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0l1",
+     "b": "p-vit-life-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0r1",
+     "b": "p-vit-life-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0l2",
+     "b": "p-vit-life-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0r2",
+     "b": "p-vit-life-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0m",
+     "b": "p-vit-life-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0m",
+     "b": "p-vit-life-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1l1",
+     "b": "p-vit-life-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1r1",
+     "b": "p-vit-life-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1l2",
+     "b": "p-vit-life-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1r2",
+     "b": "p-vit-life-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1m",
+     "b": "p-vit-life-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1m",
+     "b": "p-vit-life-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d2l1",
+     "b": "p-vit-life-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d2r1",
+     "b": "p-vit-life-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d2l2",
+     "b": "p-vit-life-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d2r2",
+     "b": "p-vit-life-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d2m",
+     "b": "p-vit-life-note",
+     "both": false
+    },
+    {
+     "a": "p-vit",
+     "b": "p-vit-barrier-n0",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-n0",
+     "b": "p-vit-barrier-n1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-n1",
+     "b": "p-vit-barrier-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-n1",
+     "b": "p-vit-barrier-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0l1",
+     "b": "p-vit-barrier-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0r1",
+     "b": "p-vit-barrier-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0l2",
+     "b": "p-vit-barrier-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0r2",
+     "b": "p-vit-barrier-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0m",
+     "b": "p-vit-barrier-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0m",
+     "b": "p-vit-barrier-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1l1",
+     "b": "p-vit-barrier-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1r1",
+     "b": "p-vit-barrier-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1l2",
+     "b": "p-vit-barrier-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1r2",
+     "b": "p-vit-barrier-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1m",
+     "b": "p-vit-barrier-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1m",
+     "b": "p-vit-barrier-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d2l1",
+     "b": "p-vit-barrier-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d2r1",
+     "b": "p-vit-barrier-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d2l2",
+     "b": "p-vit-barrier-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d2r2",
+     "b": "p-vit-barrier-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d2m",
+     "b": "p-vit-barrier-note",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-note",
+     "b": "p-vit-barrier-key",
+     "both": false
+    },
+    {
+     "a": "p-vit",
+     "b": "p-vit-resist-n0",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-n0",
+     "b": "p-vit-resist-n1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-n1",
+     "b": "p-vit-resist-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-n1",
+     "b": "p-vit-resist-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0l1",
+     "b": "p-vit-resist-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0r1",
+     "b": "p-vit-resist-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0l2",
+     "b": "p-vit-resist-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0r2",
+     "b": "p-vit-resist-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0m",
+     "b": "p-vit-resist-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0m",
+     "b": "p-vit-resist-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1l1",
+     "b": "p-vit-resist-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1r1",
+     "b": "p-vit-resist-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1l2",
+     "b": "p-vit-resist-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1r2",
+     "b": "p-vit-resist-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1m",
+     "b": "p-vit-resist-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1m",
+     "b": "p-vit-resist-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d2l1",
+     "b": "p-vit-resist-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d2r1",
+     "b": "p-vit-resist-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d2l2",
+     "b": "p-vit-resist-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d2r2",
+     "b": "p-vit-resist-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d2m",
+     "b": "p-vit-resist-note",
+     "both": false
+    },
+    {
+     "a": "p-int",
+     "b": "p-int-mana-n0",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-n0",
+     "b": "p-int-mana-n1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-n1",
+     "b": "p-int-mana-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-n1",
+     "b": "p-int-mana-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0l1",
+     "b": "p-int-mana-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0r1",
+     "b": "p-int-mana-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0l2",
+     "b": "p-int-mana-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0r2",
+     "b": "p-int-mana-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0m",
+     "b": "p-int-mana-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0m",
+     "b": "p-int-mana-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1l1",
+     "b": "p-int-mana-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1r1",
+     "b": "p-int-mana-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1l2",
+     "b": "p-int-mana-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1r2",
+     "b": "p-int-mana-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1m",
+     "b": "p-int-mana-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1m",
+     "b": "p-int-mana-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d2l1",
+     "b": "p-int-mana-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d2r1",
+     "b": "p-int-mana-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d2l2",
+     "b": "p-int-mana-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d2r2",
+     "b": "p-int-mana-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d2m",
+     "b": "p-int-mana-note",
+     "both": false
+    },
+    {
+     "a": "p-int",
+     "b": "p-int-poison-n0",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-n0",
+     "b": "p-int-poison-n1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-n1",
+     "b": "p-int-poison-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-n1",
+     "b": "p-int-poison-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0l1",
+     "b": "p-int-poison-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0r1",
+     "b": "p-int-poison-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0l2",
+     "b": "p-int-poison-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0r2",
+     "b": "p-int-poison-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0m",
+     "b": "p-int-poison-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0m",
+     "b": "p-int-poison-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1l1",
+     "b": "p-int-poison-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1r1",
+     "b": "p-int-poison-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1l2",
+     "b": "p-int-poison-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1r2",
+     "b": "p-int-poison-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1m",
+     "b": "p-int-poison-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1m",
+     "b": "p-int-poison-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d2l1",
+     "b": "p-int-poison-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d2r1",
+     "b": "p-int-poison-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d2l2",
+     "b": "p-int-poison-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d2r2",
+     "b": "p-int-poison-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d2m",
+     "b": "p-int-poison-note",
+     "both": false
+    },
+    {
+     "a": "p-int",
+     "b": "p-int-lightning-n0",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-n0",
+     "b": "p-int-lightning-n1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-n1",
+     "b": "p-int-lightning-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-n1",
+     "b": "p-int-lightning-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0l1",
+     "b": "p-int-lightning-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0r1",
+     "b": "p-int-lightning-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0l2",
+     "b": "p-int-lightning-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0r2",
+     "b": "p-int-lightning-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0m",
+     "b": "p-int-lightning-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0m",
+     "b": "p-int-lightning-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1l1",
+     "b": "p-int-lightning-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1r1",
+     "b": "p-int-lightning-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1l2",
+     "b": "p-int-lightning-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1r2",
+     "b": "p-int-lightning-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1m",
+     "b": "p-int-lightning-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1m",
+     "b": "p-int-lightning-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d2l1",
+     "b": "p-int-lightning-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d2r1",
+     "b": "p-int-lightning-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d2l2",
+     "b": "p-int-lightning-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d2r2",
+     "b": "p-int-lightning-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d2m",
+     "b": "p-int-lightning-note",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-note",
+     "b": "p-int-lightning-key",
+     "both": false
+    },
+    {
+     "a": "p-int",
+     "b": "p-int-cold-n0",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-n0",
+     "b": "p-int-cold-n1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-n1",
+     "b": "p-int-cold-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-n1",
+     "b": "p-int-cold-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0l1",
+     "b": "p-int-cold-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0r1",
+     "b": "p-int-cold-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0l2",
+     "b": "p-int-cold-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0r2",
+     "b": "p-int-cold-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0m",
+     "b": "p-int-cold-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0m",
+     "b": "p-int-cold-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1l1",
+     "b": "p-int-cold-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1r1",
+     "b": "p-int-cold-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1l2",
+     "b": "p-int-cold-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1r2",
+     "b": "p-int-cold-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1m",
+     "b": "p-int-cold-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1m",
+     "b": "p-int-cold-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d2l1",
+     "b": "p-int-cold-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d2r1",
+     "b": "p-int-cold-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d2l2",
+     "b": "p-int-cold-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d2r2",
+     "b": "p-int-cold-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d2m",
+     "b": "p-int-cold-note",
+     "both": false
+    },
+    {
+     "a": "p-int",
+     "b": "p-int-fire-n0",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-n0",
+     "b": "p-int-fire-n1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-n1",
+     "b": "p-int-fire-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-n1",
+     "b": "p-int-fire-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0l1",
+     "b": "p-int-fire-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0r1",
+     "b": "p-int-fire-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0l2",
+     "b": "p-int-fire-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0r2",
+     "b": "p-int-fire-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0m",
+     "b": "p-int-fire-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0m",
+     "b": "p-int-fire-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1l1",
+     "b": "p-int-fire-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1r1",
+     "b": "p-int-fire-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1l2",
+     "b": "p-int-fire-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1r2",
+     "b": "p-int-fire-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1m",
+     "b": "p-int-fire-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1m",
+     "b": "p-int-fire-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d2l1",
+     "b": "p-int-fire-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d2r1",
+     "b": "p-int-fire-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d2l2",
+     "b": "p-int-fire-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d2r2",
+     "b": "p-int-fire-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d2m",
+     "b": "p-int-fire-note",
+     "both": false
+    },
+    {
+     "a": "p-int",
+     "b": "p-int-hex-n0",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-n0",
+     "b": "p-int-hex-n1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-n1",
+     "b": "p-int-hex-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-n1",
+     "b": "p-int-hex-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0l1",
+     "b": "p-int-hex-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0r1",
+     "b": "p-int-hex-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0l2",
+     "b": "p-int-hex-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0r2",
+     "b": "p-int-hex-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0m",
+     "b": "p-int-hex-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0m",
+     "b": "p-int-hex-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1l1",
+     "b": "p-int-hex-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1r1",
+     "b": "p-int-hex-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1l2",
+     "b": "p-int-hex-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1r2",
+     "b": "p-int-hex-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1m",
+     "b": "p-int-hex-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1m",
+     "b": "p-int-hex-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d2l1",
+     "b": "p-int-hex-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d2r1",
+     "b": "p-int-hex-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d2l2",
+     "b": "p-int-hex-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d2r2",
+     "b": "p-int-hex-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d2m",
+     "b": "p-int-hex-note",
+     "both": false
+    },
+    {
+     "a": "p-dex",
+     "b": "p-dex-pierce-n0",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-n0",
+     "b": "p-dex-pierce-n1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-n1",
+     "b": "p-dex-pierce-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-n1",
+     "b": "p-dex-pierce-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0l1",
+     "b": "p-dex-pierce-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0r1",
+     "b": "p-dex-pierce-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0l2",
+     "b": "p-dex-pierce-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0r2",
+     "b": "p-dex-pierce-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0m",
+     "b": "p-dex-pierce-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0m",
+     "b": "p-dex-pierce-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1l1",
+     "b": "p-dex-pierce-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1r1",
+     "b": "p-dex-pierce-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1l2",
+     "b": "p-dex-pierce-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1r2",
+     "b": "p-dex-pierce-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1m",
+     "b": "p-dex-pierce-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1m",
+     "b": "p-dex-pierce-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d2l1",
+     "b": "p-dex-pierce-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d2r1",
+     "b": "p-dex-pierce-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d2l2",
+     "b": "p-dex-pierce-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d2r2",
+     "b": "p-dex-pierce-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d2m",
+     "b": "p-dex-pierce-note",
+     "both": false
+    },
+    {
+     "a": "p-dex",
+     "b": "p-dex-agile-n0",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-n0",
+     "b": "p-dex-agile-n1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-n1",
+     "b": "p-dex-agile-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-n1",
+     "b": "p-dex-agile-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0l1",
+     "b": "p-dex-agile-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0r1",
+     "b": "p-dex-agile-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0l2",
+     "b": "p-dex-agile-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0r2",
+     "b": "p-dex-agile-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0m",
+     "b": "p-dex-agile-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0m",
+     "b": "p-dex-agile-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1l1",
+     "b": "p-dex-agile-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1r1",
+     "b": "p-dex-agile-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1l2",
+     "b": "p-dex-agile-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1r2",
+     "b": "p-dex-agile-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1m",
+     "b": "p-dex-agile-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1m",
+     "b": "p-dex-agile-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d2l1",
+     "b": "p-dex-agile-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d2r1",
+     "b": "p-dex-agile-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d2l2",
+     "b": "p-dex-agile-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d2r2",
+     "b": "p-dex-agile-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d2m",
+     "b": "p-dex-agile-note",
+     "both": false
+    },
+    {
+     "a": "p-dex",
+     "b": "p-dex-precision-n0",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-n0",
+     "b": "p-dex-precision-n1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-n1",
+     "b": "p-dex-precision-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-n1",
+     "b": "p-dex-precision-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0l1",
+     "b": "p-dex-precision-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0r1",
+     "b": "p-dex-precision-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0l2",
+     "b": "p-dex-precision-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0r2",
+     "b": "p-dex-precision-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0m",
+     "b": "p-dex-precision-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0m",
+     "b": "p-dex-precision-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1l1",
+     "b": "p-dex-precision-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1r1",
+     "b": "p-dex-precision-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1l2",
+     "b": "p-dex-precision-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1r2",
+     "b": "p-dex-precision-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1m",
+     "b": "p-dex-precision-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1m",
+     "b": "p-dex-precision-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d2l1",
+     "b": "p-dex-precision-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d2r1",
+     "b": "p-dex-precision-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d2l2",
+     "b": "p-dex-precision-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d2r2",
+     "b": "p-dex-precision-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d2m",
+     "b": "p-dex-precision-note",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-note",
+     "b": "p-dex-precision-key",
+     "both": false
+    },
+    {
+     "a": "p-dex",
+     "b": "p-dex-swift-n0",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-n0",
+     "b": "p-dex-swift-n1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-n1",
+     "b": "p-dex-swift-d0l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-n1",
+     "b": "p-dex-swift-d0r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0l1",
+     "b": "p-dex-swift-d0l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0r1",
+     "b": "p-dex-swift-d0r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0l2",
+     "b": "p-dex-swift-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0r2",
+     "b": "p-dex-swift-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0m",
+     "b": "p-dex-swift-d1l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0m",
+     "b": "p-dex-swift-d1r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1l1",
+     "b": "p-dex-swift-d1l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1r1",
+     "b": "p-dex-swift-d1r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1l2",
+     "b": "p-dex-swift-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1r2",
+     "b": "p-dex-swift-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1m",
+     "b": "p-dex-swift-d2l1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1m",
+     "b": "p-dex-swift-d2r1",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d2l1",
+     "b": "p-dex-swift-d2l2",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d2r1",
+     "b": "p-dex-swift-d2r2",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d2l2",
+     "b": "p-dex-swift-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d2r2",
+     "b": "p-dex-swift-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d2m",
+     "b": "p-dex-swift-note",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d0m",
+     "b": "p-str-crush-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-bulwark-d1m",
+     "b": "p-str-crush-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d0m",
+     "b": "p-str-heavy-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-crush-d1m",
+     "b": "p-str-heavy-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d0m",
+     "b": "p-str-holyfire-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-heavy-d1m",
+     "b": "p-str-holyfire-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d0m",
+     "b": "p-vit-life-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-regen-d1m",
+     "b": "p-vit-life-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d0m",
+     "b": "p-vit-barrier-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-life-d1m",
+     "b": "p-vit-barrier-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d0m",
+     "b": "p-vit-resist-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-barrier-d1m",
+     "b": "p-vit-resist-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d0m",
+     "b": "p-int-poison-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-mana-d1m",
+     "b": "p-int-poison-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d0m",
+     "b": "p-int-lightning-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-poison-d1m",
+     "b": "p-int-lightning-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d0m",
+     "b": "p-int-cold-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-lightning-d1m",
+     "b": "p-int-cold-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d0m",
+     "b": "p-int-fire-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-cold-d1m",
+     "b": "p-int-fire-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d0m",
+     "b": "p-int-hex-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-fire-d1m",
+     "b": "p-int-hex-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d0m",
+     "b": "p-dex-agile-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-pierce-d1m",
+     "b": "p-dex-agile-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d0m",
+     "b": "p-dex-precision-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-agile-d1m",
+     "b": "p-dex-precision-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d0m",
+     "b": "p-dex-swift-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-precision-d1m",
+     "b": "p-dex-swift-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d0m",
+     "b": "p-vit-regen-d0m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d1m",
+     "b": "p-vit-regen-d1m",
+     "both": false
+    },
+    {
+     "a": "p-str-holyfire-d2m",
+     "b": "p-vit-regen-d2m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d0m",
+     "b": "p-int-mana-d0m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d1m",
+     "b": "p-int-mana-d1m",
+     "both": false
+    },
+    {
+     "a": "p-vit-resist-d2m",
+     "b": "p-int-mana-d2m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d0m",
+     "b": "p-dex-pierce-d0m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d1m",
+     "b": "p-dex-pierce-d1m",
+     "both": false
+    },
+    {
+     "a": "p-int-hex-d2m",
+     "b": "p-dex-pierce-d2m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d0m",
+     "b": "p-str-bulwark-d0m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d1m",
+     "b": "p-str-bulwark-d1m",
+     "both": false
+    },
+    {
+     "a": "p-dex-swift-d2m",
+     "b": "p-str-bulwark-d2m",
+     "both": false
     }
    ]
   },
@@ -12618,7 +19728,8 @@
       "pick": 1,
       "start": "Старт: этаж 1 · монстры ур. 1 · других меток пока нет",
       "hidden": null,
-      "hiddenMarks": []
+      "hiddenMarks": [],
+      "hiddenTitles": []
      },
      "start": {
       "depth": 1,
@@ -12642,7 +19753,8 @@
      "reward": "Богаче: Число вещей +15 %",
      "desc": "Пачки крупнее, и с убитых падает больше вещей.",
      "carried": 4,
-     "picked": 1
+     "picked": 1,
+     "canAdd": false
     }
    ],
    "summary": [
@@ -12652,7 +19764,8 @@
    "from": 4,
    "to": 6,
    "slots": 1,
-   "used": 1
+   "used": 1,
+   "refusal": null
   },
   "reforge": {
    "note": "Три печати одной ступени → одна СЛУЧАЙНОГО вида ступенью выше: вид решает кузнец.",
@@ -12684,6 +19797,7 @@
      "can": true
     }
    ],
+   "feeGold": 0,
    "fee": null,
    "source": "Печати берутся из сумки и из сундука."
   },
@@ -12841,7 +19955,35 @@
      "opacity": 0.5
     }
    ],
-   "legendNote": "⌂ — привал с порталом в город (места 3, 6, 9, 12, 15, 18, 20 круга)"
+   "legendNote": "⌂ — привал с порталом в город (места 3, 6, 9, 12, 15, 18, 20 круга)",
+   "legend": [
+    {
+     "type": "combat",
+     "label": "Бой",
+     "color": "#8a8f9a"
+    },
+    {
+     "type": "elite",
+     "label": "Элита",
+     "color": "#d0a040"
+    },
+    {
+     "type": "boss",
+     "label": "Босс",
+     "color": "#d05050"
+    },
+    {
+     "type": "treasure",
+     "label": "Сокровищница",
+     "color": "#f0d070"
+    },
+    {
+     "type": "rest",
+     "label": "Привал",
+     "color": "#8a5cff"
+    }
+   ],
+   "r": 16
   },
   "mapEmpty": {
    "empty": "Забег не активен — карта появится в подземелье.",

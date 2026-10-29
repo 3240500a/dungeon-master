@@ -7,7 +7,7 @@ import type { Item } from '../types/items.js';
 import { nextWaypointAfter, openWaypoints, portalPlaces, floorMonsterLevel } from '../formulas/power.js';
 import { runModCount } from '../dungeon/run/runModEffects.js';
 import { sealBuffs, sealTierMul } from '../economy/seals.js';
-import { RUN_PORTAL_TEXT, runChainMap, runPortalView, type RunAltarModel } from './runPortal.js';
+import { RUN_PORTAL_TEXT, runChainMap, runHiddenMarkTitle, runPortalView, type RunAltarModel } from './runPortal.js';
 import { RUN_SEGMENT_TEXT, runSegmentView } from './runSegment.js';
 
 /**
@@ -76,15 +76,15 @@ const FIELDS = {
   PowerBreakdown: ['level', 'gearBonus', 'passiveBonus', 'total'],
   AltarChip: ['id', 'name', 'title', 'active'],
   AltarTier: ['id', 'name', 'meta', 'line', 'variant', 'lockText', 'unlocked', 'descend', 'restart', 'map', 'start'],
-  AltarChainMap: ['nodes', 'links', 'dividers', 'width', 'height', 'r', 'cycle', 'record', 'openCount', 'pick', 'start', 'hidden', 'hiddenMarks'],
+  AltarChainMap: ['nodes', 'links', 'dividers', 'width', 'height', 'r', 'cycle', 'record', 'openCount', 'pick', 'start', 'hidden', 'hiddenMarks', 'hiddenTitles'],   // ⭐ С6: + подписи скрытых меток
   ChainNode: ['depth', 'place', 'x', 'y', 'level', 'open', 'pick', 'entry', 'label', 'title'],
   ChainBoss: ['depth', 'x', 'y', 'level', 'rank', 'mark', 'title'],
   ChainStrand: ['points', 'main'],
   ChainLink: ['from', 'to', 'strands', 'boss', 'gapText', 'gapX', 'gapY'],
   ChainDivider: ['y', 'circle', 'label'],
   AltarStart: ['depth', 'line', 'note'],
-  SegmentModelView: ['line', 'note', 'hint', 'paid', 'notMine', 'seals', 'summary', 'from', 'to', 'slots', 'used'],
-  SealCard: ['key', 'name', 'danger', 'reward', 'desc', 'carried', 'picked'],
+  SegmentModelView: ['line', 'note', 'hint', 'paid', 'notMine', 'seals', 'summary', 'from', 'to', 'slots', 'used', 'refusal'],   // ⭐ С6: + отказ набора
+  SealCard: ['key', 'name', 'danger', 'reward', 'desc', 'carried', 'picked', 'canAdd'],   // ⭐ С6: + «можно ещё одну»
 } as const;
 const keysOf = (o: object): string[] => Object.keys(o);
 
@@ -193,6 +193,7 @@ describe('С-views: окно «Портал» (PortalCheck)', () => {
     const marks = openWaypoints({ normal: 400 }, 'normal', access.portalsAt, access.contentCycle);
     expect(map.nodes.length).toBe(48);
     expect(map.hiddenMarks).toEqual(marks.slice(0, marks.length - 48));
+    expect(map.hiddenTitles, 'подпись — на каждую скрытую метку').toEqual(map.hiddenMarks.map(runHiddenMarkTitle));
     expect(map.hidden).toBe(`Выше ещё меток: ${marks.length - 48} (этажи 1–${map.hiddenMarks[map.hiddenMarks.length - 1]})`);
     expect(map.dividers.length).toBeGreaterThan(0);
     for (const d of map.dividers) expect(d.label).toBe(`круг ${d.circle}`);
@@ -225,7 +226,8 @@ describe('С-views: окно «Портал» (PortalCheck)', () => {
               ...web,
               links: web.links.map((l) => ({ from: l.from, to: l.to, strands: l.strands, boss: l.boss, gapText: l.gap?.text ?? null, gapX: l.gap?.x ?? 0, gapY: l.gap?.y ?? 0 })),
             };
-            expect({ ...mine }, `места ${JSON.stringify(places)} цикл ${cycle} рекорд ${record} ширина ${widthMax} старт ${pick}`)
+            const { hiddenTitles: _ht, ...mineWeb } = mine;   // ⭐ С6: подписи скрытых меток — поле вида, у веб-исходника его нет
+            expect({ ...mineWeb }, `места ${JSON.stringify(places)} цикл ${cycle} рекорд ${record} ширина ${widthMax} старт ${pick}`)
               .toEqual({ ...webFlat, nodes: web.nodes, dividers: web.dividers });
             n++;
           }
@@ -256,7 +258,7 @@ describe('С-views: алтарь отрезка на метке (PortalCheck, Ф
     expect(m.seals.every((s) => s.key !== 'enduring@t1')).toBe(true);
     expect(m.seals[0]).toEqual({
       key: 'swarming@t1', name: 'Кишащий I', danger: 'Опаснее: Размер пачки +20 %', reward: 'Богаче: Число вещей +15 %', desc: 'Пачки крупнее',
-      carried: 5, picked: 0,
+      carried: 5, picked: 0, canAdd: true,
     });
     expect(m.slots).toBe(2);
     expect([m.summary, m.used, m.paid, m.notMine]).toEqual([[], 0, false, false]);
@@ -348,6 +350,6 @@ describe('С-views: алтарь отрезка на метке (PortalCheck, Ф
 
   it('на обычном этаже алтаря нет — модель пуста', () => {
     const plain = runSegmentView(cfg, bag(), { depth: mark + 1, tierId: 'normal' }, null);
-    expect(plain).toEqual({ line: 'Здесь алтаря нет.', note: null, hint: null, paid: false, notMine: false, seals: [], summary: [], from: 0, to: 0, slots: 0, used: 0 });
+    expect(plain).toEqual({ line: 'Здесь алтаря нет.', note: null, hint: null, paid: false, notMine: false, seals: [], summary: [], from: 0, to: 0, slots: 0, used: 0, refusal: null });
   });
 });

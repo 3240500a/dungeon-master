@@ -30,11 +30,11 @@ import { heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView } from './h
 import { craftView, craftVerdict, initialCraftState } from './craft.js';
 import { craftWeapon, fullJournal } from '../formulas/craft.js';
 import {
-  respecView, questsView, socketsView, bindView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
+  respecView, questsView, socketsView, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView,
 } from './town.js';
 import {
-  runPortalView, runSegmentView, runReforgeView, runReforgeHead, runMapPanelView, runMapLegendNote, runVoteQuestion, runDeathFrame,
+  runPortalView, runSegmentView, runReforgeView, runReforgeHead, runMapPanelView, runMapLegendNote, runMapLegend, RUN_MAP_GEOM, runVoteQuestion, runDeathFrame,
 } from './runViews.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +75,10 @@ describe('эталон моделей окон для Unity (виды серве
     // атрибуты с запасом — пупсик скажет «ляжет», а не только отказ; отказ — клеткой не той вещи (`equipWrong`)
     for (const a of ['strength', 'dexterity', 'vitality', 'intelligence'] as const) save.attributes[a] += 120;
     // задания: главное + взятое с доски; скил с гнёздами (ранг 6 — два гнезда), вставка в первом, бинд на ПКМ
+    // мастерство: вход вложен — соседи доступны, дальние закрыты, у высоких — замок уровнем
+    const mt = cfg.get('mastery-tree');
+    if (mt.entryNodes[0]) save.masteries[mt.entryNodes[0]] = 1;
+    save.unspentMasteryPoints = 2;
     const board = generateBoard(cfg, createRng(7), 1_790_000_000_000);
     if (board[0]) acceptQuest(save, board[0]);
     ensureMainQuest(cfg, save);
@@ -112,6 +116,7 @@ describe('эталон моделей окон для Unity (виды серве
         quests: questsView(save, board),
         sockets: socketsView(cfg, save),
         bind: bindView(cfg, save),
+        mastery: masteryTreeView(cfg, save),
         menu: { items: itemMenuView(cfg, save, stash, bag[2]!.uid, true) },
         menuField: { items: itemMenuView(cfg, save, stash, bag[2]!.uid, false) },
         tips: { tips: itemTipsView(cfg, save, [...bag, ...worn]) },
@@ -127,7 +132,7 @@ describe('эталон моделей окон для Unity (виды серве
         portal: runPortalView(cfg, save, {}),
         segment: runSegmentView(cfg, save, { depth: mark, biomeId: biome.id, tierId: diff.id, mayTune: true }, { [`${sealDefs[0]?.id}@${tier?.id}`]: 1 }),
         reforge: (() => { const v = runReforgeView(cfg, save, stash); return { ...v, ...runReforgeHead(cfg, v, true) }; })(),
-        map: { ...runMapPanelView(plan, plan.nodes[0]?.id ?? null, access.portalsAt, access.contentCycle), legendNote: runMapLegendNote(access.portalsAt, access.contentCycle) },
+        map: { ...runMapPanelView(plan, plan.nodes[0]?.id ?? null, access.portalsAt, access.contentCycle), legendNote: runMapLegendNote(access.portalsAt, access.contentCycle), legend: runMapLegend(), r: RUN_MAP_GEOM.r },
         mapEmpty: runMapPanelView(null, null, access.portalsAt, access.contentCycle),
         died: { view: death1.view, dock: death1.dock, opens: death1.opens },
         diedStatus: { view: death2.view, dock: death2.dock, opens: death2.opens },

@@ -19,9 +19,9 @@ import {
   type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits, type ViewKind,
   monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
   type LastTarget, type PendingAttrs, type HeroFloor, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
-  respecView, questsView, socketsView, bindView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
+  respecView, questsView, socketsView, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
-  runVoteQuestion, runDeathFrame, type RunDeathState, type Lang, type EquipSlot, type SealGains,
+  runVoteQuestion, runDeathFrame, runMapLegend, RUN_MAP_GEOM, type RunDeathState, type Lang, type EquipSlot, type SealGains,
   craftView, craftVerdict, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
@@ -680,7 +680,7 @@ function viewCost(kind: ViewKind, args: Record<string, unknown>): number {
     case 'craft': return 4;
     case 'hero': return args.part === 'tree' ? 20 : 1;
     // подсказки — по числу вещей в запросе (≈ 0.008 мс на вещь; 400 — ≈ 3 мс)
-    case 'item': return args.part === 'tips' && Array.isArray(args.uids) ? 1 + Math.floor(args.uids.length / 40) : 1;
+    case 'item': return args.part !== 'tips' ? 1 : Array.isArray(args.uids) ? 1 + Math.floor(args.uids.length / 40) : 1 + Math.floor(VIEW_TIPS_MAX / 40);
     default: return 1;
   }
 }
@@ -4634,6 +4634,7 @@ export class Room implements Tickable {
       const at = a.spawns[i % a.spawns.length]!;
       this.arenaSpawnByPid.set(pid, at);
       this.session.respawnPlayer(pid, at, ARENA_IMMUNE_MS);
+      const rc = this.clients.get(pid); if (rc) delete rc.deathState;   // ⭐ С6: ожил — память окна смерти сброшена
       i++;
     }
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
@@ -4949,7 +4950,8 @@ export class Room implements Tickable {
       }
       // Прилавок — тот же список, что у кадра `shop` и у команды `buy` (`shopListed`); вне города — только скупка (стока нет).
       case 'shop': return { ok: true, view: shopView(this.cfg, save, stash, this.area === 'town' ? this.shopListed() : []) };
-      case 'exchange': return { ok: true, view: exchangeView(this.cfg, save, stash, { from: argId(args.from), to: argId(args.to), n: argInt(args.n) }) };
+      // ⚠ нет `n` — умолчание обмена (`exchangeModel` берёт его только при `undefined`, а `null` значил бы «0»)
+      case 'exchange': return { ok: true, view: exchangeView(this.cfg, save, stash, { from: argId(args.from), to: argId(args.to), n: argInt(args.n) ?? undefined }) };
       case 'portal': {
         const depth = argInt(args.depth);
         return { ok: true, view: runPortalView(this.cfg, save, { biome: argId(args.biome), ...(depth !== null ? { depth } : {}) }, opts) };
@@ -4971,7 +4973,8 @@ export class Room implements Tickable {
       case 'map': {
         const access = this.cfg.get('balance').dungeonAccess;
         const v = runMapPanelView(this.area === 'dungeon' ? this.runPlan : null, this.runNodeId, access.portalsAt, access.contentCycle);
-        return { ok: true, view: { ...v, legendNote: runMapLegendNote(access.portalsAt, access.contentCycle) } };
+        // ⭐ С6: легенда и радиус узла — тоже сервером (своих подписей и цветов типов узлов у окна нет)
+        return { ok: true, view: { ...v, legendNote: runMapLegendNote(access.portalsAt, access.contentCycle), legend: runMapLegend(), r: RUN_MAP_GEOM.r } };
       }
       case 'craft': return this.craftViewOf(pid, args);
       default: return { ok: false, reason: `Вид «${kind}» сервер ещё не считает` };
@@ -5036,10 +5039,14 @@ export class Room implements Tickable {
         return { ok: true, view: { items: itemMenuView(this.cfg, save, stash, uid, this.area === 'town') } };
       }
       case 'tips': {
+        // Без `uids` — подсказки ВСЕГО показанного игроку (сумка, надетое, сундук, прилавок): ключ запроса у окна один и тот же, и кэш
+        // видов не копит по записи на каждую перемену сумки. С `uids` — только эти (не больше `VIEW_TIPS_MAX`).
+        const seen = this.itemsSeen(save, stash);
+        if (args.uids === undefined) return { ok: true, view: { tips: itemTipsView(this.cfg, save, seen.slice(0, VIEW_TIPS_MAX)) } };
         const uids = Array.isArray(args.uids) ? args.uids : null;
         if (!uids || uids.length > VIEW_TIPS_MAX) return { ok: false, reason: 'Неверный запрос вида' };
         const want = new Set(uids.map(argId).filter((u): u is string => u !== null));
-        return { ok: true, view: { tips: itemTipsView(this.cfg, save, this.itemsSeen(save, stash).filter((it) => want.has(it.uid))) } };
+        return { ok: true, view: { tips: itemTipsView(this.cfg, save, seen.filter((it) => want.has(it.uid))) } };
       }
       case 'equip': {
         const uid = argId(args.uid), cell = argId(args.cell);
@@ -5349,7 +5356,7 @@ export class Room implements Tickable {
       const p = this.session.world.players[pid];
       if (!p) continue;                          // игрок вышел — просто снимаем таймер
       const spawn = this.arenaSpawnByPid.get(pid) ?? this.arenaSpawns[0];
-      if (spawn) this.session.respawnPlayer(pid, spawn, ARENA_IMMUNE_MS);
+      if (spawn) { this.session.respawnPlayer(pid, spawn, ARENA_IMMUNE_MS); const rc = this.clients.get(pid); if (rc) delete rc.deathState; }   // ⭐ С6: ожил — окно смерти забыто
     }
   }
 
@@ -6337,6 +6344,7 @@ export class Room implements Tickable {
       case 'quests': return { ok: true, view: questsView(p.save, this.questBoard) };
       case 'sockets': return { ok: true, view: socketsView(this.cfg, p.save) };
       case 'bind': return { ok: true, view: bindView(this.cfg, p.save) };
+      case 'mastery': return { ok: true, view: masteryTreeView(this.cfg, p.save) };   // ⭐ С4: древо мастерства — доступность и цены сервером
       case 'sheet': break;
       default: return { ok: false, reason: 'Неверный запрос вида' };
     }

@@ -40,6 +40,8 @@ export const RUN_SEGMENT_TEXT = {
 export interface RunSealCard {
   key: string; name: string; danger: string | null; reward: string | null; desc: string | null;
   carried: number; picked: number;
+  /** ⭐ С6: можно ли добавить ещё одну такую (сервер примет набор на одну больше). */
+  canAdd: boolean;
 }
 
 /** C# `SegmentModelView`. */
@@ -47,6 +49,8 @@ export interface RunSegmentModel {
   line: string; note: string | null; hint: string | null; paid: boolean; notMine: boolean;
   seals: RunSealCard[]; summary: string[];
   from: number; to: number; slots: number; used: number;
+  /** ⭐ С6: почему сервер не примет набранное (`altarPick`); `null` — примет. */
+  refusal: string | null;
 }
 
 /** Факты комнаты для алтаря отрезка — всё, что сервер знает сам. */
@@ -116,7 +120,7 @@ export function runSegmentView(
 ): RunSegmentModel {
   const tx = cfgTextOf(reg, opts);
   const v: RunSegmentModel = {
-    line: '', note: null, hint: null, paid: false, notMine: false, seals: [], summary: [], from: 0, to: 0, slots: 0, used: 0,
+    line: '', note: null, hint: null, paid: false, notMine: false, seals: [], summary: [], from: 0, to: 0, slots: 0, used: 0, refusal: null,
   };
   const depth = isNum(facts.depth) ? Math.floor(facts.depth) : 0;
   const access = reg.get('balance').dungeonAccess;
@@ -171,6 +175,7 @@ export function runSegmentView(
       desc: tx('seals', [def.id], 'desc', def.desc),
       carried: n,
       picked: got,
+      canAdd: false,
     });
   }
   v.seals.sort((a, b) => ordinal(a.name, b.name));
@@ -190,5 +195,10 @@ export function runSegmentView(
     v.summary.push(`${nm} ×${csFixed(mulv, 2)}`);
   }
   v.summary.sort(ordinal);
+  // ⭐ С6: ПРИМЕТ ЛИ СЕРВЕР ЭТОТ НАБОР — те же два отказа, что у `altarPick` (молча: кадр `altar` не команда): гнёзд меньше набранного,
+  // печатей в сумке меньше набранных. И можно ли добавить ещё одну каждой карточки: степпер окна — по этому, своих пределов у него нет.
+  const over = v.seals.find((s) => s.picked > s.carried);
+  v.refusal = v.used > v.slots ? `Гнёзд не хватает: набрано ${v.used} из ${v.slots}` : over ? `Столько печатей нет: «${over.name}» — ${over.carried}` : null;
+  for (const s of v.seals) s.canAdd = !v.notMine && !v.paid && s.picked < s.carried && v.used < v.slots;
   return v;
 }

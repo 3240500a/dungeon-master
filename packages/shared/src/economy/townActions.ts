@@ -1903,30 +1903,35 @@ export function passiveEntriesFor(reg: ConfigRegistry, _save?: SaveState): strin
   return reg.get('mastery-tree').entryNodes;
 }
 
-export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: string, maxGold?: number): ActionResult {
+/**
+ * ⭐ С4 (29.10): ПРОВЕРКИ ВЛОЖЕНИЯ РАНГА МАСТЕРСТВА — всё, кроме денег и записи: тем же правилом команда `allocPassive` решает «можно», а вид
+ * древа мастерства (`masteryTreeView`) — что доступно и почему нет. Успех несёт цену следующего ранга.
+ */
+export function passiveAllocCheck(reg: ConfigRegistry, save: SaveState, nodeId: string): { ok: false; reason: string } | { ok: true; cost: number; rank: number } {
   const tree = reg.get('mastery-tree');
   const node = tree.nodes.find((n) => n.id === nodeId);
   if (!node) return { ok: false, reason: 'Узел не найден' };
   const rank = save.masteries[nodeId] ?? 0;
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
-  // ⚠ R10-11: «Треб. уровень» редактора — как у древа скилов (`allocActive`). Не смотрели вовсе: узел, закрытый до 60-го
-  // уровня, брал герой 2-го с очком мастерства и золотом.
   if (save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
-  // Вход доступен только своему классу; прочее — по смежности (переходы дают край соседней ветви).
-  const entries = passiveEntriesFor(reg, save);
-  const allocatable = rank > 0 || entries.includes(nodeId)
+  const allocatable = rank > 0 || passiveEntriesFor(reg, save).includes(nodeId)
     || passiveNeighbors(tree, nodeId).some((n) => (save.masteries[n] ?? 0) > 0);
   if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };
+  return { ok: true, cost: Math.round(node.cost.amount * Math.pow(reg.get('balance').passiveRankCostMult, rank)), rank };
+}
+
+export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: string, maxGold?: number): ActionResult {
+  // ⚠ R10-11 (уровень), смежность, тип цены — `passiveAllocCheck`: тем же правилом вид древа мастерства решает, что доступно
+  const chk = passiveAllocCheck(reg, save, nodeId);
+  if (!chk.ok) return chk;
   if (save.unspentMasteryPoints < 1) return { ok: false, reason: 'Нет очков мастерства' };
-  const mult = reg.get('balance').passiveRankCostMult;
-  const cost = Math.round(node.cost.amount * Math.pow(mult, rank));
-  const raised = priceRaised(cost, maxGold);   // R6-16: «след. ранг: N зол.» карточки — дороже сервер не возьмёт
+  const raised = priceRaised(chk.cost, maxGold);   // R6-16: «след. ранг: N зол.» карточки — дороже сервер не возьмёт
   if (raised) return raised;
-  if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
-  save.gold -= cost;
+  if (save.gold < chk.cost) return { ok: false, reason: 'Недостаточно золота' };
+  save.gold -= chk.cost;
   save.unspentMasteryPoints -= 1;
-  save.masteries[nodeId] = rank + 1;
+  save.masteries[nodeId] = chk.rank + 1;
   return { ok: true };
 }
 

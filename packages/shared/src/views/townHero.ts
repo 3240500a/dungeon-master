@@ -13,11 +13,12 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { QuestDef, QuestProgress, SaveState, SkillNode } from '../types/index.js';
 import {
-  attrRespecRefund, passiveRespecFee, respecPassives, respecRefusal, respecSkills, skillRespecFee,
+  attrRespecRefund, passiveAllocCheck, passiveRespecFee, respecPassives, respecRefusal, respecSkills, skillRespecFee,
 } from '../economy/townActions.js';
 import { questRival } from '../economy/questLogic.js';
 import { insertById, insertFits, insertRank, insertUnlocked, resolveActive, socketsOpen } from '../session/inserts.js';
 import { abilityElementOf } from '../session/session.js';
+import { insertCooldownMult } from '../formulas/buffTiming.js';
 import { skillWeaponAllowed } from '../formulas/skills.js';
 
 // ── сбросы и узел мастерства ─────────────────────────────────────────────────
@@ -91,7 +92,8 @@ export function questLines(def: QuestDef, prog: Pick<QuestProgress, 'status' | '
 }
 /** Соперник того же шаблона (C# кортеж `(questId, name, progress)?` → DTO `QuestRival`; нет — `null`). */
 export interface QuestRival { questId: string; name: string; progress: string }
-export interface QuestEntry extends QuestLines { questId: string; name: string; description: string; rival: QuestRival | null }
+/** ⭐ С4: `canTurnIn` — задание выполнено и не сдано (то же условие, что у `turnInQuest`): кнопка «Забрать награду» — по нему, не по сейву. */
+export interface QuestEntry extends QuestLines { questId: string; name: string; description: string; rival: QuestRival | null; canTurnIn: boolean }
 /**
  * ⭐ ЖУРНАЛ ЗАДАНИЙ (новый DTO `QuestsView`): активные (не сданные, с определением) — строки по прогрессу; доска — строки без прогресса и
  * соперник (`questRival`: «взять — прежнее пропадёт»; согласие уходит флагом `replace` команды `acceptQuest`).
@@ -99,7 +101,7 @@ export interface QuestEntry extends QuestLines { questId: string; name: string; 
 export interface QuestsView { active: QuestEntry[]; board: QuestEntry[] }
 export function questsView(save: SaveState, board: readonly QuestDef[]): QuestsView {
   const entry = (def: QuestDef, prog: QuestProgress | null, rival: QuestRival | null): QuestEntry =>
-    ({ questId: def.id, name: def.name, description: def.description, ...questLines(def, prog), rival });
+    ({ questId: def.id, name: def.name, description: def.description, ...questLines(def, prog), rival, canTurnIn: prog?.status === 'completed' });
   const active: QuestEntry[] = [];
   for (const q of save.quests) {
     if (q.status === 'turned-in') continue;
@@ -120,8 +122,10 @@ export function priceText(ins: { cost: number; costPool?: 'carrier' | 'mana' | '
   return `${ins.cost > 0 ? '+' : ''}${ins.cost} ${pool ? POOL_SHORT[pool as 'mana' | 'stamina'] : 'ресурса скила'}`;
 }
 
-/** Вариант для гнезда (C# кортеж `(label, insertId)` → DTO `{ label, insertId, price }`); `insertId: null` — «✕ Вынуть». */
-export interface SocketOption { label: string; insertId: string | null; price: string | null }
+/** ⭐ С4: подсказка вставки — имя, описание и множитель отката на ранге героя (`insertCooldownMult`, та же формула, что у боя). */
+export interface InsertTip { name: string; desc: string; cooldownMult: number }
+/** Вариант для гнезда (C# кортеж `(label, insertId)` → DTO `{ label, insertId, price, tip }`); `insertId: null` — «✕ Вынуть». */
+export interface SocketOption { label: string; insertId: string | null; price: string | null; tip: InsertTip | null }
 export interface SocketCell {
   head: string;
   text: string;
@@ -130,17 +134,26 @@ export interface SocketCell {
   /** Вставка в гнезде (для подсказки: имя, описание, откат — из конфига) и её ранг. */
   insertId: string | null;
   rank: number;
+  /** Подсказка вставки в гнезде; пусто — `null`. */
+  tip: InsertTip | null;
   options: SocketOption[];
 }
 /** C# `DmTown.SocketSummary` — итог сборки (`resolveActive`): те же числа, что посчитает сервер. */
-export interface SocketSummary { baseCost: number; cost: number; baseCd: number; cd: number; resource: string; extraPool: string | null; extraAmount: number; procs: number }
-export interface SocketNodeView { id: string; name: string; open: number; filled: number; label: string; cells: SocketCell[]; summary: SocketSummary | null }
+/** ⭐ С4: `resourceText`/`extraPoolText` — пулы словом («маны», «выносл.»): своего словаря у окна нет. */
+export interface SocketSummary {
+  baseCost: number; cost: number; baseCd: number; cd: number; resource: string; extraPool: string | null; extraAmount: number; procs: number;
+  resourceText: string; extraPoolText: string | null;
+}
+/** ⭐ С4: `element` — стихия скила (цвет обводки гнезда), то же правило, что у бинда. */
+export interface SocketNodeView { id: string; name: string; element: string; open: number; filled: number; label: string; cells: SocketCell[]; summary: SocketSummary | null }
 /** Новый DTO `SocketsView`: выученные активки с открытыми гнёздами (в порядке древа); нет ни одной — подсказка. */
 export interface SocketsView { learned: SocketNodeView[]; hint: string | null }
 
 export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
   const tree = reg.get('skill-tree');
   const typeName = (id: string): string => reg.get('skill-insert-types').find((t) => t.id === id)?.name ?? id;
+  const tipOf = (x: { id: string; name: string; description: string; cooldownMult: number; perRank: { cooldownDecay: number } }): InsertTip =>
+    ({ name: x.name, desc: x.description, cooldownMult: insertCooldownMult(x.cooldownMult, x.perRank.cooldownDecay, insertRank(reg, save, x.id)) });
   const learned = tree.nodes.filter((n) => n.effect.active && socketsOpen(reg, save.skills[n.id] ?? 0) > 0);
   const hint = learned.length ? null
     : `Гнёзда открываются рангом скила: ${reg.get('balance').skillSocketRanks.join(' / ')}. Вложите очко в активный скил.`;
@@ -158,7 +171,7 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
       const r = resolveActive(reg, save, n.id);
       const b = base as { manaCost: number; cooldown: number };
       return {
-        id: n.id, name: n.name, open, filled, label: `${n.name} ${filled}/${open}`,
+        id: n.id, name: n.name, element: skillElement(n), open, filled, label: `${n.name} ${filled}/${open}`,
         cells: Array.from({ length: open }, (_, i): SocketCell => {
           const cur = slots[i] ?? null;
           const ins = cur ? insertById(reg, cur) : undefined;
@@ -167,13 +180,13 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
           // `skillSocketRanks`). Вариант, от которого сервер откажет «Вставка этого типа уже стоит в другом гнезде», здесь не предлагается.
           const others = slots.filter((_, j) => j !== i);
           const usedTypes = new Set(others.map((id) => (id ? insertById(reg, id)?.type : undefined)).filter(Boolean) as string[]);
-          const options: SocketOption[] = cur && !foreign ? [{ label: '✕ Вынуть', insertId: null, price: null }] : [];
+          const options: SocketOption[] = cur && !foreign ? [{ label: '✕ Вынуть', insertId: null, price: null, tip: null }] : [];
           if (!foreign) for (const x of reg.get('skill-inserts')) {
             if (x.enabled === false || x.id === cur) continue;
             if (!insertUnlocked(reg, save, x.id)) continue;
             if (!insertFits(x, base, weaponClass)) continue;
             if (usedTypes.has(x.type)) continue;
-            options.push({ label: `${typeName(x.type)} · ${x.name}`, insertId: x.id, price: priceText(x, base.resource) });
+            options.push({ label: `${typeName(x.type)} · ${x.name}`, insertId: x.id, price: priceText(x, base.resource), tip: tipOf(x) });
           }
           return {
             head: ins ? typeName(ins.type) : `Гнездо ${i + 1}`,
@@ -181,12 +194,14 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
             price: ins ? priceText(ins, base.resource) : null,
             insertId: ins ? ins.id : null,
             rank: ins ? insertRank(reg, save, ins.id) : 0,
+            tip: ins ? tipOf(ins) : null,
             options,
           };
         }),
         summary: r ? {
           baseCost: b.manaCost, cost: (r.active as { manaCost: number }).manaCost, baseCd: b.cooldown, cd: (r.active as { cooldown: number }).cooldown,
           resource: r.active.resource, extraPool: r.extraCost?.pool ?? null, extraAmount: r.extraCost?.amount ?? 0, procs: r.procs.length,
+          resourceText: poolShort(r.active.resource), extraPoolText: r.extraCost ? poolShort(r.extraCost.pool) : null,
         } : null,
       };
     }),
@@ -237,4 +252,49 @@ export function bindView(reg: ConfigRegistry, save: SaveState): BindView {
     .filter((n) => (save.skills[n.id] ?? 0) > 0 && n.effect.active)
     .map((n) => ({ id: n.id, name: n.name, rank: save.skills[n.id]!, abbrev: abbrev(n.name), element: skillElement(n), fits: bindFits(reg, save, n.id) }));
   return { slots: values.map((v) => bindSlotView(reg, save, v)), options };
+}
+
+// ── древо мастерства ─────────────────────────────────────────────────────────
+/**
+ * ⭐ С4 (29.10): УЗЕЛ ДРЕВА МАСТЕРСТВА — сервером. `state`: `alloc` — вложен, `avail` — можно вложить, `level` — доступен по смежности, но закрыт
+ * уровнем, `closed` — ни входа, ни вложенного соседа. `cost` — цена следующего ранга (→ `maxGold` команды `allocPassive`), `refusal` — почему
+ * команда откажет (то же правило `passiveAllocCheck`, плюс очки и золото), `clickable` — правило самой команды пускает. Подсказка — строкой.
+ * Заменяет доступность и подсказку, которые `DmTree.Build` считал по конфигу сам (вход/сосед вложен/`levelReq`, текст модификаторов).
+ */
+export interface MasteryNode {
+  id: string; x: number; y: number; name: string; notable: boolean; entry: boolean; rank: number; maxRank: number;
+  state: 'alloc' | 'avail' | 'level' | 'closed'; clickable: boolean; cost: number | null; refusal: string | null; tip: string;
+}
+export interface MasteryEdge { a: string; b: string; both: boolean }
+export interface MasteryTreeView { nodes: MasteryNode[]; edges: MasteryEdge[] }
+
+export function masteryTreeView(reg: ConfigRegistry, save: SaveState): MasteryTreeView {
+  const tree = reg.get('mastery-tree');
+  const entries = new Set(tree.entryNodes);
+  const rankOf = (id: string): number => save.masteries[id] ?? 0;
+  const adj = new Map<string, string[]>();
+  for (const [a, b] of tree.edges) { (adj.get(a) ?? adj.set(a, []).get(a)!).push(b); (adj.get(b) ?? adj.set(b, []).get(b)!).push(a); }
+  const nodes = tree.nodes.map((n): MasteryNode => {
+    const rank = rankOf(n.id);
+    const near = entries.has(n.id) || (adj.get(n.id) ?? []).some((x) => rankOf(x) > 0);
+    const state: MasteryNode['state'] = rank > 0 ? 'alloc' : !near ? 'closed' : save.level < n.levelReq ? 'level' : 'avail';
+    const chk = passiveAllocCheck(reg, save, n.id);
+    const cost = chk.ok ? chk.cost : null;
+    const refusal = !chk.ok ? chk.reason : save.unspentMasteryPoints < 1 ? 'Нет очков мастерства' : save.gold < chk.cost ? 'Недостаточно золота' : null;
+    const costLine = n.cost.type !== 'gold' ? '' : rank >= n.maxRank ? ' · макс. ранг' : cost !== null ? ` · след. ранг: ${cost} зол. + 1 очко` : '';
+    let tip = `<b>${n.name}</b>
+${n.description}
+ранг ${rank}/${n.maxRank}${costLine}`;
+    if (save.level < n.levelReq) tip += `
+<color=#d89b7c>требуется уровень ${n.levelReq}</color>`;
+    const eff = (n.effect.modifiers ?? []).map((m) => `${m.kind === 'increased' ? `+${Math.round(m.value * 100)}%` : `+${m.value}`} ${m.stat}`).join(', ');
+    if (eff) tip += `
+<color=#88ffdd>${eff}</color>`;
+    return {
+      id: n.id, x: n.x, y: n.y, name: n.name, notable: !!n.notable, entry: entries.has(n.id), rank, maxRank: n.maxRank,
+      state, clickable: chk.ok, cost, refusal, tip,
+    };
+  });
+  const edges = tree.edges.map(([a, b]) => ({ a, b, both: rankOf(a) > 0 && rankOf(b) > 0 }));
+  return { nodes, edges };
 }
