@@ -209,6 +209,41 @@ describe('⭐ С4/С6: виды города и забега — от серве
     expect(refused, 'всплеск 120 токенов — 15 верстаков, остальные — отказ').toBeGreaterThanOrEqual(5);
   });
 
+  it('фаззер аргументов вида: любой мусор — ответ (вид или отказ), ни одного броска изнутри', () => {
+    const { room, ws, pid, save } = setup();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let seed = 1;
+    const rnd = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const uids = [...save.inventory, ...Object.values(save.equipment)].filter((x): x is Item => !!x).map((x) => x.uid);
+    const junk = (d = 0): unknown => {
+      const r = rnd();
+      if (r < 0.1) return null;
+      if (r < 0.2) return Math.floor(rnd() * 2e6) - 1e6;
+      if (r < 0.25) return rnd() * 1e9;
+      if (r < 0.3) return NaN;
+      if (r < 0.45) return uids[Math.floor(rnd() * uids.length)] ?? 'x';
+      if (r < 0.55) return ['sword', 'bow', 'weapon', 'strike', 'tree', 'menu', 'tips', 'equip', 'materials', 'respec', '', '__proto__', 'constructor'][Math.floor(rnd() * 13)];
+      if (r < 0.7 && d < 3) return Array.from({ length: Math.floor(rnd() * 5) }, () => junk(d + 1));
+      if (d < 3) return Object.fromEntries(Array.from({ length: Math.floor(rnd() * 5) }, () => [String(junk(d + 1)).slice(0, 20), junk(d + 1)]));
+      return 'z'.repeat(Math.floor(rnd() * 300));
+    };
+    const keys = ['part', 'uid', 'uids', 'cell', 'from', 'to', 'n', 'biome', 'depth', 'picked', 'weaponClass', 'hands', 'parts', 'finish', 'sketchPick', 'crafted', 'pending'];
+    const kinds = ['hero', 'item', 'bench', 'shop', 'exchange', 'portal', 'segment', 'reforge', 'map', 'craft'] as const;
+    let n = 0;
+    for (let i = 0; i < 1500; i++) {
+      limits.viewReq.reset(`user-views-${seq}`);
+      const args: Record<string, unknown> = {};
+      for (const k of keys) if (rnd() < 0.35) args[k] = junk();
+      room.viewRequest(pid, 5000 + i, kinds[i % kinds.length]!, args);
+      n++;
+    }
+    const answers = ws.all('view').filter((f) => f.id >= 5000);
+    expect(answers.length, 'на каждый запрос — ответ').toBe(n);
+    expect(answers.filter((a) => a.reason === 'Ошибка сервера').length, 'броски изнутри вида').toBe(0);
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
   it('перековка по карточке: провод берёт карточку или связку; набирает связку сервер', () => {
     expect(townCommandSchema.safeParse({ cmd: 'sealReforge', card: 't1|any' }).success).toBe(true);
     expect(townCommandSchema.safeParse({ cmd: 'sealReforge', seals: { 'a@t1': 3 } }).success).toBe(true);
