@@ -8,6 +8,8 @@ export * from './microFight.js';
 export * from './aggregate.js';
 export * from './netTypes.js';
 export * from './serialize.js';
+export * from './interactables.js';
+export * from './reveal.js';
 export * from './weapon3d.js';
 export * from './toggles.js';
 export * from './inserts.js';

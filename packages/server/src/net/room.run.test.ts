@@ -4,7 +4,7 @@ import {
   ConfigRegistry, newCharacterSave, generateItem, itemFromBaseId, materialItem, createRng, uuidv7,
   craftWeapon, defaultParts, keyVariantsByBase, variantsFor, keySlotOf, CRAFT_SLOT_LIST, emptyJournal, fullJournal, emptyStash, enchantCost, sketchable,
   enchantMaterials, ESSENCE_ID, PRICE_CHANGED, legacyGateOpen, normalizeJournal,
-  addToInventory, carriedMaterials, shopBuyPrice, Cell, addDebuffStack, acceptQuest,
+  addToInventory, carriedMaterials, shopBuyPrice, Cell, addDebuffStack, acceptQuest, chunkAt, townStationAt,
   type ServerFrame, type RunPlan, type RunNode, type SaveState, type Item, type AccountStash, type CraftInput, type CraftJournal,
   type CraftCost,
   isWaypoint as isWaypointAt,
@@ -210,7 +210,7 @@ type Pt = { x: number; y: number };
 type RunIn = {
   runPlan: RunPlan | null; runNodeId: string | null; depth: number; decor: { kind: string; x: number; y: number }[];
   runConfig: { tier: string } | null;
-  session: { world: { exits?: Pt[]; spawn: Pt; players: Record<string, { pos: Pt; hp: number; alive: boolean; debuffs: Record<string, unknown> }> } };
+  session: { world: { exits?: Pt[]; chests: unknown[]; spawn: Pt; players: Record<string, { pos: Pt; hp: number; alive: boolean; debuffs: Record<string, unknown> }> } };
   enterNode(nodeId: string): void;
 };
 const runOf = (room: Room): RunIn => room as unknown as RunIn;
@@ -284,7 +284,8 @@ describe('Room — жизненный цикл забега v2 (сервер, he
       const cur = nodeOf(rp.plan, rp.currentNodeId);
       const area = ws.last('areaChanged')!;
       expect(area.floor.runNodeId).toBe(rp.currentNodeId);
-      expect(area.floor.exits?.length ?? 0).toBe(cur.edges.length);
+      // ⭐ С-аудит F5: выходы клиенту — по мере открытия этажа; контракт «выходов = рёбер» — у этажа сервера.
+      expect(runOf(room).session.world.exits?.length ?? 0).toBe(cur.edges.length);
     }
 
     // ⭐⭐ 13.10 (Г2): СПУСК БЕСКОНЕЧЕН — идём по первому ребру фиксированное число этажей и требуем, чтобы каждый узел
@@ -304,7 +305,8 @@ describe('Room — жизненный цикл забега v2 (сервер, he
       expect(rp2.currentNodeId, 'спуск по ребру → вошли в целевой узел').toBe(target);
       const a2 = ws.last('areaChanged')!;
       expect(a2.floor.runNodeId).toBe(target);
-      expect(a2.floor.exits?.length ?? 0).toBe(nodeOf(rp2.plan, target).edges.length);
+      expect(runOf(room).session.world.exits?.length ?? 0).toBe(nodeOf(rp2.plan, target).edges.length);
+      for (const e of a2.floor.exits ?? []) expect(e.i, 'выход клиента — с номером ребра').toBeTypeOf('number');
       // Привал (чистая каденция глубины, `balance.dungeonAccess.waypointStep`) — узел-город: портал есть, монстров нет.
       if (nodeOf(rp2.plan, target).type === 'rest') {
         waypoints++;
@@ -345,7 +347,7 @@ describe('Room — жизненный цикл забега v2 (сервер, he
     for (let i = 0; i < 5; i++) {
       const { room, ws, pid } = makeRoom();
       room.descend(pid);
-      counts.push(ws.last('areaChanged')!.floor.chests.length);
+      counts.push(runOf(room).session.world.chests.length);   // ⭐ С-аудит F5: клиенту — по мере открытия; доезжает ли до сессии — мир сервера
     }
     const min = cfg.get('balance').loot.chestsPerFloor.min;
     expect(min, 'тест имеет смысл, только пока сундуки вообще включены').toBeGreaterThan(0);
@@ -1087,6 +1089,9 @@ describe('Room — ковка на сервере: ковка, зачарова�
     db.stashes.get(user)!.data.forgeJournal = emptyJournal();       // не открыто ничего
     process.env.DM_CRAFT_FULL_JOURNAL = '1';
     process.env.NODE_ENV = 'production';
+    // ⭐ С7: в бою проверка «у станции» не снимается флагом стенда — герой встаёт к кузнице, как честный игрок.
+    const forge = townStationAt('forge')!;
+    (room as unknown as { session: { world: { players: Record<string, { pos: { x: number; y: number } }> } } }).session.world.players[pid]!.pos = { ...forge };
     const before = JSON.stringify(save), snap = dbSnap(user, save.charId);
     await room.handleCmd(pid, craftCmd('fulljr-prod-01', s.input), 1);
     expect(ws.last('cmdResult'), 'забытый на боевом сервере флаг ворот не открывает').toMatchObject({ id: 1, ok: false });
@@ -2390,6 +2395,24 @@ describe('Room — раунд 4: узел забега не фармится в�
   const wOf = (room: Room): NodeWorld => (room as unknown as { session: { world: NodeWorld } }).session.world;
   const nodeNow = (ws: FakeWs): RunNode => { const rp = ws.last('runPlan')!; return nodeOf(rp.plan, rp.currentNodeId); };
   const standAt = (room: Room, pid: string, at: Pt): void => { wOf(room).players[pid]!.pos = { x: at.x, y: at.y }; };
+  /**
+   * ⭐ С-аудит F5: что клиент знает об этаже — последний кадр области и кадры `reveal` после него (клетки, сундуки, рычаги, двери). Туман:
+   * клиенту уходит открытое пати, поэтому сторожа «клиенту — как в мире» судят открытое, подойдя к предмету (`near` — шаги, чтобы ушёл `reveal`).
+   */
+  function clientView(ws: FakeWs, kind: 'areaChanged' | 'joined' = 'areaChanged') {
+    let k = -1;
+    for (let i = ws.frames.length - 1; i >= 0; i--) if (ws.frames[i]!.t === kind) { k = i; break; }
+    const f = (ws.frames[k] as Extract<ServerFrame, { t: 'areaChanged' }>).floor;
+    const v = { grid: f.grid.map((r) => [...r]), chests: [...f.chests], levers: [...f.levers], doors: [...f.doors] };
+    for (const x of ws.frames.slice(k + 1)) {
+      if (x.t !== 'reveal') continue;
+      for (const p of x.patches) for (let j = 0; j < p.h; j++) for (let i = 0; i < p.w; i++) v.grid[p.y + j]![p.x + i] = p.cells[j * p.w + i] as Cell;
+      v.chests.push(...x.chests); v.levers.push(...x.levers); v.doors.push(...x.doors);
+    }
+    return v;
+  }
+  const near = (room: Room, pid: string, at: Pt): void => { standAt(room, pid, at); room.step(); room.step(); };
+  const revealedOf = (room: Room): Set<number> => (room as unknown as { revealed: Set<number> }).revealed;
   /** Подпись монстра заселения — что и где стоит (id сущности — сквозной счётчик мира, по нему не сравнить). */
   const sig = (m: MonIn): string => `${m.def.id}/${m.def.rarity}/${m.def.level}@${Math.round(m.pos.x)},${Math.round(m.pos.y)}`;
   const aliveSigs = (room: Room): string[] => wOf(room).monsters.filter((m) => m.alive).map(sig).sort();
@@ -2485,8 +2508,11 @@ describe('Room — раунд 4: узел забега не фармится в�
     expect(nodeNow(ws).id, 'продолжили тот же узел').toBe(node);
     // ⭐ 13.10 (владелец: «пусть сундук не пропадает»): открытый приходит — с `opened: true` (было — не приходил вовсе, и после
     // продолжения узла сундука в комнате не было); закрытые — без поля
-    const sent = ws.last('areaChanged')!.floor.chests;
-    expect(sent.map((c) => c.id).sort(), 'клиенту — все сундуки узла').toEqual([...all].sort());
+    // ⭐ С-аудит F5: клиенту — сундуки открытых кусков; подошли к открытому — он пришёл открытым, и ни одного из-за тумана.
+    near(room, pid, chest.pos);
+    const sent = clientView(ws).chests;
+    const shown = wOf(room).chests.filter((c) => revealedOf(room).has(chunkAt(c.pos.x, c.pos.y))).map((c) => c.id);
+    expect(sent.map((c) => c.id).sort(), 'клиенту — все сундуки открытого').toEqual([...shown].sort());
     expect(sent.filter((c) => c.opened).map((c) => c.id), 'открытый — открытым, остальные — без поля').toEqual([chest.id]);
     expect(wOf(room).chests.map((c) => c.id).sort(), 'сундуки узла те же').toEqual([...all].sort());
     const again = wOf(room).chests.find((c) => c.id === chest.id)!;
@@ -2504,7 +2530,8 @@ describe('Room — раунд 4: узел забега не фармится в�
     // ⭐ 13.10: и вошедший посреди этажа (кадр `joined`) видит его открытым; его [E] и команда тоже ничего не дают
     const peer = addPeer(room, 'user-r401-chest-b');
     const seen = peer.ws.last('joined')!.floor.chests;
-    expect(seen.map((c) => c.id).sort(), 'вошедшему — все сундуки узла').toEqual([...all].sort());
+    expect(seen.map((c) => c.id).sort(), 'вошедшему — все сундуки открытого пати').toEqual(
+      wOf(room).chests.filter((c) => revealedOf(room).has(chunkAt(c.pos.x, c.pos.y))).map((c) => c.id).sort());
     expect(seen.filter((c) => c.opened).map((c) => c.id), 'вошедшему — открытый открытым').toEqual([chest.id]);
     standAt(room, peer.pid, again.pos);
     room.openChest(peer.pid, chest.id);
@@ -2615,7 +2642,9 @@ describe('Room — раунд 4: узел забега не фармится в�
       expect(save.run?.node?.levers).toContain(lever.id);
       toTown(room, pid);
       await resume(room, pid);
-      const floor = ws.last('areaChanged')!.floor;
+      near(room, pid, lever.pos);   // ⭐ С-аудит F5: рычаг и дверь клиенту — когда пати к ним подошла
+      for (const c of door.cells) near(room, pid, { x: c.cx * 32 + 16, y: c.cy * 32 + 16 });
+      const floor = clientView(ws);
       expect(floor.levers.map((l) => l.id), 'рычаг не предлагается снова').not.toContain(lever.id);
       expect(floor.doors.map((d) => d.id), 'дверь не рисуется запертой').not.toContain(door.id);
       for (const c of door.cells) expect(floor.grid[c.cy]![c.cx], 'проход открыт').toBe(Cell.Floor);

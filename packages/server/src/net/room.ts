@@ -17,6 +17,7 @@ import {
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type RunWindow, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
   type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits,
+  monsterDefView, floorInteractables, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -28,7 +29,7 @@ import { leaseLost } from '../cluster/lease.js';
 import { limits } from './rateLimit.js';
 import { logThrottle, type LogThrottle } from './logThrottle.js';
 import { SessionTelemetry, tallyForge } from './telemetry.js';
-import { craftFullJournalOn, craftFullJournalNotice } from './devFlags.js';
+import { craftFullJournalOn, craftFullJournalNotice, isProduction, stationCheckOff } from './devFlags.js';
 import { upsertPlaySession } from '../db/telemetry.js';
 import { serverBuild } from '../buildStamp.js';
 
@@ -270,6 +271,17 @@ const STASH_READ_CMDS: ReadonlySet<string> = new Set([
   'forgeExchange',
   'sealReforge',   // ⭐ 17.10: перековка берёт печати и из сундука — значит читает его из базы
 ]);
+/**
+ * ⭐ С7 (29.10): у какой станции города исполняется команда (`TOWN_STATIONS[].panel`; любая из списка). Покупка — у лавки и в кузнице
+ * (её вкладка «Купить»), продажа — у лавки; кузница — всё ремесло; сундук — перекладка и сдача сырья, открыть его можно и из кузницы
+ * (окно кузницы читает сырьё сундука).
+ */
+const STATION_CMDS: Partial<Record<TownCommand['cmd'], readonly string[]>> = {
+  buy: ['shop', 'forge'], sell: ['shop'],
+  forgeUpgrade: ['forge'], forgeReroll: ['forge'], forgeSalvage: ['forge'], forgeRepair: ['forge'], craft: ['forge'], forgeEnchant: ['forge'],
+  forgeSketch: ['forge'], forgeExchange: ['forge'], sealReforge: ['forge'],
+  depositMaterials: ['stash'], stashMove: ['stash'], stashOpen: ['stash', 'forge'],
+};
 /** ⭐ С-аудит F8: события, которые видит только их герой (`Room.broadcastEvents`). */
 const PRIVATE_EVENTS: ReadonlySet<SessionEvent['type']> = new Set(['gold', 'xp', 'materials', 'item-picked', 'quest', 'cooldown']);
 /** ⭐ С9 (29.10): лимиты команд для клиента (`joined.limits`) — из тех же бакетов и наборов, что судят команды. */
@@ -637,6 +649,16 @@ const FULL_SNAPSHOT_MS = 5_000;
 const AOI_RADIUS = Math.max(0, Number(process.env.DM_AOI_RADIUS ?? 0));
 /** Выход из области шире входа: без гистерезиса сущности на кромке мигали бы каждый кадр. */
 const AOI_EXIT_MULT = 1.2;
+/**
+ * ⭐ С-аудит F1/F2 (29.10): ВИД КОМНАТЫ В ПОДЗЕМЕЛЬЕ — то, что видит ПАТИ. Монстры, снаряды и добыча уходят клиентам, только пока они рядом
+ * хотя бы с одним героем комнаты (в радиусе экрана камеры на самом дальнем зуме, с запасом), события о них — тоже. Раньше каждому клиенту
+ * уходил весь этаж: радар пачек и боссов, кто уже гонится, добыча по всей карте. Вид один на комнату (союзники видят друг за друга — пати
+ * заодно), поэтому снимок, дельта и двоичный кадр по-прежнему считаются раз на комнату. Город и арена — целиком, как были.
+ * `DM_VIEW_RADIUS` — стенду (0 — выключить: весь этаж, как до правки).
+ */
+const VIEW_RADIUS = Math.max(0, Number(process.env.DM_VIEW_RADIUS ?? 768));
+/** ⭐ С-аудит F4: дебаг-слой восприятия монстров (зрение, слух) — только стенду разработки; в бою определения без него. */
+const MONSTER_DEF_DEBUG = !isProduction(process.env);
 /** Отладка провода (Ф1.4): дублировать кадр текстом для точной сверки. Только для стенда. */
 const WIRE_VERIFY = process.env.DM_WIRE_VERIFY === '1';
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
@@ -991,6 +1013,11 @@ export class Room implements Tickable {
   private roomDelta = new SnapshotDelta();
   /** Монстры, чьи определения комната уже разослала. Сбрасывается на смене этажа. */
   private known = new Set<number>();
+  /** ⭐ С-аудит F1: монстры, которые сейчас в виде комнаты (`roomView`; гистерезис выхода). Сбрасывается на смене этажа. */
+  private inView = new Set<number>();
+  /** ⭐ С-аудит F5: открытые пати куски этажа (`chunkKey`) и сетка, к которой они относятся (сменилась сетка — этаж другой, куски заново). */
+  private revealed = new Set<number>();
+  private revealGrid: unknown = null;
   /** R8-08: `by` и цель спуска (`targetNodeId`/`targetNodeType`) — чтобы вошедший посреди голосования получил его окно. */
   private vote: {
     kind: 'descend' | 'town' | 'arena'; by: string; diffId?: string; targetNodeId?: string; targetNodeType?: string; finish?: boolean;
@@ -1263,7 +1290,7 @@ export class Room implements Tickable {
     const cooldowns = this.session.cooldownsOf(pid);
     this.send(ws, {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
-      floor: this.currentFloorInit(), peers: this.peerList(), save: clientSave(save),   // R14-10: без сида забега
+      floor: this.clientFloor(), peers: this.peerList(), save: clientSave(save),   // R14-10: без сида забега; ⭐ F5: только открытое
       ...(build ? { build } : {}), cfgRev: this.cfg.revision(), gameRev: this.cfg.gameRevision(), ...(cooldowns ? { cooldowns } : {}),
       limits: CMD_LIMITS(),   // ⭐ С9
     });
@@ -2450,6 +2477,14 @@ export class Room implements Tickable {
       this.warnClient(c, `команда «${command.cmd}» вне города (область ${this.area}), игрок ${save.charId}`);
       return { ok: false, reason: 'Это доступно только в городе', early: true };
     }
+    // ⭐ С7 (29.10): СТАНЦИЯ ГОРОДА — РЯДОМ. Лавка, кузница и сундук — объекты площади: команду станции сервер исполняет, только если герой
+    // у неё (`STATION_USE_R` от центра). Раньше проверялось лишь «в городе», и изменённый клиент ковал и торговал с любого края площади.
+    const far = this.stationRefusal(pid, command.cmd);
+    if (far) {
+      counters.cmdOutOfPlace++;
+      this.warnClient(c, `команда «${command.cmd}» далеко от станции, игрок ${save.charId}`);
+      return { ok: false, reason: far, early: true };
+    }
     // D12: тяжёлые команды кузницы — не чаще лимита. Токен списывается за ПОПЫТКУ, а не за
     // успех: иначе перебор несуществующих uid был бы бесплатным.
     if (FORGE_RATE_CMDS.has(command.cmd) && !limits.forgeCmd.take(c.userId)) {   // R4-17: по аккаунту
@@ -2788,6 +2823,9 @@ export class Room implements Tickable {
     if (this.vote?.kind === 'arena' && this.area === 'town' && this.clients.has(pid) && !this.vote.yes.has(pid)) this.castVote(pid, false);
     if (this.votePending(pid) || !this.voteAllowed(pid)) return;
     if (this.area === 'town') {
+      // ⭐ С7 (29.10): спуск из города зовут У ПОРТАЛА (его окно — «куда лететь»); раньше — с любого края площади.
+      const far = this.portalRefusal(pid);
+      if (far) { this.tellFar(pid, far); return; }
       // R4-25: зовущий сам переписал бы свой припаркованный забег чужим — отказ до голосования.
       if (this.runClash(pid, false)) { this.tellBlocked(pid, 'run'); return; }
       // ⭐ V2: продолжение забега, который идёт в другой комнате, — тоже (окончательная сверка — перед входом, `resumeFromLedger`).
@@ -3584,6 +3622,8 @@ export class Room implements Tickable {
   /** Вход в PvP-арену из города (через алтарь) — голосование, затем круглый зал с уроном игрок↔игрок. */
   enterArena(pid: string): void {
     if (this.refuseFrozen(pid) || this.area !== 'town' || this.votePending(pid) || !this.voteAllowed(pid)) return; // арена только из города
+    const far = this.portalRefusal(pid);   // ⭐ С7: арену зовут из окна портала — у портала
+    if (far) { this.tellFar(pid, far); return; }
     this.vote = { kind: 'arena', by: pid, yes: new Set([pid]), no: new Set(), until: this.voteUntil() };   // D1: вне подземелья — со сроком
     this.broadcast(this.voteStartFrame(this.vote));
     this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
@@ -4213,7 +4253,7 @@ export class Room implements Tickable {
     // R9-01: запись узла (и принесённое из сейвов участников) — в свод базы; уходит с чекпойнтом ниже (`persistAll`).
     if (folded) this.markLedger();
     this.markLedger(nodeId);
-    this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast({ t: 'runPlan', plan: clientPlan(this.runPlan), currentNodeId: nodeId });   // R14-10: без сидов
@@ -4482,7 +4522,7 @@ export class Room implements Tickable {
       if (from === 'dungeon' && save.run?.config && this.runConfig && sameRun(save.run.config, this.runConfig)) delete save.run.deadAt;
       ensureMainQuest(this.cfg, save);
     }
-    this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast(this.shopFrame());
@@ -4525,7 +4565,7 @@ export class Room implements Tickable {
       this.session.respawnPlayer(pid, at, ARENA_IMMUNE_MS);
       i++;
     }
-    this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
   }
@@ -4791,6 +4831,30 @@ export class Room implements Tickable {
     if (events.length || quest.length) this.broadcastEvents(quest.length ? [...events, ...quest] : events);
     if (saves) for (const pid of touched) this.sendSave(pid);
     if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
+  }
+
+  /** ⭐ С7: отказ команды станции города, если герой не у своей станции (`STATION_CMDS`); `null` — можно. Вне города — не судит (SCOPE). */
+  private stationRefusal(pid: string, cmd: TownCommand['cmd']): string | null {
+    const panels = STATION_CMDS[cmd];
+    if (!panels || this.area !== 'town' || stationCheckOff(process.env)) return null;
+    const p = this.session.world.players[pid];
+    if (!p) return null;
+    const ok = panels.some((panel) => {
+      const s = townStationAt(panel);
+      return !!s && (p.pos.x - s.x) ** 2 + (p.pos.y - s.y) ** 2 <= STATION_USE_R * STATION_USE_R;
+    });
+    if (ok) return null;
+    const name = TOWN_STATIONS.find((s) => s.panel === panels[0])?.label ?? panels[0]!;
+    return `Подойдите ближе: ${name}`;
+  }
+
+  /** ⭐ С7: отказ «спуск или арена из города не у портала»; `null` — можно. */
+  private portalRefusal(pid: string): string | null {
+    if (stationCheckOff(process.env)) return null;
+    const p = this.session.world.players[pid];
+    const at = townPortalAt(this.session.world.grid);
+    if (!p || !at) return null;
+    return (p.pos.x - at.x) ** 2 + (p.pos.y - at.y) ** 2 <= STATION_USE_R * STATION_USE_R ? null : 'Подойдите к порталу';
   }
 
   /** R5-03: узел древа — тогл (аура, стойка): его каст срабатывает по нажатию, а не удержанием. ⭐ С0: нажатие от удержания отличает сервер (`setInput`). */
@@ -5569,6 +5633,7 @@ export class Room implements Tickable {
     // а идентификаторы продолжают расти — старые определения клиенту уже не нужны.
     this.roomDelta.reset();
     this.known.clear();
+    this.inView.clear();
     for (const c of this.clients.values()) {
       c.delta.reset();
       c.baselined = false;
@@ -5586,6 +5651,7 @@ export class Room implements Tickable {
    */
   private emitWorld(): void {
     if (this.clients.size === 0) return;
+    this.revealTick();   // ⭐ С-аудит F5: новые куски этажа — до кадра мира
     const snap = serializeWorld(this.session.world);
     const now = Date.now();
     const forceFull = now - this.lastFullAt >= FULL_SNAPSHOT_MS;
@@ -5607,7 +5673,7 @@ export class Room implements Tickable {
         const info = fresh
           .map((m) => live.get(m.id))
           .filter((m): m is NonNullable<typeof m> => !!m)
-          .map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y }));
+          .map((m) => ({ id: m.id, def: monsterDefView(m.def, MONSTER_DEF_DEBUG), x: m.pos.x, y: m.pos.y }));
         if (info.length) { const msg = JSON.stringify({ t: 'monsterInfo', monsters: info } satisfies ServerFrame); c.ws.send(msg); bytes += msg.length; }
       }
       c.visible = new Set(view.monsters.map((m) => m.id));
@@ -5646,7 +5712,8 @@ export class Room implements Tickable {
    * забега должен получить ПОЛНЫЙ кадр того же тика, от которого посчитана общая дельта.
    * Тогда со следующего тика он идёт в общем потоке.
    */
-  private emitShared(snap: ReturnType<typeof serializeWorld>, forceFull: boolean): void {
+  private emitShared(full: ReturnType<typeof serializeWorld>, forceFull: boolean): void {
+    const snap = this.roomView(full);   // ⭐ С-аудит F1: только то, что видит пати
     const sum = worldChecksum(snap);
 
     // Определения новых монстров — один раз на комнату. Без области интереса монстр появляется
@@ -5658,7 +5725,7 @@ export class Room implements Tickable {
       return list
         .map((m) => live.get(m.id))
         .filter((m): m is NonNullable<typeof m> => !!m)
-        .map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y }));
+        .map((m) => ({ id: m.id, def: monsterDefView(m.def, MONSTER_DEF_DEBUG), x: m.pos.x, y: m.pos.y }));   // ⭐ С-аудит F4
     };
     if (fresh.length) {
       const info = infoOf(fresh);
@@ -5708,6 +5775,51 @@ export class Room implements Tickable {
     }
     counters.snapshotFrames += sent;
     counters.snapshotBytes += bytes;
+  }
+
+  /**
+   * ⭐ С-аудит F1 (29.10): ВИД КОМНАТЫ — монстры, снаряды и добыча рядом хотя бы с одним героем (`VIEW_RADIUS`; монстру — гистерезис выхода
+   * `AOI_EXIT_MULT`, иначе на кромке он мигал бы и гонял определения). Герои — все: они нужны интерфейсу пати. Город и арена — целиком.
+   */
+  private roomView(snap: ReturnType<typeof serializeWorld>): ReturnType<typeof serializeWorld> {
+    if (VIEW_RADIUS <= 0 || this.area !== 'dungeon') return snap;
+    const pts = snap.players.map((p) => [p.x, p.y] as const);
+    const rIn2 = VIEW_RADIUS * VIEW_RADIUS, rOut2 = (VIEW_RADIUS * AOI_EXIT_MULT) ** 2;
+    const near = (x: number, y: number, r2: number): boolean => pts.some(([px, py]) => (x - px) * (x - px) + (y - py) * (y - py) <= r2);
+    const monsters = snap.monsters.filter((m) => near(m.x, m.y, this.inView.has(m.id) ? rOut2 : rIn2));
+    this.inView = new Set(monsters.map((m) => m.id));
+    return {
+      tick: snap.tick,
+      players: snap.players,
+      monsters,
+      projectiles: snap.projectiles.filter((r) => near(r.x, r.y, rIn2)),
+      drops: snap.drops.filter((d) => near(d.x, d.y, rIn2)),
+    };
+  }
+
+  /**
+   * ⭐ С-аудит F2 (29.10): ВИДНО ЛИ СОБЫТИЕ ПАТИ. О монстре — пока он в виде комнаты или рядом с героем (удар, смерть, замах, оглушение,
+   * сбивание); выпавшее — рядом с героем; прочее (о героях, сундук, который открыл герой, этаж) — всегда. Раньше события шли всей комнате с
+   * точными координатами откуда угодно: бой за стеной, смерти и добыча по всей карте.
+   */
+  private eventVisible(e: SessionEvent): boolean {
+    if (VIEW_RADIUS <= 0 || this.area !== 'dungeon') return true;
+    const near = (x: number, y: number): boolean => {
+      const r2 = (VIEW_RADIUS * AOI_EXIT_MULT) ** 2;
+      return Object.values(this.session.world.players).some((p) => (x - p.pos.x) ** 2 + (y - p.pos.y) ** 2 <= r2);
+    };
+    const mon = (id: number): boolean => {
+      if (this.inView.has(id)) return true;
+      const m = this.session.world.monsters.find((x) => x.id === id);
+      return !!m && near(m.pos.x, m.pos.y);
+    };
+    switch (e.type) {
+      case 'hit': return e.target === 'player' || mon(Number(e.id)) || near(e.x, e.y);
+      case 'monster-died': return mon(e.id) || near(e.x, e.y);
+      case 'monster-swing': case 'stun': case 'knockdown': return mon(e.id);
+      case 'item-dropped': return near(e.x, e.y);
+      default: return true;
+    }
   }
 
   /**
@@ -5836,6 +5948,51 @@ export class Room implements Tickable {
   private heroPower(save: SaveState, pool: readonly Item[] | undefined): number {
     return effectiveLevel(save, this.cfg.get('balance').power, pool ?? [], this.cfg.get('item-tiers')).total;   // R12-09: и ступень вещей
   }
+  /**
+   * ⭐ С-аудит F5 (29.10): ОБЛАСТЬ ДЛЯ КЛИЕНТА. В подземелье — только открытые пати куски (`maskFloor`): сетка без них — стены, объекты и
+   * интерактивы — на открытых. Вошедшему посреди этажа — всё, что пати уже открыла. Город и арена — целиком.
+   */
+  private clientFloor(): FloorInit {
+    const f = this.currentFloorInit();
+    if (this.area !== 'dungeon' || VIEW_RADIUS <= 0) return f;
+    // Новый этаж — его открытое у входа едет в самом кадре области (всем). Тот же этаж (вошёл ещё один) — новые куски у вошедшего прежние
+    // клиенты узнают кадром `reveal` (иначе комната открыла бы их молча, и у них остались бы дыры), а вошедшему они — в его кадре.
+    if (this.newRevealFloor()) for (const k of this.revealNear()) this.revealed.add(k);
+    else this.revealTick();
+    const masked = maskFloor(f, this.revealed);
+    masked.interactables = floorInteractables(masked, this.runPlan ?? undefined);
+    return masked;
+  }
+
+  /** ⭐ F5: куски рядом с героями — в открытые; возвращает новые. Сетка сменилась (другой этаж) — открытое начинается заново. */
+  private newRevealFloor(): boolean {
+    const g = this.session.world.grid;
+    if (this.revealGrid === g) return false;
+    this.revealed = new Set(); this.revealGrid = g;
+    return true;
+  }
+  private revealNear(): number[] {
+    const w = this.session.world;
+    const rows = w.grid.length, cols = w.grid[0]?.length ?? 0;
+    const pts = Object.values(w.players).map((p) => p.pos);
+    const fresh = chunksNear(cols, rows, pts, VIEW_RADIUS).filter((k) => !this.revealed.has(k));
+    return fresh;
+  }
+
+  /** ⭐ F5: подошли к новым кускам — кадр `reveal` всей комнате (клетки с каймой, объекты на них, их интерактивы). */
+  private revealTick(): void {
+    if (this.area !== 'dungeon' || VIEW_RADIUS <= 0 || this.clients.size === 0) return;
+    if (this.newRevealFloor()) { for (const k of this.revealNear()) this.revealed.add(k); return; }   // кадр области ещё не уходил — откроет он
+    const fresh = this.revealNear();
+    if (!fresh.length) return;
+    const before = new Set(this.revealed);
+    for (const k of fresh) this.revealed.add(k);
+    const r = revealOf(this.currentFloorInit(), fresh, before);
+    r.interactables = floorInteractables({ area: 'dungeon', exits: r.exits, decor: r.decor, spawn: this.session.world.spawn, altar: r.altar, levers: r.levers,
+      chests: r.chests, grid: this.session.world.grid, runNodeId: this.session.world.runNodeId }, this.runPlan ?? undefined, { spawn: false });
+    this.broadcast(r);
+  }
+
   private currentFloorInit(): FloorInit {
     // Арена рендерится клиентом как обычный этаж (грид+спавн), поэтому area → 'dungeon'.
     const f = floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor, this.area === 'dungeon' ? this.rooms : undefined);
@@ -5853,6 +6010,7 @@ export class Room implements Tickable {
         f.altar = this.altarSpot()!;   // ⭐ 17.10: ОДНА точка на сервер (её же проверяет `altarPick`)
       }
     }
+    f.interactables = floorInteractables(f, this.runPlan ?? undefined);   // ⭐ С7: [E] — с сервера, подписи выходов — по его плану
     return f;
   }
   /** Статика игрока для кадра `peerInfo` (Ф1.1). */
@@ -5950,7 +6108,10 @@ export class Room implements Tickable {
    * только ему, а взмах чужого — без его отката (`cooldownMs`): раньше вся комната видела кошелёк, добычу и откаты каждого (в PvP — точные
    * откаты и ресурсы соперника). Общее (удары, смерти, сундуки, взмахи для анимации) — всем, одной строкой на всех.
    */
-  private broadcastEvents(events: readonly SessionEvent[]): void {
+  private broadcastEvents(all: readonly SessionEvent[]): void {
+    // ⭐ С-аудит F2/F4: только видимое пати; смерть монстра — с видом определения, а не с определением целиком.
+    const events = all.filter((e) => this.eventVisible(e))
+      .map((e) => (e.type === 'monster-died' ? { ...e, def: monsterDefView(e.def, MONSTER_DEF_DEBUG) as unknown as typeof e.def } : e));
     if (!events.length) return;
     const pub: SessionEvent[] = [];
     let mine = false;

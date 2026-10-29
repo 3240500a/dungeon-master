@@ -10,6 +10,8 @@ import type { RunPlan } from '../dungeon/run/types.js';
 import type { CraftInput, CraftJournal } from '../formulas/craft.js';
 import type { HeroCooldowns, PlayerInput, SessionEvent } from './session.js';
 import type { WorldDelta } from './delta.js';
+import type { ClientMonsterDef } from './serialize.js';
+import type { Interactable } from './interactables.js';
 
 /**
  * ⭐ С9 (29.10): ЛИМИТЫ ЧАСТОТЫ КОМАНД — как их держит сервер (`server/net/rateLimit.ts`, `room.ts`). Бакет — [ёмкость всплеска, токенов в секунду].
@@ -146,8 +148,11 @@ export interface FloorInit {
   grid: Grid;
   spawn: { x: number; y: number };
   stairs?: { x: number; y: number };
-  /** Все выходы на следующие этажи (v2 развилка). exits[0] совместим со `stairs`. */
-  exits?: { x: number; y: number }[];
+  /**
+   * Все выходы на следующие этажи (v2 развилка). exits[0] совместим со `stairs`. ⭐ С-аудит F5: клиенту — только на открытых кусках, с номером
+   * ребра узла `i` (по нему `descend` выбирает ветку).
+   */
+  exits?: { x: number; y: number; i?: number }[];
   /** id текущего узла забега (v2) и его роль/тип — для карты и рендера. */
   runNodeId?: string;
   runNodeType?: string;
@@ -184,6 +189,13 @@ export interface FloorInit {
    * 1 м = `TILE` ед. мира) — клиент ставит по пробе отражений на комнату. Только подземелье; город и арена — поля нет.
    */
   rooms?: { x: number; y: number; w: number; h: number }[];
+  /**
+   * ⭐ С7 (29.10): интерактивы области — их собирает сервер (`floorInteractables`): точка, радиус [E], подпись, действие. Клиент рисует их,
+   * а не свои константы; сервер по тем же точкам проверяет, что герой рядом. Нет поля — старый сервер.
+   */
+  interactables?: Interactable[];
+  /** ⭐ С-аудит F5: открытые куски этажа (`chunkKey`, `REVEAL_CHUNK` клеток) — рисовать только их. Нет поля — весь этаж открыт (город, арена). */
+  revealed?: number[];
 }
 
 /** Снапшот, слитый со статикой пиров — то, с чем работает клиент (Ф1.1). */
@@ -374,7 +386,15 @@ export type ServerFrame =
    * этажа приезжал в `FloorInit` — это и лишний килобайт на входе, и готовый maphack:
    * клиент знал про всех монстров карты, включая тех, кого не видит.
    */
-  | { t: 'monsterInfo'; monsters: { id: number; def: ScaledMonster; x: number; y: number }[] }
+  // ⭐ С-аудит F4: `def` — вид определения для клиента (`monsterDefView`), а не определение целиком.
+  | { t: 'monsterInfo'; monsters: { id: number; def: ClientMonsterDef; x: number; y: number }[] }
+  // ⭐ С-аудит F5 (29.10): открылись куски этажа `chunks`. `patches` — клетки кусков с каймой в одну клетку (прямоугольник, по строкам), рядом —
+  // всё, что стоит на новых кусках, и их интерактивы. Клиент сливает это в свою область и достраивает только новые куски.
+  | {
+    t: 'reveal'; chunks: number[]; patches: { x: number; y: number; w: number; h: number; cells: number[] }[];
+    exits: { x: number; y: number; i: number }[]; decor: DecorObject[]; doors: FloorInit['doors']; levers: FloorInit['levers']; chests: FloorInit['chests'];
+    altar?: { x: number; y: number }; rooms: { x: number; y: number; w: number; h: number }[]; interactables?: Interactable[];
+  }
   | { t: 'peerLeft'; id: string }
   | { t: 'areaChanged'; floor: FloorInit }
   // Структура текущего забега (v2) — данные для панели-карты (граф узлов, «видно вперёд»).

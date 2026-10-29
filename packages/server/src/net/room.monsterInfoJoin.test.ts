@@ -56,8 +56,11 @@ function join(room: Room, userId: string, save?: SaveState): { ws: FakeWs; pid: 
   return { ws, pid, save: s };
 }
 const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
-const liveIds = (room: Room): number[] =>
-  (room as unknown as { session: { world: { monsters: { id: number }[] } } }).session.world.monsters.map((m) => m.id).sort((a, b) => a - b);
+/**
+ * ⭐ С-аудит F1 (29.10): определения уходят только тем монстрам, кого видела ПАТИ (вид комнаты, `Room.roomView`), — и «знает» комната
+ * ровно их (`known`). Сторож тот же по смыслу: вошедшему — все знакомые комнате до первого кадра, без дублей.
+ */
+const liveIds = (room: Room): number[] => [...(room as unknown as { known: Set<number> }).known].sort((a, b) => a - b);
 const sorted = (a: number[]): number[] => [...new Set(a)].sort((x, y) => x - y);
 
 beforeAll(async () => {
@@ -77,8 +80,10 @@ describe('Room — monsterInfo вошедшему на живой этаж (об
     await settle();
     room.step();
     const live = liveIds(room);
-    expect(live.length, 'на этаже есть монстры').toBeGreaterThan(0);
-    expect(sorted(a.ws.allInfoIds()), 'первый на этаже узнаёт всех рассылкой новых').toEqual(live);
+    expect(live.length, 'пати видит монстров').toBeGreaterThan(0);
+    const all = (room as unknown as { session: { world: { monsters: unknown[] } } }).session.world.monsters.length;
+    expect(live.length, '⭐ F1: далёких (вне вида пати) комната не рассылает').toBeLessThan(all);
+    expect(sorted(a.ws.allInfoIds()), 'первый на этаже узнаёт всех видимых рассылкой новых').toEqual(live);
 
     // Вошедший по коду: комната всех уже знает — рассылка новых ему пуста.
     const b = join(room, 'user-mi-b');

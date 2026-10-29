@@ -1111,7 +1111,8 @@ export async function startOnline3d(): Promise<void> {
   // `runStatus`/`abandoned`/`error` и жизнь сокета — у потока входа (`entry` ниже), общего с 2D.
   app.net.on('peerLeft', (f) => { const a = peers.get(f.id); if (a) { disposeActor(a); peers.delete(f.id); } peerStatics.delete(f.id); });
   app.net.on('peerInfo', (f) => mergePeerStatics(peerStatics, f.peers));
-  app.net.on('monsterInfo', (f) => { for (const m of f.monsters) spawnMonster(m); });
+  // ⚠ С-аудит F4: вид определения (`ClientMonsterDef`); веб-клиент не поддерживается — приведение ради сборки.
+  app.net.on('monsterInfo', (f) => { for (const m of f.monsters) spawnMonster(m as { id: number; def: ScaledMonster; x: number; y: number }); });
   app.net.on('peerJoined', (f) => { peerStatics.set(f.peer.id, f.peer); });
 
   // ── Модалки (DOM, как в 2D OnlineScene) ──────────────────────────────────────

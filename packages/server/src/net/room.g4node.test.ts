@@ -267,7 +267,8 @@ describe('⭐⭐ Г4 (круг охоты): полоса узла пропала
     r.descend(pid, undefined, undefined, undefined, 1);
     // нужен узел с ЧЁТНОЙ глубиной и полосой 1: шаг метки 2 форсирует там ширину 1 (привал)
     for (let i = 0; i < 24; i++) {
-      if (runNodeLane(r.runNodeId ?? undefined) > 0 && depthNow(r) % 2 === 0) break;
+      // ⚠ 29.10: ровно полоса 1 (ниже её и ждём): граф забега случаен (сид и ключ — на каждый забег), и на широком слое шаг мог встать на 2-ю
+      if (runNodeLane(r.runNodeId ?? undefined) === 1 && depthNow(r) % 2 === 0) break;
       walk(r, pid, [], 1);
     }
     const parked = r.runNodeId!;

@@ -7,7 +7,7 @@ import {
   ConfigRegistry, newCharacterSave, clientFrameSchema, validateInput, shopBuyPrice, ATTRIBUTES, stashDims, emptyStash,
   generateItem, createRng, addToInventory, materialItem, uuidv7, buildSeal, liveSealDefs,
   CRAFT_SLOT_LIST, keySlotOf, keyVariantsByBase, variantsFor, craftWeapon, emptyJournal, sketchable, normalizeCraftNonces,
-  upgradeCost, repairCost, rerollMaterials, enchantMaterials,
+  upgradeCost, repairCost, rerollMaterials, enchantMaterials, chunkAt,
   type SaveState, type Item, type TownCommand, type CraftInput, type CraftJournal, type AccountStash,
 } from '@dm/shared';
 import { counters } from './metrics.js';
@@ -49,6 +49,8 @@ import { Prng, mutateFrame, junkText, junkBytes, shrinkOps } from './protocolFuz
  *  I11 — ⭐ 13.10: последний кадр этажа соединения (`joined`/`areaChanged`) несёт ВСЕ сундуки области; `opened` — только `true` и только у
  *       открытого в мире; открытый в мире без пометки открыт позже — и событие `chest-opened` соединению пришло. Было — открытые не слались,
  *       и вошедший посреди этажа (код, реконнект, «Продолжить») видел комнату без сундука.
+ *       ⭐ С-аудит F5 (29.10): «все сундуки» — все на ОТКРЫТЫХ пати кусках этажа (туман войны): кадр этажа плюс кадры `reveal` после него
+ *       несут ровно сундуки открытых кусков, ни одного за туманом.
  * HTTP-ручки аккаунта — свой блок в конце файла (H1–H4).
  *
  * МОДЕЛЬ. Сценарии: «смесь» (честный один или с другом, соседняя вкладка аккаунта, чужие аккаунты, анонимы, мусор всех видов) и
@@ -450,12 +452,21 @@ interface Got {
   chests?: { id: number; opened?: unknown }[];
   /** ⭐ 13.10 (I11): id сундуков из событий `chest-opened` этого кадра. */
   opened?: number[];
+  /** ⭐ С-аудит F5 (I11): сундуки кадра `reveal` (открытые куски этажа). */
+  revealChests?: { id: number; opened?: unknown }[];
 }
 
 /** ⭐ 13.10 (I11): сундуки из текста кадра этажа — массив `chests` объекта `floor` (в сундуке массивов нет: до первой `]`). */
 function floorChests(data: string): { id: number; opened?: unknown }[] | undefined {
   const fl = data.indexOf('"floor":{');
   const at = fl < 0 ? -1 : data.indexOf('"chests":[', fl);
+  if (at < 0) return undefined;
+  const from = at + '"chests":'.length;
+  try { return JSON.parse(data.slice(from, data.indexOf(']', from) + 1)) as { id: number; opened?: unknown }[]; } catch { return undefined; }
+}
+/** ⭐ С-аудит F5 (I11): сундуки из текста кадра `reveal` — его массив `chests` (в сундуке массивов нет: до первой `]`). */
+function revealChests(data: string): { id: number; opened?: unknown }[] | undefined {
+  const at = data.indexOf('"chests":[');
   if (at < 0) return undefined;
   const from = at + '"chests":'.length;
   try { return JSON.parse(data.slice(from, data.indexOf(']', from) + 1)) as { id: number; opened?: unknown }[]; } catch { return undefined; }
@@ -793,6 +804,7 @@ class Run {
     const got: Got = { t, bytes, f, op: this.opIndex };
     if (typeof data === 'string') {   // ⭐ 13.10 (I11)
       if (t === 'joined' || t === 'areaChanged') got.chests = floorChests(data);
+      else if (t === 'reveal') got.revealChests = revealChests(data);   // ⭐ F5: сундуки открытых кусков
       else if (t === 'events' && data.includes('"chest-opened"')) got.opened = chestOpenedIds(data);
     }
     slot.frames.push(got);
@@ -999,18 +1011,23 @@ class Run {
     let k = -1;
     for (let i = s.frames.length - 1; i >= 0; i--) if (s.frames[i]!.chests) { k = i; break; }
     if (k < 0) return;
-    const sent = s.frames[k]!.chests!;
-    const world = e.room.session.world.chests ?? [];
+    // ⭐ С-аудит F5: кадр этажа и кадры `reveal` после него — всё, что клиент знает о сундуках; в мире — сундуки открытых пати кусков.
+    const sent = [...s.frames[k]!.chests!];
+    for (let i = k + 1; i < s.frames.length; i++) for (const c of s.frames[i]!.revealChests ?? []) if (!sent.some((x) => x.id === c.id)) sent.push(c);
+    const room = e.room as unknown as { revealed?: Set<number>; area: string };
+    const open = room.revealed;
+    const fog = room.area === 'dungeon' && open !== undefined && open.size > 0;
+    const world = (e.room.session.world.chests ?? []).filter((c) => !fog || open!.has(chunkAt(c.pos.x, c.pos.y)));
     const at = `${where}, комната ${e.room.code} (${e.room.area})`;
-    const ids = (l: readonly { id: number }[]): string => l.map((c) => c.id).join(',');
+    const ids = (l: readonly { id: number }[]): string => l.map((c) => c.id).sort((a, b) => a - b).join(',');
     if (ids(sent) !== ids(world)) {
       this.violate('I11', 'кадр этажа — не все сундуки области', `${at}: прислано [${ids(sent)}], в мире [${ids(world)}]`);
       return;
     }
     const later = new Set<number>();
     for (let i = k + 1; i < s.frames.length; i++) for (const id of s.frames[i]!.opened ?? []) later.add(id);
-    world.forEach((w, i) => {
-      const f = sent[i]!;
+    world.forEach((w) => {
+      const f = sent.find((x) => x.id === w.id)!;
       if (f.opened !== undefined && f.opened !== true) this.violate('I11', '`opened` не `true`', `${at}: сундук ${w.id} — ${JSON.stringify(f.opened)}`);
       else if (f.opened === true && !w.opened) this.violate('I11', 'закрытый сундук прислан открытым', `${at}: сундук ${w.id}`);
       else if (w.opened && f.opened !== true && !later.has(w.id)) {

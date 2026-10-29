@@ -23,6 +23,12 @@ export const isProduction = (env: Env): boolean => (env.NODE_ENV ?? '').trim().t
 export const craftFullJournalOn = (env: Env): boolean => env.DM_CRAFT_FULL_JOURNAL === '1' && !isProduction(env);
 
 /**
+ * ⭐ С7 (29.10): `DM_STATION_CHECK=off` — команды станций города (лавка, кузница, сундук) исполняются с любого места площади, без проверки
+ * «герой у станции». Для стендов и тестов, где боты и сторожа шлют команды со спавна. ⚠ В продакшене флаг ИГНОРИРУЕТСЯ: проверка — анти-чит.
+ */
+export const stationCheckOff = (env: Env): boolean => env.DM_STATION_CHECK === 'off' && !isProduction(env);
+
+/**
  * Строка для лога при старте процесса: null — флаг не задан. Задан — громко в обоих случаях: на стенде
  * «ворота открыты», в продакшене «проигнорирован», чтобы забытый флаг был виден с первой секунды.
  */

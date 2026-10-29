@@ -12,7 +12,7 @@ import { mergePeerStatics } from './peerStatics.js';
 import { dmgColorNum } from '../core/damageTypes.js';
 import { getHeld } from '../modules/inventory/heldItem.js';
 import { monsterCombatStats } from '@dm/shared';
-import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot, WorldSnapshotFull, PeerInfo } from '@dm/shared';
+import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot, WorldSnapshotFull, PeerInfo, ScaledMonster } from '@dm/shared';
 
 /** Задержка интерполяции чужих сущностей (мс): рисуем их немного в прошлом, чтобы сгладить 30 Гц + джиттер. */
 const INTERP_DELAY_MS = 100;
@@ -139,7 +139,8 @@ export class NetDriver {
       app.net.on('peerInfo', (f) => mergePeerStatics(this.peerStatics, f.peers)),
       app.net.on('monsterInfo', (f) => {
         for (const m of f.monsters) {
-          if (!this.monsters.has(m.id)) this.monsters.set(m.id, new Monster(this.scene, m.x, m.y, m.def));
+          // ⚠ С-аудит F4: сервер шлёт вид определения (`ClientMonsterDef`); веб-клиент не поддерживается — приведение ради сборки.
+          if (!this.monsters.has(m.id)) this.monsters.set(m.id, new Monster(this.scene, m.x, m.y, m.def as ScaledMonster));
         }
       }),
       app.net.on('peerJoined', (f) => { this.peerStatics.set(f.peer.id, f.peer); }),

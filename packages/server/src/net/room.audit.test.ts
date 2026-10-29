@@ -109,3 +109,202 @@ describe('⭐ С-аудит F3: печати комнаты — криптоис
     expect(s.sealRng, 'поток печатей — он').toBe(s.sealSource);
   });
 });
+
+describe('⭐ С-аудит F1/F2/F4: в подземелье клиенту — только то, что видит пати', () => {
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  type Mon = { id: number; alive: boolean; pos: { x: number; y: number }; def: Record<string, unknown> };
+  type Inner = {
+    area: string; inView: Set<number>;
+    session: { world: { monsters: Mon[]; players: Record<string, { pos: { x: number; y: number } }> } };
+    roomView(s: unknown): { monsters: { id: number }[]; drops: unknown[]; projectiles: unknown[] };
+    eventVisible(e: SessionEvent): boolean;
+  };
+  async function dungeon(): Promise<{ room: Room; inner: Inner; a: ReturnType<typeof join> }> {
+    const room = newRoom();
+    const a = join(room, 'A');
+    await settle();
+    room.descend(a.pid);
+    await settle();
+    const inner = room as unknown as Inner;
+    expect(inner.area, 'спустились').toBe('dungeon');
+    return { room, inner, a };
+  }
+
+  it('монстр за пределами вида — не в кадре и без событий; подошёл — в кадре; гистерезис на кромке', async () => {
+    const { inner, a } = await dungeon();
+    const { serializeWorld } = await import('@dm/shared');
+    const w = inner.session.world;
+    const me = w.players[a.pid]!.pos;
+    const live = w.monsters.filter((m) => m.alive);
+    expect(live.length, 'на этаже есть монстры').toBeGreaterThan(1);
+    const far = live[0]!, near = live[1]!;
+    far.pos = { x: me.x + 5000, y: me.y };
+    near.pos = { x: me.x + 200, y: me.y };
+    const ids = (): number[] => inner.roomView(serializeWorld(w as never)).monsters.map((m) => m.id);
+    expect(ids()).toContain(near.id);
+    expect(ids(), 'далёкий монстр клиенту не уходит').not.toContain(far.id);
+    // Кромка: вошёл — держится до выхода за радиус с запасом, а не мигает.
+    near.pos = { x: me.x + 850, y: me.y };
+    expect(ids(), 'чуть за радиусом входа, но уже в виде — держится').toContain(near.id);
+    near.pos = { x: me.x + 2000, y: me.y };
+    expect(ids(), 'ушёл далеко — выпал').not.toContain(near.id);
+    // События о далёком монстре — тоже нет; о герое — всегда.
+    expect(inner.eventVisible({ type: 'monster-swing', id: far.id, windupMs: 300, x: far.pos.x, y: far.pos.y, facing: 0 })).toBe(false);
+    expect(inner.eventVisible({ type: 'monster-died', id: far.id, def: far.def as never, x: far.pos.x, y: far.pos.y })).toBe(false);
+    expect(inner.eventVisible({ type: 'item-dropped', item: {} as never, x: me.x + 5000, y: me.y, from: 'monster' })).toBe(false);
+    expect(inner.eventVisible({ type: 'item-dropped', item: {} as never, x: me.x + 50, y: me.y, from: 'monster' })).toBe(true);
+    expect(inner.eventVisible({ type: 'player-died', playerId: a.pid })).toBe(true);
+  });
+
+  it('определение монстра клиенту — без восприятия, ИИ, опыта и свойств снаряжения', async () => {
+    const { monsterDefView } = await import('@dm/shared');
+    const { inner } = await dungeon();
+    const def = inner.session.world.monsters[0]!.def as unknown as Parameters<typeof monsterDefView>[0];
+    const v = monsterDefView(def) as unknown as Record<string, unknown>;
+    for (const k of ['vision', 'visionAngle', 'hearing', 'ai', 'xp', 'hpRegen', 'resFire', 'armor', 'minDamage', 'maxDamage', 'attackSpeed', 'moveSpeed'])
+      expect(v, k).not.toHaveProperty(k);
+    expect(v).toMatchObject({ id: def.id, name: def.name, faction: def.faction, rarity: def.rarity, level: def.level });
+    for (const g of (v.gearRolls as Record<string, unknown>[] | undefined) ?? []) expect(Object.keys(g).sort()).toEqual(expect.arrayContaining(['name', 'slot']));
+    for (const g of (v.gearRolls as Record<string, unknown>[] | undefined) ?? []) { expect(g).not.toHaveProperty('mods'); expect(g).not.toHaveProperty('base'); }
+    expect(monsterDefView(def, true), 'стенду — с восприятием').toHaveProperty('vision');
+  });
+});
+
+describe('⭐ С7: команда станции города — только у станции', () => {
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  type Res = Extract<ServerFrame, { t: 'cmdResult' }>;
+  const last = (ws: FakeWs): Res | undefined => ws.frames.filter((f): f is Res => f.t === 'cmdResult').at(-1);
+  it('кузница и сундук со спавна — отказ «подойдите»; у станции — исполняется; флаг стенда снимает проверку', async () => {
+    const { TOWN_STATIONS, townStationAt, STATION_USE_R } = await import('@dm/shared');
+    const prev = process.env.DM_STATION_CHECK;
+    process.env.DM_STATION_CHECK = 'on';
+    try {
+      const room = newRoom();
+      const a = join(room, 'A');
+      await settle();
+      const p = (room as unknown as { session: { world: { players: Record<string, { pos: { x: number; y: number } }> } } }).session.world.players[a.pid]!;
+      const forge = townStationAt('forge')!, stash = townStationAt('stash')!;
+      expect(TOWN_STATIONS.length).toBe(5);
+      p.pos = { x: forge.x + STATION_USE_R + 40, y: forge.y };
+      await room.handleCmd(a.pid, { cmd: 'forgeSalvage', uid: 'nope' }, 1);
+      expect(last(a.ws), 'далеко от кузницы').toMatchObject({ ok: false, reason: 'Подойдите ближе: Кузница' });
+      await room.handleCmd(a.pid, { cmd: 'stashMove', uid: 'nope', dst: 'inv', x: 0, y: 0 } as never, 2);
+      expect(last(a.ws), 'далеко от сундука').toMatchObject({ ok: false, reason: 'Подойдите ближе: Сундук' });
+      p.pos = { x: forge.x + 20, y: forge.y };
+      await room.handleCmd(a.pid, { cmd: 'forgeSalvage', uid: 'nope' }, 3);
+      expect(last(a.ws)?.reason, 'у кузницы — до вещи дошли (отказ уже про вещь)').not.toBe('Подойдите ближе: Кузница');
+      // Сундук открывается и из кузницы (окно кузницы читает сырьё сундука), перекладка — только у сундука.
+      await room.handleCmd(a.pid, { cmd: 'stashOpen' }, 4);
+      expect(last(a.ws)?.reason).not.toBe('Подойдите ближе: Сундук');
+      p.pos = { ...stash };
+      await room.handleCmd(a.pid, { cmd: 'stashMove', uid: 'nope', dst: 'inv', x: 0, y: 0 } as never, 5);
+      expect(last(a.ws)?.reason).not.toBe('Подойдите ближе: Сундук');
+      // Стенд: флаг снимает проверку (в бою он игнорируется — `devFlags.stationCheckOff`).
+      process.env.DM_STATION_CHECK = 'off';
+      p.pos = { x: 5, y: 5 };
+      await room.handleCmd(a.pid, { cmd: 'forgeSalvage', uid: 'nope' }, 6);
+      expect(last(a.ws)?.reason).not.toBe('Подойдите ближе: Кузница');
+    } finally {
+      if (prev === undefined) delete process.env.DM_STATION_CHECK; else process.env.DM_STATION_CHECK = prev;
+    }
+  });
+
+  it('флаг стенда в бою игнорируется', async () => {
+    const { stationCheckOff } = await import('./devFlags.js');
+    expect(stationCheckOff({ DM_STATION_CHECK: 'off', NODE_ENV: 'production' })).toBe(false);
+    expect(stationCheckOff({ DM_STATION_CHECK: 'off', NODE_ENV: ' Production ' })).toBe(false);
+    expect(stationCheckOff({ DM_STATION_CHECK: 'off' })).toBe(true);
+  });
+
+  it('интерактивы области — с сервера: город — пять станций и портал, у каждой радиус и окно', async () => {
+    const room = newRoom();
+    const a = join(room, 'A');
+    const joined = a.ws.frames.find((f): f is Extract<ServerFrame, { t: 'joined' }> => f.t === 'joined')!;
+    const acts = joined.floor.interactables ?? [];
+    expect(acts.map((x) => x.panel)).toEqual(['shop', 'forge', 'master', 'quests', 'stash', 'difficulty']);
+    for (const x of acts) expect(x.radius).toBeGreaterThan(0);
+  });
+});
+
+describe('⭐ С-аудит F5: этаж открывается по мере исследования', () => {
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  it('вход на этаж — только куски у героя; подошёл к новому — кадр `reveal` с клетками и объектами; повторно не шлёт', async () => {
+    const { REVEAL_CHUNK, chunkAt, chunkKey, TILE, Cell } = await import('@dm/shared');
+    const room = newRoom();
+    const a = join(room, 'A');
+    await settle();
+    room.descend(a.pid);
+    await settle();
+    const changed = a.ws.frames.filter((f): f is Extract<ServerFrame, { t: 'areaChanged' }> => f.t === 'areaChanged').at(-1)!;
+    const f = changed.floor;
+    expect(f.revealed?.length, 'открыты куски у входа').toBeGreaterThan(0);
+    const w = (room as unknown as { session: { world: { grid: number[][]; chests: { pos: { x: number; y: number } }[]; players: Record<string, { pos: { x: number; y: number } }> } } }).session.world;
+    const rows = w.grid.length, cols = w.grid[0]!.length;
+    const total = Math.ceil(cols / REVEAL_CHUNK) * Math.ceil(rows / REVEAL_CHUNK);
+    expect(f.revealed!.length, 'не весь этаж').toBeLessThan(total);
+    expect(f.revealed, 'кусок героя открыт').toContain(chunkAt(w.players[a.pid]!.pos.x, w.players[a.pid]!.pos.y));
+    // Клетка в неоткрытом куске (далеко от каймы) у клиента — стена, хотя у сервера там пол.
+    const open = new Set(f.revealed);
+    let hidden = 0, leaked = 0;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const near = [-1, 0, 1].some((dy) => [-1, 0, 1].some((dx) => open.has(chunkKey(Math.floor((x + dx) / REVEAL_CHUNK), Math.floor((y + dy) / REVEAL_CHUNK)))));
+      if (near) continue;
+      if (w.grid[y]![x] !== Cell.Wall) { hidden++; if (f.grid[y]![x] !== Cell.Wall) leaked++; }
+    }
+    expect(hidden, 'за туманом есть проходимые клетки').toBeGreaterThan(0);
+    expect(leaked, 'ни одна из них клиенту не видна').toBe(0);
+    for (const c of f.chests) expect(open.has(chunkAt(c.x, c.y)), 'сундук клиента — на открытом куске').toBe(true);
+    expect(f.chests.length, 'не все сундуки этажа').toBeLessThanOrEqual(w.chests.length);
+    // Шаг в неоткрытый кусок — кадр `reveal`.
+    const far = [...Array(total).keys()].map((i) => i).find((i) => {
+      const cx = i % Math.ceil(cols / REVEAL_CHUNK), cy = Math.floor(i / Math.ceil(cols / REVEAL_CHUNK));
+      return !open.has(chunkKey(cx, cy));
+    })!;
+    const cx = far % Math.ceil(cols / REVEAL_CHUNK), cy = Math.floor(far / Math.ceil(cols / REVEAL_CHUNK));
+    w.players[a.pid]!.pos = { x: (cx * REVEAL_CHUNK + REVEAL_CHUNK / 2) * TILE, y: (cy * REVEAL_CHUNK + REVEAL_CHUNK / 2) * TILE };
+    a.ws.frames.length = 0;
+    room.step(); room.step();   // кадр мира (и открытие перед ним) — на своей частоте, не на каждом тике
+    const rev = a.ws.frames.filter((x): x is Extract<ServerFrame, { t: 'reveal' }> => x.t === 'reveal');
+    expect(rev.length, 'кадр открытия').toBe(1);
+    expect(rev[0]!.chunks).toContain(chunkKey(cx, cy));
+    const pat = rev[0]!.patches.find((p) => p.x <= cx * REVEAL_CHUNK && p.y <= cy * REVEAL_CHUNK)!;
+    expect(pat.cells.length).toBe(pat.w * pat.h);
+    expect(pat.cells[0], 'клетки — сервера').toBe(w.grid[pat.y]![pat.x]);
+    a.ws.frames.length = 0;
+    room.step(); room.step();
+    expect(a.ws.frames.filter((x) => x.t === 'reveal').length, 'открытое второй раз не шлётся').toBe(0);
+  });
+});
+
+describe('⭐ С7: спуск и арена из города — у портала', () => {
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  it('со спавна — отказ «Подойдите к порталу», у портала — голосование; интерактив портала несёт досягаемость', async () => {
+    const { townPortalAt, STATION_USE_R } = await import('@dm/shared');
+    const prev = process.env.DM_STATION_CHECK;
+    process.env.DM_STATION_CHECK = 'on';
+    try {
+      const room = newRoom();
+      const a = join(room, 'A');
+      await settle();
+      const w = (room as unknown as { area: string; session: { world: { grid: number[][]; players: Record<string, { pos: { x: number; y: number } }> } } });
+      const portal = townPortalAt(w.session.world.grid as never)!;
+      w.session.world.players[a.pid]!.pos = { x: portal.x - STATION_USE_R - 30, y: portal.y };
+      room.descend(a.pid);
+      expect(w.area, 'спуска нет').toBe('town');
+      expect(a.ws.frames.filter((f) => f.t === 'error').at(-1)).toMatchObject({ code: 'far', msg: 'Подойдите к порталу' });
+      room.enterArena(a.pid);
+      expect(a.ws.frames.some((f) => f.t === 'voteStart'), 'и арены нет').toBe(false);
+      w.session.world.players[a.pid]!.pos = { ...portal };
+      room.descend(a.pid);
+      await settle();
+      expect(w.area, 'у портала — спуск (соло: голос проходит сразу)').toBe('dungeon');
+      const joined = a.ws.frames.find((f): f is Extract<ServerFrame, { t: 'joined' }> => f.t === 'joined')!;
+      const acts = joined.floor.interactables ?? [];
+      expect(acts.find((x) => x.panel === 'difficulty')?.reach).toBe(STATION_USE_R);
+      expect(acts.find((x) => x.panel === 'forge')?.reach).toBe(STATION_USE_R);
+      expect(acts.find((x) => x.panel === 'quests')?.reach, 'задания — откуда угодно').toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.DM_STATION_CHECK; else process.env.DM_STATION_CHECK = prev;
+    }
+  });
+});

@@ -7,6 +7,35 @@ import type { PlayerEntity } from '../world/state.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import { weapon3dKeyFromEquipment, weaponLookOf } from './weapon3d.js';
 import { posQ, posU, angQ, angU } from './wire.js';
+import type { ScaledMonster } from '../types/world.js';
+
+/**
+ * ⭐ С-аудит F4 (29.10): ОПРЕДЕЛЕНИЕ МОНСТРА ДЛЯ КЛИЕНТА — то, что видно и рисуется: имя, фракция, редкость и аффиксы (табличка),
+ * уровень, внешность (атлас, броня, оружие, щит, снаряжение слотами — `gearRolls` без свойств вещей), жизнь, меткость и уклонение (лист героя
+ * считает шанс попасть по последней цели). Без восприятия (зрение, угол, слух — с ними изменённый клиент обходил обнаружение пачек),
+ * ИИ, опыта, регена, сопротивлений, брони, урона и свойств снаряжения (из них — добыча с трупа). `debug` — стенд разработки: восприятие для
+ * дебаг-слоя клиента (F3 «восприятие»), в бою его нет.
+ */
+export type ClientMonsterDef = Pick<ScaledMonster, 'id' | 'name' | 'faction' | 'damageType' | 'rarity' | 'affixes' | 'level' | 'sprite' | 'hp' | 'accuracy' | 'evade'>
+  & Partial<Pick<ScaledMonster, 'physSub' | 'atlasKey' | 'armorModels' | 'armorClass' | 'weaponModelId' | 'weaponKey' | 'shieldModelId' | 'vision' | 'visionAngle' | 'hearing'>>
+  & { gearRolls?: { slot: string; gearId?: string; name: string }[] };
+
+export function monsterDefView(d: ScaledMonster, debug = false): ClientMonsterDef {
+  const v: ClientMonsterDef = {
+    id: d.id, name: d.name, faction: d.faction, damageType: d.damageType, rarity: d.rarity, affixes: d.affixes, level: d.level, sprite: d.sprite,
+    hp: d.hp, accuracy: d.accuracy, evade: d.evade,
+  };
+  if (d.physSub !== undefined) v.physSub = d.physSub;
+  if (d.atlasKey !== undefined) v.atlasKey = d.atlasKey;
+  if (d.armorModels !== undefined) v.armorModels = d.armorModels;
+  if (d.armorClass !== undefined) v.armorClass = d.armorClass;
+  if (d.weaponModelId !== undefined) v.weaponModelId = d.weaponModelId;
+  if (d.weaponKey !== undefined) v.weaponKey = d.weaponKey;
+  if (d.shieldModelId !== undefined) v.shieldModelId = d.shieldModelId;
+  if (d.gearRolls) v.gearRolls = d.gearRolls.map((g) => ({ slot: g.slot, ...(g.gearId !== undefined ? { gearId: g.gearId } : {}), name: g.name }));
+  if (debug) { v.vision = d.vision; v.visionAngle = d.visionAngle; v.hearing = d.hearing; }
+  return v;
+}
 
 /**
  * Чистая сериализация мира в сетевые кадры (без Phaser/DOM). Снапшот — только
