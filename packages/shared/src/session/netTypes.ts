@@ -17,7 +17,7 @@ import type { Interactable } from './interactables.js';
  * ⭐ С2/С4–С6 (29.10): ВИДЫ, КОТОРЫЕ СЕРВЕР СЧИТАЕТ ОКНАМ КЛИЕНТА (кадр `view`): лист героя с набранными очками, меню вещи, верстак кузницы,
  * прилавок, обмен сырья, алтарь и окно портала, алтарь метки, перековка печатей, ковка. Клиент формул не держит — только показ.
  */
-export const VIEW_KINDS = ['hero', 'item', 'bench', 'shop', 'exchange', 'portal', 'segment', 'reforge', 'craft'] as const;
+export const VIEW_KINDS = ['hero', 'item', 'bench', 'shop', 'exchange', 'portal', 'segment', 'reforge', 'map', 'craft'] as const;
 export type ViewKind = typeof VIEW_KINDS[number];
 
 /**
@@ -264,7 +264,11 @@ export type TownCommand =
   /**
    * ⭐⭐ Ф5-6: перековка печатей — связка «вид@ступень» → штук; сколько нужно и можно ли мешать виды — решает конфиг.
    */
-  | { cmd: 'sealReforge'; seals: Record<string, number>; nonce?: string; op?: 'up' | 'reroll'; maxGold?: number; cfgRev?: string; build?: string }
+  | {
+    cmd: 'sealReforge'; seals?: Record<string, number>; nonce?: string; op?: 'up' | 'reroll'; maxGold?: number; cfgRev?: string; build?: string;
+    /** ⭐ С6 (29.10): карточка окна (`reforge` → `cards[].key` / `rerolls[].key`): какие печати сжечь, решает сервер (`runReforgeTake`). */
+    card?: string;
+  }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
   | { cmd: 'salvage'; uid: string; minYield?: Record<string, number>; avgYield?: Record<string, number>; cfgRev?: string; build?: string }
   /**
@@ -417,7 +421,16 @@ export type ServerFrame =
   // вернулся в комнату мёртвым). Потерь в нём нет (0/0): клиент берёт их из кадра самой смерти, закрытое «Смотреть» окно не открывает
   // (а без окна — после входа — открывает без строки потерь). canLeave=true — живых подключённых нет, пати ждёт отвалившегося посреди
   // боя: мёртвый может увести её в город сам (`return`; сбежавших из боя это хоронит, R4-14).
-  | { t: 'died'; goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean; status?: boolean; canLeave?: boolean }
+  | {
+    t: 'died'; goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean; status?: boolean; canLeave?: boolean;
+    /**
+     * ⭐ С6 (29.10): ОКНО СМЕРТИ — СЕРВЕРОМ (`runDeathFrame`): надписи окна (`view`), плашка при закрытом окне (`dock`) и «этот кадр
+     * открывает окно» (`opens`). Клиент хранит только, открыто ли окно («Смотреть» его закрывает).
+     */
+    view?: { title: string; loss: string | null; status: string; spectate: string | null; town: string | null };
+    dock?: { status: string; town: string } | null;
+    opens?: boolean;
+  }
   /**
    * Голосование за переход. ⭐ R9-08: СПУСК ИЗ ГОРОДА — С ТЕМ, ЧТО НАЧНЁТСЯ: тир (`difficultyId`), шаблон, биом и модификаторы
    * забега, а `resume` — продолжение припаркованного забега героя `host` с глубины `depth` (тир и прочее тогда — его забега).
@@ -436,6 +449,8 @@ export type ServerFrame =
     t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string;
     finish?: true;
     difficultyId?: string; biomeId?: string; modifiers?: string[]; startDepth?: number; resume?: { host: string; depth: number };
+    /** ⭐ С6 (29.10): вопрос окна голосования — сервером, каждому получателю свой (`runVoteQuestion`: «сложность вам не открыта»). */
+    question?: string;
   }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }

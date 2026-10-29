@@ -19,6 +19,9 @@ import {
   type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits, type ViewKind,
   monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
   type LastTarget, type PendingAttrs, type HeroFloor, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
+  respecView, questsView, socketsView, bindView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
+  exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
+  runVoteQuestion, runDeathFrame, type RunDeathState, type Lang, type EquipSlot, type SealGains,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -660,6 +663,27 @@ const AOI_EXIT_MULT = 1.2;
 const VIEW_RADIUS = Math.max(0, Number(process.env.DM_VIEW_RADIUS ?? 768));
 /** ⭐ С-аудит F4: дебаг-слой восприятия монстров (зрение, слух) — только стенду разработки; в бою определения без него. */
 const MONSTER_DEF_DEBUG = !isProduction(process.env);
+
+/** ⭐ С2/С4–С6: ответ на запрос вида. */
+type ViewAnswer = { ok: boolean; view?: unknown; reason?: string };
+/** ⭐ С4: потолок подсказок за один запрос (сумка + сундук + прилавок окна — с запасом). */
+const VIEW_TIPS_MAX = 400;
+/** ⭐ С4: клетки пупсика, о которых окно вправе спросить. */
+const EQUIP_CELLS: readonly EquipSlot[] = ['weapon', 'offhand', 'helm', 'chest', 'gloves', 'boots', 'belt', 'ring', 'amulet'];
+/** ⭐ С2/С4–С6: id из аргументов вида — строка разумной длины, иначе `null`. */
+function argId(v: unknown): string | null { return typeof v === 'string' && v.length > 0 && v.length <= 129 ? v : null; }
+/** ⭐ С4–С6: целое из аргументов вида, иначе `null`. */
+function argInt(v: unknown): number | null { return typeof v === 'number' && Number.isInteger(v) && Math.abs(v) <= 1e6 ? v : null; }
+/** ⭐ С6: набор «ключ → штук» (печати на алтаре) — пусто/нет: `{}`, кривое: `undefined`. */
+function argCounts(v: unknown): Record<string, number> | undefined {
+  if (v === undefined || v === null) return {};
+  if (typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const out: Record<string, number> = {};
+  const e = Object.entries(v as Record<string, unknown>);
+  if (e.length > 64) return undefined;
+  for (const [k, n] of e) { if (argId(k) === null || typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 999) return undefined; if (n > 0) out[k] = n; }
+  return out;
+}
 /** Отладка провода (Ф1.4): дублировать кадр текстом для точной сверки. Только для стенда. */
 const WIRE_VERIFY = process.env.DM_WIRE_VERIFY === '1';
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
@@ -749,6 +773,14 @@ interface Client {
   heroToggles?: string;
   /** ⭐ С8 (29.10): язык интерфейса игрока (`join.lang`, включённый в `locales`; иначе — источник) — на нём сервер собирает тексты видов. */
   lang?: string;
+  /**
+   * ⭐ С4/С6 (29.10): последний слепок сундука аккаунта, ушедший этому клиенту (`sendStashOf`) — по нему считаются виды (кошелёк сырья,
+   * журнал, печати сундука), то есть ровно то, что игрок видит. Цену команды это не решает: команда читает сундук из базы своей
+   * транзакцией, а расхождение (сундук правил другой герой) ловит согласие («Цена изменилась»).
+   */
+  stashSeen?: AccountStash;
+  /** ⭐ С6 (29.10): память окна смерти (`runDeathFrame`) — потери из кадра самой смерти; сброс — смена области и вход. */
+  deathState?: RunDeathState;
   /**
    * ⭐ С0 (29.10): каст ПРОШЛОГО пришедшего кадра, как его прислал клиент. Тогл (аура, стойка) срабатывает по ФРОНТУ нажатия, и фронт
    * видит сервер: тот же каст тогла и в следующем кадре — удержание клавиши, не новое нажатие. Раньше сервер верил, что клиент шлёт каст
@@ -2656,6 +2688,7 @@ export class Room implements Tickable {
         // несохранённая перековка (откат в безопасную сторону), а сохранённую игрок увидит в сумке и не будет повторять.
         // ⚠ 23.10 (находка ревизии): ВИД ОБМЕНА — ЧАСТЬ КЛЮЧА. Перековка и перекат делят одну память ключей, и
         // без `op` повтор с тем же ключом, но другим видом обмена получал «уже исполнено» НЕ ИСПОЛНИВШИСЬ.
+        if ((command.seals === undefined) === (command.card === undefined)) return { ok: false, reason: 'Неверная заявка перековки' };   // ⭐ С6: связка или карточка
         const key = command.nonce ? `${save.charId}:${command.op === 'reroll' ? 'r' : 'u'}:${command.nonce}` : null;
         if (key && this.sealNonces.has(key)) return { ok: true, summary: SEAL_REFORGE_REPEAT };
         // ⚠ Через `withAccount`: запас печатей — сумка И СУНДУК (решение владельца 17.10), а сундук —
@@ -2667,10 +2700,15 @@ export class Room implements Tickable {
         // ВНУТРИ действия, той же транзакцией, что обмен (как у ковки): память комнаты выше — быстрый кеш,
         // который экономит чтение базы, но не решает. До правки она решала, и двойное списание давали два
         // пути: вытеснение ключа по счёту (64 обмена в комнате) и фиксация с неизвестным исходом.
+        // ⭐ С6 (29.10): по КАРТОЧКЕ окна связку набирает сервер — по живым сейву и сундуку этой же транзакции (`runReforgeTake`); у
+        // переката карточка — сам ключ, одна печать. Не набралась — та же связка-пустышка, и отказ тот же, что у короткой связки.
+        const sealsOf = (st: AccountStash | undefined): SealGains => (command.card === undefined
+          ? command.seals ?? {}
+          : command.op === 'reroll' ? { [command.card]: 1 } : runReforgeTake(this.cfg, save, st, command.card) ?? {});
         const out = await this.withAccount(c, pid, 'forgeSeal',
           (st) => (command.op === 'reroll'
-            ? sealReroll(this.cfg, save, st, command.seals, townRng(), command.maxGold, command.nonce)
-            : sealReforge(this.cfg, save, st, command.seals, townRng(), command.maxGold, command.nonce)), { guard });
+            ? sealReroll(this.cfg, save, st, sealsOf(st), townRng(), command.maxGold, command.nonce)
+            : sealReforge(this.cfg, save, st, sealsOf(st), townRng(), command.maxGold, command.nonce)), { guard });
         if (out.ok && key) {
           this.sealNonces.add(key);
           if (this.sealNonces.size > SEAL_NONCES_KEEP) {
@@ -4267,7 +4305,7 @@ export class Room implements Tickable {
     if (folded) this.markLedger();
     this.markLedger(nodeId);
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
-    for (const id of this.clients.keys()) this.pushHero(id);   // ⭐ С2: строка HUD — по новой области
+    for (const [id, cl] of this.clients) { delete cl.deathState; this.pushHero(id); }   // ⭐ С2: строка HUD — по новой области; ⭐ С6: смерть забыта
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast({ t: 'runPlan', plan: clientPlan(this.runPlan), currentNodeId: nodeId });   // R14-10: без сидов
@@ -4537,7 +4575,7 @@ export class Room implements Tickable {
       ensureMainQuest(this.cfg, save);
     }
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
-    for (const id of this.clients.keys()) this.pushHero(id);   // ⭐ С2: строка HUD — по новой области
+    for (const [id, cl] of this.clients) { delete cl.deathState; this.pushHero(id); }   // ⭐ С2: строка HUD — по новой области; ⭐ С6: смерть забыта
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast(this.shopFrame());
@@ -4581,7 +4619,7 @@ export class Room implements Tickable {
       i++;
     }
     this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
-    for (const id of this.clients.keys()) this.pushHero(id);   // ⭐ С2: строка HUD — по новой области
+    for (const [id, cl] of this.clients) { delete cl.deathState; this.pushHero(id); }   // ⭐ С2: строка HUD — по новой области; ⭐ С6: смерть забыта
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
   }
@@ -4878,11 +4916,87 @@ export class Room implements Tickable {
   }
 
   /** ⭐ С2/С4–С6: вид `kind` игрока `pid` по выбору окна `args`. Каждый вид — функция `shared/views`, её же зовёт редактор. */
-  private viewOf(pid: string, kind: ViewKind, args: Record<string, unknown>): { ok: boolean; view?: unknown; reason?: string } {
+  private viewOf(pid: string, kind: ViewKind, args: Record<string, unknown>): ViewAnswer {
+    const c = this.clients.get(pid)!;
+    const save = this.session.world.players[pid]!.save;
+    const stash = c.stashSeen ?? null;
+    const opts = { lang: c.lang as Lang | undefined };
     switch (kind) {
       case 'hero': return this.heroView(pid, args);
+      case 'item': return this.itemView(pid, args);
+      case 'bench': {
+        const uid = argId(args.uid);
+        const v = uid !== null ? forgeBenchView(this.cfg, save, stash, uid) : null;
+        return v ? { ok: true, view: v } : { ok: false, reason: 'Вещи нет' };
+      }
+      // Прилавок — тот же список, что у кадра `shop` и у команды `buy` (`shopListed`); вне города — только скупка (стока нет).
+      case 'shop': return { ok: true, view: shopView(this.cfg, save, stash, this.area === 'town' ? this.shopListed() : []) };
+      case 'exchange': return { ok: true, view: exchangeView(this.cfg, save, stash, { from: argId(args.from), to: argId(args.to), n: argInt(args.n) }) };
+      case 'portal': {
+        const depth = argInt(args.depth);
+        return { ok: true, view: runPortalView(this.cfg, save, { biome: argId(args.biome), ...(depth !== null ? { depth } : {}) }, opts) };
+      }
+      case 'segment': {
+        const picked = argCounts(args.picked);
+        if (picked === undefined) return { ok: false, reason: 'Неверный запрос вида' };
+        const seg = this.segment;
+        const v = runSegmentView(this.cfg, save, {
+          depth: this.area === 'dungeon' ? this.depth : 0, biomeId: this.session.world.biomeId, tierId: this.difficultyId,
+          mayTune: this.mayTuneSegment(pid), segment: seg ? { from: seg.from, seals: seg.seals } : null,
+        }, picked, opts);
+        return { ok: true, view: v };
+      }
+      case 'reforge': {
+        const v = runReforgeView(this.cfg, save, stash, opts);
+        return { ok: true, view: { ...v, ...runReforgeHead(this.cfg, v, !!c.stashSeen) } };
+      }
+      case 'map': {
+        const access = this.cfg.get('balance').dungeonAccess;
+        const v = runMapPanelView(this.area === 'dungeon' ? this.runPlan : null, this.runNodeId, access.portalsAt, access.contentCycle);
+        return { ok: true, view: { ...v, legendNote: runMapLegendNote(access.portalsAt, access.contentCycle) } };
+      }
       default: return { ok: false, reason: `Вид «${kind}» сервер ещё не считает` };
     }
+  }
+
+  /**
+   * ⭐ С4 (29.10): вид `item` — вещь игрока глазами сервера: меню сумки (`part: 'menu'`, `uid`), подсказки (`tips`, `uids` — свои вещи,
+   * сундук, прилавок), куда ляжет вещь с курсора на пупсике (`equip`, `uid` + `cell`), сырьё (`materials`: кошелёк сундука + стопки сумки).
+   * Чужих вещей вид не знает: uid ищется только там, что игроку и так показано.
+   */
+  private itemView(pid: string, args: Record<string, unknown>): ViewAnswer {
+    const c = this.clients.get(pid)!;
+    const save = this.session.world.players[pid]!.save;
+    const stash = c.stashSeen ?? null;
+    switch (args.part) {
+      case 'menu': {
+        const uid = argId(args.uid);
+        if (uid === null || !save.inventory.some((it) => it.uid === uid)) return { ok: false, reason: 'Вещи нет' };
+        return { ok: true, view: { items: itemMenuView(this.cfg, save, stash, uid, this.area === 'town') } };
+      }
+      case 'tips': {
+        const uids = Array.isArray(args.uids) ? args.uids : null;
+        if (!uids || uids.length > VIEW_TIPS_MAX) return { ok: false, reason: 'Неверный запрос вида' };
+        const want = new Set(uids.map(argId).filter((u): u is string => u !== null));
+        return { ok: true, view: { tips: itemTipsView(this.cfg, save, this.itemsSeen(save, stash).filter((it) => want.has(it.uid))) } };
+      }
+      case 'equip': {
+        const uid = argId(args.uid), cell = argId(args.cell);
+        const item = uid !== null ? this.itemsSeen(save, stash).find((it) => it.uid === uid) : undefined;
+        if (!item || cell === null || !(EQUIP_CELLS as readonly string[]).includes(cell)) return { ok: false, reason: 'Неверный запрос вида' };
+        return { ok: true, view: paperdollEquipView(this.cfg, save, item, cell as EquipSlot) };
+      }
+      case 'materials': return { ok: true, view: materialsView(this.cfg, stash?.materials ?? null, save.inventory) };
+      default: return { ok: false, reason: 'Неверный запрос вида' };
+    }
+  }
+
+  /** ⭐ С4: вещи, которые игроку показаны: сумка, надетое, сундук (последний слепок), прилавок города. */
+  private itemsSeen(save: SaveState, stash: AccountStash | null): Item[] {
+    const out: Item[] = [...save.inventory, ...Object.values(save.equipment).filter((x): x is Item => !!x)];
+    if (stash) for (const tab of stash.tabs) out.push(...tab);
+    if (this.area === 'town') out.push(...this.shopListed());
+    return out;
   }
 
   /** ⭐ С7: отказ команды станции города, если герой не у своей станции (`STATION_CMDS`); `null` — можно. Вне города — не судит (SCOPE). */
@@ -6155,8 +6269,16 @@ export class Room implements Tickable {
    */
   private heroView(pid: string, args: Record<string, unknown>): { ok: boolean; view?: unknown; reason?: string } {
     const p = this.session.world.players[pid]!;
-    if (args.part === 'tree') return { ok: true, view: skillTreeView(this.cfg, p.save) };
-    if (args.part !== 'sheet') return { ok: false, reason: 'Неверный запрос вида' };
+    switch (args.part) {
+      case 'tree': return { ok: true, view: skillTreeView(this.cfg, p.save) };
+      // ⭐ С4: стойки города — сбросы и цена ранга мастера, журнал заданий (доска — та, что у кадра `questBoard`), гнёзда, бинды
+      case 'respec': return { ok: true, view: respecView(this.cfg, p.save) };
+      case 'quests': return { ok: true, view: questsView(p.save, this.questBoard) };
+      case 'sockets': return { ok: true, view: socketsView(this.cfg, p.save) };
+      case 'bind': return { ok: true, view: bindView(this.cfg, p.save) };
+      case 'sheet': break;
+      default: return { ok: false, reason: 'Неверный запрос вида' };
+    }
     const pending: PendingAttrs = {};
     let sum = 0;
     const raw = args.pending;
@@ -6184,6 +6306,7 @@ export class Room implements Tickable {
    * Вместе с журналом кузнеца: окно ковки решает по нему, что открыто. Ключи заявок не шлём.
    */
   private sendStashOf(c: Client, stash: AccountStash): void {
+    c.stashSeen = stash;   // ⭐ С4/С6: виды считаются по тому, что видит игрок
     const d = stashDims(this.cfg);
     this.send(c.ws, {
       t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg), materials: stash.materials ?? {},
@@ -6215,9 +6338,31 @@ export class Room implements Tickable {
     this.broadcastEvents([{ type: 'quest', playerId: pid, kind, questId, name }]);
   }
   private send(ws: GameConn, frame: ServerFrame): void {
-    if (ws.open) ws.send(JSON.stringify(frame));
+    if (!ws.open) return;
+    if (frame.t === 'died' || frame.t === 'voteStart') frame = this.personal(ws, frame);
+    ws.send(JSON.stringify(frame));
+  }
+  /**
+   * ⭐ С6 (29.10): КАДРЫ С ТЕКСТОМ ПОЛУЧАТЕЛЯ. Окно смерти (`died`: надписи, плашка, «открывает ли») помнит потери этого героя, вопрос
+   * голосования (`voteStart`) предупреждает о закрытой ЕМУ сложности — оба собирает сервер, каждому свой. Без клиента (кадр ушёл до входа) —
+   * без памяти и без чужого прогресса.
+   */
+  private personal(ws: GameConn, frame: ServerFrame): ServerFrame {
+    let c: Client | undefined;
+    for (const x of this.clients.values()) if (x.ws === ws) { c = x; break; }
+    if (frame.t === 'died') {
+      const dv = runDeathFrame(c?.deathState ?? null, frame);
+      if (c) c.deathState = dv.state;
+      return { ...frame, view: dv.view, dock: dv.dock, opens: dv.opens };
+    }
+    if (frame.t === 'voteStart') {
+      const p = c ? this.session.world.players[c.pid] : undefined;
+      return { ...frame, question: runVoteQuestion(frame, this.cfg, p?.save.difficultyProgress ?? null, { lang: c?.lang as Lang | undefined }) };
+    }
+    return frame;
   }
   private broadcast(frame: ServerFrame): void {
+    if (frame.t === 'died' || frame.t === 'voteStart') { for (const c of this.clients.values()) this.send(c.ws, frame); return; }
     const msg = JSON.stringify(frame);
     let sent = 0;
     for (const c of this.clients.values()) if (c.ws.open) { c.ws.send(msg); sent++; }

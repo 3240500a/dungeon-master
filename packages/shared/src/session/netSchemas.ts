@@ -142,7 +142,13 @@ export const townCommandSchema = z.discriminatedUnion('cmd', [
     cmd: z.literal('sealReforge'),
     // Ключ — «вид@ступень»: два id конфига и разделитель, поэтому рамка длины вдвое плюс один.
     seals: z.record(wireText(3, WIRE_ID_MAX * 2 + 1), z.number().int().min(1).max(WIRE_SEAL_REFORGE_MAX))
-      .refine((r) => Object.keys(r).length > 0 && Object.keys(r).length <= WIRE_SEAL_REFORGE_MAX, 'связка перековки пуста или длиннее потолка кадра'),
+      .refine((r) => Object.keys(r).length > 0 && Object.keys(r).length <= WIRE_SEAL_REFORGE_MAX, 'связка перековки пуста или длиннее потолка кадра')
+      .optional(),
+    /**
+     * ⭐ С6 (29.10): КАРТОЧКА ОКНА вместо связки — какие печати сжечь, набирает СЕРВЕР (`runReforgeTake`, тот же порядок «сумка, потом
+     * сундук»). Клиент формул набора не держит. Ключ карточки — «вид@ступень» или «ступень|привязка»: два id и разделитель.
+     */
+    card: wireText(3, WIRE_ID_MAX * 2 + 1).optional(),
     /**
      * ⭐⭐ КЛЮЧ ЗАЯВКИ — против ДВОЙНОГО СПИСАНИЯ при повторе (тот же довод, что у ковки).
      *
@@ -161,7 +167,7 @@ export const townCommandSchema = z.discriminatedUnion('cmd', [
     // «op обязателен» (у zod на выходе default — не опция), и каждый старый вызов пришлось бы править.
     op: z.enum(['up', 'reroll']).optional(),
     maxGold, cfgRev, build,
-  }).strict(),
+  }).strict(),   // ⚠ «связка или карточка — ровно одно» судит обработчик: член `discriminatedUnion` не может быть `.refine`
   z.object({ cmd: z.literal('depositMaterials') }).strict(),
   z.object({ cmd: z.literal('salvage'), uid, minYield, avgYield, cfgRev, build }).strict(),
   // R11-02: цель — только вторая рука (дуал-вилд, щит); без неё — родной слот вещи. Встанет ли — решает ядро (`equip`).
