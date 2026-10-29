@@ -182,6 +182,25 @@ describe('⭐ С4/С6: виды города и забега — от серве
     expect(ws.all('voteStart').at(-1)!.question).toBe('Вернуться в город?');
   });
 
+  it('окно ковки (С5): модель сервера, выбор приведён к допустимому; скованная — только своя; чужой класс — отказ', () => {
+    const { room, ws, pid, save } = setup();
+    const ask = asker(room, ws, pid);
+    const v = ask('craft', { weaponClass: 'sword', hands: 1, parts: { strike: { id: 'нет-такой', step: 99 } }, finish: 7 });
+    expect(v.ok).toBe(true);
+    const view = v.view as { classes: { id: string; on: boolean }[]; slots: unknown[]; left: { craft: { disabled: boolean } }; state: { parts: Record<string, { id: string; step: number }>; finish: number }; verdict: string | null };
+    expect(view.classes.find((c) => c.on)?.id).toBe('sword');
+    expect(view.slots.length).toBe(4);
+    expect(view.state.parts.strike!.id, 'несуществующая деталь — заменена допустимой').not.toBe('нет-такой');
+    expect(view.state.parts.strike!.step).toBeLessThanOrEqual(5);
+    expect(view.verdict).toBeNull();
+    const own = Object.values(save.equipment).find((x) => !!x);
+    const withOwn = ask('craft', { weaponClass: 'sword', crafted: own?.uid ?? 'x' });
+    expect(withOwn.ok).toBe(true);
+    const other = ask('craft', { weaponClass: 'sword', crafted: 'чужая-вещь' });
+    expect((other.view as { state: { crafted: string | null } }).state.crafted, 'чужой uid — не скованная').toBeNull();
+    expect(ask('craft', { weaponClass: 'нет-класса' }).ok).toBe(false);
+  });
+
   it('перековка по карточке: провод берёт карточку или связку; набирает связку сервер', () => {
     expect(townCommandSchema.safeParse({ cmd: 'sealReforge', card: 't1|any' }).success).toBe(true);
     expect(townCommandSchema.safeParse({ cmd: 'sealReforge', seals: { 'a@t1': 3 } }).success).toBe(true);

@@ -22,6 +22,7 @@ import {
   respecView, questsView, socketsView, bindView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
   runVoteQuestion, runDeathFrame, type RunDeathState, type Lang, type EquipSlot, type SealGains,
+  craftView, craftVerdict, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -4955,8 +4956,51 @@ export class Room implements Tickable {
         const v = runMapPanelView(this.area === 'dungeon' ? this.runPlan : null, this.runNodeId, access.portalsAt, access.contentCycle);
         return { ok: true, view: { ...v, legendNote: runMapLegendNote(access.portalsAt, access.contentCycle) } };
       }
+      case 'craft': return this.craftViewOf(pid, args);
       default: return { ok: false, reason: `Вид «${kind}» сервер ещё не считает` };
     }
+  }
+
+  /**
+   * ⭐ С5 (29.10): вид `craft` — ОКНО КОВКИ сервером (`craftView`): выбор окна (`weaponClass`, `hands`, `parts` по гнёздам `{id, step}`,
+   * `finish`, `sketchPick`, `crafted` — uid скованной) против того, что сервер знает сам: журнал кузнеца — ТОТ, которым он гейтит ковку
+   * (`journalView`), сырьё — сумка и сундук (`availableMaterials`, тратится сперва сумка), золото и сумка героя (место «после списания»).
+   * Кривой выбор не отказ: окно приводит его к допустимому (`normalizeCraftState`) и возвращает приведённое (`state`) — клиент рисует его.
+   * Скованная — только своя (сумка или надетое); с ней — строка итога «Скована: … бросок N % вилки» (`verdict`).
+   */
+  private craftViewOf(pid: string, args: Record<string, unknown>): ViewAnswer {
+    const c = this.clients.get(pid)!;
+    const save = this.session.world.players[pid]!.save;
+    const stash = c.stashSeen;
+    const cls = argId(args.weaponClass);
+    if (!cls || !this.cfg.get('weapon-anatomy').some((a) => a.id === cls)) return { ok: false, reason: 'Неверный запрос вида' };
+    const hands = argInt(args.hands);
+    const st: CraftWindowState = initialCraftState(this.cfg, cls, hands === 1 || hands === 2 ? hands : undefined);
+    const parts = args.parts;
+    if (parts && typeof parts === 'object' && !Array.isArray(parts)) {
+      for (const slot of CRAFT_SLOT_LIST) {
+        const p = (parts as Record<string, unknown>)[slot];
+        if (!p || typeof p !== 'object') continue;
+        const id = argId((p as { id?: unknown }).id), step = argInt((p as { step?: unknown }).step);
+        if (id !== null && step !== null) st.parts[slot] = { id, step };
+      }
+    }
+    const finish = argInt(args.finish);
+    if (finish !== null) st.finish = finish;
+    const pick = argId(args.sketchPick);
+    if (pick !== null) st.sketchPick = pick;
+    const uid = argId(args.crafted);
+    const inBag = uid !== null ? save.inventory.find((it) => it.uid === uid) : undefined;
+    const worn = uid !== null && !inBag ? Object.values(save.equipment).find((it) => it?.uid === uid) : undefined;
+    st.crafted = inBag ?? worn ?? null;
+    const journal = this.journalView(stash ?? ({ version: 0, tabs: [] } as AccountStash));
+    const view = craftView(this.cfg, {
+      st, journal, wallet: availableMaterials(save.inventory, stash?.materials ?? {}), gold: save.gold, bag: save.inventory, sketch: true,
+      craftedInBag: !!inBag,
+    });
+    const verdict = st.crafted ? craftVerdict(this.cfg, st, journal, st.crafted) : null;
+    const state = { weaponClass: st.weaponClass, hands: st.hands, parts: st.parts, finish: st.finish ?? 0, sketchPick: st.sketchPick ?? null, crafted: st.crafted?.uid ?? null };
+    return { ok: true, view: { ...view, verdict, state } };
   }
 
   /**

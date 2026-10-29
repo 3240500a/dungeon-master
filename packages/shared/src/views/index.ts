@@ -5,3 +5,4 @@
 export * from './hero.js';
 export * from './town.js';
 export * from './runViews.js';
+export * from './craft.js';

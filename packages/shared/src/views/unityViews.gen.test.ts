@@ -27,6 +27,8 @@ import type { Item } from '../types/items.js';
 import { addToInventory } from '../inventory/grid.js';
 import type { AccountStash } from '../types/stash.js';
 import { heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView } from './hero.js';
+import { craftView, craftVerdict, initialCraftState } from './craft.js';
+import { craftWeapon, fullJournal } from '../formulas/craft.js';
 import {
   respecView, questsView, socketsView, bindView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView,
@@ -43,6 +45,9 @@ describe('эталон моделей окон для Unity (виды серве
     cfg.loadAll();
     const cls = cfg.get('classes').find((c) => c.enabled !== false) ?? cfg.get('classes')[0]!;
     const save = newCharacterSave(cfg, cls.id, 'Образец', 'char-views-golden');
+    // uid стартового набора рождают часы — эталону нужны постоянные
+    for (const [slot, it] of Object.entries(save.equipment)) if (it) it.uid = `g-worn-${slot}`;
+    save.inventory.forEach((it, i) => { it.uid = `g-start-${i}`; });
     save.unspentAttributePoints = 3;
     save.level = 12;
     save.gold = 5000;
@@ -128,6 +133,21 @@ describe('эталон моделей окон для Unity (виды серве
         diedStatus: { view: death2.view, dock: death2.dock, opens: death2.opens },
         question: runVoteQuestion({ kind: 'descend', difficultyId: diff.id, biomeId: biome.id, modifiers: [] }, cfg, {}),
       },
+      // ── С5: окно ковки (`view` → `craft`): открытый журнал, сырьё сумки и сундука; второй образец — со скованной вещью в сумке ──
+      craft: (() => {
+        const journal = fullJournal(cfg);
+        const wallet = Object.fromEntries(cfg.get('craft-materials').map((m) => [m.id, 60]));
+        const a = initialCraftState(cfg, 'sword');
+        const plain = craftView(cfg, { st: a, journal, wallet, gold: save.gold, bag: save.inventory, sketch: true });
+        const b = initialCraftState(cfg, 'sword');
+        const forged = craftWeapon(cfg, { weaponClass: b.weaponClass, hands: b.hands, parts: structuredClone(b.parts), finish: 0 }, { journal, materialsOn: true, rng: createRng(5) }).item;
+        if (forged) b.crafted = { ...forged, uid: 'g-forged' };
+        const crafted = craftView(cfg, { st: b, journal, wallet, gold: save.gold, bag: save.inventory, sketch: true, craftedInBag: true });
+        return {
+          plain: { ...plain, verdict: null },
+          crafted: { ...crafted, verdict: b.crafted ? craftVerdict(cfg, b, journal, b.crafted) : null },
+        };
+      })(),
     };
     expect(out.sheet.blocks.length).toBeGreaterThan(3);
     expect(out.tree.nodes.length).toBeGreaterThan(10);
