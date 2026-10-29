@@ -11,7 +11,7 @@ import { attachWeapons, disposeWeaponGroup, hostWeaponOnHand } from './weapon3d.
 import { makeRetargetRig } from './retarget3d.js';
 import { makeHumanoidDoll } from './gamePlayerDoll.js';
 import { CRAFT_CM_TO_UNITS, acquireCraftMesh, applyCraftLooks, craftMeshCacheStats, disposeOwnGeometry, loadCraftMeshLib } from './craftWeapon3d.js';
-import { craftMeshConfigVersion } from '../modules/town/craftMesh/configVersion.js';
+import { craftMeshConfigVersion } from '@dm/shared';
 
 /**
  * ⭐ ДРУГИЕ ИГРОКИ ВИДЯТ СКОВАННОЕ (D22, К6) — сторожа клиентской половины: рука с видом из деталей получает

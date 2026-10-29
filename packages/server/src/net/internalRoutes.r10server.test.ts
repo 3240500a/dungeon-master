@@ -63,7 +63,7 @@ async function processOf(role: string): Promise<string> {
   app.get('/api/config', (_req, res) => { res.json({ ok: true }); });
   app.post('/api/dev/config', (_req, res) => { res.json({ ok: true }); });
   installAccountRoutes(app, { config: cfg });
-  installStatic(app, { assetsDir: join(root, 'models'), clientDist: join(root, 'dist'), serveStatic: true, dev: false });
+  installStatic(app, { assetsDir: join(root, 'models'), dev: false });
   const s = await new Promise<Server>((resolve) => { const x = app.listen(0, '127.0.0.1', () => resolve(x)); });
   servers.push(s);
   return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
@@ -100,7 +100,6 @@ describe('⭐ R10-09: нода — только /ws и служебное', () =
       const base = await processOf(role);
       expect(await status(base, '/api/login', loginInit(50)), `${role}: вход`).toBe(401);
       expect(await status(base, '/api/config'), `${role}: конфиг`).toBe(200);
-      expect(await status(base, '/game3d.html'), `${role}: статика`).toBe(200);
       expect(await status(base, '/assets/knight.glb'), `${role}: модели`).toBe(200);
       expect(await status(base, '/metrics')).toBe(200);
     }

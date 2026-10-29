@@ -1,5 +1,6 @@
-import type { FloorInit, RunPlan } from '@dm/shared';
-import { runNodeLabel } from './runLabels.js';
+import { exitLabel, type FloorInit, type RunPlan } from '@dm/shared';
+// ⭐ С1: подпись выхода — `@dm/shared` (её читает и сервер).
+export { exitLabel } from '@dm/shared';
 
 /**
  * ⭐ C-10: ВЫХОДЫ УЗЛА ЗАБЕГА — интерактивы «[E] Спуститься…» обоих веб-клиентов (2D `OnlineScene`, веб-3D `online3d`), одна истина.
@@ -10,17 +11,6 @@ import { runNodeLabel } from './runLabels.js';
  * глубже», пока игрок не сменит этаж, — на развилке он выбирал ветку вслепую (карта забега M показывала граф, а мир — нет).
  */
 export interface ExitInteract { readonly x: number; readonly y: number; readonly radius: number; readonly label: string; run: () => void }
-
-/** Подпись `i`-го выхода узла `nodeId` (узел этажа, где стоишь): на развилке (>1 ребро) — тип целевого узла, иначе обычный спуск. */
-export function exitLabel(plan: RunPlan | undefined, nodeId: string | undefined, i: number): string {
-  const cur = plan?.nodes.find((n) => n.id === nodeId);
-  if (cur && cur.edges.length > 1) {
-    const to = cur.edges[i]?.to;
-    const tn = to ? plan!.nodes.find((n) => n.id === to) : undefined;
-    if (tn) return `Спуститься: ${runNodeLabel(tn.type)} (голосование)`;
-  }
-  return 'Спуститься глубже (голосование)';
-}
 
 /**
  * Интерактив `i`-го выхода этажа `floor` в точке `at`. `plan` — ЧТЕНИЕ плана забега (подпись — на каждый показ), `descend` — спуск по `i`-му

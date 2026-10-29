@@ -5,6 +5,7 @@
   "description": "Браузерный dungeon-crawler в духе Diablo 2 (модульный, data-driven)",
   "workspaces": [
     "packages/shared",
+    "packages/craft-mesh",
     "packages/client",
     "packages/server",
     "packages/editor"

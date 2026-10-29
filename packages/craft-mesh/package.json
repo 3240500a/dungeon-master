@@ -1,0 +1,23 @@
+{
+  "name": "@dm/craft-mesh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Модель оружия из деталей (ковка): построители на three. Её печёт сервер (DMCM/GLB для Unity), ею меряет клинки редактор.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dm/shared": "*",
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.171.0",
+    "typescript": "^5.7.2"
+  }
+}

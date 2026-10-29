@@ -16,7 +16,7 @@ import { buildCraftMesh } from './index.js';
 import { geomOf, measureBlade, type BladeMeasure } from './bladeGeom.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PARTS_JSON = join(HERE, '../../../../../shared/src/config/data/weapon-parts.json');
+const PARTS_JSON = join(HERE, '../../shared/src/config/data/weapon-parts.json');
 
 const reg = new ConfigRegistry();
 reg.loadAll();

@@ -170,7 +170,7 @@ const app = express();
  *
  * Запросы БЕЗ `Origin` (curl, сервер-сервер) не отсекаем намеренно: CORS защищает браузер от чужой
  * страницы, а не сервер от клиента — сервер защищает авторизация. По той же причине разрешён
- * собственный хост: при `DM_SERVE_STATIC` игра раздаётся с этого же адреса.
+ * собственный хост (запрос страницы инструмента с того же адреса).
  */
 const ORIGINS = parseOrigins(process.env.DM_ORIGINS, 'http://localhost:5173,http://localhost:5174');
 app.use(cors((req, cb) => {
@@ -552,27 +552,11 @@ app.get('/api/me', ah(async (req, res) => {
 // ⭐ 08.10 (Ф4): рядом — `GET /api/craft-mesh.bin` (та же модель двоичным мешем DMCM v1 для Unity без glTFast) — ставит та же функция.
 if (ROLE !== 'node') installCraftMeshRoute(app, { config });
 
-// ── Статика клиента (прод: ОДИН сервер отдаёт игру + /api + /ws на одном домене) ──────────
-// Регистрируется ПОСЛЕ всех /api-роутов, поэтому их не затирает; WS — на upgrade `/ws`, отдельно.
-// Клиент сам находит сервер на том же origin (`/api`, `wss://<host>/ws`), доп. конфиг не нужен.
-// Модели и текстуры (`/assets`, ASSETS_DIR) и собранный клиент (его бандл — тоже `/assets`, R10-03) — `net/staticRoutes.ts`.
-const CLIENT_DIST = process.env.CLIENT_DIST ?? join(dirname(fileURLToPath(import.meta.url)), '../../client/dist');
-// Ф0.9: `DM_SERVE_STATIC=off` снимает раздачу клиента с игрового процесса. Сейчас через него
-// идут 7,4 МБ бандла и 31 МБ моделей — один холодный заход стоит игровому ядру десятков
-// мегабайт. Правильный ответ это CDN; переменная нужна, чтобы отделить игру от раздачи уже
-// сегодня, не дожидаясь CDN (второй процесс с тем же CLIENT_DIST).
-const SERVE_STATIC = process.env.DM_SERVE_STATIC !== 'off';
-// R10-09: нода статику не отдаёт вовсе (`installNodeFence` выше) — и не монтирует.
-const ENTRY = ROLE === 'node' ? undefined : installStatic(app, { assetsDir: ASSETS_DIR, clientDist: CLIENT_DIST, serveStatic: SERVE_STATIC, dev: DEV_CONFIG_APPLY });
-if (ROLE === 'node') {
-  console.log('[dm-server] нода кластера: по HTTP — только /metrics, /internal/drain и /api/health (API и статика — у гейтвея)');
-} else if (!SERVE_STATIC) {
-  console.log('[dm-server] раздача статики выключена (DM_SERVE_STATIC=off)');
-} else if (ENTRY) {
-  console.log(`[dm-server] отдаю клиент из ${CLIENT_DIST}, корневая страница — ${ENTRY}`);
-} else {
-  console.log('[dm-server] client/dist не найден — статику не отдаю (dev: клиент на Vite :5173)');
-}
+// ── Модели и текстуры (`/assets`, ASSETS_DIR) — `net/staticRoutes.ts` ──────────
+// Регистрируется ПОСЛЕ всех /api-роутов; WS — на upgrade `/ws`, отдельно. ⭐ С1 (29.10): собранный веб-клиент сервер больше не раздаёт —
+// играют Unity, сервер не знает, какой клиент его рисует. R10-09: нода статику не отдаёт вовсе (`installNodeFence` выше) — и не монтирует.
+if (ROLE !== 'node') installStatic(app, { assetsDir: ASSETS_DIR, dev: DEV_CONFIG_APPLY });
+else console.log('[dm-server] нода кластера: по HTTP — только /metrics, /internal/drain и /api/health (API и модели — у гейтвея)');
 
 /** Лаг цикла событий этой ноды — уезжает в реестр с каждым ударом сердца (Ф4). */
 const clusterLoop = monitorEventLoopDelay({ resolution: 5 });

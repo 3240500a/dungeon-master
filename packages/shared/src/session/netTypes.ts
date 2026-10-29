@@ -12,6 +12,19 @@ import type { HeroCooldowns, PlayerInput, SessionEvent } from './session.js';
 import type { WorldDelta } from './delta.js';
 
 /**
+ * ⭐ С9 (29.10): ЛИМИТЫ ЧАСТОТЫ КОМАНД — как их держит сервер (`server/net/rateLimit.ts`, `room.ts`). Бакет — [ёмкость всплеска, токенов в секунду].
+ * `town` платит каждая команда, `forge` — ещё и команды из `forgeCmds`, `stash` — из `stashCmds`. Клиент по ним не шлёт команду, которой
+ * сервер ответил бы «Слишком часто» (отказ на месте, токены сервера целы); своей копии таблицы у клиента нет.
+ */
+export interface CmdLimits {
+  town: [number, number];
+  forge: [number, number];
+  stash: [number, number];
+  forgeCmds: string[];
+  stashCmds: string[];
+}
+
+/**
  * Сетевой протокол кооп-сервера (MP-2). Кадры JSON, авторитет — сервер: клиент шлёт
  * ввод/команды, получает снапшоты мира + события + свой авторитетный сейв. View-типы
  * несут ТОЛЬКО изменяемые поля сущностей (без тяжёлого `save`), грид/декор — один раз
@@ -319,7 +332,8 @@ export type ServerFrame =
   // ключ — как у события `cooldown`/`swing` (узел скила; `ins:<вставка>` — печать), `leftMs` — остаток, `fullMs` — полный откат (заливка слота).
   // Событие каста о них не придёт — без поля новая страница рисовала слот готовым, а каст сервер молча отбрасывал. Нет откатов — поля нет.
   // ⭐ 08.10 (Д1): `gameRev` — ИГРОВАЯ ревизия конфига комнаты (`gameRevision`): клиент кладёт её в согласие, и правка картинки ему не отказ.
-  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState; build?: string; cfgRev?: string; gameRev?: string; cooldowns?: HeroCooldowns }
+  // ⭐ С9 (29.10): `limits` — лимиты частоты команд сервера: клиент не держит их копию (копия Unity разошлась — в ней не было перековки).
+  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState; build?: string; cfgRev?: string; gameRev?: string; cooldowns?: HeroCooldowns; limits?: CmdLimits }
   // Ответ на runStatus: есть ли незавершённый забег (+ код комнаты и этаж для модалки).
   // ⭐ R16 C-09: `dead` — герой в этом забеге погиб и штраф за смерть взят: «Завершить» — без штрафа (V1), «Продолжить» — мёртвым ждать пати
   // (K1). Нет поля — сервер старше его: экран говорит, как раньше.

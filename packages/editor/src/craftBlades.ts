@@ -4,7 +4,7 @@ import {
   craftTiers, craftWeapon, defaultParts, familiesOf, partById, suggestBracket, suggestForm, weaponSpeedOf,
   type BladeForm, type BladeStats, type BladeTuning, type Item, type WeaponPart,
 } from '@dm/shared';
-import { measureBlade, geomOf, type BladeMeasure } from '@dm/client/modules/town/craftMesh/bladeGeom.js';
+import { measureBlade, geomOf, type BladeMeasure } from '@dm/craft-mesh';
 import type { CraftIo } from './craft.js';
 
 /**

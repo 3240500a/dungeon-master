@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { ConfigRegistry, defaultParts, weaponLookSig } from '@dm/shared';
-import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
+import { CRAFT_MESH_DEPS } from '@dm/shared';
 import { buildForBake, depsRegistry } from './bake.js';
 import { bakeCraftBin } from './encodeBin.js';
 import {

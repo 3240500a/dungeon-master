@@ -3,7 +3,7 @@ import { gzipSync } from 'node:zlib';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { ConfigRegistry, defaultParts, familiesOf, weaponLookSig } from '@dm/shared';
-import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
+import { CRAFT_MESH_DEPS } from '@dm/shared';
 import { bakeCraftGlb, depsRegistry } from './bake.js';
 import { bakeCraftBin, encodeCraftBin } from './encodeBin.js';
 import { CRAFT_BIN_FORMAT, DMCM_FLAG_INDEX32, DMCM_H, DMCM_SLOTS, decodeCraftBin, type DmcmFile, type DmcmMaterial } from './binFormat.js';

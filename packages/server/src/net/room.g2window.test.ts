@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { ConfigRegistry, defaultRunConfig, newCharacterSave, type SaveState, type RunPlan, type RunConfig, type ServerFrame } from '@dm/shared';
-// ⚠ Подпись выхода — НАСТОЯЩАЯ клиентская (`exitLabel`): предмет сторожа — то, что увидит игрок, а не то, что лежит в
-// плане. Серверный тест берёт клиентский исходник так же, как клиентский фаззер паритета берёт серверную комнату
-// (`client/src/modules/town/uiParity.fuzz.test.ts`) — относительным путём, без своего пакета.
-import { exitLabel } from '../../../client/src/modules/run/runExits.js';
+// ⚠ Подпись выхода — та, что увидит игрок (`exitLabel`, ⭐ С1: в `@dm/shared`, её читают сервер и клиенты), а не то, что лежит в плане.
+import { exitLabel } from '@dm/shared';
 
 // Двадцать этажей — это двадцать настоящих генераций этажа и заселений; умолчание 5 с тут лотерея.
 vi.setConfig({ testTimeout: 60_000 });

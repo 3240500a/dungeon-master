@@ -4,7 +4,7 @@ import { COLORS, mk } from '../../ui/kit.js';
 import { craftWindow, forgeableFamilies, initialCraftState, type CraftWindowState } from './craftPanel.js';
 import { gameCraftHost } from './craftHost.js';
 import { resumePreview3d, weaponPreview3d } from './craftPreview3d.js';
-import { craftMeshConfigVersion } from './craftMesh/configVersion.js';
+import { craftMeshConfigVersion } from '@dm/shared';
 
 /**
  * ВКЛАДКА «КОВКА» КУЗНИЦЫ ГОРОДА — окно ковки (`craftPanel.ts`) с игровым хозяином (`craftHost.ts`)

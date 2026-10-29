@@ -166,6 +166,20 @@ describe('Room — раунд 5: тогл срабатывает один раз
     expect(p().toggles, 'второе нажатие — выкл, и тик без кадра не включил её обратно').toEqual([]);
   });
 
+  it('⭐ С0: клиент держит каст тогла в КАЖДОМ кадре (клавиша зажата) — одно переключение; отпустил и нажал снова — второе', () => {
+    const { room, pid, p } = auraHero('every-frame');
+    for (let i = 0; i < 6; i++) {
+      room.setInput(pid, { ...idle, cast: AURA });
+      room.step(false);
+      expect(p().toggles, `кадр ${i + 1}: удержание — не новое нажатие`).toEqual([AURA]);
+    }
+    room.setInput(pid, idle);
+    room.step(false);
+    room.setInput(pid, { ...idle, cast: AURA });
+    room.step(false);
+    expect(p().toggles, 'новое нажатие после отпускания — выкл').toEqual([]);
+  });
+
   it('удержанный каст НЕ тогла по-прежнему держится между кадрами (снимается только тогл)', () => {
     const { room, pid } = auraHero('attack');
     room.setInput(pid, { ...idle, cast: 'b-axe1h-a1' });

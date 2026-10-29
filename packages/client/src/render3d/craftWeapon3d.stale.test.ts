@@ -13,7 +13,7 @@ import { ConfigRegistry, PROTOCOL_VERSION } from '@dm/shared';
  * Кусок «не грузится» — `vi.mock` с броском: так `import()` отказывает, как в браузере на 404.
  */
 const loads = vi.hoisted(() => ({ n: 0 }));
-vi.mock('../modules/town/craftMesh/index.js', () => {
+vi.mock('@dm/craft-mesh', () => {
   loads.n++;
   throw new TypeError('Failed to fetch dynamically imported module: https://game.example/assets/forgeCraftTab-KtW2feJZ.js');
 });

@@ -98,6 +98,9 @@ export class RateLimiter {
 
   get size(): number { return this.buckets.size; }
 
+  /** ⭐ С9: [ёмкость, токенов в секунду] — клиенту в `joined` (`CmdLimits`), чтобы у него не было своей копии чисел. */
+  spec(): [number, number] { return [this.capacity, this.refillPerSec]; }
+
   /** Периодическая чистка простаивающих ключей: карта не должна расти вечно. */
   private sweep(now: number): void {
     if (now - this.lastSweep < 60_000) return;

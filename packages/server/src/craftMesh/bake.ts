@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { ConfigRegistry, type ConfigKey, type CraftParts } from '@dm/shared';
-import { buildCraftMesh, type CraftMeshResult } from '../../../client/src/modules/town/craftMesh/index.js';
-import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
+import { buildCraftMesh, type CraftMeshResult } from '@dm/craft-mesh';
+import { CRAFT_MESH_DEPS } from '@dm/shared';
 
 /**
- * ⭐ ПЕЧЬ МОДЕЛИ ИЗ ДЕТАЛЕЙ: тот же построитель, что у веб-клиента (`client/modules/town/craftMesh`), → бинарный GLB.
+ * ⭐ ПЕЧЬ МОДЕЛИ ИЗ ДЕТАЛЕЙ: построитель пакета `@dm/craft-mesh` → бинарный GLB (и DMCM v1 для Unity).
  *
  * Зачем на сервере: геометрия клинка кормит его статы (`bladeGeom.ts` → `shared/formulas/bladeStats.ts`), и второй построитель
  * (порт 5.2 тыс. строк в C#) был бы второй правдой о форме — решение Р2 плана Unity. Unity грузит GLB через glTFast и

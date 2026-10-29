@@ -4,3 +4,4 @@ export * from './runModifiers.js';
 export * from './runModEffects.js';
 export * from './nodeState.js';
 export * from './waypointData.js';
+export * from './labels.js';

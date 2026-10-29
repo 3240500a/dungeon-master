@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { ConfigRegistry, defaultParts, familiesOf, weaponLookSig } from '@dm/shared';
-import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
+import { CRAFT_MESH_DEPS } from '@dm/shared';
 import { bakeCraftGlb, depsRegistry, CRAFT_GLB_FORMAT } from './bake.js';
 
 /**

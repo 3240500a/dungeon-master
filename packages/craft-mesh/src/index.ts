@@ -90,3 +90,4 @@ export function buildCraftMesh(reg: ConfigRegistry, weaponClass: string, hands: 
 }
 
 export { MatCache } from './core.js';
+export { measureBlade, geomOf, BLADE_STATIONS, type BladeMeasure } from './bladeGeom.js';

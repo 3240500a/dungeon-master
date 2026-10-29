@@ -16,7 +16,7 @@ import {
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type RunWindow, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
-  type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody,
+  type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -259,6 +259,11 @@ const STASH_READ_CMDS: ReadonlySet<string> = new Set([
   'forgeExchange',
   'sealReforge',   // ⭐ 17.10: перековка берёт печати и из сундука — значит читает его из базы
 ]);
+/** ⭐ С9 (29.10): лимиты команд для клиента (`joined.limits`) — из тех же бакетов и наборов, что судят команды. */
+const CMD_LIMITS = (): CmdLimits => ({
+  town: limits.townCmd.spec(), forge: limits.forgeCmd.spec(), stash: limits.stashRead.spec(),
+  forgeCmds: [...FORGE_RATE_CMDS], stashCmds: [...STASH_READ_CMDS],
+});
 /** D13: отказ ковки и зачарования, пока кузнец не открыт (`balance.craft.live`). Разбор работает и так. */
 /**
  * ⭐ 17.10: Радиус работы с алтарём отрезка на СЕРВЕРЕ. У клиента интерактив с радиусом 42; серверу даём тот же
@@ -702,6 +707,12 @@ interface Client {
   inputSeen: boolean;
   /** R4-20: тиков с последнего кадра ввода. */
   inputAge: number;
+  /**
+   * ⭐ С0 (29.10): каст ПРОШЛОГО пришедшего кадра, как его прислал клиент. Тогл (аура, стойка) срабатывает по ФРОНТУ нажатия, и фронт
+   * видит сервер: тот же каст тогла и в следующем кадре — удержание клавиши, не новое нажатие. Раньше сервер верил, что клиент шлёт каст
+   * тогла только в кадре нажатия: клиент, державший каст в каждом кадре, щёлкал ауру на каждом кадре.
+   */
+  lastCast?: string | null;
   /**
    * ⭐ R14-04: снимки записей с НЕИЗВЕСТНЫМ исходом фиксации (`CommitUnknown.sent`), пока копия в памяти — их продолжение. Отказ по версии
    * следующей записи сперва сверяется с ними (`landedOf`): легла одна из них — пишем поверх её версии. ⭐ V3: все с последней подтверждённой
@@ -1240,6 +1251,7 @@ export class Room implements Tickable {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
       floor: this.currentFloorInit(), peers: this.peerList(), save: clientSave(save),   // R14-10: без сида забега
       ...(build ? { build } : {}), cfgRev: this.cfg.revision(), gameRev: this.cfg.gameRevision(), ...(cooldowns ? { cooldowns } : {}),
+      limits: CMD_LIMITS(),   // ⭐ С9
     });
     // Сундук с журналом — сразу: кузница по нему решает, что открыто. ⚠ Переезд старого кошелька сейва в
     // сундук аккаунта делает менеджер ДО входа (R1-06): здесь, уже в живой комнате, его откат после неудачной
@@ -2117,6 +2129,10 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     if (!c || this.frozen) return;   // R5-07: заморожена — ввод не применяется
     const prev = c.input;
+    const raw = input.cast ?? null;
+    // ⭐ С0: тогл, нажатый и в прошлом кадре, — удержание: переключения нет (фронт считает сервер, а не клиент).
+    if (raw != null && raw === c.lastCast && this.isToggleNode(raw)) input = { ...input, cast: null };
+    c.lastCast = raw;
     let next = input;
     if (!c.inputSeen) {
       next = {
@@ -4763,7 +4779,7 @@ export class Room implements Tickable {
     if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
   }
 
-  /** R5-03: узел древа — тогл (аура, стойка): его каст срабатывает по нажатию, а не удержанием. Та же мера, что у клиента. */
+  /** R5-03: узел древа — тогл (аура, стойка): его каст срабатывает по нажатию, а не удержанием. ⭐ С0: нажатие от удержания отличает сервер (`setInput`). */
   private isToggleNode(nodeId: string): boolean {
     const cat = activeAbilityOf(this.cfg, nodeId)?.category;
     return cat === 'aura' || cat === 'stance';

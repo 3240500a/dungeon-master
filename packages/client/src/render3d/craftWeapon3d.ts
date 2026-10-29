@@ -1,8 +1,8 @@
 // ── Оружие из деталей в руках куклы (D22, К6): модель ковки вместо процедурного меша ──
 import * as THREE from 'three';
 import { TILE, weaponLookSig, type ConfigRegistry, type WeaponLookHand } from '@dm/shared';
-import type { CraftMeshResult } from '../modules/town/craftMesh/index.js';
-import { craftMeshConfigVersion } from '../modules/town/craftMesh/configVersion.js';
+import type { CraftMeshResult } from '@dm/craft-mesh';
+import { craftMeshConfigVersion } from '@dm/shared';
 import { markStaleBuild } from '../net/staleBuild.js';
 
 /**
@@ -23,7 +23,7 @@ import { markStaleBuild } from '../net/staleBuild.js';
  *   ронять из-за него кадр нельзя.
  */
 
-type CraftMeshLib = typeof import('../modules/town/craftMesh/index.js');
+type CraftMeshLib = typeof import('@dm/craft-mesh');
 
 /** 1 см модели ковки в юнитах игры: клетка `TILE` = 1 м. */
 export const CRAFT_CM_TO_UNITS = TILE / 100;
@@ -38,7 +38,7 @@ let loading: Promise<CraftMeshLib | null> | null = null;
  */
 export function loadCraftMeshLib(): Promise<CraftMeshLib | null> {
   if (lib) return Promise.resolve(lib);
-  loading ??= import('../modules/town/craftMesh/index.js')
+  loading ??= import('@dm/craft-mesh')
     .then((m) => (lib = m))
     .catch((e: unknown) => { loading = null; markStaleBuild('модель оружия из деталей', e); return null; });
   return loading;

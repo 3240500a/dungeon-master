@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CRAFT_SLOT_LIST, anatomyOf, partById, slotName, stepLabel, type ConfigRegistry, type CraftSlot } from '@dm/shared';
-import { buildCraftMesh, type CraftMeshResult } from './craftMesh/index.js';
+import { buildCraftMesh, type CraftMeshResult } from '@dm/craft-mesh';
 import type { CraftWindowState } from './craftPanel.js';
 
 /**

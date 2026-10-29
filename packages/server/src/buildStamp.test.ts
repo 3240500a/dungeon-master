@@ -50,7 +50,8 @@ beforeAll(async () => {
 afterEach(() => { for (const r of rooms) r.stop(); rooms.length = 0; });
 
 describe('⭐ R18-08: штамп сборки сервера', () => {
-  it('штамп сервера = штамп исходников shared = штамп, который `vite build` вписывает в бандл; дев-сервер Vite — пустой', async () => {
+  // ⭐ С1 (29.10): сверка со сборкой веб-клиента (`client/vite.config.ts`) снята — веб-клиент не поддерживается, и сервер проверяется без него.
+  it('штамп сервера = штамп исходников shared', () => {
     const stamp = serverBuild();
     expect(stamp, 'исходники shared рядом — штамп есть').not.toBe('');
     expect(serverBuild(), 'один на процесс').toBe(stamp);
@@ -58,11 +59,6 @@ describe('⭐ R18-08: штамп сборки сервера', () => {
     const all = (readdirSync(dir, { recursive: true }) as string[]).filter((p) => statSync(join(dir, p)).isFile());   // вся папка: и тесты, и данные
     const files = all.map((p) => [p, readFileSync(join(dir, p), 'utf8')] as const);
     expect(buildStampOf(files), 'независимый обход той же папки').toBe(stamp);
-    // Сборка клиента: тот же штамп — в `define` (как его видит `vite build`), а дев-серверу — пустой.
-    const VITE = '../../client/vite.config.ts';   // путём из переменной: проверка типов сервера не тянет конфиг сборки клиента
-    const { default: config } = (await import(/* @vite-ignore */ VITE)) as { default: (env: { command: string; mode: string }) => { define?: Record<string, string> } };
-    expect(JSON.parse(config({ command: 'build', mode: 'production' }).define!.__DM_BUILD__!), 'было: у вкладки штампа не было вовсе').toBe(stamp);
-    expect(JSON.parse(config({ command: 'serve', mode: 'development' }).define!.__DM_BUILD__!)).toBe('');
   });
 
   it('кадр `joined` несёт штамп сборки', () => {
@@ -82,8 +78,8 @@ describe('⭐ R18-08: штамп сборки сервера', () => {
  * «перезагрузите», а перезагрузка не помогала никогда. Здесь — настоящие исходники shared, выложенные в две папки (LF и CRLF, с BOM у части
  * файлов), и оба настоящих читателя папки: сервера (`stampOfDir`) и сборки клиента (`vite.config.ts` `buildStampOfDir`).
  */
-describe('⚠ R19-06 × D3: штамп сборки — CRLF и LF одного кода дают один штамп у сервера и у сборки клиента', () => {
-  it('выгрузки Windows (CRLF, BOM) и Linux (LF) одного кода — один штамп у обоих читателей; правка знака его двигает', async () => {
+describe('⚠ R19-06 × D3: штамп сборки — CRLF и LF одного кода дают один штамп', () => {
+  it('выгрузки Windows (CRLF, BOM) и Linux (LF) одного кода — один штамп; правка знака его двигает', () => {
     const src = join(HERE, '../../shared/src');
     const files = (readdirSync(src, { recursive: true }) as string[]).filter((p) => isBuildStampSource(p) && statSync(join(src, p)).isFile());
     const root = mkdtempSync(join(tmpdir(), 'dm-stamp-'));
@@ -99,19 +95,14 @@ describe('⚠ R19-06 × D3: штамп сборки — CRLF и LF одного 
       const lf = lay('lf', (t) => t);
       const crlf = lay('crlf', (t, i) => `${i % 3 === 0 ? '﻿' : ''}${t.replace(/\n/g, '\r\n')}`);
       expect(readFileSync(join(crlf, files[1]!), 'utf8'), 'выгрузка и правда CRLF').toMatch(/\r\n/);
-      const VITE = '../../client/vite.config.ts';   // путём из переменной: проверка типов сервера не тянет конфиг сборки клиента
-      const { buildStampOfDir } = (await import(/* @vite-ignore */ VITE)) as { buildStampOfDir: (dir: string) => string };
       const stamp = stampOfDir(lf);
       expect(stamp, 'штамп есть').not.toBe('');
       expect(stampOfDir(crlf), 'сервер из выгрузки Windows (CRLF, BOM)').toBe(stamp);
-      expect(buildStampOfDir(crlf), 'было: бандл с рабочей машины (CRLF) — чужой штамп, «перезагрузите» навсегда').toBe(stamp);
-      expect(buildStampOfDir(lf), 'бандл из выгрузки Linux').toBe(stamp);
       // А правка кода под CRLF — другой штамп: нормализация не прячет знаки.
       const victim = files.find((p) => p.replace(/\\/g, '/') === 'economy/townActions.ts')!;
       const text = readFileSync(join(crlf, victim), 'utf8');
       writeFileSync(join(crlf, victim), text.replace("'Цена изменилась'", "'Цена изменилась!'"), 'utf8');
-      expect(buildStampOfDir(crlf)).not.toBe(stamp);
-      expect(stampOfDir(crlf)).toBe(buildStampOfDir(crlf));
+      expect(stampOfDir(crlf)).not.toBe(stamp);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

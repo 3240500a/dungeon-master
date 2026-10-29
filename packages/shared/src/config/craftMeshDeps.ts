@@ -1,4 +1,4 @@
-import type { ConfigRegistry } from '@dm/shared';
+import type { ConfigRegistry } from './registry.js';
 
 /**
  * Таблицы конфига, из которых строится модель из деталей (`buildCraftMesh`): анатомия, сами детали, тип → база

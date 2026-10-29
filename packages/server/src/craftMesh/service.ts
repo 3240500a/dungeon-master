@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configSetRev, type ConfigRegistry, type CraftParts } from '@dm/shared';
-import { CRAFT_MESH_DEPS } from '../../../client/src/modules/town/craftMesh/configVersion.js';
+import { CRAFT_MESH_DEPS } from '@dm/shared';
 import { serverBuild, stampOfDir } from '../buildStamp.js';
 import { CraftMeshBaker, type BakeJob, type BakeResult } from './baker.js';
 import { CRAFT_BIN_FORMAT } from './binFormat.js';
@@ -19,7 +19,7 @@ import type { CraftMeshFormat } from './protocol.js';
  *   СОДЕРЖИМОМУ, одинаковая у всех процессов и после рестарта (память ревизии — по объекту таблицы, дёшево на каждый запрос).
  *   Правка детали в редакторе — новый ключ, новый ETag, клиент перечитает модель. Таблицы берутся СНИМКОМ вместе с ключом
  *   (`keyOf`) и тем же снимком уходят печи: правка конфига посреди запроса не положит под старый ключ модель новых таблиц.
- * - Штамп кода — исходники построителей (`client/modules/town/craftMesh`), печи (`server/craftMesh`), `shared` (`serverBuild`) и
+ * - Штамп кода — исходники построителей (пакет `@dm/craft-mesh`), печи (`server/craftMesh`), `shared` (`serverBuild`) и
  *   версия `three` (экспортёр): деплой, сменивший форму модели, не отдаст с диска старую. Штампа нет (урезанная выкладка без
  *   исходников) — дисковый кэш выключается: без штампа он не отличил бы старый код от нового.
  *
@@ -46,7 +46,11 @@ const ERROR_REASON = 'Печь моделей: сбой, попробуйте п
 const UNBUILDABLE_REASON = 'Модель этого вида не строится';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BUILDER_SRC = join(HERE, '../../../client/src/modules/town/craftMesh');
+/**
+ * ⭐ С1 (29.10): исходники построителей — пакет `@dm/craft-mesh` (был `client/modules/town/craftMesh`: сервер не стартовал без веб-клиента).
+ * Каталог — по входу пакета, а не относительным путём: перенос пакета не выключит дисковый кэш молча (`craftMeshCodeStamp` без каталога — '').
+ */
+const BUILDER_SRC = dirname(createRequire(import.meta.url).resolve('@dm/craft-mesh'));
 
 /** Версия `three`, которую возьмёт печь: `package.json` пакета (его `exports` сам файл не отдаёт — ищем от входа вверх). */
 function threeVersion(): string {
