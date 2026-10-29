@@ -56,7 +56,13 @@ export class RateLimiter {
   ) {}
 
   /** Списать один токен. `false` — лимит исчерпан, запрос надо отклонить. */
-  take(key: string, now = monotonicMs()): boolean {
+  take(key: string, now = monotonicMs()): boolean { return this.takeCost(key, 1, now); }
+
+  /**
+   * ⭐ С-аудит (29.10): списать `cost` токенов разом — запрос, который стоит серверу дороже прочих (вид верстака кузни ≈ 7 мс против
+   * ≈ 0.1 мс у подсказки), платит пропорционально. Иначе один лимит на все виды пускал 30 дорогих в секунду: ~22 % ядра на аккаунт.
+   */
+  takeCost(key: string, cost: number, now = monotonicMs()): boolean {
     if (DISABLED) return true;
     this.sweep(now);
     let b = this.buckets.get(key);
@@ -64,8 +70,8 @@ export class RateLimiter {
     // R3-15: момент раньше уже виденного — ноль прошедших секунд, а не долг; и точка отсчёта назад не уезжает.
     b.tokens = Math.min(this.capacity, b.tokens + (Math.max(0, now - b.at) / 1000) * this.refillPerSec);
     b.at = Math.max(b.at, now);
-    if (b.tokens < 1) return false;
-    b.tokens -= 1;
+    if (b.tokens < cost) return false;
+    b.tokens -= cost;
     return true;
   }
 

@@ -201,6 +201,14 @@ describe('⭐ С4/С6: виды города и забега — от серве
     expect(ask('craft', { weaponClass: 'нет-класса' }).ok).toBe(false);
   });
 
+  it('дорогой вид платит лимиту дороже: верстак кузни исчерпывает всплеск в 8 раз быстрее подсказки', () => {
+    const { room, ws, pid, save } = setup();
+    const any = Object.values(save.equipment).find((x) => !!x)!;
+    for (let i = 0; i < 20; i++) room.viewRequest(pid, 1000 + i, 'bench', { uid: any.uid });
+    const refused = ws.all('view').filter((f) => f.id >= 1000 && f.reason === 'Слишком часто').length;
+    expect(refused, 'всплеск 120 токенов — 15 верстаков, остальные — отказ').toBeGreaterThanOrEqual(5);
+  });
+
   it('перековка по карточке: провод берёт карточку или связку; набирает связку сервер', () => {
     expect(townCommandSchema.safeParse({ cmd: 'sealReforge', card: 't1|any' }).success).toBe(true);
     expect(townCommandSchema.safeParse({ cmd: 'sealReforge', seals: { 'a@t1': 3 } }).success).toBe(true);

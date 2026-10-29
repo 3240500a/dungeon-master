@@ -667,6 +667,21 @@ const MONSTER_DEF_DEBUG = !isProduction(process.env);
 
 /** ⭐ С2/С4–С6: ответ на запрос вида. */
 type ViewAnswer = { ok: boolean; view?: unknown; reason?: string };
+/**
+ * ⭐ С-аудит (29.10): ЦЕНА ВИДА В ТОКЕНАХ ЛИМИТА — по замеру на богатом сейве (мс на запрос): верстак ≈ 7.3, прилавок ≈ 3.2, древо ≈ 2.7,
+ * ковка ≈ 1–1.5, прочие ≤ 0.3. Токен ≈ мс: при пополнении 30/с аккаунт держит не больше ≈ 30 мс счёта видов в секунду, как его ни шли.
+ */
+function viewCost(kind: ViewKind, args: Record<string, unknown>): number {
+  switch (kind) {
+    case 'bench': return 8;
+    case 'shop': return 4;
+    case 'craft': return 2;
+    case 'hero': return args.part === 'tree' ? 3 : 1;
+    // подсказки — по числу вещей в запросе (≈ 0.008 мс на вещь; 400 — ≈ 3 мс)
+    case 'item': return args.part === 'tips' && Array.isArray(args.uids) ? 1 + Math.floor(args.uids.length / 40) : 1;
+    default: return 1;
+  }
+}
 /** ⭐ С4: потолок подсказок за один запрос (сумка + сундук + прилавок окна — с запасом). */
 const VIEW_TIPS_MAX = 400;
 /** ⭐ С4: клетки пупсика, о которых окно вправе спросить. */
@@ -4907,7 +4922,7 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     if (!c || this.frozen) return;
     const answer = (out: { ok: boolean; view?: unknown; reason?: string }): void => this.send(c.ws, { t: 'view', id, kind, ...out });
-    if (!limits.viewReq.take(c.userId)) { answer({ ok: false, reason: 'Слишком часто' }); return; }
+    if (!limits.viewReq.takeCost(c.userId, viewCost(kind, args ?? {}))) { answer({ ok: false, reason: 'Слишком часто' }); return; }
     const p = this.session.world.players[pid];
     if (!p) { answer({ ok: false, reason: 'Нет персонажа' }); return; }
     let out: { ok: boolean; view?: unknown; reason?: string };
