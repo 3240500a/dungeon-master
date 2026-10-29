@@ -1,7 +1,8 @@
 /**
- * Вид «⇄ Обмен» ⇄ эталон вкладки Unity (`Assets/DM/UI/Tests/unity_exchange_golden.json`, ExchangeCheck.cs; генерит его
- * `tools/unity-check/exchange_golden.mts` кодом веба): реестр каждого из конфигов эталона — из его снимка, модель вкладки на каждом выборе
- * — до буквы, `defaultGive`.
+ * Вид «⇄ Обмен» ⇄ эталон вкладки Unity (`__fixtures__/unity_exchange.json` — заморожен из `Assets/DM/UI/Tests/unity_exchange_golden.json`
+ * HEAD Unity-репо, ExchangeCheck.cs; генерил его `tools/unity-check/exchange_golden.mts` кодом веба): реестр каждого из конфигов эталона —
+ * из его снимка, модель вкладки на каждом выборе — до буквы, `defaultGive`.
+ * ⭐ С-аудит (29.10): эталона нет — тест ПАДАЕТ (раньше `describe.skipIf` молча пропускал все случаи, и правка обмена проходила `npm test`).
  * ⚠ ОТКЛОНЕНИЕ (сервер ≠ эталон): конфиг `odd` (курс 5 → 3, золото за сорт `[7, 0, 1]`) схема сервера НЕ ПРИНИМАЕТ (`goldPerUnit` — ровно пять
  * чисел ≥ 1): сервер с ним не стартует и правку из редактора отвергает — у игрока такого окна не бывает. Его кейсы не сверяются; что реестр
  * его отвергает — проверено явно.
@@ -22,8 +23,12 @@ const json = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 /** Конфиги эталона, которых сервер не примет (схема `balance`). */
 const SERVER_REJECTS = new Set(['odd']);
 
-describe.skipIf(!g)('вид «⇄ Обмен» ⇄ unity_exchange_golden.json', () => {
-  const regs = new Map(Object.entries(g!.config).filter(([name]) => !SERVER_REJECTS.has(name)).map(([name, cfg]) => [name, registryFromGolden(cfg)]));
+describe('вид «⇄ Обмен» ⇄ unity_exchange.json', () => {
+  it('эталон на месте', () => {
+    expect(g, `эталон обмена: ${GOLDEN.exchange}`).not.toBeNull();
+  });
+  if (!g) return;
+  const regs = new Map(Object.entries(g.config).filter(([name]) => !SERVER_REJECTS.has(name)).map(([name, cfg]) => [name, registryFromGolden(cfg)]));
 
   it('конфиг, которого сервер не примет, отвергнут реестром (его кейсы — не сверяются)', () => {
     for (const name of SERVER_REJECTS) expect(() => registryFromGolden(g!.config[name]!), name).toThrow(/balance/);

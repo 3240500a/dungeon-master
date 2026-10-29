@@ -11,7 +11,7 @@ import type { Difficulty } from '../formulas/power.js';
 import { createRng, type Rng , strSeed } from '../formulas/rng.js';
 import { rewardScaleOf, rewardRolls } from '../formulas/lootRate.js';
 import { runModBuffs, liveModStats, mergeRunBuffs, NO_RUN_BUFFS, type RunModBuffs } from '../dungeon/run/runModEffects.js';
-import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
+import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth, meleeGeometry } from '../formulas/combat.js';
 import { buffNodeCooldown, clampBuffCooldown } from '../formulas/buffTiming.js';
 import { hitMaterialOf, type HitMaterial } from '../formulas/hitMaterial.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
@@ -853,9 +853,8 @@ export class GameSession {
   /** Взмах: дальность/дуга по оружию (копьё длиннее, топор шире). */
   private meleeSwing(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, weapon?: Item, opts?: HitOpts, rangeMult = 1, arcMult = 1): void {
     // Дальность/размах — базовые из конфига × оружие (копьё длиннее, топор шире) × множители скилла (attack).
-    const mel = this.cfg.get('balance').melee;
-    const range = mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult;
-    const arc = mel.baseArc * (weapon?.arcMult ?? 1) * arcMult;
+    // ⭐ С-аудит (29.10): одной формулой с кадром героя (`meleeGeometry` → `hero.melee`): то, что рисует клиент, и то, чем бьёт сервер, не разойдутся.
+    const { range, halfArc: arc } = meleeGeometry(this.cfg.get('balance').melee, weapon, rangeMult, arcMult);
     const hitOpts = opts ?? this.weaponHitOpts(weapon);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
@@ -1354,7 +1353,8 @@ export class GameSession {
     const dist = active.dashDist > 0 ? active.dashDist : 130;
     const mel = this.cfg.get('balance').melee;
     const weapon = this.heldWeapon(p);
-    const halfW = swingHalfWidth(mel.baseRange * (weapon?.reachMult ?? 1), mel.baseArc * (weapon?.arcMult ?? 1));
+    const g = meleeGeometry(mel, weapon);
+    const halfW = swingHalfWidth(g.range, g.halfArc);
     const from = { ...p.pos };
     const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1, this.world.obstacles);
     // R5-05: коридор рывка шире стены в клетку — цель достаётся, только если видна с ближней точки пути.

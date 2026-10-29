@@ -40,12 +40,22 @@ describe('место команды', () => {
   });
 
   it('панели, открытые горячей клавишей, работают везде', () => {
-    // Эти команды шлёт обычный клиент прямо из подземелья: дерево скилов, пояс, экипировка,
-    // подбор и питьё зелья. Запрет здесь сломал бы игру, а не читера.
-    for (const cmd of ['equip', 'unequip', 'allocAttr', 'allocSkill', 'allocPassive', 'respec',
+    // Эти команды шлёт обычный клиент прямо из подземелья: дерево скилов (K — вложить, сбросить, гнёзда), лист персонажа (C —
+    // атрибуты), пояс, экипировка, подбор и питьё зелья. Запрет здесь сломал бы игру, а не читера.
+    for (const cmd of ['equip', 'unequip', 'allocAttr', 'allocSkill', 'respecSkills', 'socketInsert', 'socketClear',
       'moveBelt', 'moveItem', 'bind', 'drop', 'pickup', 'useConsumable',
       'acceptQuest', 'turnInQuest'] as const) {
       expect(cmdAllowedIn(cmd, 'dungeon'), `${cmd} в подземелье`).toBe(true);
+    }
+  });
+
+  it('⭐ С-аудит (29.10): мастер прокачки — объект города: сбросы и мастерство вне города закрыты', () => {
+    // Окно мастера оба клиента открывали только [E] у станции «Мастер прокачки» (горячей клавиши нет) и закрывали при уходе из
+    // города. Прежняя карта пускала их отовсюду: изменённый клиент перекидывал атрибуты перед боссом и вкладывал мастерство в бою.
+    for (const cmd of ['respec', 'respecPassives', 'allocPassive'] as const) {
+      expect(cmdAllowedIn(cmd, 'town'), `${cmd} в городе`).toBe(true);
+      expect(cmdAllowedIn(cmd, 'dungeon'), `${cmd} в подземелье`).toBe(false);
+      expect(cmdAllowedIn(cmd, 'arena'), `${cmd} на арене`).toBe(false);
     }
   });
 

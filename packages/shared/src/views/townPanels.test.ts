@@ -64,7 +64,7 @@ describe.skipIf(!g)('виды города ⇄ unity_panels.json', () => {
       expect(glyphOf(c.item), `${c.item.uid} glyph`).toBe(c.glyph);
       const tip = itemTipView(reg, c.item, c.item);
       expect(tip.glyph).toBe(c.glyph);
-      expect(tip.worn, 'та же вещь — без сравнения').toBeNull();
+      expect(tip.wornSlot, 'та же вещь — без сравнения').toBeNull();
       expect(tip.note === null).toBe(c.item.kind !== 'material');
       for (const b of c.bench) {
         const w = wallets[b.wallet]!;

@@ -31,6 +31,27 @@ describe('RateLimiter', () => {
     expect(rl.take('ip', t + 3_600_000)).toBe(false);
   });
 
+  it('⭐ С-аудит: доплата по факту (`charge`) уводит бакет в долг — запросы ждут, пока пополнение его не покроет', () => {
+    const rl = new RateLimiter(10, 2);   // 2 токена в секунду
+    const t = 1_000_000;
+    expect(rl.takeCost('u', 4, t)).toBe(true);   // 10 → 6
+    rl.charge('u', 20, t);                       // 6 → −14: ответ вышел длиннее цены
+    expect(rl.take('u', t), 'в долгу — отказ').toBe(false);
+    expect(rl.peek('u', t)).toBe(false);
+    expect(rl.retryAfterSec('u', t), 'до токена — 7.5 с').toBe(8);
+    expect(rl.take('u', t + 7_000), '−14 + 14 = 0 — ещё нет').toBe(false);
+    expect(rl.take('u', t + 7_500), '−14 + 15 = 1 — есть').toBe(true);
+    // пополнение — не выше ёмкости и из долга, как обычно; ноль и мусор — ничего
+    rl.charge('u', 0, t + 7_500); rl.charge('u', Number.NaN, t + 7_500); rl.charge('u', -5, t + 7_500);
+    expect(rl.take('u', t + 7_500), 'ничего не списано и не подарено').toBe(false);
+    expect(rl.takeCost('u', 10, t + 3_600_000), 'час простоя — полный бакет').toBe(true);
+    expect(rl.take('u', t + 3_600_000)).toBe(false);
+    // новый ключ: доплата со свежего бакета
+    rl.charge('v', 15, t);
+    expect(rl.take('v', t + 2_000), '10 − 15 + 4 = −1').toBe(false);
+    expect(rl.take('v', t + 3_000), '10 − 15 + 6 = 1').toBe(true);
+  });
+
   it('ключи независимы', () => {
     const rl = new RateLimiter(1, 0.001);
     const t = 1_000_000;

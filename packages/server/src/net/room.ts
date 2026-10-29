@@ -17,9 +17,9 @@ import {
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type RunWindow, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
   type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits, type ViewKind,
-  monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
+  monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, heroMelee, masterBlock, hudInfo, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
   type LastTarget, type PendingAttrs, type HeroFloor, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
-  respecView, questsView, socketsView, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
+  respecView, questsView, socketsView, socketNodes, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
   runVoteQuestion, runDeathFrame, runMapLegend, RUN_MAP_GEOM, type RunDeathState, type Lang, type EquipSlot, type SealGains,
   craftWindowView, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
@@ -279,13 +279,15 @@ const STASH_READ_CMDS: ReadonlySet<string> = new Set([
 /**
  * ⭐ С7 (29.10): у какой станции города исполняется команда (`TOWN_STATIONS[].panel`; любая из списка). Покупка — у лавки и в кузнице
  * (её вкладка «Купить»), продажа — у лавки; кузница — всё ремесло; сундук — перекладка и сдача сырья, открыть его можно и из кузницы
- * (окно кузницы читает сырьё сундука).
+ * (окно кузницы читает сырьё сундука). ⭐ С-аудит (29.10): мастер прокачки — сброс атрибутов, сброс и вложение мастерства (его окно
+ * открывается только у станции; вне города эти команды закрыты картой мест, `guard.ts`).
  */
 const STATION_CMDS: Partial<Record<TownCommand['cmd'], readonly string[]>> = {
   buy: ['shop', 'forge'], sell: ['shop'],
   forgeUpgrade: ['forge'], forgeReroll: ['forge'], forgeSalvage: ['forge'], forgeRepair: ['forge'], craft: ['forge'], forgeEnchant: ['forge'],
   forgeSketch: ['forge'], forgeExchange: ['forge'], sealReforge: ['forge'],
   depositMaterials: ['stash'], stashMove: ['stash'], stashOpen: ['stash', 'forge'],
+  respec: ['master'], respecPassives: ['master'], allocPassive: ['master'],
 };
 /** ⭐ С-аудит F8: события, которые видит только их герой (`Room.broadcastEvents`). */
 const PRIVATE_EVENTS: ReadonlySet<SessionEvent['type']> = new Set(['gold', 'xp', 'materials', 'item-picked', 'quest', 'cooldown']);
@@ -674,17 +676,28 @@ type ViewAnswer = { ok: boolean; view?: unknown; reason?: string };
  * Токен ≈ мс счёта и ≈ 11 КБ ответа: при пополнении 30/с аккаунт держит ≲ 30 мс счёта и ≲ 330 КБ/с видов, как его ни шли. Окно Unity
  * держит последний вид у себя (`ViewCache`) и спрашивает заново только после перемены — честной игре цена не видна.
  */
-function viewCost(kind: ViewKind, args: Record<string, unknown>): number {
+function viewCost(kind: ViewKind, args: Record<string, unknown>, work: ViewWork): number {
   switch (kind) {
     case 'bench': return 8;
     case 'shop': return 4;
     case 'craft': return 8;
-    case 'hero': return args.part === 'tree' ? 20 : args.part === 'mastery' ? 16 : 1;
-    // подсказки — по числу вещей в запросе (≈ 0.008 мс на вещь; 400 — ≈ 3 мс)
-    case 'item': return args.part !== 'tips' ? 1 : Array.isArray(args.uids) ? 1 + Math.floor(args.uids.length / 40) : 1 + Math.floor(VIEW_TIPS_MAX / 40);
+    // ⭐ С-аудит (29.10): гнёзда — ПО РАБОТЕ: клетки и варианты растут с числом выученных активок с гнёздами (поздний билд ≈ 74 → 11 токенов),
+    // а не стоят 1 токен за 130–200 КБ ответа, как было.
+    case 'hero': return args.part === 'tree' ? 20 : args.part === 'mastery' ? 16 : args.part === 'sockets' ? 1 + Math.ceil(work.sockets() / 8) : 1;
+    // ⭐ С-аудит (29.10): подсказки — по числу вещей ОТВЕТА (с `uids` — сколько спросили; без — сколько игроку показано, не больше
+    // `VIEW_TIPS_MAX`): ≈ 20 подсказок ≈ 11 КБ после выноса надетого (`worn`) из каждой подсказки. Раньше — 40 на токен по счёту, а байт
+    // уходило ≈ 40 КБ на токен.
+    case 'item': return args.part !== 'tips' ? 1 : 1 + Math.floor((Array.isArray(args.uids) ? args.uids.length : Math.min(work.seen(), VIEW_TIPS_MAX)) / 20);
     default: return 1;
   }
 }
+/** ⭐ С-аудит (29.10): объём работы вида, известный до счёта (лениво — считается только у вида, чья цена от него зависит). */
+interface ViewWork { sockets(): number; seen(): number }
+/**
+ * ⭐ С-аудит (29.10): БАЙТ ОТВЕТА НА ТОКЕН (доплата по факту, `RateLimiter.charge`). Ответ, вышедший длиннее `VIEW_BYTES_PER_TOKEN` × цена,
+ * доплачивает разницу — в долг: ни один вид не уходит дороже ≈ 11 КБ на токен, как бы ни ошиблась цена наперёд.
+ */
+const VIEW_BYTES_PER_TOKEN = 11_000;
 /** ⭐ С4: потолок подсказок за один запрос (сумка + сундук + прилавок окна — с запасом). */
 const VIEW_TIPS_MAX = 400;
 /** ⭐ С4: клетки пупсика, о которых окно вправе спросить. */
@@ -1076,6 +1089,8 @@ export class Room implements Tickable {
    * попасть и уклониться. Раньше её помнил клиент (по событиям `hit` и определениям монстров), теперь — сервер, по своим ударам.
    */
   private lastTargets = new Map<string, LastTarget>();
+  /** ⭐ С-аудит (29.10): «дойдёт ли монстр» меры опасности — один поиск на пару точек за тик (`reaches`); сброс — смена области и открытая дверь. */
+  private reachMemo: { world: unknown; grid: unknown; obstacles: unknown; t: number; seen: Map<string, boolean> } | null = null;
   /** ⭐ С-аудит F1: монстры, которые сейчас в виде комнаты (`roomView`; гистерезис выхода). Сбрасывается на смене этажа. */
   private inView = new Set<number>();
   /** ⭐ С-аудит F5: открытые пати куски этажа (`chunkKey`) и сетка, к которой они относятся (сменилась сетка — этаж другой, куски заново). */
@@ -1702,6 +1717,7 @@ export class Room implements Tickable {
    * в город таким, каким ушёл, а не свежим.
    */
   private floorChanged(to: 'dungeon' | 'town' | 'arena'): void {
+    this.reachMemo = null;   // ⭐ С-аудит (29.10): пути монстров меры опасности — заново на новом этаже
     for (const [id, s] of this.left) {
       if (!s.alive) { this.left.delete(id); continue; }
       delete s.pos;
@@ -3160,6 +3176,23 @@ export class Room implements Tickable {
    * за ближайшим героем сквозь стену, и спокойно вышедший считался сбежавшим из боя.
    */
   private reaches(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+    // ⭐ С-аудит (29.10): ОДИН ПОИСК НА ПАРУ ТОЧЕК ЗА ТИК. Мера опасности зовётся и из кадров (`vote` → `voteBlock` → `canDescend`, сверка
+    // голосов `silentFlees`), а поиск здесь — путь по всему этажу (до 6000 узлов, два массива на всю сетку): поток «за» на потолке кадров
+    // (80/с) умножал эти поиски на частоту кадров на общем потоке ноды. Ответ — чистая функция сетки, преград и двух точек: точки — ключ, а
+    // память живёт тик (сменилось время мира, сам мир или сетка — заново); дверь рычага (`pullLever`) и смена области её сбрасывают. Дешёвая
+    // часть меры (кто гонится, кто ближе, урон по времени) считается на каждый вызов, как прежде.
+    const w = this.session.world;
+    let memo = this.reachMemo;
+    if (!memo || memo.world !== w || memo.grid !== w.grid || memo.obstacles !== w.obstacles || memo.t !== w.timeMs) {
+      memo = this.reachMemo = { world: w, grid: w.grid, obstacles: w.obstacles, t: w.timeMs, seen: new Map() };
+    }
+    const key = `${from.x},${from.y}>${to.x},${to.y}`;
+    let v = memo.seen.get(key);
+    if (v === undefined) { v = this.reachesNow(from, to); memo.seen.set(key, v); }
+    return v;
+  }
+  /** Сам поиск (`reaches` — он же с памятью тика). */
+  private reachesNow(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
     const w = this.session.world;
     return hasLineOfSight(w.grid, from.x, from.y, to.x, to.y, w.obstacles) || findPath(w.grid, from, to).length > 0;
   }
@@ -3302,6 +3335,7 @@ export class Room implements Tickable {
     if (this.refuseFrozen(pid)) return;
     const doorId = this.session.openLever(pid, leverId);
     if (doorId == null) return;
+    this.reachMemo = null;   // ⭐ С-аудит (29.10): дверь открыта — пути монстров другие, мера опасности заново
     this.broadcast({ t: 'doorOpened', doorId });
     // R4-01: дёрнутый рычаг — в запись узла: продолжение откроет его дверь сразу.
     if (this.nodeState && this.area === 'dungeon' && noteNodeId(this.nodeState.levers, leverId)) this.syncNodeState();
@@ -3729,6 +3763,9 @@ export class Room implements Tickable {
     // Голос только от игрока комнаты: сессия, снятая за устаревший сейв (R1-01), ещё может прислать кадр,
     // пока её сокет закрывается, — и «за» призрака провело бы переход без согласия живых.
     if (!this.vote || !this.clients.has(pid) || this.refuseFrozen(pid)) return;
+    // ⭐ С-аудит (29.10): ПОВТОР «ЗА» — НИЧЕГО. Голос уже засчитан: повтор не меняет ни счёта, ни исхода (сверка `checkVote` перепроверяет
+    // каждое «за» перед переходом сама), а стоил меры опасности с поиском пути и кадра `voteUpdate` всей комнате — на каждый кадр потока.
+    if (accept && this.vote.yes.has(pid)) return;
     // ⭐ R4-14, R4-25, R5-04: «за» засчитывается только тому, кто может перейти: в город из подземелья и завершение финала —
     // у портала или мёртвым (иначе напарник у портала уводил из любого боя без штрафа), спуск — не из-под монстра вдали от
     // выхода и не переписывая свой чужой забег.
@@ -4926,13 +4963,24 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     if (!c || this.frozen) return;
     const answer = (out: { ok: boolean; view?: unknown; reason?: string }): void => this.send(c.ws, { t: 'view', id, kind, ...out });
-    if (!limits.viewReq.takeCost(c.userId, viewCost(kind, args ?? {}))) { answer({ ok: false, reason: 'Слишком часто' }); return; }
     const p = this.session.world.players[pid];
+    const work: ViewWork = {
+      sockets: () => (p ? socketNodes(this.cfg, p.save).length : 0),
+      seen: () => (p ? this.itemsSeen(p.save, c.stashSeen ?? null).length : 0),
+    };
+    const cost = viewCost(kind, args ?? {}, work);
+    if (!limits.viewReq.takeCost(c.userId, cost)) { answer({ ok: false, reason: 'Слишком часто' }); return; }
     if (!p) { answer({ ok: false, reason: 'Нет персонажа' }); return; }
     let out: { ok: boolean; view?: unknown; reason?: string };
     try { out = this.viewOf(pid, kind, args ?? {}); }
     catch (e) { console.error(`[room ${this.code}] вид «${kind}» игрока ${p.save.charId} упал:`, e); out = { ok: false, reason: 'Ошибка сервера' }; }
-    answer(out);
+    // ⭐ С-аудит (29.10): кадр собирается ОДИН раз — его длина и есть счёт за байты: длиннее цены (`VIEW_BYTES_PER_TOKEN` на токен) —
+    // доплата в долг (`charge`), следующие запросы аккаунта ждут пополнения.
+    const text = JSON.stringify({ t: 'view', id, kind, ...out });
+    // байты ПРОВОДА (UTF-8): кириллица — два байта на знак, `text.length` (UTF-16) занижал счёт в 1.2–1.3 раза
+    const extra = Math.ceil(Buffer.byteLength(text, 'utf8') / VIEW_BYTES_PER_TOKEN) - cost;
+    if (extra > 0) limits.viewReq.charge(c.userId, extra);
+    if (c.ws.open) c.ws.send(text);
   }
 
   /** ⭐ С2/С4–С6: вид `kind` игрока `pid` по выбору окна `args`. Каждый вид — функция `shared/views`, её же зовёт редактор. */
@@ -5040,12 +5088,13 @@ export class Room implements Tickable {
       case 'tips': {
         // Без `uids` — подсказки ВСЕГО показанного игроку (сумка, надетое, сундук, прилавок): ключ запроса у окна один и тот же, и кэш
         // видов не копит по записи на каждую перемену сумки. С `uids` — только эти (не больше `VIEW_TIPS_MAX`).
+        // ⭐ С-аудит (29.10): ответ — `{ tips, worn }`: надетое для сравнения — один раз на слот (`ItemTip.wornSlot` → `worn`), а не в каждой подсказке.
         const seen = this.itemsSeen(save, stash);
-        if (args.uids === undefined) return { ok: true, view: { tips: itemTipsView(this.cfg, save, seen.slice(0, VIEW_TIPS_MAX)) } };
+        if (args.uids === undefined) return { ok: true, view: itemTipsView(this.cfg, save, seen.slice(0, VIEW_TIPS_MAX)) };
         const uids = Array.isArray(args.uids) ? args.uids : null;
         if (!uids || uids.length > VIEW_TIPS_MAX) return { ok: false, reason: 'Неверный запрос вида' };
         const want = new Set(uids.map(argId).filter((u): u is string => u !== null));
-        return { ok: true, view: { tips: itemTipsView(this.cfg, save, seen.filter((it) => want.has(it.uid))) } };
+        return { ok: true, view: itemTipsView(this.cfg, save, seen.filter((it) => want.has(it.uid))) };
       }
       case 'equip': {
         const uid = argId(args.uid), cell = argId(args.cell);
@@ -6306,6 +6355,8 @@ export class Room implements Tickable {
       hudInfo: hudInfo(this.cfg, save, this.heroFloor()),
       xp,
       toggles: [...p.toggles],
+      // ⭐ С-аудит (29.10): конус взмаха — той же формулой, что бьёт (`heroMelee` → `meleeGeometry`): дебаг-слою клиента считать нечего
+      melee: heroMelee(this.cfg, save),
     };
     const text = JSON.stringify(view);
     if (text === c.heroSent) return;

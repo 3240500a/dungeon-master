@@ -209,6 +209,60 @@ describe('⭐ С7: команда станции города — только �
     }
   });
 
+  it('⭐ С-аудит: мастер прокачки — станция: сбросы и мастерство только у мастера; в подземелье и на арене — «только в городе»', async () => {
+    const { townStationAt, STATION_USE_R, allocPassive, passiveAllocCheck } = await import('@dm/shared');
+    const prev = process.env.DM_STATION_CHECK;
+    process.env.DM_STATION_CHECK = 'on';
+    try {
+      const room = newRoom();
+      const a = join(room, 'A');
+      await settle();
+      type P = { pos: { x: number; y: number }; save: SaveState };
+      const w = room as unknown as { area: string; movedAt: number; session: { world: { players: Record<string, P> } } };
+      const p = w.session.world.players[a.pid]!;
+      // вложение мастерства, которое команда исполнила бы: вход вложен, очки и золото есть
+      const tree = cfg.get('mastery-tree');
+      p.save.masteries[tree.entryNodes[0]!] = 1; p.save.unspentMasteryPoints = 3; p.save.gold = 1_000_000; p.save.level = 20;
+      const node = tree.nodes.find((n) => allocPassive(cfg, structuredClone(p.save), n.id).ok)!;
+      const chk = passiveAllocCheck(cfg, p.save, node.id);
+      const cost = chk.ok ? chk.cost : 0;
+      const cmds = [
+        { cmd: 'respec', maxGold: 1_000_000 }, { cmd: 'respecPassives', maxGold: 1_000_000 }, { cmd: 'allocPassive', nodeId: node.id, maxGold: cost },
+      ];
+      const master = townStationAt('master')!;
+      p.pos = { x: master.x + STATION_USE_R + 30, y: master.y };
+      let id = 30;
+      for (const cmd of cmds) {
+        await room.handleCmd(a.pid, cmd, ++id);
+        expect(last(a.ws), `${cmd.cmd} с края площади`).toMatchObject({ ok: false, reason: 'Подойдите ближе: Мастер прокачки' });
+      }
+      expect(p.save.masteries[node.id] ?? 0, 'отказ — ничего не вложено').toBe(node.id === tree.entryNodes[0] ? 1 : 0);
+      p.pos = { x: master.x + 10, y: master.y };
+      await room.handleCmd(a.pid, cmds[2]!, ++id);
+      expect(last(a.ws), 'у мастера — исполняется').toMatchObject({ ok: true });
+      // вне города — карта мест (`guard.ts`), до всякой станции; флаг стенда её не снимает
+      process.env.DM_STATION_CHECK = 'off';
+      w.movedAt = 0; room.descend(a.pid);
+      await settle();
+      expect(w.area).toBe('dungeon');
+      for (const cmd of cmds) {
+        await room.handleCmd(a.pid, cmd, ++id);
+        expect(last(a.ws), `${cmd.cmd} в подземелье`).toMatchObject({ ok: false, reason: 'Это доступно только в городе' });
+      }
+      w.movedAt = 0; room.returnTown(a.pid);
+      await settle();
+      w.movedAt = 0; room.enterArena(a.pid);
+      await settle();
+      expect(w.area).toBe('arena');
+      for (const cmd of cmds) {
+        await room.handleCmd(a.pid, cmd, ++id);
+        expect(last(a.ws), `${cmd.cmd} на арене`).toMatchObject({ ok: false, reason: 'Это доступно только в городе' });
+      }
+    } finally {
+      if (prev === undefined) delete process.env.DM_STATION_CHECK; else process.env.DM_STATION_CHECK = prev;
+    }
+  });
+
   it('флаг стенда в бою игнорируется', async () => {
     const { stationCheckOff } = await import('./devFlags.js');
     expect(stationCheckOff({ DM_STATION_CHECK: 'off', NODE_ENV: 'production' })).toBe(false);
@@ -302,9 +356,82 @@ describe('⭐ С7: спуск и арена из города — у порта�
       const acts = joined.floor.interactables ?? [];
       expect(acts.find((x) => x.panel === 'difficulty')?.reach).toBe(STATION_USE_R);
       expect(acts.find((x) => x.panel === 'forge')?.reach).toBe(STATION_USE_R);
+      expect(acts.find((x) => x.panel === 'master')?.reach, '⭐ С-аудит: мастер — станция, окно закрывается вдали').toBe(STATION_USE_R);
       expect(acts.find((x) => x.panel === 'quests')?.reach, 'задания — откуда угодно').toBeUndefined();
     } finally {
       if (prev === undefined) delete process.env.DM_STATION_CHECK; else process.env.DM_STATION_CHECK = prev;
     }
+  });
+});
+
+/**
+ * ⭐ С-аудит (29.10): ПОТОК «ЗА» НЕ ДОЛЖЕН СТОИТЬ ПОИСКОВ ПУТИ. Кадр `vote` платил только общий потолок кадров (80/с), а каждый — меру
+ * опасности (поиск пути на каждого гонящегося монстра) и `voteUpdate` всей комнате, хотя голос давно засчитан.
+ */
+describe('⭐ С-аудит: голос и мера опасности — без умножения на частоту кадров', () => {
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  type Danger = { inDanger(p: unknown): boolean; step(): void; session: { world: { timeMs: number; players: Record<string, unknown> } } };
+
+  it('повтор «за» уже голосовавшего — без `voteUpdate` комнате; голос второго — как прежде', async () => {
+    const room = newRoom();
+    const a = join(room, 'A'), b = join(room, 'B');
+    await settle();
+    room.descend(a.pid);   // спуск из города: голосование, «за» — позвавший
+    const updates = (ws: FakeWs): number => ws.frames.filter((f) => f.t === 'voteUpdate').length;
+    expect(b.ws.frames.some((f) => f.t === 'voteStart'), 'голосование открыто').toBe(true);
+    const before = updates(b.ws);
+    for (let i = 0; i < 50; i++) room.castVote(a.pid, true);
+    expect(updates(b.ws), 'повтор ничего не шлёт').toBe(before);
+    room.castVote(b.pid, true);
+    await settle();
+    expect((room as unknown as { area: string }).area, 'оба «за» — спуск').toBe('dungeon');
+  });
+
+  it('мера опасности: поиск пути — один на пару точек за тик; новый тик, шаг героя, смена области — заново; кто гонится — как прежде', async () => {
+    const room = newRoom();
+    const a = join(room, 'A');
+    await settle();
+    room.descend(a.pid);
+    await settle();
+    type Mon = { alive: boolean; aiState: string; windup?: unknown; pos: { x: number; y: number } };
+    const r = room as unknown as Danger & { reachesNow(f: unknown, t: unknown): boolean; session: { world: { monsters: Mon[] } } };
+    const w = r.session.world;
+    const p = w.players[a.pid] as { pos: { x: number; y: number } };
+    expect(w.monsters.length, 'на этаже есть монстры').toBeGreaterThan(0);
+    // ровно один гонится за героем (он ближайший — герой один)
+    const chase = (): Mon => {
+      for (const m of w.monsters) { m.aiState = 'idle'; delete m.windup; }
+      const m = w.monsters[0]!;
+      m.alive = true; m.aiState = 'chase'; m.pos = { x: p.pos.x + 60, y: p.pos.y };
+      return m;
+    };
+    const m = chase();
+    const spy = vi.spyOn(r, 'reachesNow');
+    const first = r.inDanger(p);
+    for (let i = 0; i < 100; i++) expect(r.inDanger(p)).toBe(first);
+    expect(spy, 'сотня кадров в одном тике — один поиск').toHaveBeenCalledTimes(1);
+    // дешёвая часть меры — на каждый вызов: оторвался — угрозы нет сразу, поиска нет
+    m.aiState = 'idle';
+    expect(r.inDanger(p)).toBe(false);
+    m.aiState = 'chase';
+    expect(r.inDanger(p)).toBe(first);
+    expect(spy).toHaveBeenCalledTimes(1);
+    // герой шагнул — другие точки, поиск заново
+    p.pos = { x: p.pos.x + 1, y: p.pos.y };
+    r.inDanger(p);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // новый тик — заново
+    const t0 = w.timeMs;
+    r.step();
+    expect(w.timeMs).toBeGreaterThan(t0);
+    chase();
+    r.inDanger(p); r.inDanger(p);
+    expect(spy, 'новый тик — поиск заново').toHaveBeenCalledTimes(3);
+    expect((room as unknown as { reachMemo: unknown }).reachMemo).not.toBeNull();
+    (room as unknown as { movedAt: number }).movedAt = 0;
+    room.returnTown(a.pid);
+    await settle();
+    expect((room as unknown as { reachMemo: unknown }).reachMemo, 'смена области — память сброшена').toBeNull();
+    spy.mockRestore();
   });
 });

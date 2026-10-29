@@ -20,6 +20,18 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
+ * ⭐ С-аудит (29.10): ГЕОМЕТРИЯ ВЗМАХА — одна формула боя и вида. Дальность — `baseRange` баланса × досягаемость оружия (`reachMult`) ×
+ * множитель скила (`rangeMult`); `halfArc` — ПОЛУугол сектора (рад): цель бьётся, если `|угол − взгляд| ≤ halfArc` (`GameSession.meleeSwing`).
+ * Ею бьёт сервер и её же шлёт клиенту в кадре героя (`heroMelee` → `hero.melee`): дебаг-слой F3 рисует конус сервера, а не свою копию
+ * (копия Unity считала тем же выражением, но рисовала половину угла — сектор вдвое уже настоящего).
+ */
+export function meleeGeometry(
+  mel: { baseRange: number; baseArc: number }, weapon?: { reachMult?: number; arcMult?: number }, rangeMult = 1, arcMult = 1,
+): { range: number; halfArc: number } {
+  return { range: mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult, halfArc: mel.baseArc * (weapon?.arcMult ?? 1) * arcMult };
+}
+
+/**
  * Полу-ширина «коридора» удара по размаху: сектор радиуса `range` и полу-угла `arc` даёт на радиусе
  * поперечную полу-ширину `range·sin(arc)`. Одна формула для сервера (попадание рывка) и клиента
  * (VFX-полоса) — ширина рывка совпадает с размахом обычного удара тем же оружием×скиллом.

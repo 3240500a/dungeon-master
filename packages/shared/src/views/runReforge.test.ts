@@ -4,8 +4,8 @@ import type { SaveState } from '../types/save.js';
 import type { Item } from '../types/items.js';
 import type { AccountStash } from '../types/stash.js';
 import { createRng } from '../formulas/rng.js';
-import { SEAL_REFORGE_FEW, canReforgeSeals, reforgeSeals } from '../economy/seals.js';
-import { sealReforge } from '../economy/townActions.js';
+import { SEAL_REFORGE_FEW, SEAL_REFORGE_ROOM, canReforgeSeals, reforgeSeals } from '../economy/seals.js';
+import { sealReforge, sealReroll } from '../economy/townActions.js';
 import { RUN_REFORGE_TEXT, runReforgeHead, runReforgeTake, runReforgeView, type RunReforgeModel } from './runReforge.js';
 
 /**
@@ -192,5 +192,76 @@ describe('С-views: КАКИЕ ПЕЧАТИ СЖЕЧЬ — решает серв
     expect(runReforgeTake(r, s, null, 'swarming@t1')).toBeNull();
     expect(runReforgeTake(r, s, null, 't1|')).toBeNull();
     expect(runReforgeTake(cfg('sameKind', { on: false }), s, stashOf([['swarming', 't1', 5]]), 'swarming@t1')).toBeNull();
+  });
+});
+
+/**
+ * ⭐ С-аудит (29.10): МЕСТО ПОД НОВУЮ ПЕЧАТЬ. Печати лежат в сундуке (там им и место — «Печати берутся из сумки и из сундука»), а сумка
+ * забита: перековка списывает из сундука, сумке это места не освобождает, и сервер отвечает `SEAL_REFORGE_ROOM`. Раньше карточка говорила
+ * «можно» (кнопка «Перековать» горела); теперь — пробный прогон на копиях, и отказ карточки — слово в слово отказ команды.
+ */
+describe('С-аудит: карточка перековки и переката — с местом под результат (как сервер)', () => {
+  /** Сумка, забитая нестекаемыми вещами 1×1 по всем клеткам; первые клетки — печати `extra` (стопки с позициями). */
+  function fullBag(r: ConfigRegistry, extra: [string, string, number][] = []): Item[] {
+    const { cols, rows } = r.get('balance').inventory;
+    const out: Item[] = [];
+    let i = 0;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++, i++) {
+      const e = extra[i];
+      out.push(e
+        ? ({ ...seal(e[0], e[1], e[2]), gridW: 1, gridH: 1, pos: { x, y } } as Item)
+        : ({ uid: `f${i}`, kind: 'gear', name: 'Хлам', rarity: 'normal', gridW: 1, gridH: 1, pos: { x, y } } as unknown as Item));
+    }
+    return out;
+  }
+  const withBag = (s: SaveState, bag: Item[]): SaveState => { s.inventory = bag; return s; };
+
+  it('sameKind: полная сумка, печати в сундуке — карточка «нет места», и команда отказывает тем же словом; есть стопка результата — можно', () => {
+    const r = cfg('sameKind');
+    const s = withBag(save(40, 0), fullBag(r));
+    const st = stashOf([['swarming', 't1', 3]]);
+    const card = find(runReforgeView(r, s, st), 'swarming@t1')!;
+    expect(card).toMatchObject({ can: false, reason: SEAL_REFORGE_ROOM, carried: 3, result: '→ II' });
+    const before = JSON.stringify([s.inventory, st]);
+    const out = sealReforge(r, s, st, runReforgeTake(r, s, st, card.key)!, createRng(3));
+    expect(out).toEqual({ ok: false, reason: card.reason });
+    expect(JSON.stringify([s.inventory, st]), 'вид и отказ ничего не тронули').toBe(before);
+    // стопка «Кишащий II» с местом — результат дольётся в неё: карточка пускает, команда исполняется
+    const s2 = withBag(save(40, 0), fullBag(r, [['swarming', 't2', 1]]));
+    const st2 = stashOf([['swarming', 't1', 3]]);
+    const ok = find(runReforgeView(r, s2, st2), 'swarming@t1')!;
+    expect([ok.can, ok.reason]).toEqual([true, null]);
+    expect(sealReforge(r, s2, st2, runReforgeTake(r, s2, st2, ok.key)!, createRng(3)).ok).toBe(true);
+  });
+
+  it('⚠ порядок — как у сервера: место проверяется ПОСЛЕДНИМ (бедному — «нет золота», а не «нет места»)', () => {
+    const r = cfg('sameKind', { goldCost: 300 });
+    const card = find(runReforgeView(r, withBag(save(40, 10), fullBag(r)), stashOf([['swarming', 't1', 3]])), 'swarming@t1')!;
+    expect(card).toMatchObject({ can: false, reason: RUN_REFORGE_TEXT.gold });
+  });
+
+  it('sameTier: вид решает бросок — карточка пускает, только если влезет ЛЮБОЙ (стопка одного вида — мало)', () => {
+    const r = cfg('sameTier');
+    const st = (): AccountStash => stashOf([['swarming', 't1', 2], ['enduring', 't1', 1]]);
+    const one = withBag(save(40, 0), fullBag(r, [['swarming', 't2', 1]]));
+    expect(find(runReforgeView(r, one, st()), 't1|')).toMatchObject({ can: false, reason: SEAL_REFORGE_ROOM });
+    const both = withBag(save(40, 0), fullBag(r, [['swarming', 't2', 1], ['enduring', 't2', 1]]));
+    expect(find(runReforgeView(r, both, st()), 't1|')).toMatchObject({ can: true, reason: null });
+    // сумка свободна — как раньше
+    expect(find(runReforgeView(r, save(40, 0), st()), 't1|')).toMatchObject({ can: true, reason: null });
+  });
+
+  it('перекат: полная сумка, печать в сундуке — «нет места», команда отказывает тем же; печать в сумке освобождает клетку — можно', () => {
+    const r = cfg('sameTier');
+    const s = withBag(save(40, 10_000), fullBag(r));
+    const st = stashOf([['swarming', 't1', 1]]);
+    const card = runReforgeView(r, s, st).rerolls.find((c) => c.key === 'swarming@t1')!;
+    expect(card).toMatchObject({ can: false, reason: SEAL_REFORGE_ROOM });
+    expect(sealReroll(r, s, st, { [card.key]: 1 }, createRng(5))).toEqual({ ok: false, reason: card.reason });
+    // та же печать лежит в сумке одной штукой — списание освобождает её клетку
+    const s2 = withBag(save(40, 10_000), fullBag(r, [['swarming', 't1', 1]]));
+    const card2 = runReforgeView(r, s2, null).rerolls.find((c) => c.key === 'swarming@t1')!;
+    expect([card2.can, card2.reason]).toEqual([true, null]);
+    expect(sealReroll(r, s2, null, { [card2.key]: 1 }, createRng(5)).ok).toBe(true);
   });
 });

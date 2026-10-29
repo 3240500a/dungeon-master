@@ -91,7 +91,11 @@
    "frac": 0,
    "max": false
   },
-  "toggles": []
+  "toggles": [],
+  "melee": {
+   "range": 52,
+   "halfArc": 1.2800000000000002
+  }
  },
  "sheet": {
   "blocks": [
@@ -18299,27 +18303,7 @@
      ],
      "note": null,
      "origin": "Вещь из прежней версии",
-     "worn": {
-      "name": "Убогие Кожаные сапоги",
-      "lines": [
-       {
-        "text": "Броня: Кожаная",
-        "affix": false
-       },
-       {
-        "text": "+3 Броня",
-        "affix": false
-       },
-       {
-        "text": "+5% Скор. движения",
-        "affix": false
-       },
-       {
-        "text": "Уровень предмета: 1",
-        "affix": false
-       }
-      ]
-     }
+     "wornSlot": "boots"
     },
     "g-magic": {
      "uid": "g-magic",
@@ -18357,35 +18341,7 @@
      ],
      "note": null,
      "origin": "Вещь из прежней версии",
-     "worn": {
-      "name": "Убогий Ручной топор",
-      "lines": [
-       {
-        "text": "Тип: ближний · физический · топор · лёгкое · одноручное",
-        "affix": false
-       },
-       {
-        "text": "Урон: 4–10 (физ.)",
-        "affix": false
-       },
-       {
-        "text": "Скорость: ×1.00 · 60 уд/мин",
-        "affix": false
-       },
-       {
-        "text": "✦ рубящий → увечье, широкая дуга",
-        "affix": false
-       },
-       {
-        "text": "Требует: Сила 10, Ловкость 15",
-        "affix": false
-       },
-       {
-        "text": "Уровень предмета: 1",
-        "affix": false
-       }
-      ]
-     }
+     "wornSlot": "weapon"
     },
     "g-rare": {
      "uid": "g-rare",
@@ -18423,23 +18379,7 @@
      ],
      "note": null,
      "origin": "Вещь из прежней версии",
-     "worn": {
-      "name": "Убогий Кожаный шлем",
-      "lines": [
-       {
-        "text": "Броня: Кожаная",
-        "affix": false
-       },
-       {
-        "text": "+5 Броня",
-        "affix": false
-       },
-       {
-        "text": "Уровень предмета: 1",
-        "affix": false
-       }
-      ]
-     }
+     "wornSlot": "helm"
     },
     "g-rare2": {
      "uid": "g-rare2",
@@ -18493,35 +18433,7 @@
      ],
      "note": null,
      "origin": "Вещь из прежней версии",
-     "worn": {
-      "name": "Убогий Ручной топор",
-      "lines": [
-       {
-        "text": "Тип: ближний · физический · топор · лёгкое · одноручное",
-        "affix": false
-       },
-       {
-        "text": "Урон: 4–10 (физ.)",
-        "affix": false
-       },
-       {
-        "text": "Скорость: ×1.00 · 60 уд/мин",
-        "affix": false
-       },
-       {
-        "text": "✦ рубящий → увечье, широкая дуга",
-        "affix": false
-       },
-       {
-        "text": "Требует: Сила 10, Ловкость 15",
-        "affix": false
-       },
-       {
-        "text": "Уровень предмета: 1",
-        "affix": false
-       }
-      ]
-     }
+     "wornSlot": "weapon"
     },
     "g-mat": {
      "uid": "g-mat",
@@ -18549,7 +18461,7 @@
       "Продажа: 1 за штуку"
      ],
      "origin": null,
-     "worn": null
+     "wornSlot": null
     },
     "g-seal": {
      "uid": "g-seal",
@@ -18571,7 +18483,7 @@
      ],
      "note": null,
      "origin": null,
-     "worn": null
+     "wornSlot": null
     },
     "g-worn-weapon": {
      "uid": "g-worn-weapon",
@@ -18609,7 +18521,7 @@
      ],
      "note": null,
      "origin": "Стартовый набор",
-     "worn": null
+     "wornSlot": null
     },
     "g-worn-helm": {
      "uid": "g-worn-helm",
@@ -18635,7 +18547,7 @@
      ],
      "note": null,
      "origin": "Стартовый набор",
-     "worn": null
+     "wornSlot": null
     },
     "g-worn-chest": {
      "uid": "g-worn-chest",
@@ -18661,7 +18573,7 @@
      ],
      "note": null,
      "origin": "Стартовый набор",
-     "worn": null
+     "wornSlot": null
     },
     "g-worn-boots": {
      "uid": "g-worn-boots",
@@ -18691,7 +18603,7 @@
      ],
      "note": null,
      "origin": "Стартовый набор",
-     "worn": null
+     "wornSlot": null
     },
     "g-worn-belt": {
      "uid": "g-worn-belt",
@@ -18725,7 +18637,76 @@
      ],
      "note": null,
      "origin": "Стартовый набор",
-     "worn": null
+     "wornSlot": null
+    }
+   },
+   "worn": {
+    "boots": {
+     "name": "Убогие Кожаные сапоги",
+     "lines": [
+      {
+       "text": "Броня: Кожаная",
+       "affix": false
+      },
+      {
+       "text": "+3 Броня",
+       "affix": false
+      },
+      {
+       "text": "+5% Скор. движения",
+       "affix": false
+      },
+      {
+       "text": "Уровень предмета: 1",
+       "affix": false
+      }
+     ]
+    },
+    "weapon": {
+     "name": "Убогий Ручной топор",
+     "lines": [
+      {
+       "text": "Тип: ближний · физический · топор · лёгкое · одноручное",
+       "affix": false
+      },
+      {
+       "text": "Урон: 4–10 (физ.)",
+       "affix": false
+      },
+      {
+       "text": "Скорость: ×1.00 · 60 уд/мин",
+       "affix": false
+      },
+      {
+       "text": "✦ рубящий → увечье, широкая дуга",
+       "affix": false
+      },
+      {
+       "text": "Требует: Сила 10, Ловкость 15",
+       "affix": false
+      },
+      {
+       "text": "Уровень предмета: 1",
+       "affix": false
+      }
+     ]
+    },
+    "helm": {
+     "name": "Убогий Кожаный шлем",
+     "lines": [
+      {
+       "text": "Броня: Кожаная",
+       "affix": false
+      },
+      {
+       "text": "+5 Броня",
+       "affix": false
+      },
+      {
+       "text": "Уровень предмета: 1",
+       "affix": false
+      }
+     ]
     }
    }
   },

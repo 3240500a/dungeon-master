@@ -1,7 +1,7 @@
 /**
  * Стенд проверок видов города (town*.test.ts): реестр конфига ИЗ СНИМКА ЭТАЛОНА и чтение эталонов.
  *
- * Эталоны Unity (`unity_town.json`, `unity_panels.json`, `unity_salvage.json`, `unity_exchange_golden.json`, `unity_stats.json`) кладут в
+ * Эталоны Unity (`unity_town.json`, `unity_panels.json`, `unity_salvage.json`, `unity_exchange.json`, `unity_stats.json`) кладут в
  * `config` ровно те поля таблиц, что читал порт C#. Схемам реестра этого мало (имени базы нет, полей детали нет), поэтому таблица эталона
  * накладывается построчно на встроенную: строка с тем же `id` (у приманок вида `iron-3-off` — строка-прототип `iron-3`), поля эталона —
  * поверх. Строки и их ПОРЯДОК — эталона (приманка перед `iron-3` стоит именно там, где её поставил генератор). `balance` — глубокое
@@ -18,15 +18,17 @@ const ROOT = join(HERE, '..', '..', '..', '..');
 
 /**
  * Пути эталонов. ⭐ С11 (29.10): эталоны веб-окон ЗАМОРОЖЕНЫ в `__fixtures__` (выход веб-клиента на теге `web-client-final`): веб-клиента и
- * портов правил Unity больше нет, вид сервера — сам источник, а файлы держат прежнее поведение окон как регрессию. Обмен живёт только в
- * Unity — читается оттуда, нет — тест пропускается.
+ * портов правил Unity больше нет, вид сервера — сам источник, а файлы держат прежнее поведение окон как регрессию.
+ * ⭐ С-аудит (29.10): и эталон вкладки «⇄ Обмен» — тоже здесь (`unity_exchange.json`, байт в байт `Assets/DM/UI/Tests/unity_exchange_golden.json`
+ * HEAD Unity-репо до удаления порта): раньше он читался из соседнего Unity-репо, а с удалением файла там весь `townExchange.test.ts` молча
+ * пропускался. Нет файла — тест ПАДАЕТ, а не пропускается.
  */
 export const GOLDEN = {
   town: join(HERE, '__fixtures__', 'unity_town.json'),
   panels: join(HERE, '__fixtures__', 'unity_panels.json'),
   salvage: join(ROOT, 'packages/shared/src/economy/__golden__/unity_salvage.json'),
   stats: join(HERE, '__fixtures__', 'unity_stats.json'),
-  exchange: join(ROOT, '..', 'ashes of the past', 'Ashes of the past', 'Assets', 'DM', 'UI', 'Tests', 'unity_exchange_golden.json'),
+  exchange: join(HERE, '__fixtures__', 'unity_exchange.json'),
 } as const;
 
 export function readGolden<T = Record<string, unknown>>(path: string): T | null {

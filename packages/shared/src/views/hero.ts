@@ -30,7 +30,7 @@ import { xpProgress } from '../formulas/xp.js';
 import { attackByType, type TypedRange } from '../formulas/playerCombat.js';
 import { asHeld, gripOf } from '../formulas/versatile.js';
 import { carriedGear, effectiveLevel, floorMonsterLevel } from '../formulas/power.js';
-import { abilityRankMult } from '../formulas/combat.js';
+import { abilityRankMult, meleeGeometry } from '../formulas/combat.js';
 import { elementDebuffs, shapeSkillPacket, weaponDebuffs, type SkillDamageShape } from '../formulas/resolveWeapon.js';
 import { armorPoise } from '../formulas/resolveArmor.js';
 import { PERCENT_STATS, STAT_LABEL } from '../formulas/itemDescribe.js';
@@ -111,6 +111,21 @@ export function heroCalc(cfg: ConfigRegistry, save: SaveState, toggles: readonly
 export function heroNumbers(cfg: ConfigRegistry, save: SaveState, toggles: readonly string[], opts: HeroOpts = {}): HeroNumbers {
   const h = heroCalc(cfg, save, toggles, opts);
   return { derived: h.derived, effective: h.effective, permanent: h.permanent, reserveMana: h.reserveMana, reserveStamina: h.reserveStamina };
+}
+
+/**
+ * ⭐ С-аудит (29.10): КОНУС ВЗМАХА ГЕРОЯ — поле `melee` кадра `hero` (дебаг-слой F3 клиента рисует его, своей формулы у клиента нет).
+ * Та же `meleeGeometry`, которой бьёт сервер (`GameSession.meleeSwing`), от оружия первого взмаха базовой атаки — основной руки в хвате
+ * (`asHeld`, как `attackWeaponsOf(...)[0]`): `range` — дальность (px мира, от центра героя до центра цели), `halfArc` — ПОЛУугол сектора
+ * (рад). Множители скила (`rangeMult`/`arcMult`) — у взмаха скила свои, сюда не входят. Оружие бьёт снарядом (`attackType` не `melee`:
+ * лук, посох-болт) — `null`: взмаха нет.
+ */
+export interface HeroMelee { range: number; halfArc: number }
+export function heroMelee(cfg: ConfigRegistry, save: SaveState): HeroMelee | null {
+  const bal = cfg.get('balance');
+  const weapon = asHeld(save.equipment.weapon, save, gripOf(bal.versatile));
+  if ((weapon?.attackType ?? 'melee') !== 'melee') return null;
+  return meleeGeometry(bal.melee, weapon);
 }
 
 // ── общие подписи ──────────────────────────────────────────────────────────────────────────────────

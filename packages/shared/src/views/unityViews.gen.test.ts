@@ -26,7 +26,7 @@ import { acceptQuest, ensureMainQuest, generateBoard } from '../economy/questLog
 import type { Item } from '../types/items.js';
 import { addToInventory } from '../inventory/grid.js';
 import type { AccountStash } from '../types/stash.js';
-import { heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView } from './hero.js';
+import { heroNumbers, heroMelee, masterBlock, hudInfo, sheetView, skillTreeView } from './hero.js';
 import { craftWindowView, initialCraftState } from './craft.js';
 import { craftWeapon, fullJournal } from '../formulas/craft.js';
 import {
@@ -106,6 +106,8 @@ describe('эталон моделей окон для Unity (виды серве
       hero: {
         numbers: heroNumbers(cfg, save, []), master: masterBlock(cfg, save, []), hudInfo: hudInfo(cfg, save, floor),
         xp: xpProgress(save.level, save.xp, cfg.get('balance').xpTable), toggles: [],
+        // ⭐ С-аудит (29.10): конус взмаха сервера (дебаг-слой F3)
+        melee: heroMelee(cfg, save),
       },
       sheet: { blocks: sheetView(cfg, save, [], live, { lastTarget: { name: 'Зомби', accuracy: 40, evade: 20 } }) },
       sheetPending: { blocks: sheetView(cfg, save, [], live, { pending: { strength: 2, vitality: 1 } }) },
@@ -119,7 +121,8 @@ describe('эталон моделей окон для Unity (виды серве
         mastery: masteryTreeView(cfg, save),
         menu: { items: itemMenuView(cfg, save, stash, bag[2]!.uid, true) },
         menuField: { items: itemMenuView(cfg, save, stash, bag[2]!.uid, false) },
-        tips: { tips: itemTipsView(cfg, save, [...bag, ...worn]) },
+        // ⭐ С-аудит (29.10): `{ tips, worn }` — надетое для сравнения по разу на слот, подсказка ссылается на него `wornSlot`
+        tips: itemTipsView(cfg, save, [...bag, ...worn]),
         equip: paperdollEquipView(cfg, save, weapon, 'weapon'),
         equipWrong: paperdollEquipView(cfg, save, weapon, 'boots'),
         materials: materialsView(cfg, stash.materials, save.inventory),
@@ -155,6 +158,9 @@ describe('эталон моделей окон для Unity (виды серве
     expect(out.tree.nodes.length).toBeGreaterThan(10);
     expect(out.town.bench, 'верстак по оружию из сумки').not.toBeNull();
     expect(Object.keys(out.town.tips.tips).length).toBeGreaterThan(4);
+    expect(Object.keys(out.town.tips.worn).length, 'есть сравнение с надетым').toBeGreaterThan(0);
+    expect(Object.values(out.town.tips.tips).some((t) => t.wornSlot !== null) && Object.values(out.town.tips.tips).some((t) => t.wornSlot === null)).toBe(true);
+    expect(out.hero.melee, 'конус взмаха').not.toBeNull();
     expect(out.run.map.nodes.length).toBeGreaterThan(3);
     const file = join(HERE, '__golden__', 'unity_views.json');
     mkdirSync(dirname(file), { recursive: true });

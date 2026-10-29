@@ -105,7 +105,8 @@ export function floorInteractables(f: Pick<FloorInit, 'area' | 'exits' | 'stairs
     return out;
   }
   // ⭐ С7: станциям ремесла и сундуку (их команды сервер судит по близости) и порталу (спуск и арена — от него) — досягаемость.
-  const judged = new Set(['shop', 'forge', 'stash']);
+  // ⭐ С-аудит (29.10): и мастеру прокачки — его сбросы и мастерство сервер тоже исполняет только рядом (`STATION_CMDS`): ушёл — окно закрывается.
+  const judged = new Set(['shop', 'forge', 'stash', 'master']);
   for (const s of TOWN_STATIONS) out.push({ ...at(s.cx, s.cy), radius: INTERACT_R.npc, act: 'panel', label: s.label, panel: s.panel, ...(judged.has(s.panel) ? { reach: STATION_USE_R } : {}) });
   const portal = townPortalAt(f.grid);
   if (portal) out.push({ ...portal, radius: INTERACT_R.townPortal, act: 'panel', label: INTERACT_LABEL.townPortal, panel: 'difficulty', reach: STATION_USE_R });

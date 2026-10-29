@@ -3,10 +3,11 @@ import type { SaveState } from '../types/save.js';
 import type { AccountStash } from '../types/stash.js';
 import { liveModStats } from '../dungeon/run/runModEffects.js';
 import {
-  SEAL_REFORGE_BIOME, SEAL_REFORGE_DEEP, SEAL_REFORGE_FEW, SEAL_REFORGE_GOLD, SEAL_REFORGE_OFF, SEAL_REFORGE_TOP, SEAL_REROLL_ALONE,
-  SEAL_REROLL_OFF, carriedSealsAll, liveSealDefs, parseSealKey, sealBiomeKey, sealDef, sealLive, sealNextTier, sealReforgeRules,
-  sealRerollCost, sealRerollRules, sealTierDef, sealTierMul, sealTiers, sealsEnabled, type SealGains,
+  SEAL_REFORGE_BIOME, SEAL_REFORGE_DEEP, SEAL_REFORGE_FEW, SEAL_REFORGE_GOLD, SEAL_REFORGE_OFF, SEAL_REFORGE_ROOM, SEAL_REFORGE_TOP, SEAL_REROLL_ALONE,
+  SEAL_REROLL_OFF, buildSeal, carriedSealsAll, liveSealDefs, parseSealKey, sealBiomeKey, sealDef, sealLive, sealNextTier, sealReforgeRules,
+  sealRerollCost, sealRerollRules, sealStackMax, sealTierDef, sealTierMul, sealTiers, sealsEnabled, spendSealsBoth, type SealGains,
 } from '../economy/seals.js';
+import { addToInventory } from '../inventory/grid.js';
 import { cfgTextOf, isNum, ordinal, type CfgText, type RunViewOptions } from './runCommon.js';
 
 /**
@@ -95,6 +96,29 @@ function fill(reg: ConfigRegistry, tx: CfgText, card: RunReforgeCard, tierId: st
   card.can = true;
 }
 
+/**
+ * ⭐ С-аудит (29.10): МЕСТО ПОД РЕЗУЛЬТАТ — ПОСЛЕДНЕЙ проверкой, как у сервера (`reforgeSeals`/`rerollSeal` проверяют место после пошлины).
+ * Пробный прогон на копиях: печати связки списываются из сумки И сундука (`spendSealsBoth`, сумка первой — как у команды), и в то, что
+ * осталось от сумки, кладётся КАЖДЫЙ возможный результат (`kinds` ступени `tierId`): вид решает бросок сервера, значит карточка обещает,
+ * только если влезет любой. Не влез хоть один — `false`, и карточка говорит `SEAL_REFORGE_ROOM` словами сервера. Раньше карточка с
+ * печатями из сундука и полной сумкой говорила «можно», а сервер отвечал «В сумке нет места под новую печать».
+ * Сумка и стопки сейва не трогаются: `addToInventory` доливает в стопки — ему даются копии вещей.
+ */
+function roomFor(
+  reg: ConfigRegistry, save: SaveState, stash: AccountStash | null | undefined, picks: SealGains | null, kinds: readonly string[], tierId: string,
+): boolean {
+  if (!picks) return true;   // связки нет — карточка до прогона не дошла бы (`can` — только с набранной), решит сервер
+  const spent = spendSealsBoth(save.inventory ?? [], tabsOf(stash), picks);
+  if (!spent) return true;   // не хватает — это `SEAL_REFORGE_FEW` сервера, не место
+  const dims = reg.get('balance').inventory;
+  const max = sealStackMax(reg);
+  return kinds.every((kind) => {
+    const seal = buildSeal(reg, kind, tierId, 1, 'probe');
+    // вида не собрать — сервер откажет другим словом (`SEAL_REFORGE_OFF`/`SEAL_REROLL_ALONE`), не местом
+    return !seal || addToInventory(spent.inventory.map((it) => ({ ...it })), seal, dims, max);
+  });
+}
+
 /** Ключ карточки `sameTier`: «ступень|привязка» (привязка — `sealBiomeKey`, пусто — общие). */
 export function runReforgeTierCardKey(tierId: string, biomeKey: string): string {
   return `${tierId}|${biomeKey}`;
@@ -117,6 +141,7 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
   const live = liveModStats(reg);
   const gold = isNum(save.gold) ? Math.floor(save.gold) : 0;
   const record = bestRecord(save);
+  const pool = liveSealDefs(reg);   // виды, среди которых бросает сервер (перековка `sameTier` и перекат)
 
   if (rules.mode === 'sameTier') {
     // По карточке на СТУПЕНЬ И ПРИВЯЗКУ: смешивать привязки ядро не даёт (`SEAL_REFORGE_BIOME`), и окно их не предлагает.
@@ -141,6 +166,11 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
           result: null, reason: null, carried: g.have, need: v.need, can: false,
         };
         fill(reg, tx, card, tier.id, g.have, gold, record);
+        // вид результата — бросок среди живых той же привязки (как `reforgeSeals`): место — под любой из них
+        const next = card.can ? sealNextTier(reg, tier.id) : undefined;
+        if (next && !roomFor(reg, save, stash, runReforgeTake(reg, save, stash, card.key), pool.filter((d) => sealBiomeKey(d) === bk).map((d) => d.id), next.id)) {
+          card.can = false; card.reason = SEAL_REFORGE_ROOM;
+        }
         v.cards.push(card);
       }
     }
@@ -156,6 +186,8 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
         result: null, reason: null, carried: n, need: v.need, can: false,
       };
       fill(reg, tx, card, parsed.tierId, n, gold, record);
+      const next = card.can ? sealNextTier(reg, parsed.tierId) : undefined;
+      if (next && !roomFor(reg, save, stash, runReforgeTake(reg, save, stash, card.key), [def.id], next.id)) { card.can = false; card.reason = SEAL_REFORGE_ROOM; }
       v.cards.push(card);
     }
   }
@@ -167,7 +199,6 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
   v.rerollNote = v.rerollOff ? RUN_REFORGE_TEXT.rerollOff : RUN_REFORGE_TEXT.rerollNote;
   if (!v.rerollOff) {
     const differs = sealRerollRules(reg).differs !== false;
-    const pool = liveSealDefs(reg);
     for (const [key, n] of Object.entries(carried)) {
       const parsed = parseSealKey(key);
       if (!parsed) continue;
@@ -181,7 +212,10 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
       const others = pool.filter((d) => d.id !== def.id && sealBiomeKey(d) === bk).length;
       if (differs && others === 0) card.reason = SEAL_REROLL_ALONE;
       else if (gold < card.gold) card.reason = SEAL_REFORGE_GOLD;
-      else card.can = true;
+      // ⭐ С-аудит (29.10): и место — последним, как `rerollSeal`: под любой вид, который может выпасть (`pool` той же привязки)
+      else if (!roomFor(reg, save, stash, { [key]: 1 }, pool.filter((d) => sealBiomeKey(d) === bk && (!differs || d.id !== def.id)).map((d) => d.id), parsed.tierId)) {
+        card.reason = SEAL_REFORGE_ROOM;
+      } else card.can = true;
       v.rerolls.push(card);
     }
   }

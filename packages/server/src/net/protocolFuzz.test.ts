@@ -1482,8 +1482,9 @@ class Run {
       case 'moveBelt': { const it = nth(inv.filter((i) => i.kind === 'consumable')); return it ? { cmd: 'moveBelt', uid: it.uid } : null; }
       case 'acceptQuest': { const q = nth(me.room.questBoard); return q ? { cmd: 'acceptQuest', questId: q.id } : null; }
       case 'turnInQuest': { const q = nth(save.activeQuestDefs ?? []); return q ? { cmd: 'turnInQuest', questId: q.id } : null; }
-      case 'respec': return { cmd: 'respec', maxGold: save.gold };
-      case 'respecPassives': return { cmd: 'respecPassives', maxGold: save.gold };
+      // ⭐ С-аудит (29.10): окно мастера прокачки — станция города: честный клиент шлёт его сбросы только там (`guard.ts`)
+      case 'respec': return town ? { cmd: 'respec', maxGold: save.gold } : null;
+      case 'respecPassives': return town ? { cmd: 'respecPassives', maxGold: save.gold } : null;
       case 'respecSkills': return { cmd: 'respecSkills', maxGold: save.gold };
       case 'depositMaterials': return town ? { cmd: 'depositMaterials' } : null;
       // ⭐⭐ Ф5-6′: ПЕЧАТИ У КУЗНЕЦА. Честный клиент собирает связку из того, что лежит в сумке: `need` штук одной
@@ -1523,7 +1524,7 @@ class Run {
       }
       // ⭐ E2E 29.09: половина — деталь, которую эскиз журнала открывает (удача), половина — чужой id (отказ).
       case 'forgeSketch': return town ? { cmd: 'forgeSketch', variantId: pick % 2 ? `v-${pick % 7}` : FORGE.sketchable[(pick >> 1) % FORGE.sketchable.length]! } : null;
-      case 'allocPassive': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'allocPassive', nodeId: n.id, maxGold: save.gold } : null; }
+      case 'allocPassive': { const n = town ? nth(cfg.get('skill-tree').nodes) : undefined; return n ? { cmd: 'allocPassive', nodeId: n.id, maxGold: save.gold } : null; }
       case 'allocSkill': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'allocSkill', nodeId: n.id } : null; }
       case 'socketInsert': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'socketInsert', nodeId: n.id, slot: pick % 3, insertId: `ins-${pick % 5}` } : null; }
       case 'socketClear': { const n = nth(cfg.get('skill-tree').nodes); return n ? { cmd: 'socketClear', nodeId: n.id, slot: pick % 3 } : null; }

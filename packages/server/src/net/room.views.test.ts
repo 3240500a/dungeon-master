@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import type { GameConn } from './conn.js';
 import {
-  ConfigRegistry, newCharacterSave, heroNumbers, respecView, socketsView, bindView, materialsView, runReforgeView, townCommandSchema, allocPassive,
+  ConfigRegistry, newCharacterSave, heroNumbers, heroMelee, respecView, socketsView, socketNodes, bindView, materialsView, runReforgeView, townCommandSchema,
+  allocPassive, allocActive, socketInsert, insertUnlocked,
   type ServerFrame, type SaveState, type Item,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
@@ -59,8 +60,11 @@ describe('⭐ С2: лист героя — от сервера', () => {
     const { room, ws, pid, save } = setup();
     const heroes = ws.all('hero');
     expect(heroes.length, 'на входе — один').toBe(1);
-    const v = heroes[0]!.view as { numbers: unknown; master: string; hudInfo: string; xp: { frac: number } };
+    const v = heroes[0]!.view as { numbers: unknown; master: string; hudInfo: string; xp: { frac: number }; melee: { range: number; halfArc: number } | null };
     expect(v.numbers).toEqual(JSON.parse(JSON.stringify(heroNumbers(cfg, save, []))));
+    // ⭐ С-аудит (29.10): конус взмаха — числа сервера (`heroMelee` = `meleeGeometry`, которой бьёт `meleeSwing`)
+    expect(v.melee).toEqual(heroMelee(cfg, save));
+    expect(v.melee!.range).toBeGreaterThan(0);
     expect(v.master.length).toBeGreaterThan(0);
     expect(v.hudInfo).toContain('Ур.');
     expect(v.xp.frac).toBeGreaterThanOrEqual(0);
@@ -153,8 +157,12 @@ describe('⭐ С4/С6: виды города и забега — от серве
     }
     expect(ask('item', { part: 'menu', uid: 'нет-такой' }).ok).toBe(false);
     const uids = [...save.inventory, ...worn].map((it) => it.uid);
-    const tips = (ask('item', { part: 'tips', uids: [...uids, 'чужая-вещь'] }).view as { tips: Record<string, unknown> }).tips;
+    const tv = ask('item', { part: 'tips', uids: [...uids, 'чужая-вещь'] }).view as { tips: Record<string, { wornSlot: string | null }>; worn: Record<string, { name: string }> };
+    const tips = tv.tips;
     expect(Object.keys(tips).sort(), 'все свои — есть, чужой — нет').toEqual([...uids].sort());
+    // ⭐ С-аудит (29.10): надетое для сравнения — по разу на слот (`worn`), подсказка ссылается на него `wornSlot`
+    for (const t of Object.values(tips)) if (t.wornSlot !== null) expect(tv.worn[t.wornSlot], 'ссылка ведёт в `worn`').toBeDefined();
+    for (const w of worn) expect(tips[w.uid]!.wornSlot, 'надетое с собой не сравнивается').toBeNull();
     expect(ask('item', { part: 'tips', uids: new Array(401).fill('x') }).ok, 'потолок запроса').toBe(false);
     const all = (ask('item', { part: 'tips' }).view as { tips: Record<string, unknown> }).tips;
     expect(Object.keys(all).sort(), 'без uids — всё показанное игроку').toEqual(expect.arrayContaining(uids));
@@ -233,6 +241,67 @@ describe('⭐ С4/С6: виды города и забега — от серве
     for (let i = 0; i < 20; i++) room.viewRequest(pid, 1000 + i, 'bench', { uid: any.uid });
     const refused = ws.all('view').filter((f) => f.id >= 1000 && f.reason === 'Слишком часто').length;
     expect(refused, 'всплеск 120 токенов — 15 верстаков, остальные — отказ').toBeGreaterThanOrEqual(5);
+  });
+
+  /** Поздний билд: уровень 100, `pts` очков — жадно в активки и доноров вставок (командой `allocActive`), вставки — в гнёзда. */
+  function bigBuild(save: SaveState, pts: number): void {
+    const tree = cfg.get('skill-tree');
+    save.level = 100; save.unspentSkillPoints = pts;
+    for (let guard = 0; guard < 2000 && save.unspentSkillPoints > 0; guard++) {
+      const fresh = tree.nodes.filter((n) => (save.skills[n.id] ?? 0) === 0);
+      const pref = [...fresh.filter((n) => n.effect.active), ...fresh.filter((n) => n.effect.grantsInsert), ...fresh];
+      if (!pref.some((n) => allocActive(cfg, save, n.id).ok)) break;
+    }
+    let k = 0;
+    for (const n of tree.nodes) {
+      if (!n.effect.active || !((save.skills[n.id] ?? 0) > 0)) continue;
+      for (const ins of cfg.get('skill-inserts')) if (insertUnlocked(cfg, save, ins.id)) socketInsert(cfg, save, n.id, (k++) % 3, ins.id);
+    }
+  }
+
+  it('⭐ С-аудит: гнёзда платят по работе — 1 + ⌈выученных активок с гнёздами / 8⌉ (был 1 токен за 50–200 КБ)', () => {
+    const { room, ws, pid, save } = setup();
+    bigBuild(save, 110);
+    const n = socketNodes(cfg, save).length;
+    expect(n, 'поздний билд').toBeGreaterThan(20);
+    const take = vi.spyOn(limits.viewReq, 'takeCost');
+    room.viewRequest(pid, 700, 'hero', { part: 'sockets' });
+    expect(take).toHaveBeenLastCalledWith(expect.any(String), 1 + Math.ceil(n / 8));
+    const ans = ws.all('view').find((f) => f.id === 700)!;
+    expect(ans.ok).toBe(true);
+    expect(JSON.stringify(ans).length / (1 + Math.ceil(n / 8)), 'байт на токен — в правиле ≈ 11 КБ').toBeLessThanOrEqual(11_000);
+    // подсказки — по числу вещей ответа, 20 на токен: без `uids` — сколько показано игроку
+    room.viewRequest(pid, 701, 'item', { part: 'tips' });
+    const seen = save.inventory.length + Object.values(save.equipment).filter(Boolean).length
+      + (room as unknown as { shopListed(): Item[] }).shopListed().length;
+    expect(take).toHaveBeenLastCalledWith(expect.any(String), 1 + Math.floor(seen / 20));
+    room.viewRequest(pid, 702, 'item', { part: 'tips', uids: new Array(45).fill('x') });
+    expect(take).toHaveBeenLastCalledWith(expect.any(String), 1 + Math.floor(45 / 20));
+    take.mockRestore();
+  });
+
+  it('⭐ С-аудит: ответ длиннее своей цены доплачивает по байтам — в долг; бакет пуст, пока пополнение не покроет', () => {
+    const { room, ws, pid } = setup();
+    // вид «дешёвый» по цене (1 токен), а ответ — ≈ 600 КБ: ⌈600 000 / 11 000⌉ = 55 токенов
+    const big = { ok: true, view: { blob: 'x'.repeat(600_000) } };
+    const viewOf = vi.spyOn(room as unknown as { viewOf(): unknown }, 'viewOf').mockReturnValue(big);
+    const charge = vi.spyOn(limits.viewReq, 'charge');
+    for (let i = 0; i < 3; i++) room.viewRequest(pid, 800 + i, 'hero', { part: 'respec' });
+    const extra = Math.ceil(JSON.stringify({ t: 'view', id: 800, kind: 'hero', ...big }).length / 11_000) - 1;
+    expect(charge).toHaveBeenCalledTimes(3);
+    expect(charge).toHaveBeenLastCalledWith(expect.any(String), extra);
+    expect(ws.all('view').filter((f) => f.id >= 800 && f.id < 803 && f.ok).length, 'ответы ушли — доплата после').toBe(3);
+    viewOf.mockRestore();
+    // 120 − 3 × (1 + 54) < 0 — бакет в долгу: даже копеечный вид — отказ
+    room.viewRequest(pid, 810, 'hero', { part: 'bind' });
+    expect(ws.all('view').find((f) => f.id === 810)).toMatchObject({ ok: false, reason: 'Слишком часто' });
+    // а честный короткий ответ не доплачивает ничего
+    charge.mockClear();
+    limits.viewReq.reset(`user-views-${seq}`);
+    room.viewRequest(pid, 811, 'hero', { part: 'bind' });
+    expect(ws.all('view').find((f) => f.id === 811)?.ok).toBe(true);
+    expect(charge).not.toHaveBeenCalled();
+    charge.mockRestore();
   });
 
   it('фаззер аргументов вида: любой мусор — ответ (вид или отказ), ни одного броска изнутри', () => {

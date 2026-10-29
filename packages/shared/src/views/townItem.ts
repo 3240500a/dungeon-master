@@ -84,11 +84,19 @@ export interface ItemTip {
   note: string[] | null;
   /** Строка происхождения («Куплено в лавке», «Ступень поднята кузнецом…»); находка — `null`. */
   origin: string | null;
-  /** «Сейчас надето: …» и строки надетого (серым); нет — `null`. */
-  worn: { name: string; lines: ItemLine[] } | null;
+  /**
+   * ⭐ С-аудит (29.10): с чем сравнить — ключ слота пупсика в `ItemTipsView.worn` («Сейчас надето: …» и строки надетого, серым); нет
+   * сравнения (слота нет, слот пуст, это и есть надетая вещь) — `null`. Раньше каждая подсказка несла строки надетого целиком (`worn`), и
+   * 400 подсказок повторяли одни и те же девять вещей: ответ был вдвое длиннее.
+   */
+  wornSlot: string | null;
 }
-export function itemTipView(reg: ConfigRegistry, item: Item, worn?: Item | null): ItemTip {
-  const labels = itemLabels(reg);
+/** ⭐ С-аудит (29.10): надетая вещь для сравнения — один раз на слот (`ItemTipsView.worn`). */
+export interface WornTip { name: string; lines: ItemLine[] }
+/** ⭐ С-аудит (29.10): ответ вида `item/tips` — подсказки по `uid` и надетое, на которое они ссылаются (`ItemTip.wornSlot`). */
+export interface ItemTipsView { tips: Record<string, ItemTip>; worn: Record<string, WornTip> }
+
+function tipOf(reg: ConfigRegistry, labels: ItemLabels, item: Item, worn: Item | null | undefined): ItemTip {
   const mat = materialNote(reg, item);
   const tierName = (id: string): string | undefined => reg.get('item-tiers').find((t) => t.id === id)?.name;
   return {
@@ -102,14 +110,29 @@ export function itemTipView(reg: ConfigRegistry, item: Item, worn?: Item | null)
     lines: describeItem(item, labels),
     note: mat ? mat.lines : null,
     origin: itemOriginNote(item, tierName),
-    worn: worn && worn.uid !== item.uid ? { name: worn.name, lines: describeItem(worn, labels) } : null,
+    wornSlot: worn && worn.uid !== item.uid && item.slot ? item.slot : null,
   };
+}
+/** Подсказка одной вещи; `worn` — что надето в её слот (`wornFor`): есть и это другая вещь — `wornSlot` = слот вещи. */
+export function itemTipView(reg: ConfigRegistry, item: Item, worn?: Item | null): ItemTip {
+  return tipOf(reg, itemLabels(reg), item, worn);
 }
 /** Что надето в слот вещи (C# `DmItem.WornFor`) — для сравнения в подсказке. */
 export const wornFor = (save: Pick<SaveState, 'equipment'>, item: Item): Item | null => (item.slot ? save.equipment[item.slot as EquipSlot] ?? null : null);
-/** Подсказки пачкой по `uid` (сумка, надетое, сундук, прилавок): у каждой — сравнение с надетым в её слот. DTO — `Dictionary<string, ItemTip>`. */
-export function itemTipsView(reg: ConfigRegistry, save: Pick<SaveState, 'equipment'>, items: readonly Item[]): Record<string, ItemTip> {
-  return Object.fromEntries(items.map((it) => [it.uid, itemTipView(reg, it, wornFor(save, it))]));
+/**
+ * Подсказки пачкой по `uid` (сумка, надетое, сундук, прилавок): у каждой — ссылка на надетое в её слот (`wornSlot`), а само надетое —
+ * в `worn`, по разу на слот и только то, на что ссылаются. DTO — `{ tips: Dictionary<string, ItemTip>, worn: Dictionary<string, WornTip> }`.
+ */
+export function itemTipsView(reg: ConfigRegistry, save: Pick<SaveState, 'equipment'>, items: readonly Item[]): ItemTipsView {
+  const labels = itemLabels(reg);
+  const worn = new Map<string, WornTip>();
+  const tips = items.map((it): [string, ItemTip] => {
+    const w = wornFor(save, it);
+    const tip = tipOf(reg, labels, it, w);
+    if (w && tip.wornSlot !== null && !worn.has(tip.wornSlot)) worn.set(tip.wornSlot, { name: w.name, lines: describeItem(w, labels) });
+    return [it.uid, tip];
+  });
+  return { tips: Object.fromEntries(tips), worn: Object.fromEntries(worn) };
 }
 
 /**
