@@ -21056,6 +21056,12 @@
      "gold": {
       "text": "Золото — 660  (есть 5000)",
       "ok": true
+     },
+     "maxGold": 660,
+     "maxMaterials": {
+      "iron-2": 24,
+      "hide-2": 12,
+      "trim-2": 24
      }
     },
     "craft": {
@@ -21066,7 +21072,393 @@
     "message": null
    },
    "sketchPick": null,
-   "verdict": null
+   "verdict": null,
+   "state": {
+    "weaponClass": "sword",
+    "hands": 1,
+    "parts": {
+     "strike": {
+      "id": "sw-a-xii",
+      "step": 2
+     },
+     "grip": {
+      "id": "sw-gr-one",
+      "step": 2
+     },
+     "bind": {
+      "id": "sw-gd-long",
+      "step": 2
+     },
+     "head": {
+      "id": "sw-pm-triangular",
+      "step": 2
+     }
+    },
+    "finish": 0,
+    "sketchPick": null,
+    "crafted": null
+   },
+   "compare": {
+    "a": {
+     "hitMin": 72.375,
+     "hitMax": 78.375,
+     "hitAvg": 75.375,
+     "aps": 1,
+     "critChance": 0.05,
+     "critMult": 1.5,
+     "dps": 77.25937499999999,
+     "attrBonus": 68.375,
+     "attackType": "melee",
+     "block": 0,
+     "interruptResist": 0,
+     "knockdown": 0.04370000000000004,
+     "mass": 6,
+     "requirements": {
+      "strength": 10,
+      "dexterity": 15
+     },
+     "reqTotal": 25,
+     "rangePx": 52,
+     "arcDeg": 146.67719555349078,
+     "area": 1.6,
+     "status": {
+      "kind": "sunder",
+      "name": "увечье",
+      "baseChance": 0.5,
+      "chance": 0.5,
+      "rawChance": 0.5,
+      "capped": false,
+      "maxStacks": 5,
+      "durationSec": 4,
+      "avgStacks": 4.3537878787878785
+     }
+    },
+    "b": {
+     "hitMin": 81.75,
+     "hitMax": 91.75,
+     "hitAvg": 86.75,
+     "aps": 1,
+     "critChance": 0.05,
+     "critMult": 1.5,
+     "dps": 88.91874999999999,
+     "attrBonus": 68.75,
+     "attackType": "melee",
+     "block": 0.0835,
+     "interruptResist": 0,
+     "knockdown": 0.044900000000000044,
+     "mass": 12,
+     "requirements": {
+      "strength": 26,
+      "dexterity": 18
+     },
+     "reqTotal": 44,
+     "rangePx": 52,
+     "arcDeg": 91.67324722093171,
+     "area": 1,
+     "status": {
+      "kind": "bleed",
+      "name": "кровотечение",
+      "baseChance": 0.25,
+      "chance": 0.239125,
+      "rawChance": 0.239125,
+      "capped": false,
+      "maxStacks": 5,
+      "durationSec": 4,
+      "avgStacks": 2.125
+     }
+    },
+    "lo": {
+     "hitMin": 79.75,
+     "hitMax": 88.75,
+     "hitAvg": 84.25,
+     "aps": 1,
+     "critChance": 0.05,
+     "critMult": 1.5,
+     "dps": 86.35624999999999,
+     "attrBonus": 68.75,
+     "attackType": "melee",
+     "block": 0.0835,
+     "interruptResist": 0,
+     "knockdown": 0.044900000000000044,
+     "mass": 12,
+     "requirements": {
+      "strength": 26,
+      "dexterity": 18
+     },
+     "reqTotal": 44,
+     "rangePx": 52,
+     "arcDeg": 91.67324722093171,
+     "area": 1,
+     "status": {
+      "kind": "bleed",
+      "name": "кровотечение",
+      "baseChance": 0.25,
+      "chance": 0.239125,
+      "rawChance": 0.239125,
+      "capped": false,
+      "maxStacks": 5,
+      "durationSec": 4,
+      "avgStacks": 2.125
+     }
+    },
+    "hi": {
+     "hitMin": 83.75,
+     "hitMax": 95.75,
+     "hitAvg": 89.75,
+     "aps": 1,
+     "critChance": 0.05,
+     "critMult": 1.5,
+     "dps": 91.99374999999999,
+     "attrBonus": 68.75,
+     "attackType": "melee",
+     "block": 0.0835,
+     "interruptResist": 0,
+     "knockdown": 0.044900000000000044,
+     "mass": 12,
+     "requirements": {
+      "strength": 26,
+      "dexterity": 18
+     },
+     "reqTotal": 44,
+     "rangePx": 52,
+     "arcDeg": 91.67324722093171,
+     "area": 1,
+     "status": {
+      "kind": "bleed",
+      "name": "кровотечение",
+      "baseChance": 0.25,
+      "chance": 0.239125,
+      "rawChance": 0.239125,
+      "capped": false,
+      "maxStacks": 5,
+      "durationSec": 4,
+      "avgStacks": 2.125
+     }
+    },
+    "rows": [
+     {
+      "cells": [
+       "",
+       "Убогий Ручной топор",
+       "Крепкий меч классической эпохи",
+       "разница"
+      ],
+      "c3": "#e39a3c",
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Удар"
+      ]
+     },
+     {
+      "cells": [
+       "урон за удар",
+       "75.4",
+       "84.3–89.8",
+       "+12…+19 %"
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "разброс",
+       "72–78",
+       "(80–84)–(89–96)",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "ударов в секунду",
+       "1.00",
+       "1.00",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "шанс крита",
+       "5.0 %",
+       "5.0 %",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "ДПС (формула)",
+       "77.3",
+       "86.4–92.0",
+       "+12…+19 %"
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "вклад атрибутов",
+       "68.4",
+       "68.8",
+       "+1 %"
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "Геометрия взмаха"
+      ]
+     },
+     {
+      "cells": [
+       "дальность, px",
+       "52",
+       "52",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "дуга, °",
+       "147",
+       "92",
+       "−38 %"
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "площадь сектора",
+       "×1.600",
+       "×1.000",
+       "−38 %"
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Защита и контроль"
+      ]
+     },
+     {
+      "cells": [
+       "блок",
+       "0.0 %",
+       "8.3 %",
+       "+8.3 п.п."
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "стойкость к прерыванию",
+       "0 %",
+       "0 %",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "сбить с ног (цель 100)",
+       "4.37 %",
+       "4.49 %",
+       "+0.12 п.п."
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "масса оружия",
+       "6",
+       "12",
+       "+6"
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Статус: увечье"
+      ]
+     },
+     {
+      "cells": [
+       "шанс за попадание",
+       "50.0 %",
+       "—",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "средних стаков",
+       "4.35 / 5",
+       "—",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Статус: кровотечение"
+      ]
+     },
+     {
+      "cells": [
+       "шанс за попадание",
+       "—",
+       "23.9 %",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "средних стаков",
+       "—",
+       "2.13 / 5",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Требования"
+      ]
+     },
+     {
+      "cells": [
+       "сила",
+       "10",
+       "26",
+       "+16"
+      ],
+      "c4": "#c85a48"
+     },
+     {
+      "cells": [
+       "ловкость",
+       "15",
+       "18",
+       "+3"
+      ],
+      "c4": "#c85a48"
+     },
+     {
+      "cells": [
+       "сумма",
+       "25",
+       "44",
+       "+19"
+      ],
+      "c4": "#c85a48"
+     }
+    ]
+   },
+   "look": "long-sword|sw-a-xii:2|sw-gr-one:2|sw-gd-long:2|sw-pm-triangular:2"
   },
   "crafted": {
    "classes": [
@@ -22102,6 +22494,12 @@
      "gold": {
       "text": "Золото — 660  (есть 5000)",
       "ok": true
+     },
+     "maxGold": 660,
+     "maxMaterials": {
+      "iron-2": 24,
+      "hide-2": 12,
+      "trim-2": 24
      }
     },
     "craft": {
@@ -22139,7 +22537,325 @@
     "message": null
    },
    "sketchPick": null,
-   "verdict": "Скована: Крепкий меч классической эпохи · урон 14–25 из вилки (11–15)–(20–27) · бросок 73 % вилки"
+   "verdict": "Скована: Крепкий меч классической эпохи · урон 14–25 из вилки (11–15)–(20–27) · бросок 73 % вилки",
+   "state": {
+    "weaponClass": "sword",
+    "hands": 1,
+    "parts": {
+     "strike": {
+      "id": "sw-a-xii",
+      "step": 2
+     },
+     "grip": {
+      "id": "sw-gr-one",
+      "step": 2
+     },
+     "bind": {
+      "id": "sw-gd-long",
+      "step": 2
+     },
+     "head": {
+      "id": "sw-pm-triangular",
+      "step": 2
+     }
+    },
+    "finish": 0,
+    "sketchPick": null,
+    "crafted": "g-forged"
+   },
+   "compare": {
+    "a": {
+     "hitMin": 72.375,
+     "hitMax": 78.375,
+     "hitAvg": 75.375,
+     "aps": 1,
+     "critChance": 0.05,
+     "critMult": 1.5,
+     "dps": 77.25937499999999,
+     "attrBonus": 68.375,
+     "attackType": "melee",
+     "block": 0,
+     "interruptResist": 0,
+     "knockdown": 0.04370000000000004,
+     "mass": 6,
+     "requirements": {
+      "strength": 10,
+      "dexterity": 15
+     },
+     "reqTotal": 25,
+     "rangePx": 52,
+     "arcDeg": 146.67719555349078,
+     "area": 1.6,
+     "status": {
+      "kind": "sunder",
+      "name": "увечье",
+      "baseChance": 0.5,
+      "chance": 0.5,
+      "rawChance": 0.5,
+      "capped": false,
+      "maxStacks": 5,
+      "durationSec": 4,
+      "avgStacks": 4.3537878787878785
+     }
+    },
+    "b": {
+     "hitMin": 82.75,
+     "hitMax": 93.75,
+     "hitAvg": 88.25,
+     "aps": 1,
+     "critChance": 0.05,
+     "critMult": 1.5,
+     "dps": 90.45625,
+     "attrBonus": 68.75,
+     "attackType": "melee",
+     "block": 0.0835,
+     "interruptResist": 0,
+     "knockdown": 0.044900000000000044,
+     "mass": 12,
+     "requirements": {
+      "strength": 26,
+      "dexterity": 18
+     },
+     "reqTotal": 44,
+     "rangePx": 52,
+     "arcDeg": 91.67324722093171,
+     "area": 1,
+     "status": {
+      "kind": "bleed",
+      "name": "кровотечение",
+      "baseChance": 0.25,
+      "chance": 0.239125,
+      "rawChance": 0.239125,
+      "capped": false,
+      "maxStacks": 5,
+      "durationSec": 4,
+      "avgStacks": 2.125
+     }
+    },
+    "rows": [
+     {
+      "cells": [
+       "",
+       "Убогий Ручной топор",
+       "Крепкий меч классической эпохи",
+       "разница"
+      ],
+      "c3": "#e39a3c",
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Удар"
+      ]
+     },
+     {
+      "cells": [
+       "урон за удар",
+       "75.4",
+       "88.3",
+       "+17 %"
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "разброс",
+       "72–78",
+       "83–94",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "ударов в секунду",
+       "1.00",
+       "1.00",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "шанс крита",
+       "5.0 %",
+       "5.0 %",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "ДПС (формула)",
+       "77.3",
+       "90.5",
+       "+17 %"
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "вклад атрибутов",
+       "68.4",
+       "68.8",
+       "+1 %"
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "Геометрия взмаха"
+      ]
+     },
+     {
+      "cells": [
+       "дальность, px",
+       "52",
+       "52",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "дуга, °",
+       "147",
+       "92",
+       "−38 %"
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "площадь сектора",
+       "×1.600",
+       "×1.000",
+       "−38 %"
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Защита и контроль"
+      ]
+     },
+     {
+      "cells": [
+       "блок",
+       "0.0 %",
+       "8.3 %",
+       "+8.3 п.п."
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "стойкость к прерыванию",
+       "0 %",
+       "0 %",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "сбить с ног (цель 100)",
+       "4.37 %",
+       "4.49 %",
+       "+0.12 п.п."
+      ],
+      "c4": "#8aa84a"
+     },
+     {
+      "cells": [
+       "масса оружия",
+       "6",
+       "12",
+       "+6"
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Статус: увечье"
+      ]
+     },
+     {
+      "cells": [
+       "шанс за попадание",
+       "50.0 %",
+       "—",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "средних стаков",
+       "4.35 / 5",
+       "—",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Статус: кровотечение"
+      ]
+     },
+     {
+      "cells": [
+       "шанс за попадание",
+       "—",
+       "23.9 %",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "средних стаков",
+       "—",
+       "2.13 / 5",
+       ""
+      ],
+      "c4": "#8f897c"
+     },
+     {
+      "cells": [
+       "Требования"
+      ]
+     },
+     {
+      "cells": [
+       "сила",
+       "10",
+       "26",
+       "+16"
+      ],
+      "c4": "#c85a48"
+     },
+     {
+      "cells": [
+       "ловкость",
+       "15",
+       "18",
+       "+3"
+      ],
+      "c4": "#c85a48"
+     },
+     {
+      "cells": [
+       "сумма",
+       "25",
+       "44",
+       "+19"
+      ],
+      "c4": "#c85a48"
+     }
+    ]
+   },
+   "look": "long-sword|sw-a-xii:2|sw-gr-one:2|sw-gd-long:2|sw-pm-triangular:2"
   }
  }
 }

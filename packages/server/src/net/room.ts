@@ -22,7 +22,7 @@ import {
   respecView, questsView, socketsView, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
   runVoteQuestion, runDeathFrame, runMapLegend, RUN_MAP_GEOM, type RunDeathState, type Lang, type EquipSlot, type SealGains,
-  craftView, craftVerdict, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
+  craftWindowView, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -669,7 +669,8 @@ const MONSTER_DEF_DEBUG = !isProduction(process.env);
 type ViewAnswer = { ok: boolean; view?: unknown; reason?: string };
 /**
  * ⭐ С-аудит (29.10): ЦЕНА ВИДА В ТОКЕНАХ ЛИМИТА — по замеру на богатом сейве: и счёт (мс), и ответ (байты). Верстак ≈ 7.3 мс, прилавок
- * ≈ 3.2 мс, ковка ≈ 1–1.5 мс и ≈ 40 КБ, древо ≈ 2.7 мс и ≈ 220 КБ (кадр в 50 байт — ответ в 4 400 раз больше), прочие ≤ 0.3 мс и ≤ 20 КБ.
+ * ≈ 3.2 мс, ковка ≈ 1.6–2.5 мс и ≈ 44 КБ (со сравнением и краями вилки), древо ≈ 2.7 мс и ≈ 220 КБ (кадр в 50 байт — ответ в 4 400 раз
+ * больше), мастерство ≈ 1 мс и ≈ 175 КБ, прочие ≤ 0.3 мс и ≤ 20 КБ.
  * Токен ≈ мс счёта и ≈ 11 КБ ответа: при пополнении 30/с аккаунт держит ≲ 30 мс счёта и ≲ 330 КБ/с видов, как его ни шли. Окно Unity
  * держит последний вид у себя (`ViewCache`) и спрашивает заново только после перемены — честной игре цена не видна.
  */
@@ -677,8 +678,8 @@ function viewCost(kind: ViewKind, args: Record<string, unknown>): number {
   switch (kind) {
     case 'bench': return 8;
     case 'shop': return 4;
-    case 'craft': return 4;
-    case 'hero': return args.part === 'tree' ? 20 : 1;
+    case 'craft': return 8;
+    case 'hero': return args.part === 'tree' ? 20 : args.part === 'mastery' ? 16 : 1;
     // подсказки — по числу вещей в запросе (≈ 0.008 мс на вещь; 400 — ≈ 3 мс)
     case 'item': return args.part !== 'tips' ? 1 : Array.isArray(args.uids) ? 1 + Math.floor(args.uids.length / 40) : 1 + Math.floor(VIEW_TIPS_MAX / 40);
     default: return 1;
@@ -5014,13 +5015,11 @@ export class Room implements Tickable {
     const worn = uid !== null && !inBag ? Object.values(save.equipment).find((it) => it?.uid === uid) : undefined;
     st.crafted = inBag ?? worn ?? null;
     const journal = this.journalView(stash ?? ({ version: 0, tabs: [] } as AccountStash));
-    const view = craftView(this.cfg, {
+    const view = craftWindowView(this.cfg, {
       st, journal, wallet: availableMaterials(save.inventory, stash?.materials ?? {}), gold: save.gold, bag: save.inventory, sketch: true,
-      craftedInBag: !!inBag,
+      craftedInBag: !!inBag, save, toggles: this.session.world.players[pid]!.toggles,
     });
-    const verdict = st.crafted ? craftVerdict(this.cfg, st, journal, st.crafted) : null;
-    const state = { weaponClass: st.weaponClass, hands: st.hands, parts: st.parts, finish: st.finish ?? 0, sketchPick: st.sketchPick ?? null, crafted: st.crafted?.uid ?? null };
-    return { ok: true, view: { ...view, verdict, state } };
+    return { ok: true, view };
   }
 
   /**

@@ -27,7 +27,7 @@ import type { Item } from '../types/items.js';
 import { addToInventory } from '../inventory/grid.js';
 import type { AccountStash } from '../types/stash.js';
 import { heroNumbers, masterBlock, hudInfo, sheetView, skillTreeView } from './hero.js';
-import { craftView, craftVerdict, initialCraftState } from './craft.js';
+import { craftWindowView, initialCraftState } from './craft.js';
 import { craftWeapon, fullJournal } from '../formulas/craft.js';
 import {
   respecView, questsView, socketsView, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
@@ -143,15 +143,12 @@ describe('эталон моделей окон для Unity (виды серве
         const journal = fullJournal(cfg);
         const wallet = Object.fromEntries(cfg.get('craft-materials').map((m) => [m.id, 60]));
         const a = initialCraftState(cfg, 'sword');
-        const plain = craftView(cfg, { st: a, journal, wallet, gold: save.gold, bag: save.inventory, sketch: true });
+        const plain = craftWindowView(cfg, { st: a, journal, wallet, gold: save.gold, bag: save.inventory, sketch: true, save, toggles: [] });
         const b = initialCraftState(cfg, 'sword');
         const forged = craftWeapon(cfg, { weaponClass: b.weaponClass, hands: b.hands, parts: structuredClone(b.parts), finish: 0 }, { journal, materialsOn: true, rng: createRng(5) }).item;
         if (forged) b.crafted = { ...forged, uid: 'g-forged' };
-        const crafted = craftView(cfg, { st: b, journal, wallet, gold: save.gold, bag: save.inventory, sketch: true, craftedInBag: true });
-        return {
-          plain: { ...plain, verdict: null },
-          crafted: { ...crafted, verdict: b.crafted ? craftVerdict(cfg, b, journal, b.crafted) : null },
-        };
+        const crafted = craftWindowView(cfg, { st: b, journal, wallet, gold: save.gold, bag: save.inventory, sketch: true, craftedInBag: true, save, toggles: [] });
+        return { plain, crafted };
       })(),
     };
     expect(out.sheet.blocks.length).toBeGreaterThan(3);

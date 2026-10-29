@@ -10,6 +10,9 @@ import { axisOf, balanceAxisOf, bladeCaption, bladeStats } from '../formulas/bla
 import { describeItem, rangeLabel, slotSuffix } from '../formulas/itemDescribe.js';
 import { craftFits, describeCost, enchantMaterials } from '../economy/townActions.js';
 import { itemLabels } from './townItem.js';
+import { compareView } from './heroCard.js';
+import { weaponLookSig } from '../session/weapon3d.js';
+import type { SaveState } from '../types/save.js';
 
 /**
  * ⭐ С5 (29.10): ОКНО КОВКИ — СЕРВЕРОМ. Модель окна целиком (классы, семейство, шапка с типом и ступенью, эскизы, «Вся вещь из», четыре
@@ -398,4 +401,26 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
 export function craftVerdict(reg: ConfigRegistry, st: CraftWindowState, journal: CraftJournal, item: Item): string {
   const pv = craftWeapon(reg, { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 }, { journal, materialsOn: true });
   return `Скована: ${item.name}${craftRollVerdict(item, pv.ranges, pv.cost?.finish?.floor ?? 0)}`;
+}
+
+/**
+ * ⭐ С5: ОКНО КОВКИ, КАК ЕГО ОТДАЁТ СЕРВЕР (кадр `view` → `craft`): модель `craftView` плюс то, чего веб-окно не клало в данные, а
+ * считало у себя: строка итога (`verdict`), приведённый выбор (`state` — его окно и рисует, и шлёт), сравнение «в руках → скую»
+ * (`compareView` — до ковки с КРАЯМИ вилки, низ и верх при этой доводке; после — со скованной), подпись вида сборки (`look` — по ней
+ * 3D-стенд берёт меш) и согласие ковки в строке цены (`left.cost.maxGold` / `maxMaterials` — дороже сервер не возьмёт).
+ */
+export function craftWindowView(reg: ConfigRegistry, v: CraftViewIn & { save: SaveState; toggles: readonly string[] }) {
+  const view = craftView(reg, v);
+  const st = v.st;
+  const verdict = st.crafted ? craftVerdict(reg, st, v.journal, st.crafted) : null;
+  const state = { weaponClass: st.weaponClass, hands: st.hands, parts: st.parts, finish: st.finish ?? 0, sketchPick: st.sketchPick ?? null, crafted: st.crafted?.uid ?? null };
+  const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 };
+  const pv = craftWeapon(reg, input, { journal: v.journal, materialsOn: true });
+  const shown = st.crafted ?? pv.item;
+  const edge = (at: 'lo' | 'hi'): Item | undefined => craftWeapon(reg, input, { journal: v.journal, materialsOn: true, at }).item;
+  const compare = shown ? compareView(reg, v.save, shown, { toggles: [...v.toggles], edges: st.crafted ? {} : { lo: edge('lo'), hi: edge('hi') } }) : null;
+  const look = pv.type?.ok && pv.type.baseId ? weaponLookSig({ baseId: pv.type.baseId, parts: st.parts }) : null;
+  const cost = (view.left as { cost?: Record<string, unknown> }).cost;
+  if (cost && pv.cost) { cost.maxGold = pv.cost.gold; cost.maxMaterials = pv.cost.materials; }
+  return { ...view, verdict, state, compare, look };
 }
