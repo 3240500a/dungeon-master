@@ -89,25 +89,36 @@ export function runLedgerKey(cfg: RunConfig): string {
  * от того, каким окном узел построен.
  */
 export function runPlanOf(reg: ConfigRegistry, run: RunConfig, window?: RunWindow): RunPlan {
-  const plan = generateRunPlan(reg, run, undefined, window);
   const key = run.floorKey;
-  if (typeof key === 'string' && key.length >= 16 && key.length <= 128) {
+  const keyOk = typeof key === 'string' && key.length >= 16 && key.length <= 128;
+  // ⭐ С-аудит F7: новый забег (`planKeyed`) — и граф от ключа: слой и узел своим HMAC, сид забега по графу больше не подбирается.
+  const keyed = keyOk && run.planKeyed === true
+    ? (tag: string): number => createHmac('sha256', key as string).update(`plan|${tag}`).digest().readUInt32BE(0)
+    : undefined;
+  const plan = generateRunPlan(reg, run, undefined, window, undefined, keyed);
+  if (keyOk) {
     for (const n of plan.nodes) n.floorSpec = { ...n.floorSpec, seed: (createHmac('sha256', key).update(n.id).digest().readUInt32BE(0) >>> 1) || 1 };
   }
   return plan;
 }
-/** ⭐ R14-10: план забега для клиента — без сидов забега и этажей: карте забега они не нужны, а по ним этажи собираются наперёд. */
+/**
+ * ⭐ R14-10: план забега для клиента — без сидов забега и этажей: карте забега они не нужны, а по ним этажи собираются наперёд.
+ * ⭐ С-аудит F7 (29.10): и БЕЗ СОСТАВА ЭТАЖЕЙ (`floorSpec`: сколько сокровищниц и уникальных комнат, есть ли лавка и комната босса, плотность
+ * пачек, шаблон) — карта рисует узел типом, рангом босса, модификаторами и рёбрами, а состав впереди лежащих этажей был подсказкой маршрута.
+ */
 function clientPlan(plan: RunPlan): RunPlan {
   const { seed: _seed, ...rest } = plan;
-  const nodes = plan.nodes.map((n) => { const { seed: _s, ...floorSpec } = n.floorSpec; return { ...n, floorSpec }; });
+  const nodes = plan.nodes.map(({ floorSpec: _fs, ...n }) => n);
   return { ...rest, nodes } as unknown as RunPlan;
 }
 /** ⭐ R14-10: сейв для клиента — забег без сида и ключа этажей (`run.config`): их знает только сервер. */
 function clientSave(save: SaveState): SaveState {
-  const run = save.run;
-  if (!run?.config) return save;
+  // ⭐ С-аудит F12 (29.10): и ссылку на поколение прилавка (`townStock`, в ней сид стока и доски заданий) — клиенту она не нужна вовсе.
+  const { townStock: _stock, ...rest } = save;
+  const run = rest.run;
+  if (!run?.config) return rest;
   const { seed: _seed, floorKey: _key, ...config } = run.config;
-  return { ...save, run: { ...run, config: config as RunConfig } };
+  return { ...rest, run: { ...run, config: config as RunConfig } };
 }
 
 /**
@@ -259,6 +270,8 @@ const STASH_READ_CMDS: ReadonlySet<string> = new Set([
   'forgeExchange',
   'sealReforge',   // ⭐ 17.10: перековка берёт печати и из сундука — значит читает его из базы
 ]);
+/** ⭐ С-аудит F8: события, которые видит только их герой (`Room.broadcastEvents`). */
+const PRIVATE_EVENTS: ReadonlySet<SessionEvent['type']> = new Set(['gold', 'xp', 'materials', 'item-picked', 'quest', 'cooldown']);
 /** ⭐ С9 (29.10): лимиты команд для клиента (`joined.limits`) — из тех же бакетов и наборов, что судят команды. */
 const CMD_LIMITS = (): CmdLimits => ({
   town: limits.townCmd.spec(), forge: limits.forgeCmd.spec(), stash: limits.stashRead.spec(),
@@ -1092,7 +1105,8 @@ export class Room implements Tickable {
     this.hooks = hooks;
     this.seed = randomSeed();   // D10: сид сессии решает дроп — угадываемым по часам ему быть нельзя
     // R9-02: и сам поток бросков — из криптоисточника: сидовый поток восстанавливался по взглядам монстров первого снимка.
-    this.session = new GameSession(cfg, this.seed, this.difficultyId, { rewards: true, rng: sessionRng() });
+    // ⭐ С-аудит F3: и печати — криптоисточником (сидовый поток печатей повторялся на входе на тот же узел и угадывался по разлёту).
+    this.session = new GameSession(cfg, this.seed, this.difficultyId, { rewards: true, rng: sessionRng(), sealRng: sessionRng() });
     this.session.pickThrown = (pid, dropId) => this.pickFromTick(pid, dropId);   // ⭐ K3: выброшенное — в сумку после записи
     this.enterTown();
     tickScheduler.add(this);
@@ -3348,7 +3362,7 @@ export class Room implements Tickable {
       it.pos = at;
       p.save.inventory.push(it);
       // Своё выброшенное — не добыча: ни сбора для заданий (R4-26), ни наблюдений «поднял вещь»; только событие всем. Сейв — зовущему.
-      this.broadcast({ t: 'events', events: [{ type: 'item-picked', playerId: pid, item: it, x: d.pos.x, y: d.pos.y, thrown: true }] });
+      this.broadcastEvents([{ type: 'item-picked', playerId: pid, item: it, x: d.pos.x, y: d.pos.y, thrown: true }]);
       return { ok: true };
     });
     return job.finally(() => { this.carrying.delete(d); });
@@ -3546,7 +3560,7 @@ export class Room implements Tickable {
     let changed = false;
     for (const e of events) if (this.noteNode(e)) changed = true;
     if (changed) this.syncNodeState();
-    this.broadcast({ t: 'events', events });
+    this.broadcastEvents(events);
   }
 
   /**
@@ -3734,7 +3748,7 @@ export class Room implements Tickable {
     const runSeed = randomSeed();   // D10: сид забега решает этажи и дроп — не по часам
     // ⭐ R9-01: личность забега — ключ его свода записей в базе (`runLedgerKey`): копии участников она не делит, а объединяет.
     // ⭐ R14-10: ключ этажей — сиды этажей узлов (`runPlanOf`); клиенту не уходит, как и сид.
-    return { biomeId, tier: this.difficultyId, seed: runSeed, modifiers, id: randomUUID(), floorKey: randomBytes(16).toString('hex') };
+    return { biomeId, tier: this.difficultyId, seed: runSeed, modifiers, id: randomUUID(), floorKey: randomBytes(16).toString('hex'), planKeyed: true };
   }
   /**
    * Выбор алтаря → биом и модификаторы нового забега — ТОЛЬКО валидными включёнными значениями (анти-чит: клиент не
@@ -4297,7 +4311,7 @@ export class Room implements Tickable {
       if (!revisit) for (const qid of trackFloor(s, node.depth).completed) qev.push(this.questCompleted(pid, s, qid));
       this.sendSave(pid);
     }
-    if (qev.length) this.broadcast({ t: 'events', events: qev });
+    if (qev.length) this.broadcastEvents(qev);
     for (const pid of stillDead) { const c = this.clients.get(pid); if (c) this.tellDeadAgain(c.ws); }   // K1
     this.persistAll();
   }
@@ -4774,7 +4788,7 @@ export class Room implements Tickable {
       else if (e.type === 'player-died') { if (this.area === 'arena') this.onArenaDeath(e.playerId); else this.onPlayerDeath(e.playerId, touched); }
     }
     if (nodeChanged) this.syncNodeState();
-    if (events.length || quest.length) this.broadcast({ t: 'events', events: quest.length ? [...events, ...quest] : events });
+    if (events.length || quest.length) this.broadcastEvents(quest.length ? [...events, ...quest] : events);
     if (saves) for (const pid of touched) this.sendSave(pid);
     if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
   }
@@ -5920,7 +5934,7 @@ export class Room implements Tickable {
     return { type: 'quest', playerId: pid, kind: 'completed', questId: qid, name };
   }
   private questEvent(pid: string, kind: 'accepted' | 'turned-in', questId: string, name: string): void {
-    this.broadcast({ t: 'events', events: [{ type: 'quest', playerId: pid, kind, questId, name }] });
+    this.broadcastEvents([{ type: 'quest', playerId: pid, kind, questId, name }]);
   }
   private send(ws: GameConn, frame: ServerFrame): void {
     if (ws.open) ws.send(JSON.stringify(frame));
@@ -5930,6 +5944,32 @@ export class Room implements Tickable {
     let sent = 0;
     for (const c of this.clients.values()) if (c.ws.open) { c.ws.send(msg); sent++; }
     if (frame.t === 'snapshot') { counters.snapshotFrames += sent; counters.snapshotBytes += msg.length * sent; }
+  }
+  /**
+   * ⭐ С-аудит F8 (29.10): СОБЫТИЯ ТИКА — КАЖДОМУ СВОИ. Личное героя (золото с итогом кошелька, опыт, сырьё, подбор, задания, откаты) уходит
+   * только ему, а взмах чужого — без его отката (`cooldownMs`): раньше вся комната видела кошелёк, добычу и откаты каждого (в PvP — точные
+   * откаты и ресурсы соперника). Общее (удары, смерти, сундуки, взмахи для анимации) — всем, одной строкой на всех.
+   */
+  private broadcastEvents(events: readonly SessionEvent[]): void {
+    if (!events.length) return;
+    const pub: SessionEvent[] = [];
+    let mine = false;
+    for (const e of events) {
+      if (PRIVATE_EVENTS.has(e.type)) { mine = true; continue; }
+      if (e.type === 'swing') { mine = true; pub.push({ ...e, cooldownMs: 0 }); continue; }
+      pub.push(e);
+    }
+    if (!mine) { this.broadcast({ t: 'events', events: pub }); return; }
+    const pubMsg = pub.length ? JSON.stringify({ t: 'events', events: pub } satisfies ServerFrame) : '';
+    for (const [pid, c] of this.clients) {
+      if (!c.ws.open) continue;
+      const own = events.filter((e) => 'playerId' in e && e.playerId === pid && (PRIVATE_EVENTS.has(e.type) || e.type === 'swing'));
+      if (!own.length) { if (pubMsg) c.ws.send(pubMsg); continue; }
+      // Порядок событий тика сохраняем: своё — на своих местах, чужое личное выпало.
+      const out = events.filter((e) => !('playerId' in e) || e.playerId === pid || !PRIVATE_EVENTS.has(e.type))
+        .map((e) => (e.type === 'swing' && e.playerId !== pid ? { ...e, cooldownMs: 0 } : e));
+      c.ws.send(JSON.stringify({ t: 'events', events: out } satisfies ServerFrame));
+    }
   }
   private broadcastExcept(pid: string, frame: ServerFrame): void {
     const msg = JSON.stringify(frame);

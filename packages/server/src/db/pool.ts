@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { createHash } from 'node:crypto';
 import { CommitUnknown } from './errors.js';
+import { isProduction } from '../net/devFlags.js';
 
 /**
  * Подключение к Postgres (Ф2). Одна точка входа: пул, помощник запроса и помощник транзакции.
@@ -23,7 +24,8 @@ const { Pool, Client } = pg;
  * молчаливый уход на localhost в проде хуже падения при старте.
  */
 const DEV_URL = 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon';
-const URL_ = process.env.DM_PG ?? (process.env.NODE_ENV === 'production' ? '' : DEV_URL);
+// ⭐ С-аудит F10: «боевой ли» — одним швом (`isProduction`: без регистра и пробелов), иначе `NODE_ENV=Production` тихо открывал дев-путь.
+const URL_ = process.env.DM_PG ?? (isProduction(process.env) ? '' : DEV_URL);
 if (!URL_) {
   console.error('[dm-server] не задан DM_PG (строка подключения к Postgres) — в бою это обязательно');
   process.exit(1);

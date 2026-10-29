@@ -133,7 +133,7 @@ const xpToDeadToo = (w: World): void => {
     try { return o(...a); } finally { Object.values(S.world.players).forEach((p, i) => { p.alive = live[i]!; }); }
   });
 };
-const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuzz.js').FuzzHooks>; weights?: Partial<Record<OpKind, number>>; len?: number }[] = [
+const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuzz.js').FuzzHooks>; weights?: Partial<Record<OpKind, number>>; len?: number; upTo?: number }[] = [
   {
     name: 'шаг длиннее скорости', want: /^I1:speed:/,
     hooks: { install: (w) => patch(w, 'stepPlayerInput', (o) => (...a) => { const r = o(...a); const p = a[0] as { pos: { x: number }; vel: { x: number } }; if (p.vel.x > 0) p.pos.x += 3; return r; }) },
@@ -239,6 +239,9 @@ const BUGS: { name: string; want: RegExp; hooks: Partial<import('./fuzz/rulesFuz
     name: 'смерть снимает откаты из сейва', want: /^(I4:buff-(rest|uptime)|I3:skill-cd):/,
     hooks: { world: { buffs: true, arena: 0, minHeroes: 3 }, vitalsOf: (p, home, now) => ((home?.body ?? p).alive ? vitalsForSave(p, home, now) : undefined) },
     weights: { ...OP_WEIGHTS, tick: 60, reconnect: 30, dot: 6, arena: 0, revive: 0 },
+    // ⚠ 29.10 (С-аудит F6: взгляд заперт на замахе): цепочки сидов 1…40 больше не доводят до смерти с откатами — первый ловящий сид 44
+    // (перебор 1…300: 44, 132). Окно сторожа расширено до 50, сама подложенная беда та же.
+    upTo: 50,
   },
   {
     // ⚠ R23-05: сейв с арены несёт откаты тела города, застывшие на входе в арену (как было: время арены их не старило), — погибший на арене и
@@ -339,7 +342,7 @@ describe('⭐ B2: у сторожа правил есть зубы — подл�
   for (const b of BUGS) {
     it(b.name, () => {
       const got = new Set<string>();
-      for (let seed = 1; seed <= 40 && ![...got].some((k) => b.want.test(k)); seed++) {
+      for (let seed = 1; seed <= (b.upTo ?? 40) && ![...got].some((k) => b.want.test(k)); seed++) {
         const out = runOps(seed, genOps(seed, b.len ?? 60, b.weights ?? { ...OP_WEIGHTS, tick: 60, pickup: 10, lever: 10 }), { ...hooks, ...b.hooks }, undefined, (k) => !b.want.test(k));
         if (out.found) got.add(violationKey(out.found));
       }
@@ -484,12 +487,16 @@ describe('⚠ R21-06: фаззер правил — взрыв конструк�
   // сканом 1250 сидов (`genOps(seed, 80)`, профиль `constructs`) `buff-rise-ins` нашёлся РОВНО В ОДНОМ, в 1028-м (смерть героя —
   // в 875 из 1250), так что искать было нечего: с новой глубиной прежняя цепочка просто перестала доводить до смерти под печатью
   // (`ev-player-died` 0), а один её шаг доводит. Покрытие нового шага: `buff-rise-ins` 1, `ev-player-died` 1 за 120 тиков.
+  // ⚠ 29.10 (С-аудит F6: взгляд заперт на замахе): шаг 13.10 (h 0, s 1008869910) к смерти под печатью больше не ведёт — путь держит новый шаг
+  // того же сида, найденный перебором `s` (1500 шагов: одно попадание, h 2, s 692747988). Прежний остаётся сторожем «без нарушений».
   it('перепрогон R21-06: бафф, застывший на трупе, — не время под баффом', () => {
-    const ops = [{ k: 'tick', h: 0, s: 1008869910 }] as Op[];
-    const out = runOps(1028, ops, { resetUids: hooks.resetUids, world: { ...PROFILES.constructs!.world, pinnedWorld: true } });
-    expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
-    expect(out.cover['buff-rise-ins'] ?? 0, 'печать срабатывала').toBeGreaterThan(0);
-    expect(out.cover['ev-player-died'] ?? 0, 'и герой с ней пал').toBeGreaterThan(0);
+    for (const [ops, path] of [[[{ k: 'tick', h: 0, s: 1008869910 }], false], [[{ k: 'tick', h: 2, s: 692747988 }], true]] as [Op[], boolean][]) {
+      const out = runOps(1028, ops, { resetUids: hooks.resetUids, world: { ...PROFILES.constructs!.world, pinnedWorld: true } });
+      expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();
+      if (!path) continue;
+      expect(out.cover['buff-rise-ins'] ?? 0, 'печать срабатывала').toBeGreaterThan(0);
+      expect(out.cover['ev-player-died'] ?? 0, 'и герой с ней пал').toBeGreaterThan(0);
+    }
   });
 });
 
@@ -592,7 +599,9 @@ describe('⭐ Z: фаззер правил — бьющий погиб поср�
     // Взят первый: `hit-after-own-death` 1, `hit-pvp` 5, `ev-player-died` 1 за 13 тиков — одна доставка, бьющий погиб внутри неё.
     // Оба прежних шага остаются сторожами «без нарушений» (ни один путь не потерян, просто перестал быть путём).
     for (const [ops, path] of [
-      [[{ k: 'tick', h: 2, s: 1420080491 }], false], [[{ k: 'tick', h: 0, s: 1422820465 }], false], [[{ k: 'tick', h: 0, s: 465361341 }], true],
+      [[{ k: 'tick', h: 2, s: 1420080491 }], false], [[{ k: 'tick', h: 0, s: 1422820465 }], false], [[{ k: 'tick', h: 0, s: 465361341 }], false],
+      // ⚠ 29.10 (С-аудит F6: взгляд заперт на замахе): шаг 13.10 к пути больше не ведёт; новый — перебором `s` того же сида (h 2, s 1476524765).
+      [[{ k: 'tick', h: 2, s: 1476524765 }], true],
     ] as [Op[], boolean][]) {
       const out = runOps(45010073, ops, { resetUids: hooks.resetUids, world: { ...PROFILES.pvp!.world, pinnedWorld: true } });
       expect(out.found ? `${violationKey(out.found)}: ${out.found.v.msg}` : null).toBeNull();

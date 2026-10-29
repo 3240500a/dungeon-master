@@ -72,6 +72,13 @@ export function generateRunPlan(
    * ⚠ Параметр ПОСЛЕДНИЙ намеренно: окно слоёв (`window`) у всех вызовов на своём месте, и порядок не поехал.
    */
   nodeLive?: ReadonlySet<string>,
+  /**
+   * ⭐ С-аудит F7 (29.10): СИДЫ СЛОЁВ И УЗЛОВ — ОТ СЕКРЕТА СЕРВЕРА (`keyed(тег)`: HMAC ключа забега). Без него слой и узел считаются от
+   * 31-битного сида забега, а граф окна (ширины, типы, выбор этажей) клиенту виден: сид подбирался перебором, и дальше изменённый клиент
+   * знал весь бесконечный граф наперёд. С ним каждый слой — свой независимый поток: подобрал один — о следующем не узнал ничего.
+   * Нет (старый забег, сим, редактор) — прежний расчёт от сида.
+   */
+  keyed?: (tag: string) => number,
 ): RunPlan {
   const biomes = reg.get('biomes') as Biome[];
   const floors = reg.get('floors') as Floor[];
@@ -83,6 +90,8 @@ export function generateRunPlan(
 
   const biome = biomes.find((b) => b.id === config.biomeId) ?? biomes[0]!;
   const seed = (config.seed >>> 0) || 1;
+  const layerSeedOf = (d: number): number => (keyed ? (keyed(`L${d}`) >>> 0) || 1 : layerSeed(seed, d));
+  const nodeSeedOf = (d: number, lane: number): number => (keyed ? (keyed(`N${d}_${lane}`) >>> 0) || 1 : nodeSeed(config.seed, d, lane));
 
   // ⭐⭐ Ф1 (16.10): ФОРМА ЗАБЕГА — ИЗ БАЛАНСА. Шаблон растворён: ширина слоя, ветвистость и веса типов рядовых
   // узлов живут в `balance.dungeonAccess` одной настройкой на игру. `config` по-прежнему может их переопределить —
@@ -169,7 +178,7 @@ export function generateRunPlan(
    */
   const layerWidth = (d: number, rng: Rng): number =>
     isWaypoint(d) || isBossAt(d) ? 1 : Math.max(1, Math.min(widthMax, rng.int(widthMin, widthMax)));
-  const widthAt = (d: number): number => layerWidth(d, createRng(layerSeed(seed, d)));
+  const widthAt = (d: number): number => layerWidth(d, createRng(layerSeedOf(d)));
 
   /**
    * ⭐⭐ Г8: СЦЕНА ЭТАЖА — ПО МЕСТУ В ПОЛОСЕ, а не по абсолютной глубине (`contentCycle`, умолчание 20). Циклится
@@ -195,7 +204,7 @@ export function generateRunPlan(
         if (picked && runModifierLive(picked, nodeLiveSet)) nodeModIds.push(picked.id);   // узловые — своим набором из конфига
       }
     }
-    const seedOfNode = nodeSeed(config.seed, depth, lane);
+    const seedOfNode = nodeSeedOf(depth, lane);
     // ⭐⭐ Г8: подбор этажа и вариант тайлсета — по МЕСТУ В ПОЛОСЕ (цикл 20), сам узел помнит настоящую глубину.
     const sd = scene(depth);
     // ⭐⭐ Ф2 (16.10): МЕСТО КРУГА решает смесь обычных этажей (`placeWeight`), а ранг — какой боссовый взять.
@@ -217,7 +226,7 @@ export function generateRunPlan(
   for (let d = from; d <= to; d++) {
     // Один поток на слой: ширина → (по полосам: роль, бросок узлового модификатора, выбор) → рёбра. Порядок броска
     // в точности прежний — граф забега, уже лежащего в сейве, от Г2 не перестраивается сверх самой адресации.
-    const rng = createRng(layerSeed(seed, d));
+    const rng = createRng(layerSeedOf(d));
     const wp = isWaypoint(d), rank = bossRankAt(d), bs = rank !== undefined;
     const width = layerWidth(d, rng);
     const layer: RunNode[] = [];

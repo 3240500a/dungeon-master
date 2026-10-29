@@ -20,6 +20,7 @@ import {
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
+import { isProduction } from './net/devFlags.js';
 import { startUwsServer, bodyCapFor } from './net/uwsServer.js';   // потолок тела пути — один и тот же у прокси и у дочитывания отказа
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { renderMetrics } from './net/metrics.js';
@@ -149,7 +150,7 @@ async function boot(): Promise<void> {
   // терминирует nginx перед ним, и определить это изнутри нельзя. Поэтому требуем ЯВНОГО
   // подтверждения: без него в проде остаётся громкое предупреждение, а не тихая уверенность,
   // что «наверное, там прокси».
-  if (process.env.NODE_ENV === 'production' && process.env.DM_BEHIND_TLS !== '1') {
+  if (isProduction(process.env) && process.env.DM_BEHIND_TLS !== '1') {
     console.warn('[dm-server] ВНИМАНИЕ: не подтверждён TLS перед сервером. Токены и игровой трафик'
       + ' могут идти открытым текстом. Поставьте DM_BEHIND_TLS=1, если снаружи стоит https-прокси.');
   }
@@ -234,7 +235,7 @@ function rebuildConfigCache(): void {
 
 
 app.get('/api/config', (req, res) => {
-  if (process.env.NODE_ENV !== 'production') res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
+  if (!isProduction(process.env)) res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
   res.setHeader('ETag', configEtag);
   res.setHeader(CONFIG_REV_HEADER, configRevision);
   res.setHeader(CONFIG_GAME_REV_HEADER, configGameRevision);
@@ -245,7 +246,8 @@ app.get('/api/config', (req, res) => {
 // Правки редактора: валидируем → ПЕРСИСТИМ в базу → пересобираем живой конфиг. Переживает
 // рестарт сервера. balance действует сразу, статы монстров/лут — со следующего этажа.
 // АНТИ-ЧИТ: запись только вне продакшена — иначе клиент мог бы переписать баланс сервера.
-const DEV_CONFIG_APPLY = process.env.NODE_ENV !== 'production';
+// ⭐ С-аудит F10: одним швом с остальными (`isProduction`) — `NODE_ENV=Production` больше не открывает дев-роуты.
+const DEV_CONFIG_APPLY = !isProduction(process.env);
 
 /**
  * Ф0.12 закрыл dev-роуты (правка баланса, заливка ассетов, чтение чужих сейвов) ДВУМЯ независимыми
@@ -369,7 +371,7 @@ installConfigWrites(app, {
  * увиденная правка. Раньше его не брал никто до рестарта, а «Применить везде» его таблицы отвечало 409 навсегда.
  */
 function watchConfigFiles(): void {
-  if (process.env.NODE_ENV === 'production' || process.env.DM_WATCH_CONFIG === '0') return;
+  if (isProduction(process.env) || process.env.DM_WATCH_CONFIG === '0') return;
   const watcher = configWatcher({
     live, keys: Object.keys(configSchemas),
     // Файл могли поймать на середине записи — бросок разбора, наблюдатель перечитает его следующим применением.

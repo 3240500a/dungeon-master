@@ -5,6 +5,7 @@ import { RoomManager } from './roomManager.js';
 import { installShutdown, frameFailed } from './wsServer.js';
 import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, routePassOf, type GameConn } from './conn.js';
 import { clientIp } from './rateLimit.js';
+import { isProduction } from './devFlags.js';
 import { isLoopback, PROXY_HEADERS, LOCAL_PROOF_HEADER, proxyLinks } from './adminAccess.js';
 import { counters } from './metrics.js';
 
@@ -97,7 +98,7 @@ const ASSET_BODY_MAX = 64 * 1024 * 1024;
 const ASSET_PATH = '/api/dev/assets/';
 
 /** R4-11: сколько тела прокси вообще готов принять на этот путь. В продакшене инструменты закрыты — им и тело не нужно. */
-export function bodyCapFor(path: string, production = process.env.NODE_ENV === 'production'): number {
+export function bodyCapFor(path: string, production = isProduction(process.env)): number {
   if (production || !path.startsWith(DEV_PATH)) return BODY_MAX;
   return path.startsWith(ASSET_PATH) ? ASSET_BODY_MAX : DEV_BODY_MAX;
 }

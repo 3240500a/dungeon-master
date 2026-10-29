@@ -293,6 +293,14 @@ export class GameSession {
    */
   private sealRng: Rng;
   /**
+   * ⭐ С-аудит F3 (29.10): криптоисточник печатей от сервера (`opts.sealRng`). Сидовый поток печатей (сид сессии × глубина × забег)
+   * заводился заново на каждом входе на этаж: ушёл в город и вернулся на тот же узел — первая элита или сундук бросали ТОТ ЖЕ бросок №0
+   * и давали ту же печать снова (честный игрок фармил её руками), а выход потока (разлёт печати в событии) выдавал 32-битное состояние —
+   * дальше изменённый клиент знал все печати наперёд. Есть источник — поток один на сессию, не перезаводится и не угадывается; нет
+   * (сим, боты, тесты) — прежний сидовый, воспроизводимый.
+   */
+  private readonly sealSource?: Rng;
+  /**
    * ⚠⚠ ГАРАНТИЯ БОССА — ОДИН РАЗ НА ЭТАЖ, и это правка по ЗАМЕРУ (17.10).
    *
    * Было: гарантия платилась за КАЖДого убитого редкости `unique` на боссовой глубине. А боссовая комната
@@ -348,11 +356,12 @@ export class GameSession {
    * дальше изменённый клиент считал сундук и дроп наперёд этим же кодом и крутил их ударами в воздух (удар — один бросок).
    * Непредсказуемый сид (D10) этого не закрывал: утекал сам поток.
    */
-  constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean; rng?: Rng } = {}) {
+  constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean; rng?: Rng; sealRng?: Rng } = {}) {
     this.cfg = cfg;
     this.rng = opts.rng ?? createRng((seed >>> 0) || 1);
     this.seed = (seed >>> 0) || 1;
-    this.sealRng = createRng(((this.seed * 2654435761) >>> 0) ^ 0x5ea15ea1);
+    this.sealSource = opts.sealRng;
+    this.sealRng = opts.sealRng ?? createRng(((this.seed * 2654435761) >>> 0) ^ 0x5ea15ea1);
     this.world = newWorldState([], seed, 0, difficultyId);
     this.rewards = opts.rewards ?? true;
     this.sustain = opts.sustain ?? this.rewards;
@@ -403,7 +412,8 @@ export class GameSession {
     );
     // ⭐ Ф5-2: поток печатей — от сида сессии И глубины: один и тот же этаж даёт один и тот же приход, а соседний
     // этаж — свой. Узел в сид не берём намеренно: переход «тот же этаж другим путём» не должен менять награду.
-    this.sealRng = createRng(((this.seed * 2654435761) >>> 0) ^ (((depth >>> 0) + 1) * 0x9e3779b1)
+    // ⭐ F3: у сервера — свой криптоисточник на всю сессию (`sealSource`): вход на тот же узел бросок не повторяет.
+    this.sealRng = this.sealSource ?? createRng(((this.seed * 2654435761) >>> 0) ^ (((depth >>> 0) + 1) * 0x9e3779b1)
       ^ (strSeed(layout.runId ?? '') >>> 0) ^ 0x5ea15ea1);
     this.bossSealPaid = false;   // гарантия — одна на этаж, и новый этаж начинает счёт заново
     w.biomeId = layout.biomeId;
@@ -706,7 +716,10 @@ export class GameSession {
     const moveMult = stunned ? 0 : attacking ? snap.derived.attackMoveMult : 1;   // per-класс замедление при атаке (из класс-scaling)
     // ⚠ R7-01: взгляд — в [−π, π] и здесь, не только на проводе: боты и сим идут мимо `validateInput`, а `wrapAngle` конуса
     // удара на 1e17 отдаёт 0 для любого угла (взмах по кругу 360°).
-    if (input && !stunned) p.facing = normalizeAngle(input.facing);
+    // ⭐ С-аудит F6 (29.10): ВО ВРЕМЯ ЗАМАХА ВЗГЛЯД ЗАПЕРТ — направление удара берётся в миг его начала (его же несёт событие `swing`).
+    // Раньше взгляд жил каждый тик, и удар брал взгляд мига РАЗЖАТИЯ: изменённый клиент начинал взмах куда угодно и доворачивал его на
+    // цель в последний тик (идеальный автоприцел), а штраф бега спиной (`moveDirMult`) обходил, держа взгляд по ходу весь замах.
+    if (input && !stunned && !p.windup) p.facing = normalizeAngle(input.facing);
     const len = input ? vecLen(input.move.x, input.move.y) : 0;
     let want = { x: 0, y: 0 };
     if (input && moveMult > 0 && len > 0) {

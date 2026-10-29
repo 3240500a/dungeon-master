@@ -12,14 +12,17 @@
  */
 
 import { isLoopback } from './adminAccess.js';
+import { isProduction } from './devFlags.js';
 
 /**
  * Аварийный выключатель для нагрузочного стенда: сотня ботов идёт с одного адреса и упирается
  * в лимит регистрации раньше, чем начнётся замер. Включается ТОЛЬКО явной переменной окружения,
  * которую ставит `loadtest/probe.ts`; в проде её не бывает, и при её появлении сервер шумит.
  */
-const DISABLED = process.env.DM_RATELIMIT === 'off';
+// ⭐ С-аудит F10 (29.10): в бою выключатель НЕ действует — одна строка окружения не должна снимать с сервера все лимиты и потолок аккаунтов.
+const DISABLED = process.env.DM_RATELIMIT === 'off' && !isProduction(process.env);
 if (DISABLED) console.warn('[rateLimit] ЛИМИТЫ ЧАСТОТЫ ВЫКЛЮЧЕНЫ (DM_RATELIMIT=off) — только для нагрузочного стенда');
+else if (process.env.DM_RATELIMIT === 'off') console.error('[rateLimit] DM_RATELIMIT=off ПРОИГНОРИРОВАН: NODE_ENV=production — лимиты действуют. Уберите флаг из окружения');
 
 interface Bucket { tokens: number; at: number; }
 

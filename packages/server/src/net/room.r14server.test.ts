@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import {
   ConfigRegistry, newCharacterSave, generateItem, generateRunPlan, generateFloor, decorSpecsFor, createRng, hasLineOfSight, isWalkableWorld,
   type Item, type ServerFrame, type SaveState, type RunPlan, type RunConfig, type Grid,
 } from '@dm/shared';
 import { counters, renderMetrics } from './metrics.js';
+/** ⭐ С-аудит F7: ключ графа забега — как у сервера (`runPlanOf`): HMAC ключа этажей по тегу слоя или узла. */
+const createHmacFor = (key: string, tag: string): number => createHmac('sha256', key).update(`plan|${tag}`).digest().readUInt32BE(0);
 
 // Тесты ждут комнату оборотами цикла; под нагрузкой полного прогона умолчание 5 с — лотерея. Исходы решают мок базы и шаги
 // комнаты, которые тест делает сам (`step`), а не часы.
@@ -70,9 +73,10 @@ type RoomIn = {
   step(): void; stop(): void;
 };
 let RoomCtor: new (code: string, cfg: ConfigRegistry, hooks: object) => RoomIn;
+let runPlanOf: (reg: ConfigRegistry, run: RunConfig, window?: { from: number; to: number }) => RunPlan;
 let cfg: ConfigRegistry;
 beforeAll(async () => {
-  ({ Room: RoomCtor } = (await import('./room.js')) as unknown as { Room: typeof RoomCtor });
+  ({ Room: RoomCtor, runPlanOf } = (await import('./room.js')) as unknown as { Room: typeof RoomCtor; runPlanOf: typeof runPlanOf });
   cfg = new ConfigRegistry();
   cfg.loadAll();
 });
@@ -437,9 +441,10 @@ describe('⭐ R14-10: сиды забега и этажей клиенту не 
     const plans = wsA.all('runPlan');
     expect(plans.length, 'план пришёл').toBeGreaterThan(0);
     for (const f of plans) {
-      const plan = f.plan as unknown as Record<string, unknown> & { nodes: { floorSpec: Record<string, unknown> }[] };
+      const plan = f.plan as unknown as Record<string, unknown> & { nodes: Record<string, unknown>[] };
       expect('seed' in plan, 'сид забега в плане').toBe(false);
-      for (const n of plan.nodes) expect('seed' in n.floorSpec, 'сид этажа в плане').toBe(false);
+      // ⭐ С-аудит F7: состава этажей (и сида в нём) в плане клиента нет вовсе — карте он не нужен, а маршрут подсказывал.
+      for (const n of plan.nodes) expect('floorSpec' in n, 'состав этажа в плане').toBe(false);
     }
     const saves = wsA.all('saveUpdate').map((f) => f.save);
     expect(saves.some((s) => s.run), 'сейв с забегом приходил').toBe(true);
@@ -465,6 +470,16 @@ describe('⭐ R14-10: сиды забега и этажей клиенту не 
     const { room } = await coop();
     const run = room.runConfig!;
     expect(typeof (run as { floorKey?: unknown }).floorKey, 'у нового забега есть ключ этажей').toBe('string');
+    // ⭐ С-аудит F7: и ГРАФ — от ключа (`planKeyed`): сид забега, подобранный по видимым слоям или утёкший, графа дальше окна не даёт.
+    expect(run.planKeyed, 'новый забег — граф от ключа').toBe(true);
+    const sig = (pl: RunPlan): string => pl.nodes.map((n) => `${n.id}:${n.type}:${n.edges.map((e) => e.to).join(',')}`).join('|');
+    const wide = { from: 1, to: 40 };
+    expect(sig(generateRunPlan(cfg, { ...run, floorKey: undefined, planKeyed: undefined } as RunConfig, undefined, wide)), 'граф по одному сиду — не граф забега')
+      .not.toBe(sig(runPlanOf(cfg, run, wide)));
+    expect(sig(runPlanOf(cfg, { ...run, floorKey: 'f'.repeat(32) } as RunConfig, wide)), 'другой ключ — другой граф').not.toBe(sig(runPlanOf(cfg, run, wide)));
+    // Старый забег из сейва (без `planKeyed`) пересобирается прежним графом — «Продолжить» находит свой узел.
+    const legacy = { ...run, planKeyed: undefined } as RunConfig;
+    expect(sig(runPlanOf(cfg, legacy, wide)), 'забег до правки — граф от сида, как был').toBe(sig(generateRunPlan(cfg, legacy, undefined, wide)));
     const snap = cfg.snapshot();
     const floorOf = (spec: RunPlan['nodes'][number]['floorSpec']) => {
       const biome = snap.biomes.find((x) => x.id === spec.biomeId) ?? snap.biomes[0]!;
@@ -472,8 +487,9 @@ describe('⭐ R14-10: сиды забега и этажей клиенту не 
         { tiers: snap.chests, perFloor: snap.balance.loot.chestsPerFloor });
       return JSON.stringify({ spawn: f.spawn, exits: f.exits, chests: f.chests });
     };
-    // Самый сильный клиент: сид забега подобран (или утёк), граф и узлы — те же; ключа этажей нет.
-    const guess = generateRunPlan(cfg, { ...run, floorKey: undefined } as RunConfig);
+    // Самый сильный клиент: граф узнан (сид и ключ графа — допустим, утекли), ключа этажей нет: сиды этажей — от сида забега.
+    const guess = generateRunPlan(cfg, { ...run, floorKey: undefined } as RunConfig, undefined, undefined, undefined,
+      (tag) => createHmacFor(run.floorKey!, tag));
     const cur = room.runPlan!.nodes.find((n) => n.id === room.runNodeId)!;
     let differ = 0;
     for (const e of cur.edges) {
