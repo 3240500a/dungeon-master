@@ -2,6 +2,7 @@ import { TILE } from '../world/grid.js';
 import { exitLabel } from '../dungeon/run/labels.js';
 import type { RunPlan } from '../dungeon/run/types.js';
 import type { FloorInit } from './netTypes.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐ С7 (29.10): ИНТЕРАКТИВЫ ОБЛАСТИ — ИХ СОБИРАЕТ СЕРВЕР. Где стоит, в каком радиусе [E], что подписано и что делает — раньше это
@@ -41,21 +42,22 @@ export interface Interactable {
 export const INTERACT_R = { exit: 34, shop: 40, portal: 44, spawn: 40, lever: 40, chest: 48, npc: 42, townPortal: 46, altar: 42 } as const;
 
 export const INTERACT_LABEL = {
-  shop: 'Лавка',
-  ret: 'Вернуться в город (голосование)',
-  lever: 'Рычаг (открыть дверь)',
-  chest: 'Сундук (открыть)',
-  townPortal: 'Портал — куда лететь',
-  altar: 'Алтарь — настроить отрезок',
+  get shop() { return tr('srv:interact.shop', 'Лавка'); },
+  get ret() { return tr('srv:interact.ret', 'Вернуться в город (голосование)'); },
+  get lever() { return tr('srv:interact.lever', 'Рычаг (открыть дверь)'); },
+  get chest() { return tr('srv:interact.chest', 'Сундук (открыть)'); },
+  get townPortal() { return tr('srv:interact.townPortal', 'Портал — куда лететь'); },
+  get altar() { return tr('srv:interact.altar', 'Алтарь — настроить отрезок'); },
 } as const;
 
 /** Станции города: клетка, подпись, окно. Цвет столбика — показ, он у клиента. */
 export const TOWN_STATIONS: readonly { cx: number; cy: number; label: string; panel: string }[] = [
-  { cx: 4, cy: 4, label: 'Магазин', panel: 'shop' },
-  { cx: 7, cy: 4, label: 'Кузница', panel: 'forge' },
-  { cx: 10, cy: 4, label: 'Мастер прокачки', panel: 'master' },
-  { cx: 14, cy: 4, label: 'Доска квестов', panel: 'quests' },
-  { cx: 17, cy: 4, label: 'Сундук', panel: 'stash' },
+  // ⭐ i18n Ф1 (06.11): подпись — геттер (`tr` на каждое чтение): таблица модульная, а язык у каждого игрока свой
+  { cx: 4, cy: 4, get label() { return tr('srv:station.shop', 'Магазин'); }, panel: 'shop' },
+  { cx: 7, cy: 4, get label() { return tr('srv:station.forge', 'Кузница'); }, panel: 'forge' },
+  { cx: 10, cy: 4, get label() { return tr('srv:station.master', 'Мастер прокачки'); }, panel: 'master' },
+  { cx: 14, cy: 4, get label() { return tr('srv:station.quests', 'Доска квестов'); }, panel: 'quests' },
+  { cx: 17, cy: 4, get label() { return tr('srv:station.stash', 'Сундук'); }, panel: 'stash' },
 ];
 
 /**

@@ -7,6 +7,7 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { SaveState } from '../types/save.js';
 import { dmgColor, dmgName, elementOf } from './heroText.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 type SkillNode = ConfigShapes['skill-tree']['nodes'][number];
 type SkillBranch = ConfigShapes['skill-tree']['branches'][number];
@@ -32,7 +33,7 @@ function sideColor(resource: string, group: string): string {
   return '#8a7d64';
 }
 const elementColor = (cfg: ConfigRegistry, el: string): string => (el === 'mastery' ? '#6a6a7a' : dmgColor(cfg, el));
-const elementLabel = (cfg: ConfigRegistry, el: string): string => (el === 'mastery' ? 'Мастерство' : dmgName(cfg, el));
+const elementLabel = (cfg: ConfigRegistry, el: string): string => (el === 'mastery' ? tr('srv:skillTree.mastery', 'Мастерство') : dmgName(cfg, el));
 /** Золотой контур входа ветки (`COLORS.gold`). */
 const ENTRY_GOLD = '#dca94b';
 
@@ -53,7 +54,7 @@ export function skillTreeView(cfg: ConfigRegistry, save: SaveState): SkillTreeMo
 
   const model: SkillTreeModel = {
     nodes: [], edges: [], labels: [],
-    header: `Очки скиллов: ${save.unspentSkillPoints} · колесо — зум, перетаскивание — панорама, клик по доступному узлу — вложить очко · ромб — вставка для сборки скилов`,
+    header: tr('srv:skillTree.header', 'Очки скиллов: {points} · колесо — зум, перетаскивание — панорама, клик по доступному узлу — вложить очко · ромб — вставка для сборки скилов', { points: save.unspentSkillPoints }),
   };
 
   for (const [a, b] of edges) {
@@ -85,12 +86,12 @@ export function skillTreeView(cfg: ConfigRegistry, save: SaveState): SkillTreeMo
       sw = notable ? 3 : 2;
     }
     if (entries.has(n.id) && !alloc) stroke = ENTRY_GOLD;
-    const kind = isActive ? 'Активный скилл' : ins ? 'Вставка для сборки скилов' : 'Пассивный скилл';
-    const tip: (string | undefined)[] = [n.name, `${kind} · ${br.name}`, n.description];
-    if (isActive) tip.push(`Стихия: ${elementLabel(cfg, el)}`);
-    tip.push(`ранг ${rank}/${n.maxRank} · ${rank >= n.maxRank ? 'макс. ранг' : `след. ранг: ${n.cost.amount} очк.`}`);
-    if (save.level < n.levelReq) tip.push(`требуется уровень ${n.levelReq}`);
-    if (ins) tip.push(`◆ Открывает вставку: ${ins.name}`, ins.description);
+    const kind = isActive ? tr('srv:skillTree.kindActive', 'Активный скилл') : ins ? tr('srv:skillTree.kindInsert', 'Вставка для сборки скилов') : tr('srv:skillTree.kindPassive', 'Пассивный скилл');
+    const tip: (string | undefined)[] = [cfgRowText(cfg, 'skill-tree', n), `${kind} · ${cfgRowText(cfg, 'skill-tree', br)}`, cfgRowText(cfg, 'skill-tree', n, 'description')];
+    if (isActive) tip.push(tr('srv:skillTree.element', 'Стихия: {element}', { element: elementLabel(cfg, el) }));
+    tip.push(tr('srv:skillTree.rankLine', 'ранг {rank}/{maxRank} · {next}', { rank, maxRank: n.maxRank, next: rank >= n.maxRank ? tr('srv:skillTree.maxRank', 'макс. ранг') : tr('srv:skillTree.nextRank', 'след. ранг: {amount} очк.', { amount: n.cost.amount }) }));
+    if (save.level < n.levelReq) tip.push(tr('srv:skillTree.levelReq', 'требуется уровень {levelReq}', { levelReq: n.levelReq }));
+    if (ins) tip.push(tr('srv:skillTree.grantsInsert', '◆ Открывает вставку: {name}', { name: cfgRowText(cfg, 'skill-inserts', ins) }), cfgRowText(cfg, 'skill-inserts', ins, 'description'));
     model.nodes.push({
       id: n.id, x: n.x, y: n.y, size, sw, ...(ins ? {} : { rx: notable ? 5 : 3 }),
       shape: ins ? 'diamond' : 'rect', fill, stroke, alloc, avail, notable,
@@ -105,7 +106,7 @@ export function skillTreeView(cfg: ConfigRegistry, save: SaveState): SkillTreeMo
     for (const n of bn) { const d = n.x * n.x + n.y * n.y; if (d > fd) { fd = d; far = n; } }
     const len = Math.max(1, Math.hypot(far.x, far.y));
     const lx = far.x + (far.x / len) * 44, ly = far.y + (far.y / len) * 44;
-    model.labels.push({ x: lx, y: ly, anchor: lx < -20 ? 'end' : lx > 20 ? 'start' : 'middle', fill: sideColor(br.resource, br.group), text: br.name });
+    model.labels.push({ x: lx, y: ly, anchor: lx < -20 ? 'end' : lx > 20 ? 'start' : 'middle', fill: sideColor(br.resource, br.group), text: cfgRowText(cfg, 'skill-tree', br) });
   }
   return model;
 }

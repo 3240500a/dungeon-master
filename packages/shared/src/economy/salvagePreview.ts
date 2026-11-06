@@ -2,10 +2,11 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { Item } from '../types/items.js';
 import {
   countsAsFind, craftTiers, emptyJournal, normalizeJournal, partById, salvageFullOrigin, salvageGrades, salvageIntoJournal, sketchable,
-  typeOfItem, type CraftJournal,
+  typeNameOfItem, type CraftJournal,
 } from '../formulas/craft.js';
 import { ESSENCE_ID, type SalvageRng } from '../formulas/salvage.js';
-import { STARTER_KNOWN, catalogGained, catalogLine, essenceOf, salvageRange, salvageYield } from './townActions.js';
+import { catalogGained, catalogLine, essenceOf, salvageRange, salvageYield, starterKnownText } from './townActions.js';
+import { cfgRowText, tr, trn } from '../i18n/tr.js';
 
 /** Бросок «путь, без выхода»: путь разбора от кубика не зависит, выход здесь не нужен. */
 const NO_ROLL: SalvageRng = { int: (a) => a, chance: () => false };
@@ -28,11 +29,11 @@ export function salvageJournalGains(reg: ConfigRegistry, item: Item, journal: Cr
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   const sketch = u.sketch && reg.get('weapon-parts').some((p) => p.enabled !== false && sketchable(reg, u.journal, p.id));
   return [
-    ...(u.newBase && base ? [`тип «${base.name}»`] : []),
-    ...u.unlocked.map((id) => `деталь «${partById(reg, id)?.name ?? id}»`),
-    ...(u.newType ? [`кодекс «${typeOfItem(reg, item)?.name ?? u.newType}»`] : []),
-    ...(u.newGear && base ? [`снаряжение «${base.name}»`] : []),
-    ...(sketch ? ['эскиз — деталь на выбор'] : []),
+    ...(u.newBase && base ? [tr('srv:salvage.gainType', 'тип «{name}»', { name: cfgRowText(reg, 'items.base', base) })] : []),
+    ...u.unlocked.map((id) => tr('srv:salvage.gainPart', 'деталь «{name}»', { name: cfgRowText(reg, 'weapon-parts', partById(reg, id)) ?? id })),
+    ...(u.newType ? [tr('srv:salvage.gainCodex', 'кодекс «{name}»', { name: typeNameOfItem(reg, item) ?? u.newType })] : []),
+    ...(u.newGear && base ? [tr('srv:salvage.gainGear', 'снаряжение «{name}»', { name: cfgRowText(reg, 'items.base', base) })] : []),
+    ...(sketch ? [tr('srv:salvage.gainSketch', 'эскиз — деталь на выбор')] : []),
   ];
 }
 
@@ -72,20 +73,23 @@ export interface SalvageCard {
 
 /** «вдвое больше», «втрое больше», «вчетверо больше» — во сколько раз у кузнеца больше, чем в поле; дальше — числом; меньше двух — «больше». */
 function timesWord(n: number): string {
-  if (!(n >= 2)) return 'больше';
-  const w = n === 2 ? 'вдвое' : n === 3 ? 'втрое' : n === 4 ? 'вчетверо' : `в ${n} раз${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'а' : ''}`;
-  return `${w} больше`;
+  if (!(n >= 2)) return tr('srv:salvage.timesMore', 'больше');
+  if (n === 2) return tr('srv:salvage.times2', 'вдвое больше');
+  if (n === 3) return tr('srv:salvage.times3', 'втрое больше');
+  if (n === 4) return tr('srv:salvage.times4', 'вчетверо больше');
+  // ⭐ i18n Ф1 (06.11): «раз/раза» — категория числа (`Intl.PluralRules`: 2–4 кроме 12–14 — `few`), а не своя арифметика окончаний
+  return trn('srv:salvage.timesN', n, { one: 'в {n} раз больше', few: 'в {n} раза больше', many: 'в {n} раз больше', other: 'в {n} раза больше' });
 }
 
 /** Происхождение не-находки — словами для игрока. Чего нет в списке (поле из будущего) — «вещь не найдена». */
 function notFoundWhy(item: Item): string {
-  if (item.tierForged && !item.bornTier && item.origin && item.origin !== 'shop') return 'ступень поднята кузнецом до учёта исходной';
+  if (item.tierForged && !item.bornTier && item.origin && item.origin !== 'shop') return tr('srv:salvage.whyTierForged', 'ступень поднята кузнецом до учёта исходной');
   switch (item.origin) {
-    case undefined: return 'вещь из прежней версии';
-    case 'shop': return 'вещь куплена';
-    case 'start': return 'стартовый набор';
-    case 'craft': return 'вещь скована';
-    default: return 'вещь не найдена';
+    case undefined: return tr('srv:salvage.whyLegacy', 'вещь из прежней версии');
+    case 'shop': return tr('srv:salvage.whyBought', 'вещь куплена');
+    case 'start': return tr('srv:salvage.whyStarter', 'стартовый набор');
+    case 'craft': return tr('srv:salvage.whyCrafted', 'вещь скована');
+    default: return tr('srv:salvage.whyNotFound', 'вещь не найдена');
   }
 }
 
@@ -94,7 +98,7 @@ function rangeText(reg: ConfigRegistry, range: Record<string, { min: number; max
   const defs = reg.get('craft-materials');
   return Object.entries(range)
     .filter(([id]) => id !== ESSENCE_ID)
-    .map(([id, r]) => `${approx ? '≈ ' : '+ '}${defs.find((m) => m.id === id)?.name ?? id} ${r.min === r.max ? r.min : `${r.min}–${r.max}`}`)
+    .map(([id, r]) => `${approx ? '≈ ' : '+ '}${cfgRowText(reg, 'craft-materials', defs.find((m) => m.id === id)) ?? id} ${r.min === r.max ? r.min : `${r.min}–${r.max}`}`)
     .join(' · ');
 }
 
@@ -107,7 +111,9 @@ export function salvagePreview(reg: ConfigRegistry, item: Item, journal: CraftJo
   const melt = !!item.parts;
   const verb: SalvageCard['verb'] = melt ? 'melt' : 'salvage';
   const pct = `${Math.round(fy * 100)} %`;
-  const title = inField ? `${melt ? 'Переплавить' : 'Разобрать'} здесь (${pct})` : `${melt ? 'Переплавить' : 'Разобрать'} — вещь исчезнет`;
+  const title = inField
+    ? (melt ? tr('srv:salvage.titleMeltHere', 'Переплавить здесь ({pct})', { pct }) : tr('srv:salvage.titleHere', 'Разобрать здесь ({pct})', { pct }))
+    : (melt ? tr('srv:salvage.titleMelt', 'Переплавить — вещь исчезнет') : tr('srv:salvage.title', 'Разобрать — вещь исчезнет'));
   const path = salvageYield(reg, item, NO_ROLL, inField);
   const rng = salvageRange(reg, item, inField);
   const range = rng.ok ? rng.range : {};
@@ -122,54 +128,55 @@ export function salvagePreview(reg: ConfigRegistry, item: Item, journal: CraftJo
   // ── Сырьё ──
   let materials: SalvageCardLine;
   const mats = rangeText(reg, range, inField);
-  if (kit) materials = { label: 'Сырьё', text: 'сырья нет — стартовый набор бесплатный', tone: 'dim' };
-  else if (melt) materials = { label: 'Сырьё', text: `${mats || 'ничего'} — вернётся доля заплаченного; эссенция и доводка не вернутся`, tone: mats ? 'gain' : 'dim' };
+  if (kit) materials = { label: tr('srv:salvage.cardMaterials', 'Сырьё'), text: tr('srv:salvage.matsStarter', 'сырья нет — стартовый набор бесплатный'), tone: 'dim' };
+  else if (melt) materials = { label: tr('srv:salvage.cardMaterials', 'Сырьё'), text: tr('srv:salvage.matsMelt', '{mats} — вернётся доля заплаченного; эссенция и доводка не вернутся', { mats: mats || tr('srv:salvage.nothing', 'ничего') }), tone: mats ? 'gain' : 'dim' };
   else {
     const notes: string[] = [];
-    if (!full) notes.push(`${why} — не выше ${gradeRoman(reg.get('balance').salvage.nonFindMaxGrade)} сорта`);
+    if (!full) notes.push(tr('srv:salvage.matsGradeCap', '{why} — не выше {nonFindMaxGrade} сорта', { why, nonFindMaxGrade: gradeRoman(reg.get('balance').salvage.nonFindMaxGrade) }));
     if (item.bornTier) {
       const born = craftTiers(reg).find((t) => t.id === item.bornTier);
-      if (born) notes.push(`как у вещи «${born.name}»: ступень поднята кузнецом`);
+      if (born) notes.push(tr('srv:salvage.matsBornTier', 'как у вещи «{name}»: ступень поднята кузнецом', { name: cfgRowText(reg, 'item-tiers', born) }));
     }
-    materials = { label: 'Сырьё', text: `${mats || 'ничего'}${notes.length ? ` (${notes.join('; ')})` : ''}`, tone: mats ? 'gain' : 'dim' };
+    materials = { label: tr('srv:salvage.cardMaterials', 'Сырьё'), text: `${mats || tr('srv:salvage.nothing', 'ничего')}${notes.length ? ` (${notes.join('; ')})` : ''}`, tone: mats ? 'gain' : 'dim' };
   }
 
   // ── Эссенция ──
   const er = range[ESSENCE_ID];
   let essence: SalvageCardLine;
-  if (er && er.max > 0) essence = { label: 'Эссенция', text: inField ? `≈ ${er.min}–${er.max}` : `+ ${er.min === er.max ? er.min : `${er.min}–${er.max}`}`, tone: 'gain' };
-  else if (melt) essence = { label: 'Эссенция', text: 'нет — переплавка эссенцию не возвращает', tone: 'dim' };
-  else if (kit) essence = { label: 'Эссенция', text: 'нет — стартовый набор', tone: 'dim' };
-  else if (!full && (item.rarity === 'magic' || item.rarity === 'rare')) essence = { label: 'Эссенция', text: `нет — ${why}`, tone: 'warn' };
-  else if (essenceOf(reg, item) > 0) essence = { label: 'Эссенция', text: 'нет — материал выключен', tone: 'dim' };
-  else essence = { label: 'Эссенция', text: 'нет — у обычной вещи чар нет', tone: 'dim' };
+  if (er && er.max > 0) essence = { label: tr('srv:salvage.cardEssence', 'Эссенция'), text: inField ? `≈ ${er.min}–${er.max}` : `+ ${er.min === er.max ? er.min : `${er.min}–${er.max}`}`, tone: 'gain' };
+  else if (melt) essence = { label: tr('srv:salvage.cardEssence', 'Эссенция'), text: tr('srv:salvage.essMelt', 'нет — переплавка эссенцию не возвращает'), tone: 'dim' };
+  else if (kit) essence = { label: tr('srv:salvage.cardEssence', 'Эссенция'), text: tr('srv:salvage.essStarter', 'нет — стартовый набор'), tone: 'dim' };
+  else if (!full && (item.rarity === 'magic' || item.rarity === 'rare')) essence = { label: tr('srv:salvage.cardEssence', 'Эссенция'), text: tr('srv:salvage.essNo', 'нет — {why}', { why }), tone: 'warn' };
+  else if (essenceOf(reg, item) > 0) essence = { label: tr('srv:salvage.cardEssence', 'Эссенция'), text: tr('srv:salvage.essDisabled', 'нет — материал выключен'), tone: 'dim' };
+  else essence = { label: tr('srv:salvage.cardEssence', 'Эссенция'), text: tr('srv:salvage.essNormal', 'нет — у обычной вещи чар нет'), tone: 'dim' };
 
   // ── Каталог: только у кузнеца (D2 — в поле строки нет) ──
   const catalog: SalvageCardLine | null = inField ? null
-    : { label: 'Каталог', text: catalogLine(reg, item, u), tone: catalogGained(u) ? 'gain' : 'dim' };
+    : { label: tr('srv:salvage.cardCatalog', 'Каталог'), text: catalogLine(reg, item, u), tone: catalogGained(u) ? 'gain' : 'dim' };
 
   // ── Эскиз (жалость): только оружие, не скованное ──
   let sketch: SalvageCardLine | null = null;
   if (base?.kind === 'weapon' && !melt) {
     const k = reg.get('balance').craft.journal.sketchAfter;
     const cls = base.weaponClass;
-    const label = (reg.get('weapon-anatomy').find((a) => a.id === cls)?.name ?? cls).toLowerCase();
-    if (!countsAsFind(item)) sketch = { label: 'Эскиз', text: 'копят только находки', tone: 'dim' };
-    else if (inField) sketch = { label: 'Эскиз', text: `копит только разбор у кузнеца (${label} ${j.classSalvages[cls] ?? 0}/${k})`, tone: 'dim' };
-    else if (u.sketch) sketch = { label: 'Эскиз', text: `+ эскиз — деталь на выбор (${label} ${k}/${k})`, tone: 'gain' };
-    else sketch = { label: 'Эскиз', text: `${label} ${u.journal.classSalvages[cls] ?? 0}/${k}`, tone: 'dim' };
+    const label = (cfgRowText(reg, 'weapon-anatomy', reg.get('weapon-anatomy').find((a) => a.id === cls)) ?? cls).toLowerCase();
+    if (!countsAsFind(item)) sketch = { label: tr('srv:salvage.cardSketch', 'Эскиз'), text: tr('srv:salvage.sketchFindsOnly', 'копят только находки'), tone: 'dim' };
+    else if (inField) sketch = { label: tr('srv:salvage.cardSketch', 'Эскиз'), text: tr('srv:salvage.sketchForgeOnly', 'копит только разбор у кузнеца ({label} {classSalvages}/{k})', { label, classSalvages: j.classSalvages[cls] ?? 0, k }), tone: 'dim' };
+    else if (u.sketch) sketch = { label: tr('srv:salvage.cardSketch', 'Эскиз'), text: tr('srv:salvage.sketchGain', '+ эскиз — деталь на выбор ({label} {k}/{k})', { label, k }), tone: 'gain' };
+    else sketch = { label: tr('srv:salvage.cardSketch', 'Эскиз'), text: `${label} ${u.journal.classSalvages[cls] ?? 0}/${k}`, tone: 'dim' };
   }
 
   // ── Можно ли ──
   let ok = path.ok;
   let reason = path.ok ? undefined : path.reason;
-  if (ok && path.source === 'catalog' && !catalogGained(u)) { ok = false; reason = STARTER_KNOWN; }
+  if (ok && path.source === 'catalog' && !catalogGained(u)) { ok = false; reason = starterKnownText(); }
   const tierIdx = salvageGrades(reg, item).tier;
   // Мягкая подсказка поля — где разница заметна: магическая, редкая (эссенция) и высокая ступень (дорогое сырьё); ⭐ и когда кузнец
   // добавил бы в каталог новое — в поле его не будет (D2).
   const hint = inField && ok && (er?.max || item.rarity === 'magic' || item.rarity === 'rare' || tierIdx >= 4 || gains.length > 0)
-    ? `у кузнеца сырья и эссенции ${timesWord(Math.round(1 / Math.max(fy, 1e-9)))}`
-      + (gains.length ? `, и в каталог легло бы: ${gains.join(', ')}` : ', и вещь попала бы в каталог')
+    ? (gains.length
+      ? tr('srv:salvage.hintGains', 'у кузнеца сырья и эссенции {times}, и в каталог легло бы: {gains}', { times: timesWord(Math.round(1 / Math.max(fy, 1e-9))), gains: gains.join(', ') })
+      : tr('srv:salvage.hintCatalog', 'у кузнеца сырья и эссенции {times}, и вещь попала бы в каталог', { times: timesWord(Math.round(1 / Math.max(fy, 1e-9))) }))
     : undefined;
   return { ok, ...(reason ? { reason } : {}), verb, title, range, materials, essence, catalog, sketch, gains, ...(hint ? { hint } : {}) };
 }
@@ -186,14 +193,14 @@ export function itemOriginNote(
 ): string | null {
   // Ф5-1: печать не разбирается на сырьё — она не вещь и не из сырья сделана (перековка 3→1 — Ф5-6′).
   if (item.kind === 'material' || item.kind === 'consumable' || item.kind === 'seal') return null;
-  const head = item.origin === undefined ? 'Вещь из прежней версии'
-    : item.origin === 'shop' ? 'Куплено в лавке'
-    : item.origin === 'quest' ? 'Награда за задание'
-    : item.origin === 'start' ? 'Стартовый набор'
-    : item.origin === 'craft' ? 'Скована кузнецом'
+  const head = item.origin === undefined ? tr('srv:salvage.originLegacy', 'Вещь из прежней версии')
+    : item.origin === 'shop' ? tr('srv:salvage.originShop', 'Куплено в лавке')
+    : item.origin === 'quest' ? tr('srv:salvage.originQuest', 'Награда за задание')
+    : item.origin === 'start' ? tr('srv:salvage.originStart', 'Стартовый набор')
+    : item.origin === 'craft' ? tr('srv:salvage.originCraft', 'Скована кузнецом')
     : '';
   const up = !item.tierForged ? ''
-    : item.bornTier ? `ступень поднята кузнецом (была «${tierName(item.bornTier) ?? item.bornTier}»)` : 'ступень поднята кузнецом';
+    : item.bornTier ? tr('srv:salvage.originTierUpWas', 'ступень поднята кузнецом (была «{bornTier}»)', { bornTier: tierName(item.bornTier) ?? item.bornTier }) : tr('srv:salvage.originTierUp', 'ступень поднята кузнецом');
   const text = [head, up].filter(Boolean).join(' · ');
   return text ? text[0]!.toUpperCase() + text.slice(1) : null;
 }

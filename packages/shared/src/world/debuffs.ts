@@ -1,3 +1,4 @@
+import { cfgRowTextIn, tr } from '../i18n/tr.js';
 /**
  * Дебафф-движок боевого ядра (headless, сериализуемый — годится и для сети).
  * Состояние — простые данные на цели; функции чистые. Виды дебаффов по типам
@@ -16,8 +17,14 @@ export type DebuffKind =
 export type PhysDebuffKind = Extract<DebuffKind, 'wound' | 'bleed' | 'sunder' | 'daze'>;
 
 export const DEBUFF_LABEL: Record<DebuffKind, string> = {
-  wound: 'Рана', bleed: 'Кровотечение', sunder: 'Увечье', daze: 'Ошеломление',
-  burn: 'Поджиг', poison: 'Отравление', shock: 'Шок', freeze: 'Заморозка',
+  get wound() { return tr('srv:debuff.wound', 'Рана'); },
+  get bleed() { return tr('srv:debuff.bleed', 'Кровотечение'); },
+  get sunder() { return tr('srv:debuff.sunder', 'Увечье'); },
+  get daze() { return tr('srv:debuff.daze', 'Ошеломление'); },
+  get burn() { return tr('srv:debuff.burn', 'Поджиг'); },
+  get poison() { return tr('srv:debuff.poison', 'Отравление'); },
+  get shock() { return tr('srv:debuff.shock', 'Шок'); },
+  get freeze() { return tr('srv:debuff.freeze', 'Заморозка'); },
 };
 
 /** Иконки-эмодзи дебаффов — единый источник для HUD игрока и наводок монстров. */
@@ -60,7 +67,7 @@ export type DebuffTuning = DebuffsConfig;
 
 /** Имя дебаффа из конфига (фолбэк — константа DEBUFF_LABEL). */
 export function debuffLabel(cfg: DebuffsConfig | undefined, k: DebuffKind): string {
-  return cfg?.find((d) => d.id === k)?.name ?? DEBUFF_LABEL[k];
+  return cfgRowTextIn('debuffs', cfg, cfg?.find((d) => d.id === k)) ?? DEBUFF_LABEL[k];
 }
 /** Иконка дебаффа из конфига (фолбэк — константа DEBUFF_ICON). */
 export function debuffIcon(cfg: DebuffsConfig | undefined, k: DebuffKind): string {

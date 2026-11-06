@@ -12,6 +12,7 @@ import type { Item, SaveState } from '../types/index.js';
 import { canBuy, shopBuyPrice, shopSellPrice } from '../economy/townActions.js';
 import { disposePrompts } from './townSalvage.js';
 import { journalOf, type StashView } from './townItem.js';
+import { tr } from '../i18n/tr.js';
 
 /** Товар прилавка: цена (→ `maxGold` команды `buy`) и почему не купит (`null` — купит). DTO Unity — новый класс `ShopOffer`. */
 export interface ShopOffer { price: number; refusal: string | null }
@@ -27,13 +28,13 @@ const SEAL_NOT_SOLD = 'Печать не продаётся — её тратя�
 export function shopOffer(reg: ConfigRegistry, save: SaveState, item: Item): ShopOffer {
   const price = shopBuyPrice(reg, item);
   const can = canBuy(reg, save, item, price);
-  return { price, refusal: can.ok ? null : can.reason ?? 'нельзя' };
+  return { price, refusal: can.ok ? null : can.reason ?? tr('srv:bench.cannot', 'нельзя') };
 }
 
 /** Цена скупки и вопросы перед продажей — одна вещь сумки. `journal` — журнал кузнеца (что засчитал бы разбор у кузнеца). */
 export function sellOffer(reg: ConfigRegistry, item: Item, journal: Parameters<typeof disposePrompts>[3]): SellOffer {
   const price = shopSellPrice(reg, item);
-  if (item.kind === 'seal') return { price, refusal: SEAL_NOT_SOLD, prompts: [] };
+  if (item.kind === 'seal') return { price, refusal: tr('srv:shop.sealNotForSale', SEAL_NOT_SOLD), prompts: [] };
   return { price, refusal: null, prompts: disposePrompts(reg, item, 'sell', journal, price) };
 }
 

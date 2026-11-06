@@ -14,6 +14,7 @@ import { gradeRoman } from '../economy/salvagePreview.js';
 import { craftTiers, MATERIAL_STEPS } from '../formulas/craft.js';
 import { CRAFT_SLOT_LIST } from '../formulas/craftType.js';
 import { ESSENCE_FAMILY, ESSENCE_ID } from '../formulas/salvage.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /** Металлическая шкала сортов I–V: от тёмной стали к светлому серебру. V — полужирным. */
 export const GRADE_HEX: readonly string[] = ['#6f767d', '#8f979f', '#b0b8bf', '#d2d8dd', '#f1f4f6'];
@@ -23,7 +24,12 @@ export const ESSENCE_HEX = '#a58bdc';
 export const SALVAGE_RULE = 'Разбор: сырьё — по ступени вещи, эссенция — по редкости, детали — в каталог (у кузнеца)';
 /** Имя семьи для игрока: в конфиге у неё только id. */
 export const FAMILY_LABEL: Readonly<Record<string, string>> = {
-  iron: 'Железо', wood: 'Дерево', cloth: 'Ткань', hide: 'Кожа', plate: 'Пластины', trim: 'Прибор',
+  get iron() { return tr('srv:family.iron', 'Железо'); },
+  get wood() { return tr('srv:family.wood', 'Дерево'); },
+  get cloth() { return tr('srv:family.cloth', 'Ткань'); },
+  get hide() { return tr('srv:family.hide', 'Кожа'); },
+  get plate() { return tr('srv:family.plate', 'Пластины'); },
+  get trim() { return tr('srv:family.trim', 'Прибор'); },
 };
 
 /** Имя семьи (`FAMILY_LABEL`, нет — id). */
@@ -33,7 +39,7 @@ export function gradeHex(grade: number): string {
   return GRADE_HEX[Math.max(1, Math.min(GRADE_HEX.length, Math.floor(grade))) - 1]!;
 }
 /** «I сорт» … «V сорт». */
-export const gradeLabel = (grade: number): string => `${gradeRoman(grade)} сорт`;
+export const gradeLabel = (grade: number): string => tr('srv:materials.grade', '{grade} сорт', { grade: gradeRoman(grade) });
 
 /** С каких ступеней вещей идёт сорт — по рецепту разбора (`balance.salvage.recipeByTier`); выключенные ступени не называем. */
 export function gradeSources(reg: ConfigRegistry, grade: number): { name: string; strikeOnly: boolean }[] {
@@ -43,15 +49,15 @@ export function gradeSources(reg: ConfigRegistry, grade: number): { name: string
     if (t.enabled === false) continue;
     const row = rows[Math.min(i, rows.length - 1)] ?? [];
     const rest = row.slice(1).includes(grade);
-    if (rest || row[0] === grade) out.push({ name: t.name || t.id, strikeOnly: !rest });
+    if (rest || row[0] === grade) out.push({ name: cfgRowText(reg, 'item-tiers', t) || t.id, strikeOnly: !rest });
   }
   return out;
 }
 
 /** Подпись под столбцом: «Убогий, Старый · тела монстров», «Старый (боевая часть), Крепкий». */
 export function gradeSourceText(reg: ConfigRegistry, grade: number): string {
-  const tiers = gradeSources(reg, grade).map((s) => (s.strikeOnly ? `${s.name} (боевая часть)` : s.name)).join(', ');
-  return grade === 1 ? (tiers ? `${tiers} · тела монстров` : 'тела монстров') : tiers || '—';
+  const tiers = gradeSources(reg, grade).map((s) => (s.strikeOnly ? tr('srv:materials.strikeOnly', '{name} (боевая часть)', { name: s.name }) : s.name)).join(', ');
+  return grade === 1 ? (tiers ? tr('srv:materials.gradeSourcesMonsters', '{tiers} · тела монстров', { tiers }) : tr('srv:materials.monsters', 'тела монстров')) : tiers || '—';
 }
 
 /** Семьи сырья, которые тратит ковка: семья гнезда анатомии и своя семья детали. */
@@ -85,22 +91,23 @@ export interface MaterialsView {
 
 type MatDef = { id: string; name: string; family: string; tier: number; sellPrice: number };
 
-function cellTip(reg: ConfigRegistry, d: MatDef, stash: number, hand: number, forge: boolean): string[] {
+/** `holdings` — строки «В сундуке / В сумке» (подсказке стопки в сумке они не нужны: `materialNote`). */
+function cellTip(reg: ConfigRegistry, d: MatDef, stash: number, hand: number, forge: boolean, holdings = true): string[] {
   const s = reg.get('balance').salvage;
   const g = d.tier;
-  const src = gradeSources(reg, g).map((x) => (x.strikeOnly ? `«${x.name}» (боевая часть)` : `«${x.name}»`)).join(', ');
-  const found = g > s.nonFindMaxGrade ? 'найденных ' : '';
+  const src = gradeSources(reg, g).map((x) => (x.strikeOnly ? tr('srv:materials.strikeOnlyQuoted', '«{name}» (боевая часть)', { name: x.name }) : `«${x.name}»`)).join(', ');
+  const found = g > s.nonFindMaxGrade ? tr('srv:materials.foundWord', 'найденных ') : '';
   const lines = [
-    d.name,
+    cfgRowText(reg, 'craft-materials', d),
     `${familyLabel(d.family)} · ${gradeLabel(g)}`,
-    `Откуда: ${src ? `разбор ${found}вещей ${src}` : 'разбор его не даёт'}${g === 1 ? '; тела монстров' : ''}`,
+    tr('srv:materials.from', 'Откуда: {from}{monsters}', { from: src ? tr('srv:materials.fromSalvage', 'разбор {found}вещей {src}', { found, src }) : tr('srv:materials.fromNone', 'разбор его не даёт'), monsters: g === 1 ? tr('srv:materials.fromMonsters', '; тела монстров') : '' }),
   ];
-  if (g > s.nonFindMaxGrade) lines.push(`Купленные вещи и вещи прежней версии дают не выше ${gradeRoman(s.nonFindMaxGrade)} сорта`);
+  if (g > s.nonFindMaxGrade) lines.push(tr('srv:materials.nonFindCap', 'Купленные вещи и вещи прежней версии дают не выше {nonFindMaxGrade} сорта', { nonFindMaxGrade: gradeRoman(s.nonFindMaxGrade) }));
   const tiers = gradeSources(reg, g).map((x) => `«${x.name}»`).join(', ');
-  lines.push(`Куда: ${forge ? 'ковка, подъём и починка' : 'подъём и починка (ковкой не используется)'}${tiers ? ` — ступени ${tiers}` : ''}`);
-  if (g === 1) lines.push('Расходник любого подъёма и починки');
-  lines.push(`В сундуке ${stash}`);
-  if (hand > 0) lines.push(`В сумке ${hand} — часть потеряешь при смерти`);
+  lines.push(tr('srv:materials.to', 'Куда: {to}{tiers}', { to: forge ? tr('srv:materials.toForge', 'ковка, подъём и починка') : tr('srv:materials.toUpgrade', 'подъём и починка (ковкой не используется)'), tiers: tiers ? tr('srv:materials.toTiers', ' — ступени {tiers}', { tiers }) : '' }));
+  if (g === 1) lines.push(tr('srv:materials.gradeOneUse', 'Расходник любого подъёма и починки'));
+  if (holdings) lines.push(tr('srv:materials.inStash', 'В сундуке {stash}', { stash }));
+  if (holdings && hand > 0) lines.push(tr('srv:materials.inBag', 'В сумке {hand} — часть потеряешь при смерти', { hand }));
   lines.push(saleLine(d.sellPrice));
   return lines;
 }
@@ -109,17 +116,17 @@ function essenceAbout(reg: ConfigRegistry): string[] {
   const s = reg.get('balance').salvage;
   const e = s.essence as Record<string, number>;
   return [
-    `Откуда: разбор у кузнеца найденных вещей и наград — магическая ${e.magic ?? 0}, редкая ${e.rare ?? 0}; в поле — ${Math.round(s.fieldYield * 100)} %`,
-    'Купленное, стартовое, вещи прежней версии и переплавка эссенции не дают',
-    'Куда: зачарование скованной вещи и перекатка свойств',
+    tr('srv:materials.essenceFrom', 'Откуда: разбор у кузнеца найденных вещей и наград — магическая {magic}, редкая {rare}; в поле — {field} %', { magic: e.magic ?? 0, rare: e.rare ?? 0, field: Math.round(s.fieldYield * 100) }),
+    tr('srv:materials.essenceNone', 'Купленное, стартовое, вещи прежней версии и переплавка эссенции не дают'),
+    tr('srv:materials.essenceTo', 'Куда: зачарование скованной вещи и перекатка свойств'),
   ];
 }
 
-const saleLine = (price: number): string => (price > 0 ? `Продажа: ${price} за штуку` : 'Не продаётся');
+const saleLine = (price: number): string => (price > 0 ? tr('srv:materials.sale', 'Продажа: {price} за штуку', { price }) : tr('srv:materials.noSale', 'Не продаётся'));
 
 function essenceTip(reg: ConfigRegistry, d: { name: string; sellPrice: number }, stash: number, hand: number): string[] {
-  const lines = [d.name, 'Не сырьё — валюта чар', ...essenceAbout(reg), `В сундуке ${stash}`];
-  if (hand > 0) lines.push(`В сумке ${hand} — часть потеряешь при смерти`);
+  const lines = [cfgRowText(reg, 'craft-materials', d), tr('srv:materials.essenceKind', 'Не сырьё — валюта чар'), ...essenceAbout(reg), tr('srv:materials.inStash', 'В сундуке {stash}', { stash })];
+  if (hand > 0) lines.push(tr('srv:materials.inBag', 'В сумке {hand} — часть потеряешь при смерти', { hand }));
   lines.push(saleLine(d.sellPrice));
   return lines;
 }
@@ -144,15 +151,15 @@ export function materialsView(reg: ConfigRegistry, stashWallet: Record<string, n
     const stash = Math.max(0, wallet[d.id] ?? 0);
     const hand = carriedMap[d.id] ?? 0;
     return {
-      id: d.id, name: d.name, grade: d.tier, stash, hand, have: stash + hand > 0, color: gradeHex(d.tier), bold: d.tier >= MATERIAL_STEPS,
+      id: d.id, name: cfgRowText(reg, 'craft-materials', d), grade: d.tier, stash, hand, have: stash + hand > 0, color: gradeHex(d.tier), bold: d.tier >= MATERIAL_STEPS,
       tip: cellTip(reg, d, stash, hand, forge.has(d.family)),
     };
   };
   const ess = all.find((d) => d.id === ESSENCE_ID);
   return {
-    tab: carried > 0 ? `Ресурсы (+${carried})` : 'Ресурсы',
-    deposit: carried > 0 ? `Сдать всё сырьё (${carried})` : 'В сумке сырья нет',
-    rule: SALVAGE_RULE,
+    tab: carried > 0 ? tr('srv:materials.title', 'Ресурсы (+{carried})', { carried }) : tr('srv:materials.titleEmpty', 'Ресурсы'),
+    deposit: carried > 0 ? tr('srv:materials.depositAll', 'Сдать всё сырьё ({carried})', { carried }) : tr('srv:materials.depositNone', 'В сумке сырья нет'),
+    rule: tr('srv:materials.salvageRule', SALVAGE_RULE),
     carried,
     heads: grades.map((g) => ({ grade: g, label: gradeLabel(g), sub: gradeSourceText(reg, g), color: gradeHex(g), bold: g >= MATERIAL_STEPS })),
     rows: families.map((fam) => ({
@@ -163,7 +170,7 @@ export function materialsView(reg: ConfigRegistry, stashWallet: Record<string, n
     essence: ess ? (() => {
       const stash = Math.max(0, wallet[ess.id] ?? 0);
       const hand = carriedMap[ess.id] ?? 0;
-      return { id: ess.id, name: ess.name, grade: ess.tier, stash, hand, have: stash + hand > 0, color: ESSENCE_HEX, bold: false, tip: essenceTip(reg, ess, stash, hand) };
+      return { id: ess.id, name: cfgRowText(reg, 'craft-materials', ess), grade: ess.tier, stash, hand, have: stash + hand > 0, color: ESSENCE_HEX, bold: false, tip: essenceTip(reg, ess, stash, hand) };
     })() : null,
   };
 }
@@ -175,6 +182,8 @@ export function materialNote(reg: ConfigRegistry, item: Pick<Item, 'kind' | 'mat
   const d = reg.get('craft-materials').find((m) => m.id === item.materialId);
   if (!d) return null;
   if (d.family === ESSENCE_FAMILY) return { color: ESSENCE_HEX, lines: [...essenceAbout(reg), saleLine(d.sellPrice)] };
-  const tip = cellTip(reg, d, 0, 0, forgeFamilies(reg).has(d.family));
-  return { color: gradeHex(d.tier), lines: tip.filter((l, i) => i > 0 && !/^В (сундуке|сумке) /.test(l)) };
+  // ⭐ i18n Ф2 (ревизия 06.11): строки «В сундуке / В сумке» не собираются вовсе (`holdings: false`), а не вырезаются по русскому началу —
+  // на переводе фильтр по тексту их бы пропустил
+  const tip = cellTip(reg, d, 0, 0, forgeFamilies(reg).has(d.family), false);
+  return { color: gradeHex(d.tier), lines: tip.slice(1) };
 }

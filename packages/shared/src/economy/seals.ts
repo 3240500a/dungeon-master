@@ -5,6 +5,7 @@ import { WIRE_SEAL_SLOTS_MAX } from '../session/wireLimits.js';   // ⚠ тол�
 import { RUN_MOD_DANGER_STATS } from '../config/schemas.js';
 import { addToInventory, type Dims } from '../inventory/grid.js';
 import type { Item } from '../types/items.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ Ф5-1 (17.10): ПЕЧАТЬ ОТРЕЗКА — ПРЕДМЕТ.
@@ -134,6 +135,12 @@ export function liveSealDefs(reg: ConfigRegistry, biomeId?: string): Seal[] {
 /** Имя печати со ступенью: «Кишащий I». Ступени нет в данных — имя без неё, а не «undefined». */
 export function sealName(def: Seal, tier?: { name: string }): string {
   return tier ? `${def.name} ${tier.name}` : def.name;
+}
+
+/** ⭐ i18n Ф1 (06.11): имя печати со ступенью ДЛЯ ПОКАЗА — на языке игрока (`sealName` печёт имя предмета языком-источником). */
+export function sealNameText(reg: ConfigRegistry, def: Seal, tier?: { name: string }): string {
+  const name = cfgRowText(reg, 'seals', def);
+  return tier ? `${name} ${cfgRowText(reg, 'balance', tier)}` : name;
 }
 
 /**
@@ -302,10 +309,10 @@ export function giveSealsTo(reg: ConfigRegistry, inventory: Item[], gains: SealG
 export function sealLines(reg: ConfigRegistry, item: Item): string[] {
   const def = sealDef(reg, item.sealId);
   const tier = sealTierDef(reg, item.sealTier);
-  if (!def) return ['⚠ Печать неизвестного вида'];
+  if (!def) return [tr('srv:seal.unknownKind', '⚠ Печать неизвестного вида')];
   const mul = tier?.mul ?? 0;
   const rows = new Map(reg.get('run-mod-stats').map((s) => [s.id, s]));
-  const label = (stat: string): string => rows.get(stat as RunModStat)?.name ?? stat;
+  const label = (stat: string): string => cfgRowText(reg, 'run-mod-stats', rows.get(stat as RunModStat)) ?? stat;
   /**
    * ⭐⭐ 23.10: СТРОКА НАЗЫВАЕТ ТО, ЧТО ДАСТ ЭТА ПЕЧАТЬ, — ЧЕРЕЗ САМ `sealBuffs`, а не своей арифметикой.
    *
@@ -325,12 +332,12 @@ export function sealLines(reg: ConfigRegistry, item: Item): string[] {
     return `${label(stat)} +${Math.round((got - 1) * 100)} %`;
   };
   const out = [
-    `Опаснее: ${side(def.danger.stat, def.danger.value)}`,
-    `Богаче: ${side(def.reward.stat, def.reward.value)}`,
+    tr('srv:seal.lineDanger', 'Опаснее: {stat}', { stat: side(def.danger.stat, def.danger.value) }),
+    tr('srv:seal.lineReward', 'Богаче: {stat}', { stat: side(def.reward.stat, def.reward.value) }),
   ];
-  if (def.desc) out.push(def.desc);
-  if (!tier) out.push('⚠ Ступень этой печати из данных убрана — на алтаре она не подействует');
-  else if (!sealLive(reg, def)) out.push('⚠ Эта печать сейчас не применяется (стат выключен в конфиге)');
+  if (def.desc) out.push(cfgRowText(reg, 'seals', def, 'desc'));
+  if (!tier) out.push(tr('srv:seal.tierRemoved', '⚠ Ступень этой печати из данных убрана — на алтаре она не подействует'));
+  else if (!sealLive(reg, def)) out.push(tr('srv:seal.statOff', '⚠ Эта печать сейчас не применяется (стат выключен в конфиге)'));
   return out;
 }
 
@@ -339,7 +346,7 @@ export function sealLines(reg: ConfigRegistry, item: Item): string[] {
  *
  * Пусто — «идти как есть»: это законный выбор и он называется словами, а не отсутствием текста.
  */
-export function sealBundleLine(reg: ConfigRegistry, picks: SealGains, empty = 'Идти как есть'): string {
+export function sealBundleLine(reg: ConfigRegistry, picks: SealGains, empty = tr('srv:seal.asIs', 'Идти как есть')): string {
   const parts: string[] = [];
   for (const [key, n] of Object.entries(picks)) {
     if (!Number.isFinite(n) || n <= 0) continue;
@@ -347,7 +354,7 @@ export function sealBundleLine(reg: ConfigRegistry, picks: SealGains, empty = '�
     const def = sealDef(reg, at > 0 ? key.slice(0, at) : key);
     if (!def) continue;
     const tier = sealTierDef(reg, at > 0 ? key.slice(at + 1) : undefined);
-    parts.push(`${sealName(def, tier)}${n > 1 ? ` ×${Math.floor(n)}` : ''}`);
+    parts.push(`${sealNameText(reg, def, tier)}${n > 1 ? ` ×${Math.floor(n)}` : ''}`);
   }
   return parts.length ? parts.join(', ') : empty;
 }
@@ -671,9 +678,9 @@ export function canReforgeSeals(
   tabs?: readonly (readonly (Item | null)[])[],
 ): { ok: false; reason: string } | { ok: true; plan: SealReforgePlan } {
   const rules = sealReforgeRules(reg);
-  if (!sealsEnabled(reg) || rules.enabled === false) return { ok: false, reason: SEAL_REFORGE_OFF };
+  if (!sealsEnabled(reg) || rules.enabled === false) return { ok: false, reason: SEAL_TEXT.reforgeOff() };
   const entries = Object.entries(picks).filter(([, n]) => Number.isFinite(n) && n > 0);
-  if (!entries.length) return { ok: false, reason: SEAL_REFORGE_FEW };
+  if (!entries.length) return { ok: false, reason: SEAL_TEXT.reforgeFew() };
 
   // Все отданные печати обязаны лежать на ОДНОЙ ступени: лестница идёт по ступеням, и смешивать их значило бы
   // считать «сколько это в единицах силы» — а сила ступени настраивается, и такой обмен стал бы прачечной.
@@ -684,29 +691,29 @@ export function canReforgeSeals(
   let have = 0;
   for (const [key, n] of entries) {
     const parsed = parseSealKey(key);
-    if (!parsed) return { ok: false, reason: SEAL_REFORGE_MIX };
+    if (!parsed) return { ok: false, reason: SEAL_TEXT.reforgeMix() };
     const def = sealDef(reg, parsed.sealId);
-    if (!def || !sealLive(reg, def, live) || sealTierMul(reg, parsed.tierId) <= 0) return { ok: false, reason: SEAL_REFORGE_MIX };
+    if (!def || !sealLive(reg, def, live) || sealTierMul(reg, parsed.tierId) <= 0) return { ok: false, reason: SEAL_TEXT.reforgeMix() };
     if (tierId === undefined) { tierId = parsed.tierId; onlyKind = parsed.sealId; biomeKey = sealBiomeKey(def) }
     else {
-      if (parsed.tierId !== tierId) return { ok: false, reason: SEAL_REFORGE_TIER };
+      if (parsed.tierId !== tierId) return { ok: false, reason: SEAL_TEXT.reforgeTier() };
       // ⭐⭐ 23.10 (Ф5-6′): ПРИВЯЗКА К БИОМУ — ЧАСТЬ ТОВАРА, А НЕ УКРАШЕНИЕ. Сложить две крипты и пещеру
       // значило бы обменять «годится только в крипте» на «годится везде» (или наоборот) ЗАДАРОМ, а вид
       // результата всё равно пришлось бы брать с потолка. Поэтому складывается только ОДНА привязка.
-      if (sealBiomeKey(def) !== biomeKey) return { ok: false, reason: SEAL_REFORGE_BIOME };
+      if (sealBiomeKey(def) !== biomeKey) return { ok: false, reason: SEAL_TEXT.reforgeBiome() };
       if (parsed.sealId !== onlyKind) onlyKind = null;
     }
     have += Math.floor(n);
   }
-  if (rules.mode === 'sameKind' && onlyKind === null) return { ok: false, reason: SEAL_REFORGE_MIX };
+  if (rules.mode === 'sameKind' && onlyKind === null) return { ok: false, reason: SEAL_TEXT.reforgeMix() };
   const next = sealNextTier(reg, tierId);
-  if (!next) return { ok: false, reason: SEAL_REFORGE_TOP };
+  if (!next) return { ok: false, reason: SEAL_TEXT.reforgeTop() };
   // ⚠ ВОРОТА ПО РЕКОРДУ: ступень, которую дроп ещё не даёт (`minDepth` глубже рекорда), кузнец не выдаёт:
   // иначе старшая сила собиралась бы в городе из мелкого мусора на первых этажах.
-  if (rules.gateByRecord !== false && next.minDepth > record) return { ok: false, reason: SEAL_REFORGE_DEEP };
-  if (have !== rules.need) return { ok: false, reason: `${SEAL_REFORGE_FEW}: нужно ровно ${rules.need}` };
-  if (!carriedEnough(inventory, picks, tabs)) return { ok: false, reason: SEAL_REFORGE_FEW };
-  if (gold < rules.goldCost) return { ok: false, reason: SEAL_REFORGE_GOLD };
+  if (rules.gateByRecord !== false && next.minDepth > record) return { ok: false, reason: SEAL_TEXT.reforgeDeep() };
+  if (have !== rules.need) return { ok: false, reason: tr('srv:seal.reforgeFewExact', 'Печатей не хватает: нужно ровно {need}', { need: rules.need }) };
+  if (!carriedEnough(inventory, picks, tabs)) return { ok: false, reason: SEAL_TEXT.reforgeFew() };
+  if (gold < rules.goldCost) return { ok: false, reason: SEAL_TEXT.reforgeGold() };
   return { ok: true, plan: { spend: have, tierId: next.id, sealId: rules.mode === 'sameKind' ? onlyKind : null, gold: rules.goldCost, biomeKey: biomeKey ?? '' } };
 }
 
@@ -744,19 +751,19 @@ export function reforgeSeals(
   if (!can.ok) return can;
   // ⚠ Списываем из СУМКИ И СУНДУКА, сумка первой (её забирает смерть). Копии: отказ ниже ничего не тронет.
   const spent = spendSealsBoth(inventory, tabs, picks);
-  if (!spent) return { ok: false, reason: SEAL_REFORGE_FEW };
+  if (!spent) return { ok: false, reason: SEAL_TEXT.reforgeFew() };
   const bag = spent.inventory;
   // Вид: при `sameKind` он известен, при `sameTier` решает БРОСОК ЗОВУЩЕГО (сервера) — клиент не выбирает.
   // ⚠ Бросок — только среди видов С ТОЙ ЖЕ привязкой к биому: иначе «три крипты» могли бы выдать печать пещер.
   const kindId = can.plan.sealId
     ?? rollSealKindAmong(liveSealDefs(reg).filter((d) => sealBiomeKey(d) === can.plan.biomeKey), rng)?.id;
   const item = kindId ? buildSeal(reg, kindId, can.plan.tierId, 1, uid()) : null;
-  if (!item) return { ok: false, reason: SEAL_REFORGE_OFF };
+  if (!item) return { ok: false, reason: SEAL_TEXT.reforgeOff() };
   item.origin = 'craft';   // вышла из рук кузнеца, а не найдена: счёт находок её не считает
   // ⚠ МЕСТО — ЧАСТЬ СДЕЛКИ. Три печати уходят, но освободившаяся клетка не гарантирована (брали из стека в
   // пять), а новая ступень может не иметь своего стека. Не влезло — отказ, и сумка остаётся прежней: копию
   // `bag` мы просто выбрасываем, настоящую не трогали.
-  if (!addToInventory(bag, item, dims, sealStackMax(reg))) return { ok: false, reason: SEAL_REFORGE_ROOM };
+  if (!addToInventory(bag, item, dims, sealStackMax(reg))) return { ok: false, reason: SEAL_TEXT.reforgeRoom() };
   // ⚠ Результат кладём в СУМКУ, а не в сундук: игрок видит, что получил, и несёт это на алтарь сам.
   return { ok: true, inventory: bag, item, gold: gold - can.plan.gold, ...(tabs ? { tabs: spent.tabs } : {}) };
 }
@@ -771,6 +778,26 @@ export function sealRerollRules(reg: ConfigRegistry) {
 export const SEAL_REROLL_OFF = 'Перекат печатей отключён';
 export const SEAL_REROLL_ONE = 'Перекат берёт РОВНО одну печать';
 export const SEAL_REROLL_ALONE = 'Другого вида этой привязки нет — перекатывать не во что';
+
+/**
+ * ⭐ i18n Ф1 (06.11): ОТКАЗЫ ПЕРЕКОВКИ И ПЕРЕКАТА НА ЯЗЫКЕ ИГРОКА (`tr`). Константы выше — текст ЯЗЫКА-ИСТОЧНИКА: по ним сверяются тесты,
+ * эталоны Unity и сим; игроку отказ уходит отсюда.
+ */
+export const SEAL_TEXT = {
+  reforgeOff: (): string => tr('srv:seal.reforgeOff', SEAL_REFORGE_OFF),
+  reforgeTop: (): string => tr('srv:seal.reforgeTop', SEAL_REFORGE_TOP),
+  reforgeMix: (): string => tr('srv:seal.reforgeMix', SEAL_REFORGE_MIX),
+  reforgeTier: (): string => tr('srv:seal.reforgeTier', SEAL_REFORGE_TIER),
+  reforgeBiome: (): string => tr('srv:seal.reforgeBiome', SEAL_REFORGE_BIOME),
+  reforgeFew: (): string => tr('srv:seal.reforgeFew', SEAL_REFORGE_FEW),
+  reforgeGold: (): string => tr('srv:seal.reforgeGold', SEAL_REFORGE_GOLD),
+  reforgeRoom: (): string => tr('srv:seal.reforgeRoom', SEAL_REFORGE_ROOM),
+  reforgeRepeat: (): string => tr('srv:seal.reforgeRepeat', SEAL_REFORGE_REPEAT),
+  reforgeDeep: (): string => tr('srv:seal.reforgeDeep', SEAL_REFORGE_DEEP),
+  rerollOff: (): string => tr('srv:seal.rerollOff', SEAL_REROLL_OFF),
+  rerollOne: (): string => tr('srv:seal.rerollOne', SEAL_REROLL_ONE),
+  rerollAlone: (): string => tr('srv:seal.rerollAlone', SEAL_REROLL_ALONE),
+} as const;
 
 /** Что выйдет из переката: та же ступень, другой вид (решит бросок сервера), цена золотом. */
 export interface SealRerollPlan {
@@ -803,20 +830,20 @@ export function canRerollSeal(
   tabs?: readonly (readonly (Item | null)[])[],
 ): { ok: false; reason: string } | { ok: true; plan: SealRerollPlan } {
   const rules = sealRerollRules(reg);
-  if (!sealsEnabled(reg) || rules.enabled === false) return { ok: false, reason: SEAL_REROLL_OFF };
+  if (!sealsEnabled(reg) || rules.enabled === false) return { ok: false, reason: SEAL_TEXT.rerollOff() };
   const entries = Object.entries(picks).filter(([, n]) => Number.isFinite(n) && n > 0);
-  if (entries.length !== 1 || Math.floor(entries[0]![1]) !== 1) return { ok: false, reason: SEAL_REROLL_ONE };
+  if (entries.length !== 1 || Math.floor(entries[0]![1]) !== 1) return { ok: false, reason: SEAL_TEXT.rerollOne() };
   const parsed = parseSealKey(entries[0]![0]);
-  if (!parsed) return { ok: false, reason: SEAL_REROLL_ONE };
+  if (!parsed) return { ok: false, reason: SEAL_TEXT.rerollOne() };
   const def = sealDef(reg, parsed.sealId);
-  if (!def || !sealLive(reg, def) || sealTierMul(reg, parsed.tierId) <= 0) return { ok: false, reason: SEAL_REROLL_OFF };
+  if (!def || !sealLive(reg, def) || sealTierMul(reg, parsed.tierId) <= 0) return { ok: false, reason: SEAL_TEXT.rerollOff() };
   const key = sealBiomeKey(def);
   // ⚠ Другой вид обязан СУЩЕСТВОВАТЬ: иначе игрок платит золото за ту же печать (`differs` держит это правилом).
   const others = liveSealDefs(reg).filter((d) => sealBiomeKey(d) === key && d.id !== def.id);
-  if (rules.differs !== false && !others.length) return { ok: false, reason: SEAL_REROLL_ALONE };
-  if (!carriedEnough(inventory, picks, tabs)) return { ok: false, reason: SEAL_REFORGE_FEW };
+  if (rules.differs !== false && !others.length) return { ok: false, reason: SEAL_TEXT.rerollAlone() };
+  if (!carriedEnough(inventory, picks, tabs)) return { ok: false, reason: SEAL_TEXT.reforgeFew() };
   const cost = sealRerollCost(reg, parsed.tierId);
-  if (gold < cost) return { ok: false, reason: SEAL_REFORGE_GOLD };
+  if (gold < cost) return { ok: false, reason: SEAL_TEXT.reforgeGold() };
   return { ok: true, plan: { sealId: def.id, tierId: parsed.tierId, gold: cost, biomeKey: key } };
 }
 
@@ -840,14 +867,14 @@ export function rerollSeal(
   const can = canRerollSeal(reg, inventory, picks, gold, tabs);
   if (!can.ok) return can;
   const spent = spendSealsBoth(inventory, tabs, picks);
-  if (!spent) return { ok: false, reason: SEAL_REFORGE_FEW };
+  if (!spent) return { ok: false, reason: SEAL_TEXT.reforgeFew() };
   const bag = spent.inventory;
   const rules = sealRerollRules(reg);
   const pool = liveSealDefs(reg).filter((d) => sealBiomeKey(d) === can.plan.biomeKey && (rules.differs === false || d.id !== can.plan.sealId));
   const kindId = rollSealKindAmong(pool, rng)?.id;
   const item = kindId ? buildSeal(reg, kindId, can.plan.tierId, 1, uid()) : null;
-  if (!item) return { ok: false, reason: SEAL_REROLL_ALONE };
+  if (!item) return { ok: false, reason: SEAL_TEXT.rerollAlone() };
   item.origin = 'craft';   // вышла из рук кузнеца, а не найдена
-  if (!addToInventory(bag, item, dims, sealStackMax(reg))) return { ok: false, reason: SEAL_REFORGE_ROOM };
+  if (!addToInventory(bag, item, dims, sealStackMax(reg))) return { ok: false, reason: SEAL_TEXT.reforgeRoom() };
   return { ok: true, inventory: bag, item, gold: gold - can.plan.gold, ...(tabs ? { tabs: spent.tabs } : {}) };
 }

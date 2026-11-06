@@ -6,6 +6,7 @@ import { cellFree, packInventory, placeWithDisplacement, type Dims } from '../in
 import { isSafeKey, normalizeCraftNonces, normalizeJournal } from '../formulas/craft.js';
 import { mendBrokenUniques, type ActionResult } from './townActions.js';
 import { migrateRetiredInStash } from './retiredMaterials.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции над ОБЩИМ (на аккаунт) городским сундуком — чистые, для сервера.
@@ -108,21 +109,21 @@ export function stashMove(
   let src: Item[] | null = null;
   if (save.inventory.some((i) => i.uid === uid)) src = save.inventory;
   else for (const tab of stash.tabs) if (tab.some((i) => i.uid === uid)) { src = tab; break; }
-  if (!src) return { ok: false, reason: 'Предмет не найден' };
+  if (!src) return { ok: false, reason: tr('srv:stash.itemNotFound', 'Предмет не найден') };
 
   // Целевой контейнер + его размеры.
-  if (dst !== 'inv' && !stash.tabs[dst]) return { ok: false, reason: 'Нет такой вкладки' };
+  if (dst !== 'inv' && !stash.tabs[dst]) return { ok: false, reason: tr('srv:stash.noTab', 'Нет такой вкладки') };
   const target: Item[] = dst === 'inv' ? save.inventory : stash.tabs[dst]!;
   const dims: Dims = dst === 'inv' ? reg.get('balance').inventory : stashDims(reg);
   const item = src.find((i) => i.uid === uid)!;
 
   if (src === target) {
     // Внутри одного контейнера — свап с вытеснением одного предмета.
-    return placeWithDisplacement(target, item, x, y, dims) ? { ok: true } : { ok: false, reason: 'Не помещается' };
+    return placeWithDisplacement(target, item, x, y, dims) ? { ok: true } : { ok: false, reason: tr('srv:town.noFit', 'Не помещается') };
   }
 
   // Между контейнерами — только на свободное место.
-  if (!cellFree(target, x, y, item.gridW, item.gridH, dims)) return { ok: false, reason: 'Нет места' };
+  if (!cellFree(target, x, y, item.gridW, item.gridH, dims)) return { ok: false, reason: tr('srv:town.noRoom', 'Нет места') };
   src.splice(src.indexOf(item), 1);
   item.pos = { x, y };
   target.push(item);

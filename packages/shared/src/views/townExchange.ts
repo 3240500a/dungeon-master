@@ -17,6 +17,7 @@ import { gradeRoman } from '../economy/salvagePreview.js';
 import { ESSENCE_FAMILY } from '../formulas/salvage.js';
 import { familyLabel, gradeHex } from './townMaterials.js';
 import type { StashView } from './townItem.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /**
  * Выбор игрока (ВХОД КЛИЕНТА — состояние окна): что отдаёт (id), во что (семья), сколько просит отдать. ⭐ `n` не задано (`undefined`) —
@@ -62,10 +63,10 @@ export function exchangeModel(
 ): ExchangeView {
   const k = exchangeTuning(reg);
   const g = k.goldPerUnit;
-  const rate = `Курс: ${k.give} → ${k.get} того же сорта (остаток не берётся)`;
-  const goldLine = `Золото за каждую полученную единицу: ${g.map((v, i) => `${gradeRoman(i + 1)} ${v}`).join(' · ')}`;
+  const rate = tr('srv:exchange.rate', 'Курс: {give} → {get} того же сорта (остаток не берётся)', { give: k.give, get: k.get });
+  const goldLine = tr('srv:exchange.goldPerUnit', 'Золото за каждую полученную единицу: {list}', { list: g.map((v, i) => `${gradeRoman(i + 1)} ${v}`).join(' · ') });
   const empty: ExchangeView = { rate, goldLine, sources: [], targets: [], n: 0, step: k.give, max: 0, min: exchangeMinGive(reg), quote: null, lines: [], canSend: false };
-  if (!k.enabled) return { ...empty, closed: 'Кузнец сейчас не меняет сырьё' };
+  if (!k.enabled) return { ...empty, closed: tr('srv:exchange.off', 'Кузнец сейчас не меняет сырьё') };
 
   const have = availableMaterials(inventory, stashWallet);
   const bag = carriedMaterials(inventory);
@@ -76,11 +77,11 @@ export function exchangeModel(
     .filter((d) => d.family !== ESSENCE_FAMILY && (have[d.id] ?? 0) > 0)
     .sort((a, b) => (order.get(a.family)! - order.get(b.family)!) || a.tier - b.tier)
     .map((d) => ({
-      id: d.id, name: d.name, family: d.family, familyLabel: familyLabel(d.family), grade: d.tier, gradeLabel: `${gradeRoman(d.tier)} сорт`,
+      id: d.id, name: cfgRowText(reg, 'craft-materials', d), family: d.family, familyLabel: familyLabel(d.family), grade: d.tier, gradeLabel: tr('srv:materials.grade', '{grade} сорт', { grade: gradeRoman(d.tier) }),
       have: have[d.id] ?? 0, bag: bag[d.id] ?? 0, stash: Math.max(0, stashWallet[d.id] ?? 0), color: gradeHex(d.tier), selected: d.id === sel.from,
     }));
   const src = sources.find((s) => s.selected);
-  if (!src) return { ...empty, sources, reason: sources.length ? 'Выбери, что отдаёшь' : 'Сырья нет — его дают разбор у кузнеца и тела монстров' };
+  if (!src) return { ...empty, sources, reason: sources.length ? tr('srv:exchange.pickSource', 'Выбери, что отдаёшь') : tr('srv:exchange.noSource', 'Сырья нет — его дают разбор у кузнеца и тела монстров') };
   const targets: ExchangeTargetRow[] = exchangeTargets(reg, src.id).map((t) => ({
     family: t.family, label: familyLabel(t.family), id: t.id, name: t.name, have: have[t.id] ?? 0, ok: t.ok, ...(t.reason !== undefined ? { reason: t.reason } : {}),
     selected: t.ok && t.family === sel.to,
@@ -90,13 +91,13 @@ export function exchangeModel(
   const n = Math.max(0, Math.min(max, Number.isFinite(want) ? Math.floor(want) : 0));
   const tgt = targets.find((t) => t.selected);
   const base = { ...empty, sources, targets, n, max };
-  if (!tgt) return { ...base, reason: targets.some((t) => t.ok) ? 'Выбери, во что меняешь' : 'Менять не во что: у других семей нет этого сорта в игре' };
+  if (!tgt) return { ...base, reason: targets.some((t) => t.ok) ? tr('srv:exchange.pickTarget', 'Выбери, во что меняешь') : tr('srv:exchange.noTarget', 'Менять не во что: у других семей нет этого сорта в игре') };
   const q = exchangeQuote(reg, src.id, tgt.family, n, have, gold);
   const unit = exchangeUnitGold(reg, src.grade, tgt.id);
   const lines: ExchangeLine[] = [
-    { label: 'Отдашь', text: `${src.name} ${q.spend} (есть ${src.have}${src.bag ? `, в сумке ${src.bag} — берётся первой` : ''})${q.spend < n ? ` · ${n - q.spend} останется — меньше курса` : ''}`, state: q.spend > 0 && src.have >= q.spend ? 'ok' : 'dim' },
-    { label: 'Получишь', text: q.get > 0 ? `${tgt.name} ${q.get} (есть ${tgt.have}) — в сундук` : `${tgt.name} 0`, state: q.get > 0 ? 'gain' : 'dim' },
-    { label: 'Золото', text: `${q.gold} (${unit} за единицу · есть ${gold})`, state: gold >= q.gold ? 'ok' : 'miss' },
+    { label: tr('srv:exchange.give', 'Отдашь'), text: tr('srv:exchange.giveLine', '{name} {spend} (есть {have}{bag}){rest}', { name: src.name, spend: q.spend, have: src.have, bag: src.bag ? tr('srv:exchange.giveBag', ', в сумке {bag} — берётся первой', { bag: src.bag }) : '', rest: q.spend < n ? tr('srv:exchange.giveRest', ' · {n} останется — меньше курса', { n: n - q.spend }) : '' }), state: q.spend > 0 && src.have >= q.spend ? 'ok' : 'dim' },
+    { label: tr('srv:exchange.get', 'Получишь'), text: q.get > 0 ? tr('srv:exchange.getLine', '{name} {get} (есть {have}) — в сундук', { name: tgt.name, get: q.get, have: tgt.have }) : `${tgt.name} 0`, state: q.get > 0 ? 'gain' : 'dim' },
+    { label: tr('srv:exchange.gold', 'Золото'), text: tr('srv:exchange.goldLine', '{gold} ({unit} за единицу · есть {have})', { gold: q.gold, unit, have: gold }), state: gold >= q.gold ? 'ok' : 'miss' },
   ];
   const command: ExchangeCommand | undefined = q.get > 0 && q.to
     ? { cmd: 'forgeExchange', from: src.id, to: tgt.family, n: q.spend, maxGold: q.gold, maxMaterials: { [src.id]: q.spend }, minYield: { [q.to]: q.get } }

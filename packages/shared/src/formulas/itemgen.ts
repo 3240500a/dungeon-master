@@ -272,8 +272,10 @@ const frag = (key: string, source: string): NameFragment => ({ key, source });
  * («полуторный меч»), и ключ базы там показывал бы не туда — перевод молча подменил бы «Полуторный
  * меч» на «Меч». Поэтому голову передают явно, а у собранного имени типа ключа нет вовсе: оно
  * переводится своим путём, шаблонами `weapon-types`.
+ * ⚠ i18n Ф2 (06.11): таблица ключа — `items.base` (так её зовёт реестр и извлекатель: `cfg:items.base/<id>/name`); было `items-base`, и
+ * перевод головы не находился бы никогда. Имя на источнике от этого не сдвинулось: источник строк не читает.
  */
-const baseHead = (base: ItemsBase[number]): NameFragment => frag(cfgKey('items-base', [base.id], 'name'), base.name);
+const baseHead = (base: ItemsBase[number]): NameFragment => frag(cfgKey('items.base', [base.id], 'name'), base.name);
 
 function tieredName(tier: { id: string; name: string } | undefined, head: NameFragment, agreement?: string, loc?: Localizer): string {
   return composeItemName(loc ?? srcLoc(), {

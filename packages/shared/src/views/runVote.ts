@@ -1,6 +1,7 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import { runNodeLabel } from '../dungeon/run/labels.js';
 import { cfgTextOf, isNum, richEsc, str, type CfgText, type RunViewOptions } from './runCommon.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ С-views (29.10): ВОПРОС ОКНА ГОЛОСОВАНИЯ — текст считает СЕРВЕР, для КАЖДОГО получателя свой.
@@ -61,13 +62,13 @@ export function runDifficultyUnlocked(diffs: readonly Row[], index: number, prog
 export function runVoteQuestion(f: RunVoteFrame, cfg: RunVoteCfg, progress?: Readonly<Record<string, unknown>> | null, opts?: RunViewOptions): string {
   const tx: CfgText = cfgTextOf(typeof (cfg as ConfigRegistry).get === 'function' ? (cfg as ConfigRegistry) : undefined, opts);
   const kind = str(f?.kind);
-  if (kind === 'town') return 'Вернуться в город?';
-  if (kind === 'arena') return 'Войти в PvP-арену?';
-  if (f?.finish === true) return 'Завершить забег и вернуться в город?';
+  if (kind === 'town') return tr('srv:vote.town', 'Вернуться в город?');
+  if (kind === 'arena') return tr('srv:vote.arena', 'Войти в PvP-арену?');
+  if (f?.finish === true) return tr('srv:vote.finish', 'Завершить забег и вернуться в город?');
   const target = str(f?.targetNodeType);
-  if (target) return `Спуск: ${richEsc(runNodeLabel(target))}?`;
+  if (target) return tr('srv:vote.descendTo', 'Спуск: {target}?', { target: richEsc(runNodeLabel(target)) });
   const diffId = str(f?.difficultyId);
-  if (!diffId) return 'Спуск на след. этаж?';   // кадр без цели — тир уже идёт
+  if (!diffId) return tr('srv:vote.descend', 'Спуск на след. этаж?');   // кадр без цели — тир уже идёт
   const nameOf = (table: 'difficulties' | 'biomes' | 'run-modifiers', id: string | null): string => {
     if (id !== null) {
       for (const x of tableOf(cfg, table)) {
@@ -83,14 +84,14 @@ export function runVoteQuestion(f: RunVoteFrame, cfg: RunVoteCfg, progress?: Rea
   const host = f.resume && typeof f.resume === 'object' ? str(f.resume.host) : null;
   const sd = f.startDepth;
   const head = host !== null
-    ? `Продолжить забег ${richEsc(host)} с этажа ${Number.isInteger(f.resume!.depth) ? (f.resume!.depth as number) : 0}?`
-    : isNum(sd) && sd > 1 ? `Новый забег с этажа ${sd}?` : 'Новый забег?';
+    ? tr('srv:vote.resume', 'Продолжить забег {host} с этажа {depth}?', { host: richEsc(host), depth: Number.isInteger(f.resume!.depth) ? (f.resume!.depth as number) : 0 })
+    : isNum(sd) && sd > 1 ? tr('srv:vote.newFrom', 'Новый забег с этажа {depth}?', { depth: sd }) : tr('srv:vote.new', 'Новый забег?');
   const run = nameOf('biomes', str(f.biomeId));
   const mods = Array.isArray(f.modifiers) ? f.modifiers.filter((m): m is string => typeof m === 'string').map((m) => nameOf('run-modifiers', m)) : [];
-  const modLine = mods.length > 0 ? `\nМодификаторы: ${mods.join(', ')}` : '';
+  const modLine = mods.length > 0 ? tr('srv:vote.mods', '\nМодификаторы: {mods}', { mods: mods.join(', ') }) : '';
   const idx = diffs.findIndex((d) => str(d?.id) === diffId);
   const locked = progress != null && idx >= 0 && !runDifficultyUnlocked(diffs, idx, progress)
-    ? `\n<b><color=#e6a05a>Внимание: сложность «${tier}» вам ещё не открыта</color></b>`
+    ? tr('srv:vote.locked', '\n<b><color=#e6a05a>Внимание: сложность «{tier}» вам ещё не открыта</color></b>', { tier })
     : '';
-  return `${head}\nСложность: <b>${tier}</b> · ${run}${modLine}${locked}`;
+  return tr('srv:vote.question', '{head}\nСложность: <b>{tier}</b> · {run}{modLine}{locked}', { head, tier, run, modLine, locked });
 }

@@ -1,3 +1,4 @@
+import { tr } from '../i18n/tr.js';
 /**
  * ⭐⭐ С-views (29.10): ОКНО СМЕРТИ — надписи считает СЕРВЕР, у клиента остаётся ровно одно: открыто ли окно.
  *
@@ -29,10 +30,10 @@ export interface RunDiedFrame {
 
 /** Тексты окна — C# `DeathWindow.*`. */
 export const RUN_DEATH_TEXT = {
-  canLeave: 'Живых в пати не осталось: напарник отключился посреди боя. Ждите его — или уходите в город (отключившийся погибнет, забег без живых кончится).',
-  town: 'В город',
-  wait: 'Ожидайте: пати спустится — там возродитесь.',
-  spectate: 'Смотреть',
+  get canLeave() { return tr('srv:deathText.canLeave', 'Живых в пати не осталось: напарник отключился посреди боя. Ждите его — или уходите в город (отключившийся погибнет, забег без живых кончится).'); },
+  get town() { return tr('srv:deathText.town', 'В город'); },
+  get wait() { return tr('srv:deathText.wait', 'Ожидайте: пати спустится — там возродитесь.'); },
+  get spectate() { return tr('srv:deathText.spectate', 'Смотреть'); },
 } as const;
 
 const flag = (v: unknown): boolean => v === true;
@@ -54,11 +55,11 @@ export function runDeathOnFrame(prev: RunDeathState | null, f: RunDiedFrame): Ru
 
 /** Надписи и кнопки окна (C# `DeathWindow.View`). */
 export function runDeathView(s: RunDeathState): RunDeathView {
-  if (s.pvp) return { title: 'Вы повержены', loss: null, status: 'Возрождение через пару секунд…', spectate: 'Смотреть за соперником', town: null };
+  if (s.pvp) return { title: tr('srv:death.pvpTitle', 'Вы повержены'), loss: null, status: tr('srv:death.pvpStatus', 'Возрождение через пару секунд…'), spectate: tr('srv:death.pvpSpectate', 'Смотреть за соперником'), town: null };
   return {
-    title: 'Вы погибли',
-    loss: s.hasLosses ? `Потеряно: <b>${s.lossGold}</b> золота, <b>${s.lossItems}</b> предм.` : null,
-    status: s.toTown ? 'Возвращаетесь в город…' : s.canLeave ? RUN_DEATH_TEXT.canLeave : RUN_DEATH_TEXT.wait,
+    title: tr('srv:death.title', 'Вы погибли'),
+    loss: s.hasLosses ? tr('srv:death.loss', 'Потеряно: <b>{lossGold}</b> золота, <b>{lossItems}</b> предм.', { lossGold: s.lossGold, lossItems: s.lossItems }) : null,
+    status: s.toTown ? tr('srv:death.toTown', 'Возвращаетесь в город…') : s.canLeave ? RUN_DEATH_TEXT.canLeave : RUN_DEATH_TEXT.wait,
     spectate: s.wipe ? null : RUN_DEATH_TEXT.spectate,
     town: s.canLeave && !s.toTown ? RUN_DEATH_TEXT.town : null,
   };

@@ -1,5 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐ КЛИНОК ИЗ ГЕОМЕТРИИ (docs/CRAFT_WEAPONS.md §26) — чистые формулы, без Phaser/DOM и без ковки.
@@ -165,8 +166,8 @@ export function suggestForm(k: BladeTuning, geom: Pick<BladeGeom, 'flare' | 'spi
 // ── Подпись для окна ковки ──────────────────────────────────────────────────────────────────────
 
 const FORM_TEXT: Record<BladeForm, string> = {
-  falchion: 'фальшион: тяжелее прямого — удар крупнее, взмахов меньше',
-  sabre: 'сабля: легче прямой — взмахов больше, удар мельче',
+  get falchion() { return tr('srv:bladeForm.falchion', 'фальшион: тяжелее прямого — удар крупнее, взмахов меньше'); },
+  get sabre() { return tr('srv:bladeForm.sabre', 'сабля: легче прямой — взмахов больше, удар мельче'); },
 };
 
 /**
@@ -178,13 +179,13 @@ const FORM_TEXT: Record<BladeForm, string> = {
 export function bladeCaption(b: BladeStats): string {
   const out: string[] = [];
   if (b.form) out.push(FORM_TEXT[b.form]);
-  const lenWord = b.place >= 0.35 ? 'длинный для вилки' : b.place <= -0.35 ? 'короткий для вилки' : 'средней длины';
-  out.push(b.form ? lenWord : b.place >= 0.35 ? `${lenWord}: удар крупнее, взмахов меньше`
-    : b.place <= -0.35 ? `${lenWord}: взмахов больше, удар мельче` : lenWord);
-  if (b.spread <= 0.8) out.push('широкий: урон ровный');
-  else if (b.spread >= 1.2) out.push('узкий: урон вразнобой');
+  const lenWord = b.place >= 0.35 ? tr('srv:blade.lenLong', 'длинный для вилки') : b.place <= -0.35 ? tr('srv:blade.lenShort', 'короткий для вилки') : tr('srv:blade.lenMid', 'средней длины');
+  out.push(b.form ? lenWord : b.place >= 0.35 ? tr('srv:blade.lenLongEffect', '{lenWord}: удар крупнее, взмахов меньше', { lenWord })
+    : b.place <= -0.35 ? tr('srv:blade.lenShortEffect', '{lenWord}: взмахов больше, удар мельче', { lenWord }) : lenWord);
+  if (b.spread <= 0.8) out.push(tr('srv:blade.wide', 'широкий: урон ровный'));
+  else if (b.spread >= 1.2) out.push(tr('srv:blade.narrow', 'узкий: урон вразнобой'));
   const bal = b.balance + b.formBalance;
-  if (bal >= 0.35) out.push('вес у руки: крепче держит удар');
-  else if (bal <= -0.35) out.push('вес к концу: чаще пускает кровь');
+  if (bal >= 0.35) out.push(tr('srv:blade.balanceHand', 'вес у руки: крепче держит удар'));
+  else if (bal <= -0.35) out.push(tr('srv:blade.balanceTip', 'вес к концу: чаще пускает кровь'));
   return out.join(' · ');
 }

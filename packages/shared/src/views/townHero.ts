@@ -16,11 +16,13 @@ import type { QuestDef, QuestProgress, SaveState, SkillNode } from '../types/ind
 import {
   attrRespecRefund, passiveAllocCheck, passiveRespecFee, respecPassives, respecRefusal, respecSkills, skillRespecFee,
 } from '../economy/townActions.js';
-import { questRival } from '../economy/questLogic.js';
+import { boardQuestText, questRival } from '../economy/questLogic.js';
+import { questDisplay } from '../session/frameText.js';
 import { insertFits, resolveActive, socketsOpen } from '../session/inserts.js';
 import { abilityElementOf } from '../session/session.js';
 import { insertCooldownMult } from '../formulas/buffTiming.js';
 import { skillWeaponAllowed } from '../formulas/skills.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 // ── сбросы и узел мастерства ─────────────────────────────────────────────────
 /** Вложенные ранги (Σ положительных) — «вернёт N очк.» у сбросов скилов и мастерства (C# `RanksOf`). */
@@ -50,7 +52,7 @@ export function respecFees(reg: ConfigRegistry, save: Pick<SaveState, 'skills' |
 /** Пробный прогон команды на копии сейва: её же отказ (или `null` — исполнится). */
 function dryRun(save: SaveState, run: (s: SaveState) => { ok: boolean; reason?: string }): string | null {
   const r = run(structuredClone(save));
-  return r.ok ? null : r.reason ?? 'нельзя';
+  return r.ok ? null : r.reason ?? tr('srv:respec.cannot', 'нельзя');
 }
 
 /**
@@ -85,9 +87,9 @@ export interface QuestLines { status: string; objectives: string[]; reward: stri
 export function questLines(def: QuestDef, prog: Pick<QuestProgress, 'status' | 'counters'> | null | undefined): QuestLines {
   const r = def.reward;
   return {
-    status: prog?.status === 'completed' ? 'выполнено' : prog?.status === 'turned-in' ? 'сдано' : '',
+    status: prog?.status === 'completed' ? tr('srv:quest.statusDone', 'выполнено') : prog?.status === 'turned-in' ? tr('srv:quest.statusTurnedIn', 'сдано') : '',
     objectives: def.objectives.map((obj) => `• ${obj.type}${obj.target ? ` ${obj.target}` : ''}: ${prog?.counters[obj.id] ?? 0}/${obj.amount}`),
-    reward: [r.gold && `${r.gold} зол.`, r.xp && `~${Math.round(r.xp / 10)}% ур. опыта`, r.skillPoints && `${r.skillPoints} очк.`, r.itemBaseId && 'предмет']
+    reward: [r.gold && tr('srv:quest.rewardGold', '{gold} зол.', { gold: r.gold }), r.xp && tr('srv:quest.rewardXp', '~{xp}% ур. опыта', { xp: Math.round(r.xp / 10) }), r.skillPoints && tr('srv:quest.rewardPoints', '{skillPoints} очк.', { skillPoints: r.skillPoints }), r.itemBaseId && tr('srv:quest.rewardItem', 'предмет')]
       .filter(Boolean).join(', '),
   };
 }
@@ -100,9 +102,13 @@ export interface QuestEntry extends QuestLines { questId: string; name: string; 
  * соперник (`questRival`: «взять — прежнее пропадёт»; согласие уходит флагом `replace` команды `acceptQuest`).
  */
 export interface QuestsView { active: QuestEntry[]; board: QuestEntry[] }
-export function questsView(save: SaveState, board: readonly QuestDef[]): QuestsView {
-  const entry = (def: QuestDef, prog: QuestProgress | null, rival: QuestRival | null): QuestEntry =>
-    ({ questId: def.id, name: def.name, description: def.description, ...questLines(def, prog), rival, canTurnIn: prog?.status === 'completed' });
+export function questsView(save: SaveState, board: readonly QuestDef[], reg?: ConfigRegistry): QuestsView {
+  // ⭐ i18n Ф2 (06.11): имя и описание задания (испечены в определение) — на языке игрока (`questDisplay`; без реестра — только доска)
+  const shown = (def: QuestDef): QuestDef => (reg ? questDisplay(reg, def) : { ...def, ...boardQuestText(def) });
+  const entry = (def: QuestDef, prog: QuestProgress | null, rival: QuestRival | null): QuestEntry => {
+    const d = shown(def);
+    return { questId: def.id, name: d.name, description: d.description, ...questLines(def, prog), rival, canTurnIn: prog?.status === 'completed' };
+  };
   const active: QuestEntry[] = [];
   for (const q of save.quests) {
     if (q.status === 'turned-in') continue;
@@ -113,14 +119,14 @@ export function questsView(save: SaveState, board: readonly QuestDef[]): QuestsV
 }
 
 // ── сборка скилов (гнёзда) ───────────────────────────────────────────────────
-const POOL_SHORT: Record<'mana' | 'stamina', string> = { mana: 'маны', stamina: 'выносл.' };
+const POOL_SHORT: Record<'mana' | 'stamina', string> = { get mana() { return tr('srv:poolGen.mana', 'маны'); }, get stamina() { return tr('srv:poolGen.stamina', 'выносл.'); } };
 /** Пул словом (C# `PoolShort`). */
 export const poolShort = (pool: string | undefined): string => (pool === 'mana' || pool === 'stamina' ? POOL_SHORT[pool] : 'undefined');
 /** Ценник вставки словом (C# `PriceText`, веб `socketsView.priceText`). */
 export function priceText(ins: { cost: number; costPool?: 'carrier' | 'mana' | 'stamina' }, carrier?: 'mana' | 'stamina'): string {
-  if (!ins.cost) return 'бесплатно';
+  if (!ins.cost) return tr('srv:socket.free', 'бесплатно');
   const pool = (ins.costPool ?? 'carrier') === 'carrier' ? carrier : ins.costPool;
-  return `${ins.cost > 0 ? '+' : ''}${ins.cost} ${pool ? POOL_SHORT[pool as 'mana' | 'stamina'] : 'ресурса скила'}`;
+  return `${ins.cost > 0 ? '+' : ''}${ins.cost} ${pool ? POOL_SHORT[pool as 'mana' | 'stamina'] : tr('srv:socket.skillResource', 'ресурса скила')}`;
 }
 
 /** ⭐ С4: подсказка вставки — имя, описание и множитель отката на ранге героя (`insertCooldownMult`, та же формула, что у боя). */
@@ -174,7 +180,7 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
   }
   const rank = (id: string): number => rankOf.get(id) ?? 0;
   const typeNames = new Map<string, string>();
-  for (const t of reg.get('skill-insert-types')) if (!typeNames.has(t.id)) typeNames.set(t.id, t.name);
+  for (const t of reg.get('skill-insert-types')) if (!typeNames.has(t.id)) typeNames.set(t.id, cfgRowText(reg, 'skill-insert-types', t));
   const typeName = (id: string): string => typeNames.get(id) ?? id;
   const inserts = reg.get('skill-inserts');
   const byId = new Map<string, SkillInsertRow>();
@@ -186,12 +192,12 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
   const tips = new Map<SkillInsertRow, InsertTip>();
   const tipOf = (x: SkillInsertRow): InsertTip => {
     let t = tips.get(x);
-    if (!t) { t = { name: x.name, desc: x.description, cooldownMult: insertCooldownMult(x.cooldownMult, x.perRank.cooldownDecay, rank(x.id)) }; tips.set(x, t); }
+    if (!t) { t = { name: cfgRowText(reg, 'skill-inserts', x), desc: cfgRowText(reg, 'skill-inserts', x, 'description'), cooldownMult: insertCooldownMult(x.cooldownMult, x.perRank.cooldownDecay, rank(x.id)) }; tips.set(x, t); }
     return t;
   };
   const learned = socketNodes(reg, save);
   const hint = learned.length ? null
-    : `Гнёзда открываются рангом скила: ${reg.get('balance').skillSocketRanks.join(' / ')}. Вложите очко в активный скил.`;
+    : tr('srv:socket.hint', 'Гнёзда открываются рангом скила: {ranks}. Вложите очко в активный скил.', { ranks: reg.get('balance').skillSocketRanks.join(' / ') });
   return {
     hint,
     learned: learned.map((n) => {
@@ -208,7 +214,7 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
       // что вообще влезает в этого носителя — от клетки не зависит
       const fits = foreign ? [] : unlocked.filter((x) => insertFits(x, base, weaponClass));
       return {
-        id: n.id, name: n.name, element: skillElement(n), open, filled, label: `${n.name} ${filled}/${open}`,
+        id: n.id, name: cfgRowText(reg, 'skill-tree', n), element: skillElement(n), open, filled, label: `${cfgRowText(reg, 'skill-tree', n)} ${filled}/${open}`,
         cells: Array.from({ length: open }, (_, i): SocketCell => {
           const cur = slots[i] ?? null;
           const ins = cur ? insertOf(cur) : undefined;
@@ -217,14 +223,14 @@ export function socketsView(reg: ConfigRegistry, save: SaveState): SocketsView {
           // `skillSocketRanks`). Вариант, от которого сервер откажет «Вставка этого типа уже стоит в другом гнезде», здесь не предлагается.
           const usedTypes = new Set<string>();
           slots.forEach((id, j) => { if (j !== i && id) { const t = insertOf(id)?.type; if (t) usedTypes.add(t); } });
-          const options: SocketOption[] = cur && !foreign ? [{ label: '✕ Вынуть', insertId: null, price: null, tip: null }] : [];
+          const options: SocketOption[] = cur && !foreign ? [{ label: tr('srv:socket.remove', '✕ Вынуть'), insertId: null, price: null, tip: null }] : [];
           for (const x of fits) {
             if (x.id === cur || usedTypes.has(x.type)) continue;
-            options.push({ label: `${typeName(x.type)} · ${x.name}`, insertId: x.id, price: priceText(x, base.resource), tip: tipOf(x) });
+            options.push({ label: `${typeName(x.type)} · ${cfgRowText(reg, 'skill-inserts', x)}`, insertId: x.id, price: priceText(x, base.resource), tip: tipOf(x) });
           }
           return {
-            head: ins ? typeName(ins.type) : `Гнездо ${i + 1}`,
-            text: ins ? `${ins.name} · ${rank(ins.id)}` : '— пусто —',
+            head: ins ? typeName(ins.type) : tr('srv:socket.cell', 'Гнездо {i}', { i: i + 1 }),
+            text: ins ? `${cfgRowText(reg, 'skill-inserts', ins)} · ${rank(ins.id)}` : tr('srv:socket.emptyCell', '— пусто —'),
             price: ins ? priceText(ins, base.resource) : null,
             insertId: ins ? ins.id : null,
             rank: ins ? rank(ins.id) : 0,
@@ -253,8 +259,14 @@ function skillElement(node: SkillNode | undefined): string {
   if ((active.category === 'attack' || active.category === 'cast' || active.category === 'curse') && active.element) return active.element;
   return abilityElementOf(active.abilityId);
 }
-/** Две буквы имени скила (без «Мастерство: »). */
-export const abbrev = (name: string): string => name.replace(/^Мастерство:\s*/, '').slice(0, 2);
+/**
+ * Две буквы имени скила (без «Мастерство: »). ⭐ i18n Ф1 (ревизия 06.11): имя приходит на языке игрока (`cfgRowText`) — и приставка снимается
+ * его переводом, а не русским началом: иначе у перевода значок был бы её первыми буквами. На источнике — ровно прежняя `/^Мастерство:\s*`.
+ */
+export const abbrev = (name: string): string => {
+  const head = tr('srv:bind.masteryPrefix', 'Мастерство:');
+  return (head && name.startsWith(head) ? name.slice(head.length).replace(/^\s*/, '') : name).slice(0, 2);
+};
 
 /** Слот бинда (новый DTO `BindSlot`): значок, стихия (цвет), подходит ли надетому оружию, делит ли таймер атаки. */
 export interface BindSlot { value: string | null; text: string; element: string | null; fits: boolean; attackLike: boolean }
@@ -273,7 +285,7 @@ export function bindSlotView(reg: ConfigRegistry, save: Pick<SaveState, 'equipme
   const node = value && value !== 'attack' ? reg.get('skill-tree').nodes.find((n) => n.id === value) : undefined;
   return {
     value: value ?? null,
-    text: value === 'attack' ? '⚔' : value ? (node ? abbrev(node.name) : '?') : '—',
+    text: value === 'attack' ? '⚔' : value ? (node ? abbrev(cfgRowText(reg, 'skill-tree', node)) : '?') : '—',
     element: node ? skillElement(node) : null,
     fits: bindFits(reg, save, value),
     attackLike: value === 'attack' || (!!value && node?.effect.active?.category === 'attack'),
@@ -284,7 +296,7 @@ export function bindView(reg: ConfigRegistry, save: SaveState): BindView {
   const values = [save.mouseLeft, save.mouseRight, ...[0, 1, 2].map((i) => save.hotbar[i] ?? null)];
   const options = reg.get('skill-tree').nodes
     .filter((n) => (save.skills[n.id] ?? 0) > 0 && n.effect.active)
-    .map((n) => ({ id: n.id, name: n.name, rank: save.skills[n.id]!, abbrev: abbrev(n.name), element: skillElement(n), fits: bindFits(reg, save, n.id) }));
+    .map((n) => ({ id: n.id, name: cfgRowText(reg, 'skill-tree', n), rank: save.skills[n.id]!, abbrev: abbrev(cfgRowText(reg, 'skill-tree', n)), element: skillElement(n), fits: bindFits(reg, save, n.id) }));
   return { slots: values.map((v) => bindSlotView(reg, save, v)), options };
 }
 
@@ -314,18 +326,15 @@ export function masteryTreeView(reg: ConfigRegistry, save: SaveState): MasteryTr
     const state: MasteryNode['state'] = rank > 0 ? 'alloc' : !near ? 'closed' : save.level < n.levelReq ? 'level' : 'avail';
     const chk = passiveAllocCheck(reg, save, n.id);
     const cost = chk.ok ? chk.cost : null;
-    const refusal = !chk.ok ? chk.reason : save.unspentMasteryPoints < 1 ? 'Нет очков мастерства' : save.gold < chk.cost ? 'Недостаточно золота' : null;
-    const costLine = n.cost.type !== 'gold' ? '' : rank >= n.maxRank ? ' · макс. ранг' : cost !== null ? ` · след. ранг: ${cost} зол. + 1 очко` : '';
-    let tip = `<b>${n.name}</b>
-${n.description}
-ранг ${rank}/${n.maxRank}${costLine}`;
-    if (save.level < n.levelReq) tip += `
-<color=#d89b7c>требуется уровень ${n.levelReq}</color>`;
+    const refusal = !chk.ok ? chk.reason : save.unspentMasteryPoints < 1 ? tr('srv:mastery.noPoints', 'Нет очков мастерства') : save.gold < chk.cost ? tr('srv:town.noGold', 'Недостаточно золота') : null;
+    const costLine = n.cost.type !== 'gold' ? '' : rank >= n.maxRank ? tr('srv:mastery.maxRank', ' · макс. ранг') : cost !== null ? tr('srv:mastery.nextRank', ' · след. ранг: {cost} зол. + 1 очко', { cost }) : '';
+    let tip = tr('srv:mastery.tip', '<b>{name}</b>\n{description}\nранг {rank}/{maxRank}{costLine}', { name: cfgRowText(reg, 'mastery-tree', n), description: cfgRowText(reg, 'mastery-tree', n, 'description'), rank, maxRank: n.maxRank, costLine });
+    if (save.level < n.levelReq) tip += tr('srv:mastery.levelReq', '\n<color=#d89b7c>требуется уровень {levelReq}</color>', { levelReq: n.levelReq });
     const eff = (n.effect.modifiers ?? []).map((m) => `${m.kind === 'increased' ? `+${Math.round(m.value * 100)}%` : `+${m.value}`} ${m.stat}`).join(', ');
     if (eff) tip += `
 <color=#88ffdd>${eff}</color>`;
     return {
-      id: n.id, x: n.x, y: n.y, name: n.name, notable: !!n.notable, entry: entries.has(n.id), rank, maxRank: n.maxRank,
+      id: n.id, x: n.x, y: n.y, name: cfgRowText(reg, 'mastery-tree', n), notable: !!n.notable, entry: entries.has(n.id), rank, maxRank: n.maxRank,
       state, clickable: chk.ok, cost, refusal, tip,
     };
   });

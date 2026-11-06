@@ -9,9 +9,10 @@ import { isSafeKey } from '../session/wireLimits.js';
 import { affixPool, affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, nameHead, pickTierClamped, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
 import { axisOf, balanceAxisOf, bladeStats, strikeAxisOf } from './bladeStats.js';
 import {
-  CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType,
+  CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType, typeDisplay,
   type CraftSlot, type PartSet, type TypeInfo, type WeaponAnatomy, type WeaponPart,
 } from './craftType.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /**
  * КОВКА ОРУЖИЯ ИЗ ДЕТАЛЕЙ — чистое ядро (docs/CRAFT_WEAPONS.md).
@@ -35,10 +36,10 @@ export type CraftTuning = ConfigShapes['balance']['craft'];
 
 /** Роль гнезда одной строкой — для подписи в окне ковки. */
 export const CRAFT_SLOT_ROLE: Record<CraftSlot, string> = {
-  strike: 'урон ↔ скорость',
-  grip: 'дальше ↔ шире',
-  bind: 'префиксы ↔ суффиксы',
-  head: 'укус ↔ упор',
+  get strike() { return tr('srv:craftRole.strike', 'урон ↔ скорость'); },
+  get grip() { return tr('srv:craftRole.grip', 'дальше ↔ шире'); },
+  get bind() { return tr('srv:craftRole.bind', 'префиксы ↔ суффиксы'); },
+  get head() { return tr('srv:craftRole.head', 'укус ↔ упор'); },
 };
 
 const r4 = (x: number): number => Math.round(x * 10000) / 10000;
@@ -97,7 +98,7 @@ export function stepLabel(reg: ConfigRegistry, anat: WeaponAnatomy, slot: CraftS
   const own = !p.family ? anat[slot].stepNames[step - 1] : undefined;
   if (own) return own;
   const id = materialId(partFamily(anat, slot, p), step);
-  return reg.get('craft-materials').find((m) => m.id === id)?.name ?? id;
+  return cfgRowText(reg, 'craft-materials', reg.get('craft-materials').find((m) => m.id === id)) ?? id;
 }
 
 /**
@@ -378,16 +379,16 @@ export function resolveParts(
   opts: { recorded?: boolean } = {},
 ): { ok: true; parts: ResolvedParts } | { ok: false; reason: string } {
   const anat = anatomyRow(reg, weaponClass);
-  if (!anat) return { ok: false, reason: 'Такого класса кузнец не знает' };
+  if (!anat) return { ok: false, reason: tr('srv:forge.unknownClass', 'Такого класса кузнец не знает') };
   const out: Partial<ResolvedParts> = {};
   for (const slot of CRAFT_SLOT_LIST) {
     const pick = picks[slot];
     const p = pick && partById(reg, pick.id);
-    if (!p || (p.enabled === false && !opts.recorded)) return { ok: false, reason: `Нет такой детали: ${pick?.id ?? '—'}` };
-    if (p.slot !== slot) return { ok: false, reason: `«${p.name}» не для этого гнезда` };
-    if (!partFits(p, weaponClass, slot, hands)) return { ok: false, reason: `«${p.name}» не подходит этому семейству` };
+    if (!p || (p.enabled === false && !opts.recorded)) return { ok: false, reason: tr('srv:forge.noSuchPartId', 'Нет такой детали: {id}', { id: pick?.id ?? '—' }) };
+    if (p.slot !== slot) return { ok: false, reason: tr('srv:forge.partWrongSocket', '«{name}» не для этого гнезда', { name: cfgRowText(reg, 'weapon-parts', p) }) };
+    if (!partFits(p, weaponClass, slot, hands)) return { ok: false, reason: tr('srv:forge.partWrongFamily', '«{name}» не подходит этому семейству', { name: cfgRowText(reg, 'weapon-parts', p) }) };
     if (!Number.isInteger(pick.step) || pick.step < p.stepMin || pick.step > p.stepMax) {
-      return { ok: false, reason: `«${p.name}» куётся только из ступеней ${p.stepMin}–${p.stepMax}: ${stepLabel(reg, anat, slot, p, p.stepMin)} … ${stepLabel(reg, anat, slot, p, p.stepMax)}` };
+      return { ok: false, reason: tr('srv:forge.partSteps', '«{name}» куётся только из ступеней {stepMin}–{stepMax}: {loName} … {hiName}', { name: cfgRowText(reg, 'weapon-parts', p), stepMin: p.stepMin, stepMax: p.stepMax, loName: stepLabel(reg, anat, slot, p, p.stepMin), hiName: stepLabel(reg, anat, slot, p, p.stepMax) }) };
     }
     out[slot] = p;
   }
@@ -448,8 +449,8 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
   push('attackSpeed', 'flat', -k.strike.attackSpeed * a1);
   if (blade?.outOfBracket) {
     notes.push(blade.bracket
-      ? `Клинок ${parts.strike.geom!.len} см вне вилки «${blade.bracket.name}» (${blade.bracket.lo}–${blade.bracket.hi}): ось упёрлась в край.`
-      : 'У клинка нет вилки по тегу `blade`: длина и ширина не считаются.');
+      ? tr('srv:forge.noteBladeOut', 'Клинок {len} см вне вилки «{name}» ({lo}–{hi}): ось упёрлась в край.', { len: parts.strike.geom!.len, name: cfgRowText(reg, 'balance', blade.bracket), lo: blade.bracket.lo, hi: blade.bracket.hi })
+      : tr('srv:forge.noteBladeNoBracket', 'У клинка нет вилки по тегу `blade`: длина и ширина не считаются.'));
   }
 
   // 2 · Держак — площадь-нейтрально: дальность K^a, дуга K^(−2a), `дуга × дальность²` постоянна.
@@ -460,7 +461,7 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
     reachMult = r4((base.reachMult ?? 1) * k.gripK ** a2);
     arcMult = r4((base.arcMult ?? 1) * k.gripK ** (-2 * a2));
   } else if (a2 !== 0) {
-    notes.push('Держак у стрелкового и магического пока только вид: дальность снаряда — константа, честной оси нет (§5.2).');
+    notes.push(tr('srv:forge.noteGripRanged', 'Держак у стрелкового и магического пока только вид: дальность снаряда — константа, честной оси нет (§5.2).'));
   }
 
   // 4 · Оголовье — укус ↔ упор. Упор: блок (у лука — стойкость к прерыванию). Укус: статус грани.
@@ -470,18 +471,18 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
   const isBow = base.weaponClass === 'bow';
   if (isBow) {
     push('interruptResist', 'flat', k.headInterrupt * a4);
-    if (a4 < 0) notes.push('Стойкость к прерыванию не бывает ниже нуля: у лука сторона укуса стоит бесплатно.');
+    if (a4 < 0) notes.push(tr('srv:forge.noteBowInterrupt', 'Стойкость к прерыванию не бывает ниже нуля: у лука сторона укуса стоит бесплатно.'));
   } else {
     push('blockChance', 'flat', k.headBlock * a4);
     const own = baseFlat(base, 'blockChance');
     if (a4 < 0 && own + k.headBlock * a4 < 0) {
-      notes.push(`Блока у базы ${Math.round(own * 100)} % — минус упирается в ноль, и укус достаётся бесплатно (долг §7.2).`);
+      notes.push(tr('srv:forge.noteBlockFloor', 'Блока у базы {own} % — минус упирается в ноль, и укус достаётся бесплатно (долг §7.2).', { own: Math.round(own * 100) }));
     }
   }
   const statusKind = statusKindOf(reg, base);
   const bite = statusKind ? k.bite[statusKind] : undefined;
   if (bite) push(bite.stat, 'flat', -bite.value * a4);
-  else if (a4 !== 0) notes.push('У базы нет грани — рычагу статуса нечем торговать (§7.1).');
+  else if (a4 !== 0) notes.push(tr('srv:forge.noteNoEdge', 'У базы нет грани — рычагу статуса нечем торговать (§7.1).'));
 
   // 3 · Обвязка — форма ёмкости. Число слотов даёт ступень.
   const affixCap = formOf(capacityOf(reg, t), parts.bind.axis);
@@ -507,7 +508,8 @@ export function finishOf(reg: ConfigRegistry, index: number | undefined): Finish
   const list = reg.get('balance').craft.finish;
   const i = Math.max(0, Math.min(list.length - 1, Math.round(index ?? 0)));
   const row = list[i];
-  return row ? { ...row, index: i } : { id: 'plain', name: 'Обычная работа', floor: 0, strikeUnits: 0, goldMult: 1, index: 0 };
+  // ⭐ i18n Ф1 (06.11): копия строки — имя переводим здесь, пока объект ещё тот, что в реестре (`cfgRowText` ищет путь по нему)
+  return row ? { ...row, name: cfgRowText(reg, 'balance', row), index: i } : { id: 'plain', name: tr('srv:forge.finishPlain', 'Обычная работа'), floor: 0, strikeUnits: 0, goldMult: 1, index: 0 };
 }
 
 /**
@@ -607,25 +609,25 @@ const PICK_KEYS = ['id', 'step'] as const;
  */
 export function parseCraftInput(reg: ConfigRegistry, raw: unknown): { ok: true; input: CraftInput } | { ok: false; reason: string } {
   const bad = (reason: string): { ok: false; reason: string } => ({ ok: false, reason });
-  if (!isPlainObject(raw) || !onlyKeys(raw, INPUT_KEYS)) return bad('Неверная заявка на ковку');
+  if (!isPlainObject(raw) || !onlyKeys(raw, INPUT_KEYS)) return bad(tr('srv:forge.badRequest', 'Неверная заявка на ковку'));
   const { weaponClass, hands, parts, finish } = raw;
-  if (!shortId(weaponClass)) return bad('Неверная заявка: класс оружия');
-  if (hands !== 1 && hands !== 2) return bad('Неверная заявка: хват');
+  if (!shortId(weaponClass)) return bad(tr('srv:forge.badRequestClass', 'Неверная заявка: класс оружия'));
+  if (hands !== 1 && hands !== 2) return bad(tr('srv:forge.badRequestHands', 'Неверная заявка: хват'));
   if (!isPlainObject(parts) || !onlyKeys(parts, CRAFT_SLOT_LIST) || !CRAFT_SLOT_LIST.every((s) => s in parts)) {
-    return bad('Неверная заявка: нужны ровно четыре детали');
+    return bad(tr('srv:forge.badRequestParts', 'Неверная заявка: нужны ровно четыре детали'));
   }
   const clean = {} as CraftParts;
   for (const slot of CRAFT_SLOT_LIST) {
     const pick = parts[slot];
-    if (!isPlainObject(pick) || !onlyKeys(pick, PICK_KEYS) || !shortId(pick.id)) return bad('Неверная заявка: деталь');
+    if (!isPlainObject(pick) || !onlyKeys(pick, PICK_KEYS) || !shortId(pick.id)) return bad(tr('srv:forge.badRequestPart', 'Неверная заявка: деталь'));
     const step = pick.step;
-    if (typeof step !== 'number' || !Number.isInteger(step) || step < 1 || step > MATERIAL_STEPS) return bad('Неверная заявка: ступень материала');
+    if (typeof step !== 'number' || !Number.isInteger(step) || step < 1 || step > MATERIAL_STEPS) return bad(tr('srv:forge.badRequestStep', 'Неверная заявка: ступень материала'));
     clean[slot] = { id: pick.id, step };
   }
   const input: CraftInput = { weaponClass, hands, parts: clean };
   if (finish !== undefined) {
     const n = reg.get('balance').craft.finish.length;
-    if (typeof finish !== 'number' || !Number.isInteger(finish) || finish < 0 || finish >= Math.max(1, n)) return bad('Неверная заявка: доводка');
+    if (typeof finish !== 'number' || !Number.isInteger(finish) || finish < 0 || finish >= Math.max(1, n)) return bad(tr('srv:forge.badRequestFinish', 'Неверная заявка: доводка'));
     input.finish = finish;
   }
   return { ok: true, input };
@@ -656,23 +658,23 @@ export function craftWeapon(
   const type = resolveType(reg, input.weaponClass, input.hands, res.parts);
   if (!type.ok) return { ok: false, reason: type.reason, type };
   const base = reg.get('items.base').find((b) => b.id === type.baseId);
-  if (!base || base.kind !== 'weapon') return { ok: false, reason: 'Такого оружия кузнец не знает', type };
+  if (!base || base.kind !== 'weapon') return { ok: false, reason: tr('srv:forge.unknownWeapon', 'Такого оружия кузнец не знает'), type };
   const { q, tier: fromParts } = tierOfSteps(reg, input.parts);
   const t = opts.atTier ?? fromParts;
   const tiers = craftTiers(reg);
   const view = { type, tier: t, q };
   if (opts.journal) {
-    if (!opts.journal.bases.includes(base.id)) return { ok: false, reason: `Тип «${base.name}» не открыт: разбери такую вещь у кузнеца`, ...view };
+    if (!opts.journal.bases.includes(base.id)) return { ok: false, reason: tr('srv:forge.typeLocked', 'Тип «{name}» не открыт: разбери такую вещь у кузнеца', { name: cfgRowText(reg, 'items.base', base) }), ...view };
     const closed = CRAFT_SLOT_LIST.map((s) => res.parts[s]).find((p) => !opts.journal!.variants.includes(p.id));
-    if (closed) return { ok: false, reason: `Деталь «${closed.name}» ещё не открыта`, ...view };
+    if (closed) return { ok: false, reason: tr('srv:forge.partLocked', 'Деталь «{name}» ещё не открыта', { name: cfgRowText(reg, 'weapon-parts', closed) }), ...view };
   }
   const br = baseTierRange(reg, base);
-  if (t < br.lo) return { ok: false, reason: `${base.name} не бывает ниже ${tiers[br.lo]?.id} ${tiers[br.lo]?.name}: возьми материалы получше`, ...view };
-  if (t > br.hi) return { ok: false, reason: `${base.name} не бывает выше ${tiers[br.hi]?.id} ${tiers[br.hi]?.name}: возьми материалы попроще`, ...view };
+  if (t < br.lo) return { ok: false, reason: tr('srv:forge.tierTooLow', '{base} не бывает ниже {tierId} {tier}: возьми материалы получше', { base: cfgRowText(reg, 'items.base', base), tierId: tiers[br.lo]?.id, tier: cfgRowText(reg, 'item-tiers', tiers[br.lo]) }), ...view };
+  if (t > br.hi) return { ok: false, reason: tr('srv:forge.tierTooHigh', '{base} не бывает выше {tierId} {tier}: возьми материалы попроще', { base: cfgRowText(reg, 'items.base', base), tierId: tiers[br.hi]?.id, tier: cfgRowText(reg, 'item-tiers', tiers[br.hi]) }), ...view };
   // ⚠ R12-08: выключенная в редакторе ступень не куётся — как не падает и с монстров. Прежде её индекс занимала следующая
   // включённая: те же материалы давали вещь ступенью выше (и с чужой ёмкостью аффиксов).
   if (tiers[t]?.enabled === false && tiers.some((x) => x.enabled !== false)) {
-    return { ok: false, reason: `Ступень ${tiers[t]!.name} кузнец сейчас не куёт: возьми материалы другой ступени`, ...view };
+    return { ok: false, reason: tr('srv:forge.tierOff', 'Ступень {name} кузнец сейчас не куёт: возьми материалы другой ступени', { name: cfgRowText(reg, 'item-tiers', tiers[t]!) }), ...view };
   }
   // ⭐ D3 (решение владельца 06.10: «разобрал вещь — получил чертежи и можно сразу делать её, всё упирается только в количество
   // ресурсов, никаких доп. заграждений»): ВОРОТ СТУПЕНИ У КОВКИ НЕТ — ни потолка журнала (`tierHi`), ни счётчика мификов. Ступень держит
@@ -680,11 +682,11 @@ export function craftWeapon(
   const tier = tiers[t]!;
   const bake = bakeParts(reg, base, t, res.parts);
   // ⚠ R17-03: у формы нет цены — отказ, а не сырьё ×1 (цена самой бедной формы). Схема такую таблицу не пропускает; это страховка.
-  if (formMult(reg, bake.affixCap) === undefined) return { ok: false, reason: FORM_UNPRICED, bake, ...view };
+  if (formMult(reg, bake.affixCap) === undefined) return { ok: false, reason: tr('srv:forge.formUnpriced', FORM_UNPRICED), bake, ...view };
   const cost = craftCost(reg, input.weaponClass, res.parts, input.parts, t, bake.affixCap, input.finish);
   if (opts.materialsOn) {
     const off = Object.keys(cost.materials).find((id) => !reg.get('craft-materials').some((m) => m.id === id && m.enabled !== false));
-    if (off) return { ok: false, reason: `Материал ещё не в игре: ${off}`, cost, bake, ...view };
+    if (off) return { ok: false, reason: tr('srv:forge.materialOff', 'Материал ещё не в игре: {off}', { off }), cost, bake, ...view };
   }
 
   // ⭐ Бросок базы: без `rng` — предпросмотр (середина вилки + сама вилка), с `rng` — ковка.
@@ -729,6 +731,20 @@ export function typeOfItem(reg: ConfigRegistry, item: Item): TypeInfo | undefine
   if (!res.ok) return undefined;
   const t = resolveType(reg, base.weaponClass, base.hands ?? 1, res.parts);
   return t.ok ? t : undefined;
+}
+
+/**
+ * ⭐ i18n Ф2 (06.11): ИМЯ ТИПА ВЕЩИ ДЛЯ ПОКАЗА («кодекс «Ланцетовидное копьё»») — на языке области (`typeDisplay`); тип не собрался —
+ * `undefined`. ⚠ Не `cfgRowText(reg, 'weapon-types', typeOfItem(…))`: итог типа — не строка таблицы, и перевода у него нет.
+ */
+export function typeNameOfItem(reg: ConfigRegistry, item: Item): string | undefined {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  const picks = partsOf(reg, item);
+  if (!base || base.kind !== 'weapon' || !picks) return undefined;
+  const res = resolveParts(reg, base.weaponClass, base.hands ?? 1, picks);
+  if (!res.ok) return undefined;
+  const t = resolveType(reg, base.weaponClass, base.hands ?? 1, res.parts);
+  return t.ok ? typeDisplay(reg, base.weaponClass, base.hands ?? 1, res.parts, t).name : undefined;
 }
 
 // ── Зачарование ─────────────────────────────────────────────────────────────────────────────────

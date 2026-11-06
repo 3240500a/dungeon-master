@@ -1,6 +1,7 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { StatModifier } from '../types/index.js';
+import { cfgRowText } from '../i18n/tr.js';
 
 /**
  * Чистые хелперы по активным тоглам (аурам/стойкам): резерв пула, эффективный максимум,
@@ -74,7 +75,8 @@ export function activeToggleInfos(cfg: ConfigRegistry, toggles: readonly string[
     const node = tree.nodes.find((n) => n.id === id);
     const a = node?.effect.active;
     if (node && a) {
-      out.push({ id, name: node.name, description: node.description, reservePct: reserveOf(a), pool: poolOf(a), buffMods: buffModsOf(a) });
+      // ⭐ i18n Ф1 (06.11): имя и описание — на языке игрока (строки окна; правила их не читают)
+      out.push({ id, name: cfgRowText(cfg, 'skill-tree', node), description: cfgRowText(cfg, 'skill-tree', node, 'description'), reservePct: reserveOf(a), pool: poolOf(a), buffMods: buffModsOf(a) });
     }
   }
   return out;

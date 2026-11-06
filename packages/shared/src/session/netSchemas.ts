@@ -283,6 +283,8 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('leave') }),
   // ⭐ С2/С4–С6: запрос вида. `args` — только форма записи (ключи и размер держит потолок кадра); что в них допустимо, судит комната по виду.
   z.object({ t: z.literal('view'), id: z.number().int().nonnegative(), kind: z.enum(VIEW_KINDS), args: z.record(z.unknown()).optional() }),
+  // ⭐ i18n Ф1 (06.11): смена языка интерфейса — в любой момент; та же рамка, что у `join.lang` (не включённый язык — источник)
+  z.object({ t: z.literal('lang'), lang: frameText(16) }),
   z.object({ t: z.literal('ping'), id: z.number().int() }),
 ]);
 

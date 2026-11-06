@@ -20,6 +20,8 @@ import { gripOf } from '../formulas/versatile.js';
 import { weaponCard, type WeaponCard } from '../formulas/craftCard.js';
 import { makePlayerModel } from '../sim/playerBot.js';
 import { offhandRefusal } from '../economy/townActions.js';
+import { tr } from '../i18n/tr.js';
+import { itemDisplayName } from '../formulas/itemDisplay.js';
 
 /** Чей герой держит оружие карточки: `server` — боевой снимок сервера (умолчание), `sim` — модель симулятора (прежний веб / C#). */
 export type CardModel = 'server' | 'sim';
@@ -76,7 +78,7 @@ const signed = (x: number, unit = '', d = 0): string => `${x > 0 ? '+' : x < 0 ?
  */
 export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName: string, save: SaveState, range?: { lo: WeaponCard; hi: WeaponCard }): CompareRow[] {
   const C = COMPARE_COLORS;
-  const rows: CompareRow[] = [{ cells: ['', aName, bName, 'разница'], c3: C.accent, c4: C.dim }];
+  const rows: CompareRow[] = [{ cells: ['', aName, bName, tr('srv:compare.diff', 'разница')], c3: C.accent, c4: C.dim }];
   const sec = (title: string): void => { rows.push({ cells: [title] }); };
   const line = (label: string, x: number | undefined, y: number | undefined, fmt: (v: number) => string, rel = true, better: 'up' | 'down' | 'none' = 'up', dfmt?: (d: number) => string): CompareRow => {
     let diff = '';
@@ -94,49 +96,49 @@ export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName:
     rows.push({ cells: [label, fmt(x), `${fmt(lo)}–${fmt(hi)}`, `${signed(d(lo), '')}…${signed(d(hi), ' %')}`], c4: d(lo) > 0 ? C.good : d(hi) < 0 ? C.bad : C.dim });
   };
   const mid = (c: WeaponCard): number => (c.hitMin + c.hitMax) / 2;
-  sec('Удар');
-  if (range) rangeLine('урон за удар', mid(a), mid(range.lo), mid(range.hi), (v) => fx(v, 1));
-  else line('урон за удар', mid(a), mid(b), (v) => fx(v, 1));
-  const spread = line('разброс', undefined, undefined, fx);
+  sec(tr('srv:compare.secHit', 'Удар'));
+  if (range) rangeLine(tr('srv:compare.hitDamage', 'урон за удар'), mid(a), mid(range.lo), mid(range.hi), (v) => fx(v, 1));
+  else line(tr('srv:compare.hitDamage', 'урон за удар'), mid(a), mid(b), (v) => fx(v, 1));
+  const spread = line(tr('srv:compare.spread', 'разброс'), undefined, undefined, fx);
   spread.cells[1] = `${fx(a.hitMin, 0)}–${fx(a.hitMax, 0)}`;
   const span = (lo: number, hi: number): string => (fx(lo, 0) === fx(hi, 0) ? fx(lo, 0) : `(${fx(lo, 0)}–${fx(hi, 0)})`);
   spread.cells[2] = range ? `${span(range.lo.hitMin, range.hi.hitMin)}–${span(range.lo.hitMax, range.hi.hitMax)}` : `${fx(b.hitMin, 0)}–${fx(b.hitMax, 0)}`;
-  line('ударов в секунду', a.aps, b.aps, (v) => fx(v, 2));
-  line('шанс крита', a.critChance, b.critChance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, ' п.п.', 1));
-  if (range) rangeLine('ДПС (формула)', a.dps, range.lo.dps, range.hi.dps, (v) => fx(v, 1));
-  else line('ДПС (формула)', a.dps, b.dps, (v) => fx(v, 1));
-  line('вклад атрибутов', a.attrBonus, b.attrBonus, (v) => fx(v, 1));
+  line(tr('srv:compare.aps', 'ударов в секунду'), a.aps, b.aps, (v) => fx(v, 2));
+  line(tr('srv:compare.crit', 'шанс крита'), a.critChance, b.critChance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, tr('srv:compare.pp', ' п.п.'), 1));
+  if (range) rangeLine(tr('srv:compare.dps', 'ДПС (формула)'), a.dps, range.lo.dps, range.hi.dps, (v) => fx(v, 1));
+  else line(tr('srv:compare.dps', 'ДПС (формула)'), a.dps, b.dps, (v) => fx(v, 1));
+  line(tr('srv:compare.attrBonus', 'вклад атрибутов'), a.attrBonus, b.attrBonus, (v) => fx(v, 1));
   if (a.attackType === 'melee' || b.attackType === 'melee') {
-    sec('Геометрия взмаха');
-    line('дальность, px', a.rangePx, b.rangePx, (v) => fx(v, 0), true, 'none');
-    line('дуга, °', a.arcDeg, b.arcDeg, (v) => fx(v, 0), true, 'none');
-    line('площадь сектора', a.area, b.area, (v) => `×${fx(v, 3)}`, true, 'none');
+    sec(tr('srv:compare.secSwing', 'Геометрия взмаха'));
+    line(tr('srv:compare.range', 'дальность, px'), a.rangePx, b.rangePx, (v) => fx(v, 0), true, 'none');
+    line(tr('srv:compare.arc', 'дуга, °'), a.arcDeg, b.arcDeg, (v) => fx(v, 0), true, 'none');
+    line(tr('srv:compare.area', 'площадь сектора'), a.area, b.area, (v) => `×${fx(v, 3)}`, true, 'none');
   }
-  sec('Защита и контроль');
-  line('блок', a.block, b.block, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, ' п.п.', 1));
-  line('стойкость к прерыванию', a.interruptResist, b.interruptResist, (v) => pct(v, 0), false, 'up', (d) => signed(d * 100, ' п.п.', 1));
-  line('сбить с ног (цель 100)', a.knockdown, b.knockdown, (v) => pct(v, 2), false, 'up', (d) => signed(d * 100, ' п.п.', 2));
-  line('масса оружия', a.mass, b.mass, (v) => fx(v, 0), false, 'none', (d) => signed(d, '', 0));
+  sec(tr('srv:compare.secDefense', 'Защита и контроль'));
+  line(tr('srv:compare.block', 'блок'), a.block, b.block, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, tr('srv:compare.pp', ' п.п.'), 1));
+  line(tr('srv:compare.interrupt', 'стойкость к прерыванию'), a.interruptResist, b.interruptResist, (v) => pct(v, 0), false, 'up', (d) => signed(d * 100, tr('srv:compare.pp', ' п.п.'), 1));
+  line(tr('srv:compare.knockdown', 'сбить с ног (цель 100)'), a.knockdown, b.knockdown, (v) => pct(v, 2), false, 'up', (d) => signed(d * 100, tr('srv:compare.pp', ' п.п.'), 2));
+  line(tr('srv:compare.mass', 'масса оружия'), a.mass, b.mass, (v) => fx(v, 0), false, 'none', (d) => signed(d, '', 0));
   const statusRows = (x: WeaponCard['status'], y: WeaponCard['status']): void => {
     const s = (y ?? x)!;
-    sec(`Статус: ${s.name}`);
-    line('шанс за попадание', x?.chance, y?.chance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, ' п.п.', 1));
-    line('средних стаков', x?.avgStacks, y?.avgStacks, (v) => `${fx(v, 2)} / ${s.maxStacks}`);
-    if (s.capped) rows.push({ cells: [`⚠ шанс упёрся в потолок ${pct(s.chance, 0)}: прибавка к шансу сверх него не работает`] });
+    sec(tr('srv:compare.secStatus', 'Статус: {name}', { name: s.name }));
+    line(tr('srv:compare.statusChance', 'шанс за попадание'), x?.chance, y?.chance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, tr('srv:compare.pp', ' п.п.'), 1));
+    line(tr('srv:compare.avgStacks', 'средних стаков'), x?.avgStacks, y?.avgStacks, (v) => `${fx(v, 2)} / ${s.maxStacks}`);
+    if (s.capped) rows.push({ cells: [tr('srv:compare.statusCap', '⚠ шанс упёрся в потолок {pct}: прибавка к шансу сверх него не работает', { pct: pct(s.chance, 0) })] });
   };
   if (a.status && b.status && a.status.kind !== b.status.kind) { statusRows(a.status, undefined); statusRows(undefined, b.status); }
   else if (a.status || b.status) statusRows(a.status, b.status);
-  sec('Требования');
+  sec(tr('srv:compare.secReqs', 'Требования'));
   const reqLine = (k: 'strength' | 'dexterity' | 'intelligence', label: string): void => {
     const x = a.requirements[k], y = b.requirements[k];
     if (x === undefined && y === undefined) return;
     const r = line(label, x, y, (v) => `${v}`, false, 'down', (d) => signed(d, '', 0));
     if (y !== undefined && (save.attributes[k] ?? 0) < y) r.c3 = C.bad;
   };
-  reqLine('strength', 'сила');
-  reqLine('dexterity', 'ловкость');
-  reqLine('intelligence', 'интеллект');
-  line('сумма', a.reqTotal, b.reqTotal, (v) => `${v}`, false, 'down', (d) => signed(d, '', 0));
+  reqLine('strength', tr('srv:compare.reqStr', 'сила'));
+  reqLine('dexterity', tr('srv:compare.reqDex', 'ловкость'));
+  reqLine('intelligence', tr('srv:compare.reqInt', 'интеллект'));
+  line(tr('srv:compare.reqTotal', 'сумма'), a.reqTotal, b.reqTotal, (v) => `${v}`, false, 'down', (d) => signed(d, '', 0));
   return rows;
 }
 
@@ -153,5 +155,6 @@ export function compareView(cfg: ConfigRegistry, save: SaveState, shown: Item, o
   const lo = opts.edges?.lo ? cardWith(cfg, save, opts.edges.lo, opts) : undefined;
   const hi = opts.edges?.hi ? cardWith(cfg, save, opts.edges.hi, opts) : undefined;
   const range = lo && hi ? { lo, hi } : undefined;
-  return { a, b, ...(range ?? {}), rows: compareTable(a, b, now?.name ?? 'без оружия', shown.name, save, range) };
+  // ⭐ i18n Ф2 (06.11): имена вещей в шапке таблицы — на языке игрока
+  return { a, b, ...(range ?? {}), rows: compareTable(a, b, now ? itemDisplayName(cfg, now) : tr('srv:compare.noWeapon', 'без оружия'), itemDisplayName(cfg, shown), save, range) };
 }

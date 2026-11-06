@@ -9,7 +9,7 @@ import { rollAffixes, nextTier, inferTierId, retierItem, tierMatters } from '../
 import {
   CRAFT_NONCES_KEEP, FORM_UNPRICED, MATERIAL_STEPS, affixSlotsFor, craftMissing, craftSalvageYield, craftTiers, craftWeapon, enchantCost,
   enchantItem, enchantSlots, essenceMaterials, fullJournal, isCraftNonce, materialId, meltReturn, normalizeCraftNonces, normalizeJournal,
-  parseCraftInput, partById, partFamily, partsOf, rolledFormMult, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndex, typeOfItem,
+  parseCraftInput, partById, partFamily, partsOf, rolledFormMult, salvageIntoJournal, shapeFoundWeapon, sketchable, tierIndex, typeNameOfItem,
   upgradeFoundParts, useSketch, type SalvageUnlock, catalogProgress, emptyJournal, salvageFullOrigin, salvageGrades, salvageTierIndex, priceTierIndex,
   type CraftJournal,
 } from '../formulas/craft.js';
@@ -23,7 +23,9 @@ import { addToWallet, availableMaterials, bagCopy, canAffordBoth, carriedMateria
 import type { AccountStash } from '../types/stash.js';
 import type { TownCommand } from '../session/netTypes.js';
 import { uuidv7 } from '../formulas/uuid.js';
-import { canRerollSeal, parseSealKey, reforgeSeals, rerollSeal, sealReforgeRules, sealRerollCost, SEAL_REFORGE_REPEAT } from './seals.js';   // Ф5-6/Ф5-6′: перековка и перекат печатей
+import { canRerollSeal, parseSealKey, reforgeSeals, rerollSeal, sealReforgeRules, sealRerollCost, SEAL_TEXT } from './seals.js';   // Ф5-6/Ф5-6′: перековка и перекат печатей
+import { cfgRowText, tr } from '../i18n/tr.js';
+import { itemDisplayName } from '../formulas/itemDisplay.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции города над `SaveState` (магазин/экип/распределение) — чистые,
@@ -36,7 +38,11 @@ export interface ActionResult {
   reason?: string;
 }
 
-/** Начало отказа «цена выросла» (R5-15) — по нему клиент понимает, что его конфиг устарел, и перечитывает его. */
+/**
+ * Начало отказа «цена выросла» (R5-15) — по нему клиент понимает, что его конфиг устарел, и перечитывает его.
+ * ⭐ i18n Ф1 (06.11): это текст ЯЗЫКА-ИСТОЧНИКА. Причина отказа переводится (`tr`), поэтому клиенту узнавать отказ по началу строки больше
+ * нельзя — у `cmdResult` есть `code: 'priceChanged'` (все фразы согласия — ключи `srv:consent.*`, код выводит из ключа сервер).
+ */
 export const PRICE_CHANGED = 'Цена изменилась';
 
 /**
@@ -49,7 +55,7 @@ export const PRICE_CHANGED = 'Цена изменилась';
  */
 export function priceRaised(gold: number, maxGold: number | undefined): ActionResult | null {
   if (maxGold === undefined) return null;
-  return Number.isFinite(maxGold) && gold <= maxGold ? null : { ok: false, reason: `${PRICE_CHANGED}: ${gold} золота` };
+  return Number.isFinite(maxGold) && gold <= maxGold ? null : { ok: false, reason: tr('srv:consent.gold', 'Цена изменилась: {gold} золота', { gold }) };
 }
 
 /**
@@ -74,14 +80,14 @@ export const CONFIG_CONSENT_CMDS: ReadonlySet<TownCommand['cmd']> = new Set<Town
  */
 export function configChanged(reg: ConfigRegistry, cfgRev: string | undefined): ActionResult | null {
   if (cfgRev === undefined || cfgRev === reg.revision() || cfgRev === reg.gameRevision()) return null;
-  return { ok: false, reason: `${PRICE_CHANGED}: условия кузницы и лавки обновлены` };
+  return { ok: false, reason: tr('srv:consent.config', 'Цена изменилась: условия кузницы и лавки обновлены') };
 }
 
 /**
  * ⭐ D3: причина отказа СОГЛАСИЯ НА СБОРКУ (`buildChanged`) — «Цена изменилась…»: клиент по ней перечитывает конфиг, а поскольку код вкладки
  * перечитыванием не догнать, сразу за этим говорит «перезагрузите страницу» (`client/net/versionGate.ts`).
  */
-export const BUILD_CHANGED = `${PRICE_CHANGED}: сервер обновился`;
+export const BUILD_CHANGED = 'Цена изменилась: сервер обновился';
 
 /**
  * ⭐ D3: СОГЛАСИЕ НА СБОРКУ — зеркало `configChanged` для КОДА. `build` — штамп сборки вкладки (`buildStampOf` исходников shared, вписан в
@@ -93,7 +99,7 @@ export const BUILD_CHANGED = `${PRICE_CHANGED}: сервер обновился`
  */
 export function buildChanged(serverBuild: string, build: string | undefined): ActionResult | null {
   if (!build || !serverBuild || build === serverBuild) return null;
-  return { ok: false, reason: BUILD_CHANGED };
+  return { ok: false, reason: tr('srv:consent.build', BUILD_CHANGED) };
 }
 
 /**
@@ -112,7 +118,7 @@ export function withConfigRev(rev: ConfigRegistry | string, command: TownCommand
  */
 export function priceDropped(gold: number, minGold: number | undefined): ActionResult | null {
   if (minGold === undefined) return null;
-  return Number.isFinite(minGold) && gold >= minGold ? null : { ok: false, reason: `${PRICE_CHANGED}: лавка даст ${gold} золота` };
+  return Number.isFinite(minGold) && gold >= minGold ? null : { ok: false, reason: tr('srv:consent.sellGold', 'Цена изменилась: лавка даст {gold} золота', { gold }) };
 }
 
 /** Сколько `id` в словаре согласия: только своё поле объекта и только конечное число ≥ 0, иначе `NaN` (согласия нет). */
@@ -136,7 +142,7 @@ export function materialsRaised(reg: ConfigRegistry, cost: MaterialCost, maxMate
   if (maxMaterials === undefined) return null;
   const raised = consentBroken(maxMaterials)
     || Object.entries(cost).some(([id, n]) => n > 0 && !(n <= consentOf(maxMaterials, id)));
-  return raised ? { ok: false, reason: `${PRICE_CHANGED}: ${describeCost(reg, cost)}` } : null;
+  return raised ? { ok: false, reason: tr('srv:consent.materials', 'Цена изменилась: {cost}', { cost: describeCost(reg, cost) }) } : null;
 }
 
 /**
@@ -175,8 +181,12 @@ export function yieldDropped(
   const avgDropped = avgYield !== undefined
     && (consentBroken(avgYield) || (mean !== null && Object.keys(avgYield).some((id) => consentOf(avgYield, id) > own(mean, id) + 1e-9)));
   if (!lowDropped && !avgDropped) return null;
-  const avg = mean ? `, в среднем ${describeCost(reg, Object.fromEntries(Object.entries(mean).map(([id, n]) => [id, Math.round(n * 100) / 100]))) || 'ничего'}` : '';
-  return { ok: false, reason: `${PRICE_CHANGED}: разбор даст от ${describeCost(reg, low) || 'ничего'}${avg}` };
+  const nothing = (): string => tr('srv:consent.nothing', 'ничего');
+  const low1 = describeCost(reg, low) || nothing();
+  // ⭐ i18n Ф1: два предложения, а не склейка «…, в среднем …»: порядок частей — дело перевода
+  if (!mean) return { ok: false, reason: tr('srv:consent.yield', 'Цена изменилась: разбор даст от {low}', { low: low1 }) };
+  const avg = describeCost(reg, Object.fromEntries(Object.entries(mean).map(([id, n]) => [id, Math.round(n * 100) / 100]))) || nothing();
+  return { ok: false, reason: tr('srv:consent.yieldAvg', 'Цена изменилась: разбор даст от {low}, в среднем {avg}', { low: low1, avg }) };
 }
 
 /** Живые витальные поля цели зелья (общий тип для клиента-GameState и серверного PlayerEntity). */
@@ -351,10 +361,10 @@ const equippedItems = (save: SaveState): Item[] => Object.values(save.equipment)
  */
 export function moveInventoryItem(reg: ConfigRegistry, save: SaveState, uid: string, x: number, y: number): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
-  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (!item) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   return placeWithDisplacement(save.inventory, item, x, y, dimsOf(reg))
     ? { ok: true }
-    : { ok: false, reason: 'Не помещается' };
+    : { ok: false, reason: tr('srv:town.noFit', 'Не помещается') };
 }
 
 /**
@@ -371,7 +381,7 @@ function wornBroken(save: SaveState, attrs: Attributes, worn: Item[]): Item | un
   return unmetWorn(attrs, worn).find((i) => !before.has(i.uid));
 }
 /** Отказ «на вещь не хватит атрибутов» — одна строка для снятия, смены и сброса. */
-const wornReason = (it: Item): string => `Не хватит атрибутов на «${it.name}» — сперва сними её`;
+const wornReason = (reg: ConfigRegistry, it: Item): string => tr('srv:equip.attrsLostWorn', 'Не хватит атрибутов на «{name}» — сперва сними её', { name: itemDisplayName(reg, it) });   // ⭐ i18n Ф2: имя — на языке игрока
 
 // ── Магазин ──────────────────────────────────────────────────────────────────
 /**
@@ -380,8 +390,8 @@ const wornReason = (it: Item): string => `Не хватит атрибутов �
  * отказывала «Нет места». `price` — цена, которую спишут: у сервера своя (`shopBuyPrice`), у окна — цена кадра (`app.shopPrice`, R4-37).
  */
 export function canBuy(reg: ConfigRegistry, save: SaveState, item: Item, price: number): ActionResult {
-  if (save.gold < price) return { ok: false, reason: 'Недостаточно золота' };
-  if (!hasSpace(save.inventory, item.gridW, item.gridH, dimsOf(reg))) return { ok: false, reason: 'Нет места' };
+  if (save.gold < price) return { ok: false, reason: tr('srv:town.noGold', 'Недостаточно золота') };
+  if (!hasSpace(save.inventory, item.gridW, item.gridH, dimsOf(reg))) return { ok: false, reason: tr('srv:town.noRoom', 'Нет места') };
   return { ok: true };
 }
 
@@ -441,7 +451,7 @@ export function sealReforge(
   // (как у ковки). Память комнаты осталась быстрым кешем, но правду держит сундук: вытеснение по счёту и
   // «исход фиксации неизвестен» больше не дают сжечь печати второй раз.
   const seen = nonce ? sealNonceSeen(stash, nonce, 'u') : null;
-  if (seen) return { ok: true, summary: SEAL_REFORGE_REPEAT };
+  if (seen) return { ok: true, summary: SEAL_TEXT.reforgeRepeat() };
   // ⚠ Рекорд — ЛУЧШИЙ по тирам: ворота ступени спрашивают «видел ли такую глубину вообще»,
   // а не «в этом ли тире»: лестница печатей одна на всю игру (`tiers[].minDepth` — глубина, не тир).
   const record = Object.values(save.difficultyProgress ?? {})
@@ -457,7 +467,7 @@ export function sealReforge(
   save.gold = res.gold;
   if (res.tabs && stash) stash.tabs = res.tabs;
   if (nonce) sealNonceWrite(stash, nonce, 'u', res.item.uid);
-  return { ok: true, summary: `Перековка: отдано печатей ${spent} → ${res.item.name}` };
+  return { ok: true, summary: tr('srv:seal.reforgeDone', 'Перековка: отдано печатей {spent} → {name}', { spent, name: itemDisplayName(reg, res.item) }) };
 }
 
 /**
@@ -474,7 +484,7 @@ export function sealReroll(
 ): ActionResult & { summary?: string } {
   // ⚠ Ключ заявки — до всего прочего и в своём виде обмена (`r`): повтор переката не должен попасть в ключи
   // перековки и наоборот (у них разные правила и разная цена).
-  if (nonce && sealNonceSeen(stash, nonce, 'r')) return { ok: true, summary: SEAL_REFORGE_REPEAT };
+  if (nonce && sealNonceSeen(stash, nonce, 'r')) return { ok: true, summary: SEAL_TEXT.reforgeRepeat() };
   // ⚠ Согласие на цену — ПО ПЛАНУ ОБМЕНА, а не по первому ключу словаря (23.10, находка ревизии): пошлина
   // растёт множителем ступени, и «первый ключ» в заявке из нескольких ключей — не та печать, которую спишут.
   // Сначала считаем план (он же проверяет «ровно одна печать»), потом сверяем согласие с ЕГО ценой.
@@ -494,14 +504,14 @@ export function sealReroll(
   save.gold = res.gold;
   if (res.tabs && stash) stash.tabs = res.tabs;
   if (nonce) sealNonceWrite(stash, nonce, 'r', res.item.uid);
-  return { ok: true, summary: `Перекат: вышла ${res.item.name}` };
+  return { ok: true, summary: tr('srv:seal.rerollDone', 'Перекат: вышла {name}', { name: itemDisplayName(reg, res.item) }) };
 }
 
 export function sellItem(reg: ConfigRegistry, save: SaveState, uid: string, minGold?: number): ActionResult {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
-  if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (idx < 0) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   // Ф5-1: печать не товар — отказ СЛОВАМИ, а не «цена упала»: игрок должен понять, что это правило.
-  if (save.inventory[idx]!.kind === 'seal') return { ok: false, reason: 'Печать не продаётся — её тратят на алтаре' };
+  if (save.inventory[idx]!.kind === 'seal') return { ok: false, reason: tr('srv:shop.sealNotForSale', 'Печать не продаётся — её тратят на алтаре') };
   const price = shopSellPrice(reg, save.inventory[idx]!);
   const dropped = priceDropped(price, minGold);
   if (dropped) return dropped;
@@ -621,7 +631,7 @@ export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
 export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number, maxMaterials?: Record<string, number>): ActionResult {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   const item = save.inventory[idx];
-  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (!item) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   const can = canUpgradeItem(reg, item);
   if (!can.ok) return can;
   // ⚠ Результат считает `upgradedItem` — ТА ЖЕ функция, которой кузница рисует предпросмотр
@@ -632,9 +642,9 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   const mats = upgradeCost(reg, item);
   const raised = priceRaised(gold, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14: цена карточки устарела — отказ до траты
   if (raised) return raised;
-  if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
+  if (save.gold < gold) return { ok: false, reason: tr('srv:town.noGold', 'Недостаточно золота') };
   if (!canAffordBoth(save.inventory, wallet, mats)) {
-    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+    return { ok: false, reason: tr('srv:town.noMaterials', 'Не хватает материалов: {cost}', { cost: describeCost(reg, missingForBoth(save.inventory, wallet, mats)) }) };
   }
   // ⚠ Списываем ОБА ресурса и только потом меняем предмет: иначе отказ на середине оставил бы
   // игрока без золота и без улучшения.
@@ -659,17 +669,17 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
  * подъём кольца t0 → t6 брал 13 584 золота и шесть лестниц железа, а статы, требования, аффиксы и мощь героя оставались те же.
  */
 export function canUpgradeItem(reg: ConfigRegistry, item: Item): ActionResult {
-  if (item.broken) return { ok: false, reason: 'Сперва почини' };
+  if (item.broken) return { ok: false, reason: tr('srv:forge.repairFirst', 'Сперва почини') };
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  if (!base) return { ok: false, reason: 'Кузнец не знает такой вещи' };
-  if (item.parts) return { ok: false, reason: 'Скованную вещь поднимает замена детали, а не подъём тира' };
+  if (!base) return { ok: false, reason: tr('srv:forge.unknownItem', 'Кузнец не знает такой вещи') };
+  if (item.parts) return { ok: false, reason: tr('srv:forge.craftedUpgradeByParts', 'Скованную вещь поднимает замена детали, а не подъём тира') };
   // ⭐ Уник кузнец не поднимает — ЯВНО (§7). Прежде его отсекала только пустая лестница сырья по редкости (`unique: 0`); цена по ступени
   // у него не пуста, и без этой строки уник t3 → t6 поднимался бы за ≈ 17 тыс. золота и ×2.4 к статам базы. «Нашёл — носи как есть».
-  if (item.rarity === 'unique') return { ok: false, reason: UNIQUE_NO_UPGRADE };
-  if (!tierMatters(base)) return { ok: false, reason: 'Ступень этой вещи ничего не меняет' };
+  if (item.rarity === 'unique') return { ok: false, reason: tr('srv:forge.uniqueNoUpgrade', UNIQUE_NO_UPGRADE) };
+  if (!tierMatters(base)) return { ok: false, reason: tr('srv:forge.tierNoEffect', 'Ступень этой вещи ничего не меняет') };
   // Ступень выше есть, а подъёма нет — у найденного меча, чьи детали до неё не дотягиваются (R4-31).
-  if (!upgradedItem(reg, item)) return { ok: false, reason: nextTierOf(reg, item) ? 'Эта форма выше не куётся' : 'Лучше эту вещь уже не сделать' };
-  if (!Object.keys(upgradeCost(reg, item)).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
+  if (!upgradedItem(reg, item)) return { ok: false, reason: nextTierOf(reg, item) ? tr('srv:forge.formMaxed', 'Эта форма выше не куётся') : tr('srv:forge.bestAlready', 'Лучше эту вещь уже не сделать') };
+  if (!Object.keys(upgradeCost(reg, item)).length) return { ok: false, reason: tr('srv:forge.noUpgrade', 'Эту вещь кузнец не улучшает') };
   return { ok: true };
 }
 
@@ -854,14 +864,14 @@ export function salvageMean(reg: ConfigRegistry, item: Item, inField: boolean): 
  */
 export function depositMaterials(save: SaveState, wallet: MaterialWallet): ActionResult & { moved: number } {
   const moved = depositCarried(save.inventory, wallet);
-  return moved > 0 ? { ok: true, moved } : { ok: false, reason: 'Сырья в сумке нет', moved: 0 };
+  return moved > 0 ? { ok: true, moved } : { ok: false, reason: tr('srv:stash.noMaterialsInBag', 'Сырья в сумке нет'), moved: 0 };
 }
 
 /** «Ржавое железо 12 · Чистое железо 5» — одна подпись для кнопки, тултипа и текста отказа. */
 export function describeCost(reg: ConfigRegistry, cost: MaterialCost): string {
   const defs = reg.get('craft-materials');
   return Object.entries(cost)
-    .map(([id, n]) => `${defs.find((m) => m.id === id)?.name ?? id} ${n}`)
+    .map(([id, n]) => `${cfgRowText(reg, 'craft-materials', defs.find((m) => m.id === id)) ?? id} ${n}`)
     .join(' · ');
 }
 
@@ -883,26 +893,26 @@ function rerollSlots(reg: ConfigRegistry, item: Item): ReturnType<typeof affixSl
  * развести их по двум местам, карточка будет предлагать то, что сервер отклонит, — или брать деньги за ничто.
  */
 export function canRerollItem(reg: ConfigRegistry, item: Item): ActionResult {
-  if (item.broken) return { ok: false, reason: 'Сперва почини' };
+  if (item.broken) return { ok: false, reason: tr('srv:forge.repairFirst', 'Сперва почини') };
   // ⚠ ПРЕДЕЛ ПЕРЕКАТОК. Подъём тира ограничен потолком базы сам по себе, а перекатка крутит
   // случайность: без предела её жмут, пока не выпадет идеал, и редкость аффиксов перестаёт
   // что-либо значить. Считаем потраченное, чтобы отсутствие поля значило «ни разу».
   const limit = reg.get('balance').forgePrices.rerollLimit;
-  if ((item.rerolls ?? 0) >= limit) return { ok: false, reason: 'Эту вещь перекатывать больше нельзя' };
+  if ((item.rerolls ?? 0) >= limit) return { ok: false, reason: tr('srv:forge.rerollSpent', 'Эту вещь перекатывать больше нельзя') };
   // ⚠ R2-13: у уникальной свойства СВОИ (`fixedAffixes`) — бросок по редкости стёр бы их за деньги; у обычной
   // слотов ноль — перекатка брала золото, катала пустоту и тратила перекатку, которую скованная вещь потом
   // уносила в зачарование (осталось бы 2 из 3). Отказ до платы.
-  if (item.rarity === 'unique') return { ok: false, reason: 'Уникальные вещи не перекатываются' };
+  if (item.rarity === 'unique') return { ok: false, reason: tr('srv:forge.uniqueNoReroll', 'Уникальные вещи не перекатываются') };
   const slots = rerollSlots(reg, item);
   if (!slots || Math.min(slots.maxAffixes, slots.maxPrefix + slots.maxSuffix) <= 0) {
-    return { ok: false, reason: item.rarity === 'normal' ? 'У обычной вещи нечего перекатывать' : 'Этой вещи нечего перекатывать' };
+    return { ok: false, reason: item.rarity === 'normal' ? tr('srv:forge.normalNoReroll', 'У обычной вещи нечего перекатывать') : tr('srv:forge.nothingToReroll', 'Этой вещи нечего перекатывать') };
   }
   // У скованной вещи форма ОПЛАЧЕНА (§6.3): пул, который её не наберёт, — отказ до платы, как у зачарования.
   if (item.affixCap && !enchantSlots(reg, item, item.rarity)?.fillable) {
-    return { ok: false, reason: 'Кузнецу не хватит свойств на форму этой вещи' };
+    return { ok: false, reason: tr('srv:forge.formTooBig', 'Кузнецу не хватит свойств на форму этой вещи') };
   }
   // ⚠ R17-03: у катаемой формы нет цены (хозяин опустил ёмкость и убрал её строку) — отказ до платы, а не перекатка по ×1.
-  if (rolledFormMult(reg, item, item.rarity) === undefined) return { ok: false, reason: FORM_UNPRICED };
+  if (rolledFormMult(reg, item, item.rarity) === undefined) return { ok: false, reason: tr('srv:forge.formUnpriced', FORM_UNPRICED) };
   return { ok: true };
 }
 
@@ -929,7 +939,7 @@ export function forgeReroll(
   reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng, maxGold?: number, wallet: MaterialWallet = {}, maxMaterials?: Record<string, number>,
 ): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
-  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (!item) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   const can = canRerollItem(reg, item);
   if (!can.ok) return can;
   const slots = rerollSlots(reg, item)!;   // `canRerollItem` уже отказал бы без редкости
@@ -937,9 +947,9 @@ export function forgeReroll(
   const mats = rerollMaterials(reg, item);
   const raised = priceRaised(cost, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
-  if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
+  if (save.gold < cost) return { ok: false, reason: tr('srv:town.noGold', 'Недостаточно золота') };
   if (!canAffordBoth(save.inventory, wallet, mats)) {
-    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+    return { ok: false, reason: tr('srv:town.noMaterials', 'Не хватает материалов: {cost}', { cost: describeCost(reg, missingForBoth(save.inventory, wallet, mats)) }) };
   }
   save.gold -= cost;
   spendBoth(save.inventory, wallet, mats);
@@ -972,7 +982,7 @@ export function forgeSalvage(
   avgYield?: Record<string, number>,
 ): ActionResult & { unlocked?: string[]; summary?: string } {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
-  if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (idx < 0) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   const item = save.inventory[idx]!;
   const out = salvageYield(reg, item, rng, false);
   if (!out.ok) return { ok: false, reason: out.reason };
@@ -980,7 +990,7 @@ export function forgeSalvage(
   if (dropped) return dropped;
   const unlock = salvageIntoJournal(reg, normalizeJournal(stash.forgeJournal), item);
   // Стартовый набор даёт только каталог (§9.3): нового нет — отказ ДО разбора, «разобрать и не получить ничего» нельзя.
-  if (out.source === 'catalog' && !catalogGained(unlock)) return { ok: false, reason: STARTER_KNOWN };
+  if (out.source === 'catalog' && !catalogGained(unlock)) return { ok: false, reason: starterKnownText() };
   // ── Проверки позади: дальше только запись, отказать она уже не может ──
   save.inventory.splice(idx, 1);
   // Вещь уже снята с полки — место под сырьё освободилось, и оно почти всегда доливается в стек.
@@ -990,14 +1000,25 @@ export function forgeSalvage(
   return {
     ok: true,
     unlocked: unlockLabels(reg, unlock, item),
-    summary: `Получено: ${describeCost(reg, out.gains) || 'сырья нет'} · Каталог: ${catalogLine(reg, item, unlock)}${unlock.sketch ? ' · Эскиз: деталь на выбор во вкладке «Ковка»' : ''}`,
+    summary: salvageSummary(describeCost(reg, out.gains) || tr('srv:salvage.noGains', 'сырья нет'), catalogLine(reg, item, unlock), unlock.sketch),
   };
+}
+
+/** ⭐ i18n Ф1 (06.11): итог разбора у кузнеца — два предложения (с эскизом и без), а не склейка хвоста. */
+function salvageSummary(gains: string, line: string, sketch: boolean): string {
+  return sketch
+    ? tr('srv:salvage.gotSketch', 'Получено: {gains} · Каталог: {line} · Эскиз: деталь на выбор во вкладке «Ковка»', { gains, line })
+    : tr('srv:salvage.got', 'Получено: {gains} · Каталог: {line}', { gains, line });
 }
 
 /** Отказ разбора стартового набора, из которого каталогу нечего взять (§9.3) — одна строка для сервера и карточки. */
 export const STARTER_KNOWN = 'Всё из этой вещи уже в каталоге, а сырья стартовый набор не даёт — продай за 1';
+/** ⭐ i18n Ф1 (06.11): `STARTER_KNOWN` на языке игрока (сама константа — текст источника: по ней сверяются тесты и сим). */
+export const starterKnownText = (): string => tr('srv:salvage.starterKnown', STARTER_KNOWN);
 /** Отказ разбора стартового набора в поле: сырья он не даёт, а каталог пишет только кузнец (решение D2). */
 export const STARTER_FIELD = 'Стартовый набор сырья не даёт, а каталог пополняет только кузнец';
+/** ⭐ i18n Ф1 (06.11): `STARTER_FIELD` на языке игрока. */
+export const starterFieldText = (): string => tr('srv:salvage.starterField', STARTER_FIELD);
 
 /** Добавил ли разбор в каталог хоть что-то: тип, деталь, кодекс, снаряжение. */
 export function catalogGained(u: SalvageUnlock): boolean {
@@ -1006,7 +1027,7 @@ export function catalogGained(u: SalvageUnlock): boolean {
 
 /** Класс оружия словами для строки каталога: «меч» (`weapon-anatomy.name`), нет — id. */
 function classLabel(reg: ConfigRegistry, cls: string): string {
-  const name = reg.get('weapon-anatomy').find((a) => a.id === cls)?.name;
+  const name = cfgRowText(reg, 'weapon-anatomy', reg.get('weapon-anatomy').find((a) => a.id === cls));
   return name ? name[0]!.toLowerCase() + name.slice(1) : cls;
 }
 
@@ -1017,29 +1038,30 @@ function classLabel(reg: ConfigRegistry, cls: string): string {
  */
 export function catalogLine(reg: ConfigRegistry, item: Item, u: SalvageUnlock): string {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  if (!base) return 'кузнец такой вещи не знает';
-  if (base.kind !== 'weapon') return u.newGear ? `+ «${base.name}»` : `«${base.name}» уже в каталоге`;
+  if (!base) return tr('srv:salvage.unknownItem', 'кузнец такой вещи не знает');
+  const baseName = cfgRowText(reg, 'items.base', base);
+  if (base.kind !== 'weapon') return u.newGear ? `+ «${baseName}»` : tr('srv:salvage.gearKnown', '«{baseName}» уже в каталоге', { baseName });
   const gains = [
-    ...(u.newBase ? [`+ тип «${base.name}»`] : []),
-    ...u.unlocked.map((id) => `+ деталь «${partById(reg, id)?.name ?? id}»`),
-    ...(u.newType ? [`+ кодекс «${typeOfItem(reg, item)?.name ?? u.newType}»`] : []),
+    ...(u.newBase ? [tr('srv:salvage.plusType', '+ тип «{baseName}»', { baseName })] : []),
+    ...u.unlocked.map((id) => tr('srv:salvage.plusPart', '+ деталь «{name}»', { name: cfgRowText(reg, 'weapon-parts', partById(reg, id)) ?? id })),
+    ...(u.newType ? [tr('srv:salvage.plusCodex', '+ кодекс «{name}»', { name: typeNameOfItem(reg, item) ?? u.newType })] : []),
   ];
   const p = catalogProgress(reg, u.journal, base.weaponClass);
-  const tail = `(${classLabel(reg, base.weaponClass)}: ${p.known} из ${p.total})`;
+  const tail = tr('srv:salvage.classProgress', '({cls}: {known} из {total})', { cls: classLabel(reg, base.weaponClass), known: p.known, total: p.total });
   if (gains.length) return `${gains.join(' · ')} ${tail}`;
-  return item.parts ? `все детали уже в каталоге ${tail}` : `всё из этой вещи уже в каталоге ${tail}`;
+  return item.parts ? tr('srv:salvage.allPartsKnown', 'все детали уже в каталоге {tail}', { tail }) : tr('srv:salvage.allKnown', 'всё из этой вещи уже в каталоге {tail}', { tail });
 }
 
 /** Что открыл разбор — строками для окна: «Тип «Длинный меч»», «Деталь «Широкий, XXII»», «Снаряжение «Латы»», «Эскиз…». */
 function unlockLabels(reg: ConfigRegistry, u: SalvageUnlock, item: Item): string[] {
   const out: string[] = [];
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  if (u.newBase && base) out.push(`Тип «${base.name}»`);
-  for (const id of u.unlocked) out.push(`Деталь «${partById(reg, id)?.name ?? id}»`);
-  if (u.newType) out.push(`Кодекс: «${typeOfItem(reg, item)?.name ?? u.newType}»`);
-  if (u.newGear && base) out.push(`Снаряжение «${base.name}»`);
+  if (u.newBase && base) out.push(tr('srv:salvage.unlockType', 'Тип «{name}»', { name: cfgRowText(reg, 'items.base', base) }));
+  for (const id of u.unlocked) out.push(tr('srv:salvage.unlockPart', 'Деталь «{name}»', { name: cfgRowText(reg, 'weapon-parts', partById(reg, id)) ?? id }));
+  if (u.newType) out.push(tr('srv:salvage.unlockCodex', 'Кодекс: «{name}»', { name: typeNameOfItem(reg, item) ?? u.newType }));
+  if (u.newGear && base) out.push(tr('srv:salvage.unlockGear', 'Снаряжение «{name}»', { name: cfgRowText(reg, 'items.base', base) }));
   // R3-11: эскиз тратится во вкладке «Ковка» (`forgeSketch`) — строка говорит, где, а не обещает в пустоту.
-  if (u.sketch) out.push('Эскиз: откроет закрытую деталь на выбор во вкладке «Ковка»');
+  if (u.sketch) out.push(tr('srv:salvage.unlockSketch', 'Эскиз: откроет закрытую деталь на выбор во вкладке «Ковка»'));
   return out;
 }
 
@@ -1055,18 +1077,18 @@ export function fieldSalvage(
   reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng, minYield?: Record<string, number>, avgYield?: Record<string, number>,
 ): ActionResult & { summary?: string } {
   const idx = save.inventory.findIndex((i) => i.uid === uid);
-  if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (idx < 0) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   const out = salvageYield(reg, save.inventory[idx]!, rng, true);
   if (!out.ok) return { ok: false, reason: out.reason };
   const dropped = yieldDropped(reg, save.inventory[idx]!, true, minYield, avgYield);   // R8-14, R9-04
   if (dropped) return dropped;
-  if (!fieldSalvageFits(reg, save.inventory, save.inventory[idx]!)) return { ok: false, reason: FIELD_SALVAGE_FULL };
+  if (!fieldSalvageFits(reg, save.inventory, save.inventory[idx]!)) return { ok: false, reason: fieldSalvageFullText() };
   save.inventory.splice(idx, 1);
   const left = giveMaterialsTo(save.inventory, out.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), uuidv7);
   // Не бывает: выпавший бросок не больше лучшего (поштучно, те же материалы), а лучший влез в ту же сумку. Бросок — чтобы
   // сервер откатил сейв, а не молча потерял сырьё.
   if (Object.keys(left).length) throw new Error('fieldSalvage: примерка разошлась с записью');
-  return { ok: true, summary: `Получено: ${describeCost(reg, out.gains) || 'ничего'} · ${FIELD_NO_CATALOG}` };
+  return { ok: true, summary: tr('srv:salvage.fieldGot', 'Получено: {gains} · каталог пополняет только разбор у кузнеца', { gains: describeCost(reg, out.gains) || tr('srv:salvage.nothing', 'ничего') }) };
 }
 
 /** Строка разбора в поле про каталог: его пополняет только кузнец (решение D2). */
@@ -1074,6 +1096,8 @@ export const FIELD_NO_CATALOG = 'каталог пополняет только 
 
 /** Отказ разбора в поле «сырьё не влезет» — одна строка для сервера и окна. */
 export const FIELD_SALVAGE_FULL = 'Сумка полна: сырьё с разбора не поместится';
+/** ⭐ i18n Ф1 (06.11): `FIELD_SALVAGE_FULL` на языке игрока. */
+export const fieldSalvageFullText = (): string => tr('srv:salvage.fieldFull', FIELD_SALVAGE_FULL);
 
 /**
  * ⭐ V-B3-04: ВЛЕЗЕТ ЛИ СЫРЬЁ РАЗБОРА В ПОЛЕ — примерка на копии сумки без самой вещи, ПО ЛУЧШЕМУ БРОСКУ (как отказ «ничего не дал
@@ -1137,25 +1161,25 @@ export function essenceOf(reg: ConfigRegistry, item: Item): number {
 function salvagePlan(reg: ConfigRegistry, item: Item, inField: boolean):
   { ok: true; source: SalvageSource; base: MaterialCost; grade: number; essence: number } | { ok: false; reason: string } {
   const tuning = reg.get('balance').salvage;
-  if (item.rarity === 'unique' && !tuning.uniqueSalvage) return { ok: false, reason: UNIQUE_NO_SALVAGE };
+  if (item.rarity === 'unique' && !tuning.uniqueSalvage) return { ok: false, reason: tr('srv:salvage.uniqueNo', UNIQUE_NO_SALVAGE) };
   // ⚠ R3-04: стартовый комплект бесплатен и бесконечен (создал героя → переложил → удалил): сырья с него нет никогда — только каталог у
   // кузнеца (решение D1). Продаётся он за 1 (`shopSellPrice`).
-  if (freeKit(item)) return inField ? { ok: false, reason: STARTER_FIELD } : { ok: true, source: 'catalog', base: {}, grade: 1, essence: 0 };
+  if (freeKit(item)) return inField ? { ok: false, reason: starterFieldText() } : { ok: true, source: 'catalog', base: {}, grade: 1, essence: 0 };
   const field = (): boolean => !inField || tuning.fieldYield > 0;
   if (item.parts) {
     const base = knownOnly(reg, meltReturn(reg, item));
-    if (!Object.keys(base).length) return { ok: false, reason: 'Переплавка ничего не дала бы' };
-    return field() ? { ok: true, source: 'melt', base, grade: 1, essence: 0 } : { ok: false, reason: 'Разбор ничего не даст' };
+    if (!Object.keys(base).length) return { ok: false, reason: tr('srv:salvage.meltNothing', 'Переплавка ничего не дала бы') };
+    return field() ? { ok: true, source: 'melt', base, grade: 1, essence: 0 } : { ok: false, reason: tr('srv:salvage.nothingWill', 'Разбор ничего не даст') };
   }
   const essence = essenceOf(reg, item);
   const byParts = knownOnly(reg, craftSalvageYield(reg, item));   // не оружие — пусто
   if (Object.keys(byParts).length) {
-    return field() ? { ok: true, source: 'parts', base: byParts, grade: 1, essence } : { ok: false, reason: 'Разбор ничего не даст' };
+    return field() ? { ok: true, source: 'parts', base: byParts, grade: 1, essence } : { ok: false, reason: tr('srv:salvage.nothingWill', 'Разбор ничего не даст') };
   }
   const can = canSalvage(item, weaponClassOf(reg, item), reg.get('salvage-rules'), tuning, inField);
   return can.ok
     ? { ok: true, source: 'rules', base: {}, grade: salvageGrades(reg, item).low, essence }
-    : { ok: false, reason: can.reason ?? 'Эту вещь не из чего разбирать' };
+    : { ok: false, reason: can.reason ?? tr('srv:salvage.nothingToSalvage', 'Эту вещь не из чего разбирать') };
 }
 
 /** Доля от целого выхода с вероятностным округлением остатка (0.6 → шесть раз из десяти единица). */
@@ -1189,7 +1213,7 @@ export function salvageYield(
   // не выйдет» давало ровно единицу вместо трети — правило «поле — 30 % от кузницы» не держалось (у кузнеца перчатки и пояс
   // так же поднимали выход на 11 %). Теперь отказ — только вещи, которой и лучший бросок не дал бы ничего; иначе пустой
   // бросок разбирает её в ничто — вилка «0–1» (`salvageRange`) ровно это и обещает.
-  if (!Object.keys(rollSalvage(reg, item, plan, ROLL_HI, inField)).length) return { ok: false, reason: 'Разбор ничего не дал бы', gains: {} };
+  if (!Object.keys(rollSalvage(reg, item, plan, ROLL_HI, inField)).length) return { ok: false, reason: tr('srv:salvage.nothingWould', 'Разбор ничего не дал бы'), gains: {} };
   return { ok: true, gains: rollSalvage(reg, item, plan, rng, inField), source: plan.source };
 }
 
@@ -1226,7 +1250,7 @@ export function canSalvageItem(reg: ConfigRegistry, item: Item, inField: boolean
   const hi = salvageYield(reg, item, ROLL_HI, inField);
   if (!hi.ok) return { ok: false, reason: hi.reason };
   if (hi.source === 'catalog' && journal !== undefined && !catalogGained(salvageIntoJournal(reg, normalizeJournal(journal ?? emptyJournal()), item))) {
-    return { ok: false, reason: STARTER_KNOWN };
+    return { ok: false, reason: starterKnownText() };
   }
   return { ok: true };
 }
@@ -1253,9 +1277,9 @@ function weaponClassOf(reg: ConfigRegistry, item: Item): string | undefined {
  * поддерживают) — починка не берётся за одно золото.
  */
 export function canRepairItem(reg: ConfigRegistry, item: Item): ActionResult {
-  if (!item.broken) return { ok: false, reason: 'Вещь цела' };
-  if (item.rarity === 'unique') return { ok: false, reason: 'Уникальную вещь кузнец не чинит' };
-  if (!Object.keys(repairCost(reg, item)).length) return { ok: false, reason: 'Эту вещь кузнец не чинит' };
+  if (!item.broken) return { ok: false, reason: tr('srv:forge.notBroken', 'Вещь цела') };
+  if (item.rarity === 'unique') return { ok: false, reason: tr('srv:forge.uniqueNoRepair', 'Уникальную вещь кузнец не чинит') };
+  if (!Object.keys(repairCost(reg, item)).length) return { ok: false, reason: tr('srv:forge.noRepair', 'Эту вещь кузнец не чинит') };
   return { ok: true };
 }
 
@@ -1277,17 +1301,17 @@ export function mendBrokenUniques(items: Iterable<Item | null | undefined>): num
  */
 export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet, maxGold?: number, maxMaterials?: Record<string, number>): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
-  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (!item) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   const can = canRepairItem(reg, item);
   if (!can.ok) return can;
   const gold = forgeGold(reg, item, 'repair');
   const mats = repairCost(reg, item);
   const raised = priceRaised(gold, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
-  if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
+  if (save.gold < gold) return { ok: false, reason: tr('srv:town.noGold', 'Недостаточно золота') };
   // Цена сырья не пуста — пустую `canRepairItem` уже отказал (R7-19, R10-14): «бесплатно по сырью» не бывает.
   if (!canAffordBoth(save.inventory, wallet, mats)) {
-    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+    return { ok: false, reason: tr('srv:town.noMaterials', 'Не хватает материалов: {cost}', { cost: describeCost(reg, missingForBoth(save.inventory, wallet, mats)) }) };
   }
   save.gold -= gold;
   spendBoth(save.inventory, wallet, mats);
@@ -1333,7 +1357,7 @@ export function craftAction(
   reg: ConfigRegistry, save: SaveState, stash: AccountStash, nonce: unknown, input: unknown, rng: Rng,
   opts: { fullJournal?: boolean; allowDisabledMaterials?: boolean; maxGold?: number; maxMaterials?: Record<string, number> } = {},
 ): ActionResult & { uid?: string } {
-  if (!isCraftNonce(nonce)) return { ok: false, reason: 'Неверный ключ заявки' };
+  if (!isCraftNonce(nonce)) return { ok: false, reason: tr('srv:forge.badNonce', 'Неверный ключ заявки') };
   const seen = normalizeCraftNonces(stash.craftNonces).find((e) => e.n === nonce);
   if (seen) return { ok: true, uid: seen.uid };
   const parsed = parseCraftInput(reg, input);
@@ -1344,7 +1368,7 @@ export function craftAction(
     materialsOn: !opts.allowDisabledMaterials,
     rng,
   });
-  if (!pv.ok || !pv.item || !pv.cost) return { ok: false, reason: pv.reason ?? 'Этого кузнец не скуёт' };
+  if (!pv.ok || !pv.item || !pv.cost) return { ok: false, reason: pv.reason ?? tr('srv:forge.cannotCraft', 'Этого кузнец не скуёт') };
   const { item, cost } = pv;
   // R5-15, R8-14: окно показало другую цену (золото или сырьё) — отказ до траты.
   const raised = priceRaised(cost.gold, opts.maxGold) ?? materialsRaised(reg, cost.materials, opts.maxMaterials);
@@ -1353,13 +1377,13 @@ export function craftAction(
   const lack = craftMissing(availableMaterials(save.inventory, wallet), 0, cost).materials;
   const goldOk = Number.isFinite(save.gold) && save.gold >= cost.gold;
   if (Object.keys(lack).length || !goldOk) {
-    const parts = [...(Object.keys(lack).length ? [describeCost(reg, lack)] : []), ...(goldOk ? [] : [`${cost.gold} золота`])];
-    return { ok: false, reason: `Не хватает: ${parts.join(' · ')}` };
+    const parts = [...(Object.keys(lack).length ? [describeCost(reg, lack)] : []), ...(goldOk ? [] : [tr('srv:forge.goldAmount', '{gold} золота', { gold: cost.gold })])];
+    return { ok: false, reason: tr('srv:forge.lacking', 'Не хватает: {parts}', { parts: parts.join(' · ') }) };
   }
   // Место — ПОСЛЕ списания: сырьё из сумки может освободить клетку, и игрок с полной сумкой сырья не
   // должен упираться в «нет места» ровно перед тем, ради чего его нёс. Меряем на копии (`craftFits` — ей же гасит «Ковать» окно).
   const dims = dimsOf(reg);
-  if (!craftFits(reg, save.inventory, cost.materials, item)) return { ok: false, reason: 'Нет места в сумке' };
+  if (!craftFits(reg, save.inventory, cost.materials, item)) return { ok: false, reason: tr('srv:town.noRoomInBag', 'Нет места в сумке') };
 
   // ── Проверки позади: дальше только запись, отказать она уже не может ──
   const w = stash.materials ?? (stash.materials = {});
@@ -1381,18 +1405,18 @@ export function craftAction(
  * зовущий — сервер по сейву, верстак по своей сумке.
  */
 export function canEnchantItem(reg: ConfigRegistry, item: Item, rarity: string): ActionResult {
-  if (rarity !== 'magic' && rarity !== 'rare') return { ok: false, reason: 'Зачаровать можно до магической или редкой' };
-  if (!item.parts) return { ok: false, reason: 'Зачаровать можно только скованную вещь' };
-  if (item.rarity !== 'normal') return { ok: false, reason: 'Вещь уже зачарована' };
-  if (item.broken) return { ok: false, reason: 'Сперва почини' };
+  if (rarity !== 'magic' && rarity !== 'rare') return { ok: false, reason: tr('srv:forge.enchantRarity', 'Зачаровать можно до магической или редкой') };
+  if (!item.parts) return { ok: false, reason: tr('srv:forge.enchantCraftedOnly', 'Зачаровать можно только скованную вещь') };
+  if (item.rarity !== 'normal') return { ok: false, reason: tr('srv:forge.alreadyEnchanted', 'Вещь уже зачарована') };
+  if (item.broken) return { ok: false, reason: tr('srv:forge.repairFirst', 'Сперва почини') };
   const fit = enchantSlots(reg, item, rarity);
-  if (!fit) return { ok: false, reason: 'Кузнец не знает такой вещи' };
-  if (Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0) return { ok: false, reason: 'Этой вещи некуда принять свойства' };
-  if (!fit.fillable) return { ok: false, reason: 'Кузнецу не хватит свойств на форму этой вещи' };
+  if (!fit) return { ok: false, reason: tr('srv:forge.unknownItem', 'Кузнец не знает такой вещи') };
+  if (Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0) return { ok: false, reason: tr('srv:forge.noAffixRoom', 'Этой вещи некуда принять свойства') };
+  if (!fit.fillable) return { ok: false, reason: tr('srv:forge.formTooBig', 'Кузнецу не хватит свойств на форму этой вещи') };
   // ⚠ R17-03: у катаемой формы нет цены — отказ до платы, а не зачарование по ×1 (цене самой бедной формы).
-  if (rolledFormMult(reg, item, rarity) === undefined) return { ok: false, reason: FORM_UNPRICED };
+  if (rolledFormMult(reg, item, rarity) === undefined) return { ok: false, reason: tr('srv:forge.formUnpriced', FORM_UNPRICED) };
   const cost = enchantCost(reg, item, rarity);
-  if (!Number.isFinite(cost) || cost < 0) return { ok: false, reason: 'Кузнец не может назвать цену' };
+  if (!Number.isFinite(cost) || cost < 0) return { ok: false, reason: tr('srv:forge.noPrice', 'Кузнец не может назвать цену') };
   return { ok: true };
 }
 
@@ -1407,24 +1431,24 @@ export function enchantAction(
   reg: ConfigRegistry, save: SaveState, uid: string, rarity: string, rng: Rng, maxGold?: number, wallet: MaterialWallet = {},
   maxMaterials?: Record<string, number>,
 ): ActionResult & { uid?: string } {
-  if (rarity !== 'magic' && rarity !== 'rare') return { ok: false, reason: 'Зачаровать можно до магической или редкой' };
+  if (rarity !== 'magic' && rarity !== 'rare') return { ok: false, reason: tr('srv:forge.enchantRarity', 'Зачаровать можно до магической или редкой') };
   const idx = typeof uid === 'string' ? save.inventory.findIndex((i) => i.uid === uid) : -1;
   const item = save.inventory[idx];
-  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (!item) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
   const can = canEnchantItem(reg, item, rarity);
   if (!can.ok) return can;
   const cost = enchantCost(reg, item, rarity);
   const mats = enchantMaterials(reg, item, rarity);
   const raised = priceRaised(cost, maxGold) ?? materialsRaised(reg, mats, maxMaterials);   // R5-15, R8-14
   if (raised) return raised;
-  if (!Number.isFinite(save.gold) || save.gold < cost) return { ok: false, reason: `Недостаточно золота: нужно ${cost}` };
+  if (!Number.isFinite(save.gold) || save.gold < cost) return { ok: false, reason: tr('srv:town.noGoldNeed', 'Недостаточно золота: нужно {cost}', { cost }) };
   if (!canAffordBoth(save.inventory, wallet, mats)) {
-    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+    return { ok: false, reason: tr('srv:town.noMaterials', 'Не хватает материалов: {cost}', { cost: describeCost(reg, missingForBoth(save.inventory, wallet, mats)) }) };
   }
   const next = enchantItem(reg, item, rarity, rng);
-  if (!next) return { ok: false, reason: 'Кузнец не знает такой вещи' };
+  if (!next) return { ok: false, reason: tr('srv:forge.unknownItem', 'Кузнец не знает такой вещи') };
   const fit = enchantSlots(reg, item, rarity)!;
-  if (new Set(next.affixes.map((a) => a.affixId)).size < fit.slots.minAffixes) return { ok: false, reason: 'Кузнецу не хватит свойств на форму этой вещи' };
+  if (new Set(next.affixes.map((a) => a.affixId)).size < fit.slots.minAffixes) return { ok: false, reason: tr('srv:forge.formTooBig', 'Кузнецу не хватит свойств на форму этой вещи') };
   // ── Проверки позади ──
   save.gold -= cost;
   // Эссенция — из сумки и сундука. ⚠ Индекс вещи — ЗАНОВО по uid: `spendBoth` мог убрать из сумки опустевшую стопку эссенции.
@@ -1445,14 +1469,14 @@ export function enchantAction(
  */
 export function sketchAction(reg: ConfigRegistry, stash: AccountStash, variantId: unknown): ActionResult & { unlocked?: string[] } {
   const journal = normalizeJournal(stash.forgeJournal);
-  if (journal.sketches <= 0) return { ok: false, reason: 'Эскизов нет' };
+  if (journal.sketches <= 0) return { ok: false, reason: tr('srv:forge.noSketches', 'Эскизов нет') };
   const part = typeof variantId === 'string' ? partById(reg, variantId) : undefined;
-  if (!part || typeof variantId !== 'string') return { ok: false, reason: 'Нет такой детали' };
-  if (journal.variants.includes(variantId)) return { ok: false, reason: 'Эта деталь уже открыта' };
-  if (!sketchable(reg, journal, variantId)) return { ok: false, reason: 'Эту деталь эскизом не открыть: её тип открывает только разбор' };
+  if (!part || typeof variantId !== 'string') return { ok: false, reason: tr('srv:forge.noSuchPart', 'Нет такой детали') };
+  if (journal.variants.includes(variantId)) return { ok: false, reason: tr('srv:forge.partKnown', 'Эта деталь уже открыта') };
+  if (!sketchable(reg, journal, variantId)) return { ok: false, reason: tr('srv:forge.partNotSketchable', 'Эту деталь эскизом не открыть: её тип открывает только разбор') };
   // ── Проверки позади ──
   stash.forgeJournal = useSketch(reg, journal, variantId);
-  return { ok: true, unlocked: [`Деталь «${part.name}»`] };
+  return { ok: true, unlocked: [tr('srv:salvage.unlockPart', 'Деталь «{name}»', { name: cfgRowText(reg, 'weapon-parts', part) })] };
 }
 
 // ── Экипировка ───────────────────────────────────────────────────────────────
@@ -1463,11 +1487,11 @@ export function sketchAction(reg: ConfigRegistry, stash: AccountStash, variantId
  * полуторное во вторую руку не берут вовсе. Причина отказа — строкой; `null` — встанет.
  */
 export function offhandRefusal(item: Item, main: Item | undefined): string | null {
-  if ((main?.hands ?? 1) >= 2 && !main?.versatile) return 'Занято двумя руками';
+  if ((main?.hands ?? 1) >= 2 && !main?.versatile) return tr('srv:equip.twoHanded', 'Занято двумя руками');
   if (item.slot === 'offhand') return null;
-  if (item.slot !== 'weapon') return 'Этот предмет не для этого слота';
-  if ((item.hands ?? 1) >= 2) return 'Двуручное оружие во вторую руку не взять';
-  if (isVersatile(main)) return 'Полуторное оружие одной рукой носят только со щитом';
+  if (item.slot !== 'weapon') return tr('srv:equip.wrongSlot', 'Этот предмет не для этого слота');
+  if ((item.hands ?? 1) >= 2) return tr('srv:equip.twoHandedOffhand', 'Двуручное оружие во вторую руку не взять');
+  if (isVersatile(main)) return tr('srv:equip.versatileOneHand', 'Полуторное оружие одной рукой носят только со щитом');
   return null;
 }
 
@@ -1481,12 +1505,12 @@ interface EquipPlan { item: Item; slot: EquipSlot; idx: number; displaced: Item 
 function equipPlan(reg: ConfigRegistry, save: SaveState, uid: string, target?: 'offhand'): EquipPlan | string {
   const dims = dimsOf(reg);
   const item = save.inventory.find((i) => i.uid === uid);
-  if (!item) return 'Предмет не в инвентаре';
-  if (!item.slot) return 'Нельзя надеть';
+  if (!item) return tr('srv:town.notInBag', 'Предмет не в инвентаре');
+  if (!item.slot) return tr('srv:equip.cannot', 'Нельзя надеть');
   // ⚠ Сломанный трофей носить нельзя — сперва к кузнецу (или на разбор). Проверка ЗДЕСЬ, в одной
   // авторитетной точке экипировки: клиент её только дублирует подсказкой.
-  if (item.broken) return 'Сломано — почини у кузнеца';
-  if (target !== undefined && target !== 'offhand') return 'Нельзя надеть';
+  if (item.broken) return tr('srv:equip.broken', 'Сломано — почини у кузнеца');
+  if (target !== undefined && target !== 'offhand') return tr('srv:equip.cannot', 'Нельзя надеть');
   const slot: EquipSlot = target ?? item.slot;
   if (slot === 'offhand') { const no = offhandRefusal(item, save.equipment.weapon); if (no) return no; }
 
@@ -1500,7 +1524,7 @@ function equipPlan(reg: ConfigRegistry, save: SaveState, uid: string, target?: '
   // ⚠ R4-08: требования — по тому, что будет надето ПОСЛЕ смены: уходящая вещь (и снятое со второй руки) своей
   // прибавкой больше не подпирает ни новую вещь, ни оставшиеся.
   const broken = wornBroken(save, save.attributes, equippedItems(save).filter((i) => i !== prev && i !== displaced).concat(item));
-  if (broken) return broken === item ? 'Недостаточно атрибутов' : wornReason(broken);
+  if (broken) return broken === item ? tr('srv:equip.noAttrs', 'Недостаточно атрибутов') : wornReason(reg, broken);
 
   const need: Item[] = [];
   if (prev) need.push(prev);
@@ -1516,7 +1540,7 @@ function equipPlan(reg: ConfigRegistry, save: SaveState, uid: string, target?: '
   // колбы пояса влезали «поодиночке», а второй `addToInventory` молча не находил места — вещь пропадала.
   const probe = bagCopy(save.inventory);
   probe.splice(idx, 1);
-  for (const it of need) if (!addToInventory(probe, { ...it }, dims)) return 'Нет места для снятого';
+  for (const it of need) if (!addToInventory(probe, { ...it }, dims)) return tr('srv:equip.noRoomUnequip', 'Нет места для снятого');
   return { item, slot, idx, displaced, need, newBeltCap };
 }
 
@@ -1557,16 +1581,16 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string, target?
 export function unequip(reg: ConfigRegistry, save: SaveState, slot: string): ActionResult {
   const s = slot as EquipSlot;
   const it = save.equipment[s];
-  if (!it) return { ok: false, reason: 'Слот пуст' };
+  if (!it) return { ok: false, reason: tr('srv:equip.slotEmpty', 'Слот пуст') };
   const broken = wornBroken(save, save.attributes, equippedItems(save).filter((i) => i !== it));   // R4-08
-  if (broken) return { ok: false, reason: wornReason(broken) };
+  if (broken) return { ok: false, reason: wornReason(reg, broken) };
   const dims = dimsOf(reg);
   // Снятие пояса: ёмкость станет 0 → все колбы из пояса тоже уходят в инвентарь (иначе висли бы в лимбо).
   const beltPotions = s === 'belt' ? save.belt.filter((x): x is Item => !!x) : [];
   const need: Item[] = [it, ...beltPotions];
   // ⚠ Примерка ВСЕГО снятого на копии сумки (см. `equip`): поодиночке пояс и колбы влезали, вместе — нет.
   const probe = bagCopy(save.inventory);
-  for (const n of need) if (!addToInventory(probe, { ...n }, dims)) return { ok: false, reason: 'Нет места' };
+  for (const n of need) if (!addToInventory(probe, { ...n }, dims)) return { ok: false, reason: tr('srv:town.noRoom', 'Нет места') };
   delete save.equipment[s];
   if (s === 'belt') save.belt = [];
   for (const n of need) if (!addToInventory(save.inventory, n, dims)) throw new Error('unequip: примерка разошлась с записью');
@@ -1580,10 +1604,10 @@ export function unequip(reg: ConfigRegistry, save: SaveState, slot: string): Act
  * потолку кадров (120) на 121-м. Всё или ничего: очков меньше `n` — отказ, ни одно не вложено.
  */
 export function allocAttr(save: SaveState, attr: string, n = 1): ActionResult {
-  if (!ATTRIBUTES.includes(attr as Attribute)) return { ok: false, reason: 'Неизвестный атрибут' };
-  if (!Number.isSafeInteger(n) || n < 1) return { ok: false, reason: 'Неверное число очков' };
-  if (save.unspentAttributePoints <= 0) return { ok: false, reason: 'Нет очков атрибутов' };
-  if (save.unspentAttributePoints < n) return { ok: false, reason: `Очков атрибутов меньше: есть ${save.unspentAttributePoints}` };
+  if (!ATTRIBUTES.includes(attr as Attribute)) return { ok: false, reason: tr('srv:attr.unknown', 'Неизвестный атрибут') };
+  if (!Number.isSafeInteger(n) || n < 1) return { ok: false, reason: tr('srv:attr.badCount', 'Неверное число очков') };
+  if (save.unspentAttributePoints <= 0) return { ok: false, reason: tr('srv:attr.noPoints', 'Нет очков атрибутов') };
+  if (save.unspentAttributePoints < n) return { ok: false, reason: tr('srv:attr.fewerPoints', 'Очков атрибутов меньше: есть {unspentAttributePoints}', { unspentAttributePoints: save.unspentAttributePoints }) };
   save.attributes[attr as Attribute] += n;
   save.unspentAttributePoints -= n;
   return { ok: true };
@@ -1668,19 +1692,19 @@ export function attrRespecRefund(reg: ConfigRegistry, save: SaveState): number {
 /** Проверки `respec` без записи — причина отказа строкой или то, что сброс запишет (`respecRefusal` спрашивает то же). */
 function respecPlan(reg: ConfigRegistry, save: SaveState, maxGold?: number): string | { base: Attributes; refunded: number; cost: number } {
   const plan = attrRespecPlan(reg, save);
-  if (!plan) return 'Класс не найден';
+  if (!plan) return tr('srv:attr.noClass', 'Класс не найден');
   // ⚠ R6-11: СБРАСЫВАТЬ НЕЧЕГО — ОТКАЗ, как у скилов и мастерств. Раньше `respecCost` списывался всегда: второй клик
   // двойного клика платил за ничто, свежий герой — за пустое место.
   const refunded = plan.refund;
-  if (refunded === 0) return 'Атрибуты не вложены';
+  if (refunded === 0) return tr('srv:attr.notInvested', 'Атрибуты не вложены');
   const cost = reg.get('balance').respecCost;
   const raised = priceRaised(cost, maxGold);   // R5-15
-  if (raised) return raised.reason ?? PRICE_CHANGED;
-  if (save.gold < cost) return 'Недостаточно золота';
+  if (raised) return raised.reason ?? tr('srv:consent.priceChanged', PRICE_CHANGED);
+  if (save.gold < cost) return tr('srv:town.noGold', 'Недостаточно золота');
   const base = plan.base;
   // ⚠ R4-08: надетое, что держится на вложенных очках, после сброса висело бы без опоры (очки ушли бы в другое).
   const broken = wornBroken(save, base, equippedItems(save));
-  if (broken) return `После сброса не хватит атрибутов на «${broken.name}» — сперва сними её`;
+  if (broken) return tr('srv:attr.respecBreaksWorn', 'После сброса не хватит атрибутов на «{name}» — сперва сними её', { name: itemDisplayName(reg, broken) });
   return { base, refunded, cost };
 }
 
@@ -1722,18 +1746,18 @@ function skillNeighbors(tree: ConfigShapes['skill-tree'], id: string): string[] 
 export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string): ActionResult {
   const tree = reg.get('skill-tree');
   const node = tree.nodes.find((n) => n.id === nodeId);
-  if (!node) return { ok: false, reason: 'Узел не найден' };
+  if (!node) return { ok: false, reason: tr('srv:skill.noNode', 'Узел не найден') };
   const branch = tree.branches.find((b) => b.id === node.branchId);
-  if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: 'Ветка другого класса' };
+  if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: tr('srv:skill.otherClass', 'Ветка другого класса') };
   const rank = save.skills[nodeId] ?? 0;
-  if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
-  if (save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
+  if (rank >= node.maxRank) return { ok: false, reason: tr('srv:skill.maxRank', 'Максимальный ранг') };
+  if (save.level < node.levelReq) return { ok: false, reason: tr('srv:skill.levelReq', 'Требуется уровень {levelReq}', { levelReq: node.levelReq }) };
   // Доступность по смежности: вход ветки, уже вложен, или сосед вложен.
   const allocatable = rank > 0 || tree.entryNodes.includes(nodeId)
     || skillNeighbors(tree, nodeId).some((n) => (save.skills[n] ?? 0) > 0);
-  if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
-  if (node.cost.type !== 'points') return { ok: false, reason: 'Неверный тип стоимости' };
-  if (save.unspentSkillPoints < node.cost.amount) return { ok: false, reason: 'Недостаточно очков скиллов' };
+  if (!allocatable) return { ok: false, reason: tr('srv:skill.noAdjacent', 'Недоступный вход или нет смежного узла') };
+  if (node.cost.type !== 'points') return { ok: false, reason: tr('srv:skill.badCostKind', 'Неверный тип стоимости') };
+  if (save.unspentSkillPoints < node.cost.amount) return { ok: false, reason: tr('srv:skill.noPoints', 'Недостаточно очков скиллов') };
   save.unspentSkillPoints -= node.cost.amount;
   save.skills[nodeId] = rank + 1;
   if (rank === 0 && node.effect.active) {
@@ -1754,13 +1778,13 @@ function socketTarget(reg: ConfigRegistry, save: SaveState, nodeId: string, slot
   { ok: true; slots: (string | null)[] } | { ok: false; reason: string } {
   const tree = reg.get('skill-tree');
   const node = tree.nodes.find((n) => n.id === nodeId);
-  if (!node) return { ok: false, reason: 'Узел не найден' };
-  if (!node.effect.active) return { ok: false, reason: 'У этого узла нет активного скила' };
+  if (!node) return { ok: false, reason: tr('srv:skill.noNode', 'Узел не найден') };
+  if (!node.effect.active) return { ok: false, reason: tr('srv:socket.noActive', 'У этого узла нет активного скила') };
   const branch = tree.branches.find((b) => b.id === node.branchId);
-  if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: 'Ветка другого класса' };
+  if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: tr('srv:skill.otherClass', 'Ветка другого класса') };
   const open = socketsOpen(reg, save.skills[nodeId] ?? 0);
-  if (open === 0) return { ok: false, reason: 'Скил не выучен' };
-  if (slot < 0 || slot >= open) return { ok: false, reason: `Гнездо ещё не открыто (есть ${open})` };
+  if (open === 0) return { ok: false, reason: tr('srv:socket.notLearned', 'Скил не выучен') };
+  if (slot < 0 || slot >= open) return { ok: false, reason: tr('srv:socket.closed', 'Гнездо ещё не открыто (есть {open})', { open }) };
   const slots = [...(save.sockets?.[nodeId] ?? [])];
   while (slots.length < open) slots.push(null);   // выравниваем под число открытых гнёзд
   return { ok: true, slots };
@@ -1781,17 +1805,17 @@ export function socketInsert(reg: ConfigRegistry, save: SaveState, nodeId: strin
   const t = socketTarget(reg, save, nodeId, slot);
   if (!t.ok) return { ok: false, reason: t.reason };
   const ins = insertById(reg, insertId);
-  if (!ins) return { ok: false, reason: 'Вставка не найдена' };
-  if (!insertUnlocked(reg, save, insertId)) return { ok: false, reason: 'Вставка не открыта в дереве' };
+  if (!ins) return { ok: false, reason: tr('srv:socket.noInsert', 'Вставка не найдена') };
+  if (!insertUnlocked(reg, save, insertId)) return { ok: false, reason: tr('srv:socket.insertLocked', 'Вставка не открыта в дереве') };
   const active = reg.get('skill-tree').nodes.find((n) => n.id === nodeId)!.effect.active!;
   // Оружие берём из экипировки: вставка вроде «пробойника» осмысленна только с луком в руках.
-  if (!insertFits(ins, active, save.equipment.weapon?.weaponClass)) return { ok: false, reason: 'Этой вставке здесь не место' };
+  if (!insertFits(ins, active, save.equipment.weapon?.weaponClass)) return { ok: false, reason: tr('srv:socket.wrongSocket', 'Этой вставке здесь не место') };
   // ОДНА ВСТАВКА КАЖДОГО ТИПА — главное правило системы: именно оно делает сборку выбором.
   for (let i = 0; i < t.slots.length; i++) {
     if (i === slot) continue;
     const other = t.slots[i];
     if (other && insertById(reg, other)?.type === ins.type) {
-      return { ok: false, reason: `Вставка этого типа уже стоит в другом гнезде` };
+      return { ok: false, reason: tr('srv:socket.typeTaken', 'Вставка этого типа уже стоит в другом гнезде') };
     }
   }
   t.slots[slot] = insertId;
@@ -1803,7 +1827,7 @@ export function socketInsert(reg: ConfigRegistry, save: SaveState, nodeId: strin
 export function socketClear(reg: ConfigRegistry, save: SaveState, nodeId: string, slot: number): ActionResult {
   const t = socketTarget(reg, save, nodeId, slot);
   if (!t.ok) return { ok: false, reason: t.reason };
-  if (!t.slots[slot]) return { ok: false, reason: 'Гнездо и так пусто' };
+  if (!t.slots[slot]) return { ok: false, reason: tr('srv:socket.empty', 'Гнездо и так пусто') };
   t.slots[slot] = null;
   socketsCommit(save, nodeId, t.slots);
   return { ok: true };
@@ -1824,11 +1848,11 @@ export function skillRespecFee(reg: ConfigRegistry, save: SaveState): number {
 export function respecSkills(reg: ConfigRegistry, save: SaveState, maxGold?: number): ActionResult {
   let ranks = 0;
   for (const rank of Object.values(save.skills)) if (rank > 0) ranks += rank;
-  if (ranks === 0) return { ok: false, reason: 'Скиллы не вложены' };
+  if (ranks === 0) return { ok: false, reason: tr('srv:skill.notInvested', 'Скиллы не вложены') };
   const fee = skillRespecFee(reg, save);
   const raised = priceRaised(fee, maxGold);   // R5-15
   if (raised) return raised;
-  if (save.gold < fee) return { ok: false, reason: `Нужно ${fee} золота на сброс` };
+  if (save.gold < fee) return { ok: false, reason: tr('srv:skill.respecFee', 'Нужно {fee} золота на сброс', { fee }) };
   save.gold -= fee;
   save.unspentSkillPoints += ranks;
   save.skills = {};
@@ -1861,14 +1885,14 @@ function passiveNeighbors(tree: ConfigShapes['mastery-tree'], id: string): strin
 export function setBinding(reg: ConfigRegistry, save: SaveState, slot: number, value: string | null): ActionResult {
   if (value !== null && value !== 'attack') {
     const node = reg.get('skill-tree').nodes.find((n) => n.id === value);
-    if (!node?.effect.active || !((save.skills[value] ?? 0) > 0)) return { ok: false, reason: 'Этот скилл не выучен' };
+    if (!node?.effect.active || !((save.skills[value] ?? 0) > 0)) return { ok: false, reason: tr('srv:skill.notLearned', 'Этот скилл не выучен') };
   }
   if (slot === 0) save.mouseLeft = value;
   else if (slot === 1) save.mouseRight = value;
   else if (slot >= 2 && slot <= 4) {
     while (save.hotbar.length < 3) save.hotbar.push(null);
     save.hotbar[slot - 2] = value;
-  } else return { ok: false, reason: 'Неверный слот бинда' };
+  } else return { ok: false, reason: tr('srv:skill.badBindSlot', 'Неверный слот бинда') };
   return { ok: true };
 }
 
@@ -1882,13 +1906,13 @@ export function setBinding(reg: ConfigRegistry, save: SaveState, slot: number, v
  */
 export function moveToBelt(save: SaveState, uid: string): ActionResult {
   const cap = save.equipment.belt?.beltSlots ?? 0;
-  if (cap <= 0) return { ok: false, reason: 'Пояс не надет' };
+  if (cap <= 0) return { ok: false, reason: tr('srv:belt.none', 'Пояс не надет') };
   const idx = save.inventory.findIndex((i) => i.uid === uid);
-  if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
-  if (save.inventory[idx]!.kind !== 'consumable') return { ok: false, reason: 'Не расходник' };
+  if (idx < 0) return { ok: false, reason: tr('srv:town.notInBag', 'Предмет не в инвентаре') };
+  if (save.inventory[idx]!.kind !== 'consumable') return { ok: false, reason: tr('srv:belt.notConsumable', 'Не расходник') };
   let slot = -1;
   for (let i = 0; i < cap && slot < 0; i++) if (!save.belt[i]) slot = i;
-  if (slot < 0) return { ok: false, reason: 'Пояс полон' };
+  if (slot < 0) return { ok: false, reason: tr('srv:belt.full', 'Пояс полон') };
   while (save.belt.length < cap) save.belt.push(null);
   save.belt[slot] = save.inventory.splice(idx, 1)[0]!;
   return { ok: true };
@@ -1910,14 +1934,14 @@ export function passiveEntriesFor(reg: ConfigRegistry, _save?: SaveState): strin
 export function passiveAllocCheck(reg: ConfigRegistry, save: SaveState, nodeId: string): { ok: false; reason: string } | { ok: true; cost: number; rank: number } {
   const tree = reg.get('mastery-tree');
   const node = tree.nodes.find((n) => n.id === nodeId);
-  if (!node) return { ok: false, reason: 'Узел не найден' };
+  if (!node) return { ok: false, reason: tr('srv:skill.noNode', 'Узел не найден') };
   const rank = save.masteries[nodeId] ?? 0;
-  if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
-  if (save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
+  if (rank >= node.maxRank) return { ok: false, reason: tr('srv:skill.maxRank', 'Максимальный ранг') };
+  if (save.level < node.levelReq) return { ok: false, reason: tr('srv:skill.levelReq', 'Требуется уровень {levelReq}', { levelReq: node.levelReq }) };
   const allocatable = rank > 0 || passiveEntriesFor(reg, save).includes(nodeId)
     || passiveNeighbors(tree, nodeId).some((n) => (save.masteries[n] ?? 0) > 0);
-  if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
-  if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };
+  if (!allocatable) return { ok: false, reason: tr('srv:skill.noAdjacent', 'Недоступный вход или нет смежного узла') };
+  if (node.cost.type !== 'gold') return { ok: false, reason: tr('srv:skill.badCostKind', 'Неверный тип стоимости') };
   return { ok: true, cost: Math.round(node.cost.amount * Math.pow(reg.get('balance').passiveRankCostMult, rank)), rank };
 }
 
@@ -1925,10 +1949,10 @@ export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: strin
   // ⚠ R10-11 (уровень), смежность, тип цены — `passiveAllocCheck`: тем же правилом вид древа мастерства решает, что доступно
   const chk = passiveAllocCheck(reg, save, nodeId);
   if (!chk.ok) return chk;
-  if (save.unspentMasteryPoints < 1) return { ok: false, reason: 'Нет очков мастерства' };
+  if (save.unspentMasteryPoints < 1) return { ok: false, reason: tr('srv:mastery.noPoints', 'Нет очков мастерства') };
   const raised = priceRaised(chk.cost, maxGold);   // R6-16: «след. ранг: N зол.» карточки — дороже сервер не возьмёт
   if (raised) return raised;
-  if (save.gold < chk.cost) return { ok: false, reason: 'Недостаточно золота' };
+  if (save.gold < chk.cost) return { ok: false, reason: tr('srv:town.noGold', 'Недостаточно золота') };
   save.gold -= chk.cost;
   save.unspentMasteryPoints -= 1;
   save.masteries[nodeId] = chk.rank + 1;
@@ -1962,11 +1986,11 @@ export function passiveRespecFee(reg: ConfigRegistry, save: SaveState): number {
 export function respecPassives(reg: ConfigRegistry, save: SaveState, maxGold?: number): ActionResult {
   let ranks = 0;
   for (const rank of Object.values(save.masteries)) if (rank > 0) ranks += rank;
-  if (ranks === 0) return { ok: false, reason: 'Мастерства не вложены' };
+  if (ranks === 0) return { ok: false, reason: tr('srv:mastery.notInvested', 'Мастерства не вложены') };
   const fee = passiveRespecFee(reg, save);
   const raised = priceRaised(fee, maxGold);   // R5-15
   if (raised) return raised;
-  if (save.gold < fee) return { ok: false, reason: `Нужно ${fee} золота на сброс` };
+  if (save.gold < fee) return { ok: false, reason: tr('srv:skill.respecFee', 'Нужно {fee} золота на сброс', { fee }) };
   save.gold -= fee;
   save.unspentMasteryPoints += ranks;
   save.masteries = {};

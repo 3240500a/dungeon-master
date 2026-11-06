@@ -3,7 +3,7 @@
  * (`t`, `cfgText`) и сторожа. Схема ключей, разъехавшаяся между извлекателем и рантаймом, — это молчаливо
  * непереведённый текст в игре, который видно только игроку, поэтому derivation живёт здесь и больше нигде.
  *
- * **Ключ конфига:** `cfg:<таблица>/<путь по id>/<поле>` — например `cfg:items-base/quilted-cap/name`.
+ * **Ключ конфига:** `cfg:<таблица>/<путь по id>/<поле>` — например `cfg:items.base/quilted-cap/name`.
  * Путь идёт по `id`-подобным полям, а НЕ по индексу: вставленная в середину списка вещь не должна сдвигать
  * ключи всех остальных (иначе каждая правка контента обнуляет часть перевода). Замер 27.10 на живых данных:
  * 3 898 игроцких строк, коллизий ключей — 0, ключей по индексу — 0.
@@ -89,7 +89,7 @@ export function cfgKey(table: string, path: readonly string[], field: string): s
 
 /** Найденная игроцкая строка конфига. */
 export interface ConfigText {
-  /** Ключ вида `cfg:items-base/quilted-cap/name`. */
+  /** Ключ вида `cfg:items.base/quilted-cap/name`. */
   key: string;
   /** Текст на языке-источнике — он же запас, если перевода нет. */
   source: string;
@@ -109,33 +109,61 @@ export interface ConfigText {
 export function walkConfigText(raw: Record<string, unknown>): ConfigText[] {
   const out: ConfigText[] = [];
   const text = new Set(I18N_TEXT_FIELDS);
+  for (const [table, value] of Object.entries(raw)) {
+    if (I18N_SKIP_TABLES.has(table)) continue;
+    walkRows(value, table, undefined, (field, v, path, stable) => {
+      if (text.has(field) && v.trim()) out.push({ key: cfgKey(table, path, field), source: v, table, field, stable });
+    });
+  }
+  return out;
+}
 
-  const walk = (node: unknown, table: string, path: string[], stable: boolean): void => {
+/**
+ * ⭐ i18n Ф1 (06.11): ОБХОД СТРОК ТАБЛИЦЫ — общий для извлекателя (`walkConfigText`) и рантайма (`rowPathOf`): путь строки считается ОДНИМ
+ * кодом, иначе ключ, под которым переведено, разъехался бы с ключом, под которым ищут. `onRow` — каждый объект таблицы с его путём,
+ * `onText` — каждое строковое поле в порядке полей (порядок корпуса прежний).
+ */
+function walkRows(
+  value: unknown, table: string,
+  onRow: ((row: object, path: string[]) => void) | undefined,
+  onText: ((field: string, value: string, path: string[], stable: boolean) => void) | undefined,
+): void {
+  const walk = (node: unknown, path: string[], stable: boolean): void => {
     if (Array.isArray(node)) {
       node.forEach((item, i) => {
         const a = anchor(item, i);
-        walk(item, table, [...path, a.seg], stable && a.stable);
+        walk(item, [...path, a.seg], stable && a.stable);
       });
       return;
     }
     if (node === null || typeof node !== 'object') return;
-    const row = node as Record<string, unknown>;
-    for (const [field, value] of Object.entries(row)) {
-      if (typeof value === 'string') {
-        if (text.has(field) && value.trim()) {
-          out.push({ key: cfgKey(table, path, field), source: value, table, field, stable });
-        }
-        continue;
-      }
-      if (value !== null && typeof value === 'object') walk(value, table, [...path, field], stable);
+    onRow?.(node, path);
+    for (const [field, v] of Object.entries(node as Record<string, unknown>)) {
+      if (typeof v === 'string') { onText?.(field, v, path, stable); continue; }
+      if (v !== null && typeof v === 'object') walk(v, [...path, field], stable);
     }
   };
+  walk(value, [], true);
+}
 
-  for (const [table, value] of Object.entries(raw)) {
-    if (I18N_SKIP_TABLES.has(table)) continue;
-    walk(value, table, [], true);
+/** Индекс «объект строки → путь» по корню таблицы: корень — объект реестра (новый на каждую перезагрузку), значит индекс не устаревает. */
+const rowPaths = new WeakMap<object, WeakMap<object, readonly string[]>>();
+
+/**
+ * ⭐ i18n Ф1 (06.11): ПУТЬ КЛЮЧА СТРОКИ ПО САМОМУ ОБЪЕКТУ — для перевода текста конфига там, где код держит строку таблицы (`def.name`), а не
+ * её путь: у вложенных таблиц (`weapon-anatomy`, `skill-tree`) путь угадывать руками — значит ошибаться. `root` — таблица из реестра
+ * (`reg.get(table)`), `row` — объект внутри неё. Не из этой таблицы (копия, собранная кодом строка) — `undefined`.
+ */
+export function rowPathOf(table: string, root: unknown, row: object): readonly string[] | undefined {
+  if (root === null || typeof root !== 'object') return undefined;
+  let idx = rowPaths.get(root);
+  if (!idx) {
+    const built = new WeakMap<object, readonly string[]>();
+    walkRows(root, table, (r, path) => { if (!built.has(r)) built.set(r, path); }, undefined);
+    rowPaths.set(root, built);
+    idx = built;
   }
-  return out;
+  return idx.get(row);
 }
 
 /** Транслитерация для достройки `id` записи из её текста. Схема одна на проект — иначе достроенные

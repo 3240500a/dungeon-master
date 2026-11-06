@@ -16,6 +16,8 @@ import { equipRefusal, offhandRefusal } from '../economy/townActions.js';
 import { debuffLabel } from '../world/debuffs.js';
 import { materialNote } from './townMaterials.js';
 import { disposePrompts, fieldSalvageEntry, fieldSalvageLines, salvageConsent, type TipLine } from './townSalvage.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
+import { itemDisplayName } from '../formulas/itemDisplay.js';
 
 /** Сундук аккаунта, как его видит вид: кошелёк сырья и журнал кузнеца. `null` — сундука нет (кадр не пришёл). */
 export type StashView = Pick<AccountStash, 'materials' | 'forgeJournal'> | null | undefined;
@@ -30,16 +32,17 @@ export const journalOf = (stash: StashView): CraftJournal | undefined => (stash 
 export function itemLabels(reg: ConfigRegistry): ItemLabels {
   const short = new Map<string, string>();
   const phys = reg.get('damage-kinds').find((k) => k.id === 'physical');
-  if (phys) short.set('physical', phys.short);
-  for (const s of reg.get('magic-subtypes')) short.set(s.id, s.short);
+  if (phys) short.set('physical', cfgRowText(reg, 'damage-kinds', phys, 'short'));
+  for (const s of reg.get('magic-subtypes')) short.set(s.id, cfgRowText(reg, 'magic-subtypes', s, 'short'));
   return {
-    armorClass: (id) => reg.get('armor-classes').find((c) => c.id === id)?.name ?? id,
-    weight: (id) => (reg.get('weapon-weights').find((w) => w.id === id)?.name ?? id).toLowerCase(),
+    // ⭐ i18n Ф1 (06.11): имена из конфига — на языке игрока (`cfgRowText` по строке таблицы)
+    armorClass: (id) => cfgRowText(reg, 'armor-classes', reg.get('armor-classes').find((c) => c.id === id)) ?? id,
+    weight: (id) => (cfgRowText(reg, 'weapon-weights', reg.get('weapon-weights').find((w) => w.id === id)) ?? id).toLowerCase(),
     physSub: (id) => {
       const sub = reg.get('phys-subtypes').find((s) => s.id === id);
-      return sub ? `${sub.name.toLowerCase()} → ${debuffLabel(reg.get('debuffs'), sub.kind).toLowerCase()}` : id;
+      return sub ? `${cfgRowText(reg, 'phys-subtypes', sub).toLowerCase()} → ${debuffLabel(reg.get('debuffs'), sub.kind).toLowerCase()}` : id;
     },
-    skill: (id) => reg.get('skill-tree').nodes.find((n) => n.id === id)?.name ?? id,
+    skill: (id) => cfgRowText(reg, 'skill-tree', reg.get('skill-tree').nodes.find((n) => n.id === id)) ?? id,
     dmgShort: (id) => short.get(id) ?? id,
   };
 }
@@ -51,12 +54,23 @@ export function itemDescLines(reg: ConfigRegistry, item: Item): ItemLine[] {
 
 /** Глифы слотов клетки сетки (`heldItem.ts` GLYPH). */
 export const SLOT_GLYPH: Readonly<Record<string, string>> = {
-  weapon: 'Ор', offhand: 'Оф', helm: 'Шл', chest: 'На', gloves: 'Пе', boots: 'Са', belt: 'По', ring: 'Ко', amulet: 'Ам',
+  get weapon() { return tr('srv:slotGlyph.weapon', 'Ор'); },
+  get offhand() { return tr('srv:slotGlyph.offhand', 'Оф'); },
+  get helm() { return tr('srv:slotGlyph.helm', 'Шл'); },
+  get chest() { return tr('srv:slotGlyph.chest', 'На'); },
+  get gloves() { return tr('srv:slotGlyph.gloves', 'Пе'); },
+  get boots() { return tr('srv:slotGlyph.boots', 'Са'); },
+  get belt() { return tr('srv:slotGlyph.belt', 'По'); },
+  get ring() { return tr('srv:slotGlyph.ring', 'Ко'); },
+  get amulet() { return tr('srv:slotGlyph.amulet', 'Ам'); },
 };
-/** Подпись клетки сетки (C# `DmItem.GridGlyph`, веб `glyphOf`): сырьё — числом в стеке, широкая вещь — именем, зелье — 🧪. */
-export function glyphOf(item: Item): string {
+/**
+ * Подпись клетки сетки (C# `DmItem.GridGlyph`, веб `glyphOf`): сырьё — числом в стеке, широкая вещь — именем, зелье — 🧪.
+ * ⭐ i18n Ф2 (06.11): с реестром имя — на языке игрока (`itemDisplayName`); без — испечённое.
+ */
+export function glyphOf(item: Item, reg?: ConfigRegistry): string {
   if (item.kind === 'material') return `${item.count ?? 1}`;
-  if (item.gridW >= 2) return item.name;
+  if (item.gridW >= 2) return reg ? itemDisplayName(reg, item) : item.name;
   return item.kind === 'consumable' ? '🧪' : item.slot ? SLOT_GLYPH[item.slot] ?? '·' : '·';
 }
 /** Значок вещи в ячейке пупсика (C# `DmItem.IconGlyph`). */
@@ -98,14 +112,14 @@ export interface ItemTipsView { tips: Record<string, ItemTip>; worn: Record<stri
 
 function tipOf(reg: ConfigRegistry, labels: ItemLabels, item: Item, worn: Item | null | undefined): ItemTip {
   const mat = materialNote(reg, item);
-  const tierName = (id: string): string | undefined => reg.get('item-tiers').find((t) => t.id === id)?.name;
+  const tierName = (id: string): string | undefined => cfgRowText(reg, 'item-tiers', reg.get('item-tiers').find((t) => t.id === id));
   return {
     uid: item.uid,
-    name: item.name,
+    name: itemDisplayName(reg, item),   // ⭐ i18n Ф2: испечённое имя — на языке игрока
     slot: slotSuffix(item),
     color: mat?.color ?? null,
     rarity: item.rarity,
-    glyph: glyphOf(item),
+    glyph: glyphOf(item, reg),
     icon: iconGlyph(item),
     lines: describeItem(item, labels),
     note: mat ? mat.lines : null,
@@ -129,7 +143,7 @@ export function itemTipsView(reg: ConfigRegistry, save: Pick<SaveState, 'equipme
   const tips = items.map((it): [string, ItemTip] => {
     const w = wornFor(save, it);
     const tip = tipOf(reg, labels, it, w);
-    if (w && tip.wornSlot !== null && !worn.has(tip.wornSlot)) worn.set(tip.wornSlot, { name: w.name, lines: describeItem(w, labels) });
+    if (w && tip.wornSlot !== null && !worn.has(tip.wornSlot)) worn.set(tip.wornSlot, { name: itemDisplayName(reg, w), lines: describeItem(w, labels) });
     return [it.uid, tip];
   });
   return { tips: Object.fromEntries(tips), worn: Object.fromEntries(worn) };
@@ -158,13 +172,13 @@ export function itemMenuView(reg: ConfigRegistry, save: SaveState, stash: StashV
   if (!item) return [];
   const journal = journalOf(stash);
   const out: MenuItem[] = [];
-  if (item.kind === 'consumable') out.push({ label: 'Выпить', act: 'drink' }, { label: 'В пояс', act: 'belt' });
-  else if (item.broken) out.push({ label: 'Сломано — к кузнецу', act: null });
+  if (item.kind === 'consumable') out.push({ label: tr('srv:item.menuDrink', 'Выпить'), act: 'drink' }, { label: tr('srv:item.menuBelt', 'В пояс'), act: 'belt' });
+  else if (item.broken) out.push({ label: tr('srv:item.menuBroken', 'Сломано — к кузнецу'), act: null });
   else if (item.slot) {
     const wear = equipRefusal(reg, save, item.uid);
-    out.push(wear ? { label: `Надеть нельзя: ${wear}`, act: null } : { label: 'Надеть', act: 'equip' });
+    out.push(wear ? { label: tr('srv:item.menuNoWear', 'Надеть нельзя: {wear}', { wear }), act: null } : { label: tr('srv:item.menuWear', 'Надеть'), act: 'equip' });
   }
-  out.push({ label: 'Выбросить', act: 'drop' });
+  out.push({ label: tr('srv:item.menuDrop', 'Выбросить'), act: 'drop' });
   const entry = inTown ? null : fieldSalvageEntry(reg, save.inventory, item);
   if (entry) {
     const m: MenuItem = { label: entry.label, act: entry.ok ? 'salvage' : null, tip: fieldSalvageLines(reg, item, journal ?? null, entry.reason) };
@@ -190,6 +204,6 @@ export function paperdollEquipView(reg: ConfigRegistry, save: SaveState, item: I
     const no = offhandRefusal(item, save.equipment.weapon);
     if (no) return { refusal: no, target: null };
     target = 'offhand';
-  } else if (item.slot !== cell) return { refusal: 'Этот предмет не для этого слота', target: null };
+  } else if (item.slot !== cell) return { refusal: tr('srv:equip.wrongSlot', 'Этот предмет не для этого слота'), target: null };
   return { refusal: equipRefusal(reg, save, item.uid, target ?? undefined), target };
 }

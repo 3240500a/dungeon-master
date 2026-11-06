@@ -237,7 +237,8 @@ export class App {
     // ⭐ D3: перечитывание — ОДНО, и только после него решение (`VersionGate.refused`): лёг новый конфиг — отказ объяснён; нет, а вкладка старше
     // сервера (код не той сборки, конфиг сервера не разобран или разобран «не в то же» — R18-08, R7-14, R16 C-07) — «перезагрузите страницу».
     this.net.on('cmdResult', (f) => {
-      if (!f.ok && f.reason?.startsWith(PRICE_CHANGED)) void this.version.refused();
+      // ⭐ i18n Ф2 (06.11): по машинному коду отказа (`cmdResult.code`), текст — запасом для сервера старше кода
+      if (!f.ok && (f.code === 'priceChanged' || f.reason?.startsWith(PRICE_CHANGED))) void this.version.refused();
       if (!this.replies.settle(f) && !f.ok && f.reason) this.logRefusal(f.reason);
     });
     // ⭐ D3: РУКОПОЖАТИЕ ВЕРСИЙ — на каждом входе в мир, здесь, а не в обработчиках сцен: оба клиента строят один `App`, и сверка не зависит

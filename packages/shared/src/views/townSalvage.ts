@@ -11,9 +11,11 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { Item } from '../types/index.js';
 import type { CraftJournal } from '../formulas/craft.js';
 import {
-  FIELD_SALVAGE_FULL, canSalvageItem, fieldSalvageFits, salvageMean, salvageRange,
+  fieldSalvageFullText, canSalvageItem, fieldSalvageFits, salvageMean, salvageRange,
 } from '../economy/townActions.js';
 import { salvageJournalGains, salvagePreview, type SalvageCardLine } from '../economy/salvagePreview.js';
+import { tr } from '../i18n/tr.js';
+import { itemDisplayName } from '../formulas/itemDisplay.js';
 
 /** Строка подсказки (C# сейчас — кортеж `(string text, string tone)`; DTO: класс `{ text, tone }`). tone: title | gain | dim | warn | hint. */
 export interface TipLine { text: string; tone: SalvageCardLine['tone'] | 'title' | 'hint' }
@@ -30,8 +32,8 @@ export function journalGainsOf(reg: ConfigRegistry, item: Item, journal: CraftJo
 export function fieldSalvageLines(reg: ConfigRegistry, item: Item, journal: CraftJournal | null | undefined, refusal?: string): TipLine[] {
   const c = salvagePreview(reg, item, journal, true);
   const line = (l: SalvageCardLine): TipLine => ({ text: `${l.label}: ${l.text}`, tone: l.tone });
-  const no = `${c.verb === 'melt' ? 'Переплавить' : 'Разобрать'} нельзя`;
-  if (!c.ok) return [{ text: no, tone: 'title' }, { text: c.reason ?? refusal ?? 'нельзя', tone: 'warn' }];
+  const no = c.verb === 'melt' ? tr('srv:salvage.meltNo', 'Переплавить нельзя') : tr('srv:salvage.salvageNo', 'Разобрать нельзя');
+  if (!c.ok) return [{ text: no, tone: 'title' }, { text: c.reason ?? refusal ?? tr('srv:bench.cannot', 'нельзя'), tone: 'warn' }];
   return [
     { text: refusal ? no : c.title, tone: 'title' },
     ...(refusal ? [{ text: refusal, tone: 'warn' as const }] : []),
@@ -49,11 +51,11 @@ export function fieldSalvageEntry(reg: ConfigRegistry, inventory: readonly Item[
   if (item.kind === 'consumable' || item.kind === 'material') return null;
   const can = canSalvageItem(reg, item, true);
   if (!can.ok) {
-    const reason = can.reason ?? 'Эту вещь не из чего разбирать';
-    return { label: `Разобрать нельзя: ${reason}`, ok: false, reason };
+    const reason = can.reason ?? tr('srv:salvage.nothingToSalvage', 'Эту вещь не из чего разбирать');
+    return { label: tr('srv:salvage.fieldNo', 'Разобрать нельзя: {reason}', { reason }), ok: false, reason };
   }
-  if (!fieldSalvageFits(reg, inventory, item)) return { label: 'Разобрать нельзя: сумка полна', ok: false, reason: FIELD_SALVAGE_FULL };
-  return { label: `Разобрать здесь (${Math.round(reg.get('balance').salvage.fieldYield * 100)} %)`, ok: true };
+  if (!fieldSalvageFits(reg, inventory, item)) return { label: tr('srv:salvage.fieldNoRoom', 'Разобрать нельзя: сумка полна'), ok: false, reason: fieldSalvageFullText() };
+  return { label: tr('srv:salvage.fieldHere', 'Разобрать здесь ({pct} %)', { pct: Math.round(reg.get('balance').salvage.fieldYield * 100) }), ok: true };
 }
 
 export type DisposeAct = 'field' | 'forge' | 'sell';
@@ -63,23 +65,22 @@ export type DisposeAct = 'field' | 'forge' | 'sell';
  */
 export function disposePrompts(reg: ConfigRegistry, item: Item, act: DisposeAct, journal: CraftJournal | null | undefined, price?: number): string[] {
   const out: string[] = [];
-  const priced = price !== undefined ? ` за ${price} золота` : '';
+  const priced = price !== undefined ? tr('srv:salvage.pricedFor', ' за {price} золота', { price }) : '';
+  const name = itemDisplayName(reg, item);   // ⭐ i18n Ф2 (06.11): испечённое имя — на языке игрока
   if (item.parts) {
     out.push(
-      act === 'sell' ? `Продать скованную «${item.name}»${priced}? Скованное лавочник берёт как любую вещь.`
-      : act === 'field' ? `Переплавить скованную «${item.name}» прямо здесь? В поле вернётся лишь малая доля сырья.`
-      : `Переплавить скованную «${item.name}»? Кузнец вернёт лишь часть сырья, доводка не вернётся.`,
-      `Точно? «${item.name}» исчезнет навсегда — скованную вещь не вернуть.`,
+      act === 'sell' ? tr('srv:salvage.promptSellCrafted', 'Продать скованную «{name}»{priced}? Скованное лавочник берёт как любую вещь.', { name, priced })
+      : act === 'field' ? tr('srv:salvage.promptFieldCrafted', 'Переплавить скованную «{name}» прямо здесь? В поле вернётся лишь малая доля сырья.', { name })
+      : tr('srv:salvage.promptMeltCrafted', 'Переплавить скованную «{name}»? Кузнец вернёт лишь часть сырья, доводка не вернётся.', { name }),
+      tr('srv:salvage.promptSure', 'Точно? «{name}» исчезнет навсегда — скованную вещь не вернуть.', { name }),
     );
   }
   if (act !== 'forge') {
     const gains = journalGainsOf(reg, item, journal);
     if (gains.length) {
       out.push(act === 'field'
-        ? `Разбор в поле журнал кузнеца не пополняет, а у кузнеца эта вещь дала бы:\n(${gains.join(', ')})\n`
-          + 'Засчитывает только разбор у кузнеца в городе. Разобрать здесь всё равно?'
-        : `Продажа журнал кузнеца не пополняет, а разбор у кузнеца дал бы:\n(${gains.join(', ')})\n`
-          + `Продать «${item.name}»${priced} всё равно?`);
+        ? tr('srv:salvage.promptFieldGains', 'Разбор в поле журнал кузнеца не пополняет, а у кузнеца эта вещь дала бы:\n({gains})\nЗасчитывает только разбор у кузнеца в городе. Разобрать здесь всё равно?', { gains: gains.join(', ') })
+        : tr('srv:salvage.promptSellGains', 'Продажа журнал кузнеца не пополняет, а разбор у кузнеца дал бы:\n({gains})\nПродать «{name}»{priced} всё равно?', { gains: gains.join(', '), name, priced }));
     }
   }
   return out;

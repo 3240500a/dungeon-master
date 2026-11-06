@@ -3,12 +3,12 @@ import type { SaveState } from '../types/save.js';
 import type { AccountStash } from '../types/stash.js';
 import { liveModStats } from '../dungeon/run/runModEffects.js';
 import {
-  SEAL_REFORGE_BIOME, SEAL_REFORGE_DEEP, SEAL_REFORGE_FEW, SEAL_REFORGE_GOLD, SEAL_REFORGE_OFF, SEAL_REFORGE_ROOM, SEAL_REFORGE_TOP, SEAL_REROLL_ALONE,
-  SEAL_REROLL_OFF, buildSeal, carriedSealsAll, liveSealDefs, parseSealKey, sealBiomeKey, sealDef, sealLive, sealNextTier, sealReforgeRules,
-  sealRerollCost, sealRerollRules, sealStackMax, sealTierDef, sealTierMul, sealTiers, sealsEnabled, spendSealsBoth, type SealGains,
+  buildSeal, carriedSealsAll, liveSealDefs, parseSealKey, sealBiomeKey, sealDef, sealLive, sealNextTier, sealReforgeRules,
+  sealRerollCost, sealRerollRules, sealStackMax, sealTierDef, sealTierMul, sealTiers, sealsEnabled, spendSealsBoth, SEAL_TEXT, type SealGains,
 } from '../economy/seals.js';
 import { addToInventory } from '../inventory/grid.js';
 import { cfgTextOf, isNum, ordinal, type CfgText, type RunViewOptions } from './runCommon.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ С-views (29.10): ВКЛАДКА КУЗНИЦЫ «🔮 Печати» (перековка 3→1 и перекат вида) — модель считает СЕРВЕР.
@@ -24,23 +24,23 @@ import { cfgTextOf, isNum, ordinal, type CfgText, type RunViewOptions } from './
 
 /** Тексты вкладки — C# константы `SealReforge.*` (отказы — общие с ядром, `SEAL_REFORGE_*`). */
 export const RUN_REFORGE_TEXT = {
-  title: 'Перековка печатей',
-  apply: 'Перековать',
-  off: SEAL_REFORGE_OFF,
-  empty: 'Печатей нет. Они падают с элиты, редких, из сундуков и с боссов.',
-  noStash: '⚠ Сундук не загрузился — перековка видит только сумку.',
-  source: 'Печати берутся из сумки и из сундука.',
-  noteKind: 'Три печати одного вида и ступени → одна того же вида ступенью выше.',
-  noteTier: 'Три печати одной ступени → одна СЛУЧАЙНОГО вида ступенью выше: вид решает кузнец.',
-  few: SEAL_REFORGE_FEW,
-  top: SEAL_REFORGE_TOP,
-  deep: SEAL_REFORGE_DEEP,
-  gold: SEAL_REFORGE_GOLD,
-  biome: SEAL_REFORGE_BIOME,
-  rerollApply: 'Перекатить',
-  rerollOff: SEAL_REROLL_OFF,
-  rerollNote: 'Перекат: одна печать → другой ВИД той же ступени, за золото. Сила не меняется.',
-  rerollAlone: SEAL_REROLL_ALONE,
+  get title() { return tr('srv:reforgeText.title', 'Перековка печатей'); },
+  get apply() { return tr('srv:reforgeText.apply', 'Перековать'); },
+  get off() { return SEAL_TEXT.reforgeOff(); },
+  get empty() { return tr('srv:reforgeText.empty', 'Печатей нет. Они падают с элиты, редких, из сундуков и с боссов.'); },
+  get noStash() { return tr('srv:reforgeText.noStash', '⚠ Сундук не загрузился — перековка видит только сумку.'); },
+  get source() { return tr('srv:reforgeText.source', 'Печати берутся из сумки и из сундука.'); },
+  get noteKind() { return tr('srv:reforgeText.noteKind', 'Три печати одного вида и ступени → одна того же вида ступенью выше.'); },
+  get noteTier() { return tr('srv:reforgeText.noteTier', 'Три печати одной ступени → одна СЛУЧАЙНОГО вида ступенью выше: вид решает кузнец.'); },
+  get few() { return SEAL_TEXT.reforgeFew(); },
+  get top() { return SEAL_TEXT.reforgeTop(); },
+  get deep() { return SEAL_TEXT.reforgeDeep(); },
+  get gold() { return SEAL_TEXT.reforgeGold(); },
+  get biome() { return SEAL_TEXT.reforgeBiome(); },
+  get rerollApply() { return tr('srv:reforgeText.rerollApply', 'Перекатить'); },
+  get rerollOff() { return SEAL_TEXT.rerollOff(); },
+  get rerollNote() { return tr('srv:reforgeText.rerollNote', 'Перекат: одна печать → другой ВИД той же ступени, за золото. Сила не меняется.'); },
+  get rerollAlone() { return SEAL_TEXT.rerollAlone(); },
 } as const;
 
 /** C# `ReforgeCard`. */
@@ -88,11 +88,11 @@ function sealTitle(reg: ConfigRegistry, tx: CfgText, sealId: string, tierId: str
 function fill(reg: ConfigRegistry, tx: CfgText, card: RunReforgeCard, tierId: string, have: number, gold: number, record: number): void {
   const rules = sealReforgeRules(reg);
   const next = sealNextTier(reg, tierId);
-  if (!next) { card.reason = SEAL_REFORGE_TOP; card.result = null; return; }
+  if (!next) { card.reason = SEAL_TEXT.reforgeTop(); card.result = null; return; }
   card.result = `→ ${tx('balance', ['seals', 'tiers', next.id], 'name', next.name) ?? next.name}`;
-  if (rules.gateByRecord !== false && next.minDepth > record) { card.reason = SEAL_REFORGE_DEEP; return; }
-  if (have < card.need) { card.reason = `${SEAL_REFORGE_FEW}: нужно ${card.need}`; return; }
-  if (gold < rules.goldCost) { card.reason = SEAL_REFORGE_GOLD; return; }
+  if (rules.gateByRecord !== false && next.minDepth > record) { card.reason = SEAL_TEXT.reforgeDeep(); return; }
+  if (have < card.need) { card.reason = tr('srv:seal.reforgeFewNeed', 'Печатей не хватает: нужно {need}', { need: card.need }); return; }
+  if (gold < rules.goldCost) { card.reason = SEAL_TEXT.reforgeGold(); return; }
   card.can = true;
 }
 
@@ -162,14 +162,14 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
         if (g.have <= 0) continue;
         const tn = tx('balance', ['seals', 'tiers', tier.id], 'name', tier.name) ?? tier.name;
         const card: RunReforgeCard = {
-          key: runReforgeTierCardKey(tier.id, bk), keys: g.keys, name: bk.length === 0 ? `Любые печати ${tn}` : `Печати ${tn} (${bk})`,
+          key: runReforgeTierCardKey(tier.id, bk), keys: g.keys, name: bk.length === 0 ? tr('srv:reforge.anyOfTier', 'Любые печати {tn}', { tn }) : tr('srv:reforge.tierBiome', 'Печати {tn} ({bk})', { tn, bk }),
           result: null, reason: null, carried: g.have, need: v.need, can: false,
         };
         fill(reg, tx, card, tier.id, g.have, gold, record);
         // вид результата — бросок среди живых той же привязки (как `reforgeSeals`): место — под любой из них
         const next = card.can ? sealNextTier(reg, tier.id) : undefined;
         if (next && !roomFor(reg, save, stash, runReforgeTake(reg, save, stash, card.key), pool.filter((d) => sealBiomeKey(d) === bk).map((d) => d.id), next.id)) {
-          card.can = false; card.reason = SEAL_REFORGE_ROOM;
+          card.can = false; card.reason = SEAL_TEXT.reforgeRoom();
         }
         v.cards.push(card);
       }
@@ -187,7 +187,7 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
       };
       fill(reg, tx, card, parsed.tierId, n, gold, record);
       const next = card.can ? sealNextTier(reg, parsed.tierId) : undefined;
-      if (next && !roomFor(reg, save, stash, runReforgeTake(reg, save, stash, card.key), [def.id], next.id)) { card.can = false; card.reason = SEAL_REFORGE_ROOM; }
+      if (next && !roomFor(reg, save, stash, runReforgeTake(reg, save, stash, card.key), [def.id], next.id)) { card.can = false; card.reason = SEAL_TEXT.reforgeRoom(); }
       v.cards.push(card);
     }
   }
@@ -210,11 +210,11 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
       };
       const bk = sealBiomeKey(def);
       const others = pool.filter((d) => d.id !== def.id && sealBiomeKey(d) === bk).length;
-      if (differs && others === 0) card.reason = SEAL_REROLL_ALONE;
-      else if (gold < card.gold) card.reason = SEAL_REFORGE_GOLD;
+      if (differs && others === 0) card.reason = SEAL_TEXT.rerollAlone();
+      else if (gold < card.gold) card.reason = SEAL_TEXT.reforgeGold();
       // ⭐ С-аудит (29.10): и место — последним, как `rerollSeal`: под любой вид, который может выпасть (`pool` той же привязки)
       else if (!roomFor(reg, save, stash, { [key]: 1 }, pool.filter((d) => sealBiomeKey(d) === bk && (!differs || d.id !== def.id)).map((d) => d.id), parsed.tierId)) {
-        card.reason = SEAL_REFORGE_ROOM;
+        card.reason = SEAL_TEXT.reforgeRoom();
       } else card.can = true;
       v.rerolls.push(card);
     }
@@ -233,7 +233,7 @@ export function runReforgeHead(reg: ConfigRegistry, view: RunReforgeModel, stash
   return {
     // ⭐ С6: пошлина числом — согласие команды (`maxGold`): дороже сервер не возьмёт
     feeGold: cost,
-    fee: cost > 0 ? `Пошлина кузнеца: ${cost} золота` : null,
+    fee: cost > 0 ? tr('srv:reforge.fee', 'Пошлина кузнеца: {cost} золота', { cost }) : null,
     source: !stashLoaded ? RUN_REFORGE_TEXT.noStash : !view.off && view.cards.length > 0 ? RUN_REFORGE_TEXT.source : null,
   };
 }

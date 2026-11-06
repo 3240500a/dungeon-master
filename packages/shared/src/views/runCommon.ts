@@ -1,5 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
-import { Localizer, SOURCE_LANG, cfgKey, type Lang, type Locales } from '../i18n/index.js';
+import { SOURCE_LANG, type Lang, type Locales } from '../i18n/index.js';
+import { cfgText, withTextLang } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ С-views (29.10): ОБЩЕЕ ДЛЯ ВИДОВ ЗАБЕГА — то, что окна Unity считали «по-сишарпному» и что сервер обязан повторить
@@ -83,10 +84,9 @@ export function richEsc(s: string | null | undefined): string {
 /** Опции языка для всех видов забега. */
 export interface RunViewOptions {
   /**
-   * Язык игрока. ⚠ Сегодня окна забега Unity не зовут `DmI18n` вовсе — их фразы живут литералами, и `ui:`-ключей для
-   * них нет. Поэтому язык переводит только тексты КОНФИГА (имена биомов, тиров, печатей, статов) через `Localizer`
-   * и ключи `cfg:` — то же правило, что у предметов; фразы окна остаются русскими, пока для них не заведут ключи.
-   * Умолчание — язык-источник (`ru`): тогда вид бит в бит равен прежнему окну.
+   * Язык игрока. ⭐ i18n Ф1 (06.11): поле НЕОБЯЗАТЕЛЬНО и обычно не нужно — язык берётся из текущей области текста (`tr.ts`), которую сервер
+   * ставит на каждый путь игрока; и фразы окна (`tr`), и тексты конфига (`cfgText`) переводятся одной областью. Поле — явный язык поверх
+   * неё (редактор показывает окно на выбранном языке). Нет ни поля, ни области — язык-источник: вид бит в бит равен прежнему окну.
    */
   lang?: Lang;
 }
@@ -94,18 +94,20 @@ export interface RunViewOptions {
 /** Перевод одной строки конфига: `table/path/field` → текст на языке; нет перевода — исходник. */
 export type CfgText = (table: string, path: readonly string[], field: string, source: string | null | undefined) => string | null;
 
-/** Разрешитель строк конфига для языка. Язык-источник — без `Localizer` (исходник и есть ответ). */
+/**
+ * Разрешитель строк конфига для видов забега. ⭐ i18n Ф1 (06.11): ОДИН путь перевода текста конфига на все виды — `cfgText` текущей
+ * области; явный `opts.lang` лишь ставит область на время вызова (`withTextLang`).
+ */
 export function cfgTextOf(reg: ConfigRegistry | undefined, opts?: RunViewOptions): CfgText {
-  const lang = opts?.lang ?? SOURCE_LANG;
-  const pass: CfgText = (_t, _p, _f, source) => source ?? null;
-  if (!reg || lang === SOURCE_LANG) return pass;
-  let loc: Localizer;
+  const lang = opts?.lang;
+  if (lang === undefined) return (table, path, field, source) => (source == null ? null : cfgText(table, path, field, source));
+  let locales: Locales | undefined;
   try {
-    loc = new Localizer(reg.get('locales') as Locales, lang);
+    locales = reg && lang !== SOURCE_LANG ? reg.get('locales') as Locales : undefined;
   } catch {
-    return pass;
+    locales = undefined;
   }
-  return (table, path, field, source) => (source == null ? null : loc.text(cfgKey(table, path, field), source));
+  return (table, path, field, source) => (source == null ? null : withTextLang(locales, lang, () => cfgText(table, path, field, source)));
 }
 
 /** Цвета узлов забега (показ) — `WorldRules.NodeColors` Unity, веб `runLabels.RUN_NODE_COLOR`. */

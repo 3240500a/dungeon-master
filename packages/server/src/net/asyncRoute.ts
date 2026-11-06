@@ -1,4 +1,5 @@
 import type { Request, Response, RequestHandler, ErrorRequestHandler } from 'express';
+import { tr } from '@dm/shared';
 import { logThrottle } from './logThrottle.js';
 
 /**
@@ -13,7 +14,8 @@ export const ah = <P extends RouteParams = RouteParams>(
 ): RequestHandler<P> => (req, res) => {
   void fn(req as Request<P>, res).catch((e: unknown) => {
     warnHttp(e, 'отказ в обработчике');
-    if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
+    // ⭐ i18n Ф1 (ревизия 06.11): на языке запроса — `catch` идёт в области обработчика (`withRequestLang` маршрутов входа и ростера)
+    if (!res.headersSent) res.status(500).json({ error: tr('srv:http.internalError', 'Внутренняя ошибка') });
   });
 };
 

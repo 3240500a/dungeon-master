@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
-import { WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN } from '@dm/shared';
+import { WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, ROOM_CODE_LEN, type Locales, tr } from '@dm/shared';
 import { q, q1 } from '../db/pool.js';
 import { getCharacter } from '../db/db.js';
 import { limits } from '../net/rateLimit.js';
@@ -8,6 +8,7 @@ import { localCaller } from '../net/adminAccess.js';
 import { cachedJson } from '../net/cachedJson.js';
 import { logThrottle } from '../net/logThrottle.js';
 import { queryText } from '../net/asyncRoute.js';
+import { withRequestLang } from '../net/textScope.js';
 import { sessionUser, routePass } from '../net/authSession.js';
 import { liveNodes, liveClaim, claimChar, sweepNodes, type NodeRow, type NodeCounters } from './registry.js';
 import { COUNTER_METRICS } from '../net/metrics.js';
@@ -186,28 +187,30 @@ function withPass(url: string, token: string): string {
  */
 export function installGatewayRoutes(
   app: Express,
-  o: { canRead?: (req: Request) => boolean } = {},
+  o: { canRead?: (req: Request) => boolean; locales?: () => Locales | undefined } = {},
 ): void {
+  // ⭐ i18n Ф1 (06.11): отказы маршрута — на языке запроса (`lang` строки запроса или `Accept-Language`); таблицы нет — язык-источник
+  const locales = o.locales ?? ((): Locales | undefined => undefined);
   const canRead = o.canRead ?? ((req: Request): boolean => localCaller(req.headers, req.socket.remoteAddress, req.socket.remotePort));
   /**
    * Куда подключаться. Возвращает либо адрес ноды, либо место в очереди.
    * Клиент зовёт это ПЕРЕД открытием сокета и после каждого разрыва.
    */
-  app.get('/api/route', (req: Request, res: Response) => {
+  app.get('/api/route', withRequestLang(locales, (req: Request, res: Response) => {
     void (async () => {
       // ⭐ R4-21: СТРОКИ ЗАПРОСА — ДО БАЗЫ. Раньше `?charId=%00` (и такой же билет очереди) уходил в Postgres, тот отвергал
       // байт 0x00, и КАЖДЫЙ такой запрос любого вошедшего игрока давал 500 со стеком в логе — без лимита. Кривое — 4xx, базе
       // его не видать: токен — вид сессии, id героя — правило провода, билет — вид `randomUUID`, код комнаты — вид кода.
       const token = bearer(req);
-      if (!token || !WIRE_TOKEN_RE.test(token)) return res.status(401).json({ error: 'Требуется вход' });
+      if (!token || !WIRE_TOKEN_RE.test(token)) return res.status(401).json({ error: tr('srv:lobby.authRequired', 'Требуется вход') });
       // ⭐ R7-05: значение — только строкой (`queryText`): `?charId[toString]=1` разборщик express делает объектом, и `String()` на
       // нём бросал — 500 и стек в лог на каждый анонимный запрос (токен нужен лишь того вида, в базу до броска не ходили).
       const charId = queryText(req.query.charId);
-      if (charId === undefined || !WIRE_CHAR_ID_RE.test(charId)) return res.status(400).json({ error: 'Неверный id персонажа' });
+      if (charId === undefined || !WIRE_CHAR_ID_RE.test(charId)) return res.status(400).json({ error: tr('srv:account.badCharId', 'Неверный id персонажа') });
       const ticket = queryText(req.query.ticket);
-      if (ticket === undefined || (ticket && !TICKET_RE.test(ticket))) return res.status(400).json({ error: 'Неверный билет очереди' });
+      if (ticket === undefined || (ticket && !TICKET_RE.test(ticket))) return res.status(400).json({ error: tr('srv:route.badTicket', 'Неверный билет очереди') });
       const code = queryText(req.query.roomCode)?.toUpperCase();
-      if (code === undefined || (code && !ROOM_CODE_RE.test(code))) return res.status(400).json({ error: 'Неверный код комнаты' });
+      if (code === undefined || (code && !ROOM_CODE_RE.test(code))) return res.status(400).json({ error: tr('srv:route.badRoomCode', 'Неверный код комнаты') });
 
       // ⭐ R9-12: сессия — под бакетом сети адреса (`sessionUser`): потолок маршрута ниже держит аккаунт, то есть стоит ПОСЛЕ базы,
       // и поток случайных токенов правильного вида ходил в общую базу без предела.
@@ -216,19 +219,19 @@ export function installGatewayRoutes(
       // R4-21: каждый маршрут пишет закрепление героя в базу — не чаще потолка аккаунта.
       if (!limits.route.take(userId)) {
         res.setHeader('Retry-After', String(limits.route.retryAfterSec(userId)));
-        return res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
+        return res.status(429).json({ error: tr('srv:account.tooOften', 'Слишком часто. Попробуйте позже') });
       }
 
       const owned = await getCharacter(charId);
-      if (!owned || owned.userId !== userId) return res.status(403).json({ error: 'Персонаж недоступен' });
+      if (!owned || owned.userId !== userId) return res.status(403).json({ error: tr('srv:lobby.charUnavailable', 'Персонаж недоступен') });
 
       const nodes = await liveNodes();
-      if (!nodes.length) return res.status(503).json({ error: 'Игровые узлы недоступны' });
+      if (!nodes.length) return res.status(503).json({ error: tr('srv:route.noNodes', 'Игровые узлы недоступны') });
       settleIssued(nodes);   // E2E 27.09: поправка — до всех сумм ниже (потолок, самая свободная)
 
       // ⭐ R5-13: код комнаты — только полный (буква ноды + знаки, R4-18). Раньше хватало одной буквы: `?roomCode=A` отдавал
       // адрес первой ноды мимо очереди, а дальше вход без кода туда же.
-      if (code && code.length !== ROOM_CODE_LEN) return res.status(404).json({ error: 'Комната не найдена' });
+      if (code && code.length !== ROOM_CODE_LEN) return res.status(404).json({ error: tr('srv:lobby.noRoom', 'Комната не найдена') });
 
       // 1. Очередь: считаем ПЕРЕД закреплением, иначе место занимает тот, кого не пустили. ⭐ R5-13: и ПЕРЕД маршрутом по коду
       // — раньше он отдавал адрес ноды до проверки потолка, и очередь обходилась входом «к другу».
@@ -273,7 +276,7 @@ export function installGatewayRoutes(
           return res.json({ url: withPass(byLetter.url, token), node: byLetter.id, reason: 'по коду комнаты' });
         }
         if (mine) dropIssued(mine);
-        return res.status(404).json({ error: 'Комната не найдена: узел не отвечает' });
+        return res.status(404).json({ error: tr('srv:route.roomNodeDown', 'Комната не найдена: узел не отвечает') });
       }
 
       // 3. Свой персонаж возвращается на свою ноду; новый — на самую свободную. Засчитано до ожидания закрепления: выбор
@@ -286,9 +289,9 @@ export function installGatewayRoutes(
       res.json({ url: withPass(target.url, token), node: target.id, reason: target.id === free.id ? 'самая свободная' : 'закреплён за узлом' });
     })().catch((e: unknown) => {
       warnRoute(e);
-      if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
+      if (!res.headersSent) res.status(500).json({ error: tr('srv:route.internalError', 'Внутренняя ошибка') });
     });
-  });
+  }));
 
   /**
    * Состояние кластера — для мониторинга и стенда.

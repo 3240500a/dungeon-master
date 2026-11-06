@@ -1,3 +1,4 @@
+import { tr } from '../i18n/tr.js';
 /**
  * ⭐ С-views (29.10): НАБЛЮДЕНИЕ ЗА СОЮЗНИКОМ ПОСЛЕ СМЕРТИ — за кем камера и подпись.
  *
@@ -11,7 +12,7 @@ export interface RunSpectPlayer { id: string; alive: boolean; name?: string | nu
 
 /** Подпись (C# `Spectate.Hint`): безымянный союзник — «союзник». */
 export function runSpectateHint(name: string | null | undefined): string {
-  return `💀 Наблюдаете за ${name ? name : 'союзник'} · Tab — сменить`;
+  return tr('srv:spectate.hint', '💀 Наблюдаете за {name} · Tab — сменить', { name: name ? name : tr('srv:spectate.ally', 'союзник') });
 }
 
 /** Кадр мира (C# `Spectate.Frame`): выбранный союзник, фокус камеры и подпись (null — подписи нет). */

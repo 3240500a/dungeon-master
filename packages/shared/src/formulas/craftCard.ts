@@ -6,6 +6,7 @@ import { attackByType, estimateAttack } from './playerCombat.js';
 import { createRng } from './rng.js';
 import { statusKindOf } from './craft.js';
 import { STATUS_CHANCE_CAP, statusChance } from '../world/debuffs.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * КАРТОЧКА ОРУЖИЯ — «всё, что у нас есть» о вещи в руках конкретного героя (docs/CRAFT_WEAPONS.md,
@@ -78,8 +79,14 @@ export interface WeaponCard {
 }
 
 const DEBUFF_NAME: Record<string, string> = {
-  wound: 'рана', bleed: 'кровотечение', sunder: 'увечье', daze: 'ошеломление',
-  burn: 'поджиг', poison: 'отравление', shock: 'шок', freeze: 'заморозка',
+  get wound() { return tr('srv:status.wound', 'рана'); },
+  get bleed() { return tr('srv:status.bleed', 'кровотечение'); },
+  get sunder() { return tr('srv:status.sunder', 'увечье'); },
+  get daze() { return tr('srv:status.daze', 'ошеломление'); },
+  get burn() { return tr('srv:status.burn', 'поджиг'); },
+  get poison() { return tr('srv:status.poison', 'отравление'); },
+  get shock() { return tr('srv:status.shock', 'шок'); },
+  get freeze() { return tr('srv:status.freeze', 'заморозка'); },
 };
 
 /**

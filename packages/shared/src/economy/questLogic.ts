@@ -8,6 +8,7 @@ import { isSafeKey, shapeFoundWeapon } from '../formulas/craft.js';
 import { addToInventory, hasSpace } from '../inventory/grid.js';
 import { creditEarned, gainXp } from './progression.js';
 import type { ActionResult } from './townActions.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * АВТОРИТЕТНАЯ логика квестов над `SaveState` — чистая, для сервера (клиент лишь
@@ -35,17 +36,40 @@ export function questFromTemplate(tpl: RandomQuestTemplate, rng: Rng, uid: strin
     xp: rng.int(tpl.rewardXpRange[0], tpl.rewardXpRange[1]),
     itemBaseId: items?.length ? rng.pick(items) : undefined,
   };
-  const label =
-    tpl.objectiveType === 'kill' ? `Уничтожить ${amount} (${target})`
-      : tpl.objectiveType === 'reach-floor' ? `Достичь этажа ${amount}`
-        : `Собрать ${amount} (${target})`;
   return {
     id: `rnd_${tpl.id}_${uid}`,
-    name: label,
-    description: 'Случайное задание с доски.',
+    name: boardQuestName(tpl.objectiveType, amount, target),
+    description: BOARD_QUEST_DESC,
     objectives: [{ id: 'o1', type: tpl.objectiveType, target, amount }],
     reward,
   };
+}
+
+/** Описание задания доски — языком-источником (печётся в сейв; показ — `boardQuestText`). */
+export const BOARD_QUEST_DESC = 'Случайное задание с доски.';
+
+/**
+ * Имя задания доски языком-источником: его ПЕЧЁТ `questFromTemplate` в определение задания, а то уезжает в сейв (`activeQuestDefs`).
+ * ⭐ i18n Ф2 (06.11): вынесено, чтобы показ (`boardQuestText`) сверял испечённое имя с тем же рецептом, а не угадывал по тексту.
+ */
+export function boardQuestName(type: string, amount: number, target: string | undefined): string {
+  return type === 'kill' ? `Уничтожить ${amount} (${target})`
+    : type === 'reach-floor' ? `Достичь этажа ${amount}`
+      : `Собрать ${amount} (${target})`;
+}
+
+/**
+ * ⭐ i18n Ф2 (06.11): имя и описание задания доски НА ЯЗЫКЕ ОБЛАСТИ — для показа. `def` не с доски или его имя собрано не этим рецептом
+ * (правленый сейв, задание старше рецепта) — `undefined`: показ берёт испечённое как есть.
+ */
+export function boardQuestText(def: QuestDef): { name: string; description: string } | undefined {
+  const o = def.objectives[0];
+  if (boardTemplateOf(def.id) === undefined || !o || boardQuestName(o.type, o.amount, o.target) !== def.name) return undefined;
+  const p = { amount: o.amount, target: o.target };
+  const name = o.type === 'kill' ? tr('srv:quest.boardKill', 'Уничтожить {amount} ({target})', p)
+    : o.type === 'reach-floor' ? tr('srv:quest.boardFloor', 'Достичь этажа {amount}', p)
+      : tr('srv:quest.boardCollect', 'Собрать {amount} ({target})', p);
+  return { name, description: def.description === BOARD_QUEST_DESC ? tr('srv:quest.boardDesc', BOARD_QUEST_DESC) : def.description };
 }
 
 /**
@@ -96,7 +120,7 @@ function boardTime(q: BoardQuota): number {
  * катанные в пределах срока друг от друга, по-прежнему дают одно задание шаблона на всех.
  */
 export function acceptQuest(save: SaveState, def: QuestDef, quota?: BoardQuota, replace = false): ActionResult {
-  if (save.quests.some((q) => q.questId === def.id)) return { ok: false, reason: 'Уже принят' };
+  if (save.quests.some((q) => q.questId === def.id)) return { ok: false, reason: tr('srv:quest.alreadyTaken', 'Уже принят') };
   const board = boardTemplateOf(def.id);
   const tpl = quota ? board : undefined;
   const at = quota ? boardTime(quota) : 0;
@@ -107,19 +131,20 @@ export function acceptQuest(save: SaveState, def: QuestDef, quota?: BoardQuota, 
     const near = (t: number | undefined): boolean => typeof t === 'number' && Math.abs(at - t) < quota.windowMs;
     const recent = near(save.boardQuota?.[tpl])
       || save.quests.some((q) => boardTemplateOf(q.questId) === tpl && near(q.boardAt ?? q.acceptedAt));
-    if (recent) return { ok: false, reason: 'Такое задание уже взято — доска обновится позже' };
+    if (recent) return { ok: false, reason: tr('srv:quest.boardTaken', 'Такое задание уже взято — доска обновится позже') };
   }
   // ⚠ R5-20: от шаблона в журнале — ОДНО задание. Выполненное, но не сданное, держит место: новое поколение его бы
   // вытеснило вместе с наградой.
   const done = board !== undefined ? save.quests.find((q) => q.status === 'completed' && boardTemplateOf(q.questId) === board) : undefined;
   if (done) {
-    const name = save.activeQuestDefs.find((d) => d.id === done.questId)?.name ?? done.questId;
-    return { ok: false, reason: `Сначала сдай «${name}» — задание этого вида уже выполнено` };
+    const was = save.activeQuestDefs.find((d) => d.id === done.questId);
+    const name = was ? boardQuestText(was)?.name ?? was.name : done.questId;   // ⭐ i18n Ф2: имя задания — на языке игрока
+    return { ok: false, reason: tr('srv:quest.turnInFirst', 'Сначала сдай «{name}» — задание этого вида уже выполнено', { name }) };
   }
   // ⚠ R6-13: НАЧАТОЕ задание того же вида вытесняется только с согласия игрока (`replace` — клиент спросил): R5-20 стирало
   // его молча, вместе с прогрессом и наградой («11 из 12» — и нет). Не начатое вытесняется, как и прежде: терять нечего.
   const rival = replace ? undefined : questRival(save, def);
-  if (rival) return { ok: false, reason: `У тебя уже есть задание этого вида: «${rival.name}» (${rival.progress}) — его прогресс пропал бы` };
+  if (rival) return { ok: false, reason: tr('srv:quest.rivalProgress', 'У тебя уже есть задание этого вида: «{name}» ({progress}) — его прогресс пропал бы', { name: rival.name, progress: rival.progress }) };
   // ── Проверки позади ──
   pruneBoardQuests(save);
   if (board !== undefined) supersede(save, board);
@@ -146,7 +171,7 @@ export function questRival(save: SaveState, def: QuestDef): { questId: string; n
   if (!q) return undefined;
   const d = defOf(save, q.questId);
   const progress = d ? d.objectives.map((o) => `${q.counters[o.id] ?? 0}/${o.amount}`).join(', ') : '';
-  return { questId: q.questId, name: d?.name ?? q.questId, progress };
+  return { questId: q.questId, name: d ? boardQuestText(d)?.name ?? d.name : q.questId, progress };   // ⭐ i18n Ф2: имя — на языке игрока
 }
 
 /** Поколение доски убранного задания шаблона — в квоту (наибольшее). Кривое время или ключ — не пишем. */
@@ -280,8 +305,8 @@ export interface TurnInResult extends ActionResult {
 export function turnInQuest(reg: ConfigRegistry, save: SaveState, questId: string): TurnInResult {
   const prog = save.quests.find((q) => q.questId === questId);
   const def = defOf(save, questId);
-  if (!prog || !def) return { ok: false, reason: 'Квест не найден' };
-  if (prog.status !== 'completed') return { ok: false, reason: 'Ещё не выполнен' };
+  if (!prog || !def) return { ok: false, reason: tr('srv:quest.notFound', 'Квест не найден') };
+  if (prog.status !== 'completed') return { ok: false, reason: tr('srv:quest.notDone', 'Ещё не выполнен') };
 
   const r = def.reward;
   // Вещь награды — ДО любой выдачи: нет места, значит отказ целиком, и квест ждёт сдачи. Раньше результат
@@ -293,7 +318,7 @@ export function turnInQuest(reg: ConfigRegistry, save: SaveState, questId: strin
     ? itemFromBaseId(reg.get('items.base'), r.itemBaseId, reg.get('item-tiers'), 'quest') : null;
   const item = raw ? shapeFoundWeapon(reg, raw) : null;
   const dims = reg.get('balance').inventory;
-  if (item && !hasSpace(save.inventory, item.gridW, item.gridH, dims)) return { ok: false, reason: 'Нет места для награды' };
+  if (item && !hasSpace(save.inventory, item.gridW, item.gridH, dims)) return { ok: false, reason: tr('srv:quest.noRoomReward', 'Нет места для награды') };
   // ⚠ C-02: награда — целое не меньше нуля. Схема её теперь так и держит, но задание, принятое до правки схемы, лежит в сейве со
   // своей наградой (`activeQuestDefs`): «−450 золота» с доски или «0.5 очка» цепочки ушли бы в золото и очки как есть.
   const gold = rewardCount(r.gold), sp = rewardCount(r.skillPoints), xp = rewardCount(r.xp);

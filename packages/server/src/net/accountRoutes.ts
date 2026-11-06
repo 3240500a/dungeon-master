@@ -1,6 +1,6 @@
-import express, { type Express, type Request, type Response } from 'express';
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { newCharacterSave, isWireText, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, type ConfigRegistry } from '@dm/shared';
+import { newCharacterSave, isWireText, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, type ConfigRegistry, type Locales, tr } from '@dm/shared';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, countRecentRegistrations,
@@ -8,6 +8,7 @@ import {
 } from '../db/db.js';
 import { limits, known, clientIp, ipBucket, netTiers, NET_WIDEN, scryptGate } from './rateLimit.js';
 import { ah } from './asyncRoute.js';
+import { withRequestLang } from './textScope.js';
 import { sessionUser, noteSession, sessionKey } from './authSession.js';
 import { deviceToken, deviceOk } from './deviceToken.js';
 
@@ -67,10 +68,10 @@ export function parseCreds(body: unknown, mode: 'register' | 'login'): Parsed<{ 
   const b = body as { username?: unknown; password?: unknown } | null | undefined;
   const username = typeof b?.username === 'string' ? b.username.trim() : '';
   const password = typeof b?.password === 'string' ? b.password : '';
-  if (!isWireText(username)) return bad(400, 'Ник содержит недопустимые символы');
-  if (mode === 'register' && !isWireText(password)) return bad(400, 'Пароль содержит недопустимые символы');
+  if (!isWireText(username)) return bad(400, tr('srv:account.badNick', 'Ник содержит недопустимые символы'));
+  if (mode === 'register' && !isWireText(password)) return bad(400, tr('srv:account.badPassword', 'Пароль содержит недопустимые символы'));
   const sized = username.length >= USERNAME_MIN && username.length <= USERNAME_MAX && password.length >= PASSWORD_MIN && password.length <= PASSWORD_MAX;
-  if (!sized) return bad(422, mode === 'register' ? 'Ник 3–20 символов, пароль от 6' : 'Неверные данные');
+  if (!sized) return bad(422, mode === 'register' ? tr('srv:account.credsSize', 'Ник 3–20 символов, пароль от 6') : tr('srv:account.badData', 'Неверные данные'));
   return { ok: true, value: { username, password } };
 }
 
@@ -79,8 +80,8 @@ export function parseNewCharacter(body: unknown): Parsed<{ name: string; classId
   const b = body as { classId?: unknown; name?: unknown } | null | undefined;
   const classId = typeof b?.classId === 'string' ? b.classId : '';
   const name = (typeof b?.name === 'string' ? b.name : '').trim();
-  if (!isWireText(name)) return bad(400, 'Имя содержит недопустимые символы');
-  if (!name || name.length > CHAR_NAME_MAX) return bad(422, `Имя 1–${CHAR_NAME_MAX} символов`);
+  if (!isWireText(name)) return bad(400, tr('srv:account.badName', 'Имя содержит недопустимые символы'));
+  if (!name || name.length > CHAR_NAME_MAX) return bad(422, tr('srv:account.nameSize', 'Имя 1–{max} символов', { max: CHAR_NAME_MAX }));
   return { ok: true, value: { name, classId } };
 }
 
@@ -110,16 +111,20 @@ export async function requireAuth(req: Request, res: Response): Promise<string |
 
 export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }): void {
   const { config } = o;
+  // ⭐ i18n Ф1 (06.11): ответы аккаунта (отказы входа, регистрации, ростера) — на языке запроса: поле `lang` или `Accept-Language`
+  // (`any` — обёртка не смотрит в параметры маршрута: тип обработчика остаётся его)
+  const inLang = <H extends (req: any, res: Response, next: NextFunction) => unknown>(h: H): H =>
+    withRequestLang(() => config.get('locales') as Locales, h) as H;
 
   // ── Аутентификация ───────────────────────────────────────────────────────────
-  app.post('/api/register', accountJson, ah(async (req, res) => {
+  app.post('/api/register', accountJson, inLang(ah(async (req, res) => {
     // Ф0.5: без лимита один скрипт кладёт сервер регистрациями — каждая это scrypt (~100 мс CPU
     // и десятки мегабайт). Ключ — IP; заголовок прокси учитывается, если он есть.
     const ip = clientIp(req.headers, req.socket.remoteAddress);
     const net = ipBucket(ip);   // R5-25: ключ лимита — сеть адреса (IPv6 — /64), а не адрес: смена адреса бакет не обнуляет
     const tooMany = (limiter: typeof limits.register, key = net): Response => {
       res.setHeader('Retry-After', String(limiter.retryAfterSec(key)));
-      return res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
+      return res.status(429).json({ error: tr('srv:account.tooOften', 'Слишком часто. Попробуйте позже') });
     };
     // ⭐ R11-08: СПЕРВА РАЗБОР — он бесплатен. Раньше бакет регистрации (`register`: 5 подряд, дальше 1 в 30 с) списывался ДО всего,
     // и его платило любое тело: аноним с `{}` раз в 30 с за общим NAT (оператор, общежитие, офис) закрывал регистрацию всем соседям.
@@ -132,7 +137,7 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     // не быстрее этого бакета.
     if (known.names.has(who)) {
       if (!limits.registerLookup.take(`k:${net}`)) return tooMany(limits.registerLookup, `k:${net}`);
-      return res.status(409).json({ error: 'Ник уже занят' });
+      return res.status(409).json({ error: tr('srv:account.nickTaken', 'Ник уже занят') });
     }
     // Бакет регистрации пуст — дальше scrypt всё равно не будет: отказ до базы (поток заявок в свободные ники базу не гоняет).
     if (!limits.register.peek(net)) return tooMany(limits.register);
@@ -148,17 +153,17 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
       for (let i = 0; i < nets.length; i++) {
         if (await countRecentRegistrations(nets[i]!) < MAX_ACCOUNTS_PER_IP * NET_WIDEN[i]!) continue;
         console.warn(`[dm-server] потолок регистраций с сети ${nets[i]}`);
-        return res.status(429).json({ error: 'С этого адреса сегодня создано слишком много аккаунтов' });
+        return res.status(429).json({ error: tr('srv:account.tooManyAccounts', 'С этого адреса сегодня создано слишком много аккаунтов') });
       }
     }
-    if (await getUserByName(username)) { known.names.add(who); return res.status(409).json({ error: 'Ник уже занят' }); }
+    if (await getUserByName(username)) { known.names.add(who); return res.status(409).json({ error: tr('srv:account.nickTaken', 'Ник уже занят') }); }
     limits.registerLookup.refund(net);
     // ⭐ R11-08: бакет регистрации — только перед самим scrypt; ⭐ R11-01: и общий бюджет scrypt процесса (`scryptGate`).
     if (!limits.register.take(net)) return tooMany(limits.register);
     if (!scryptGate.admit()) {
       limits.register.refund(net);
       res.setHeader('Retry-After', String(scryptGate.retryAfterSec()));
-      return res.status(503).json({ error: 'Сервер занят. Попробуйте через несколько секунд' });
+      return res.status(503).json({ error: tr('srv:account.busy', 'Сервер занят. Попробуйте через несколько секунд') });
     }
     let pass: { hash: string; salt: string };
     try { pass = await hashPassword(password); } finally { scryptGate.done(); }
@@ -167,9 +172,9 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     const token = await createSession(userId);
     noteSession(token, userId);    // R10-04: сессию завёл этот процесс — бакет адреса ей не нужен
     res.json({ token, userId, username, device: deviceToken(who) });   // R11-05: токен устройства — вход мимо бакета адреса
-  }));
+  })));
 
-  app.post('/api/login', accountJson, ah(async (req, res) => {
+  app.post('/api/login', accountJson, inLang(ah(async (req, res) => {
     // Ф0.5: тот же scrypt плюс защита от перебора пароля. Успешный вход обнуляет счётчик НИКА — человек, промахнувшийся
     // пару раз, не должен потом ждать. ⭐ R9-10: а бакету адреса — лишь возвращает свой токен (см. ниже).
     // ⭐ R7-13: бакет СЕТИ АДРЕСА платит только НЕВЕРНЫЙ ПАРОЛЬ (scrypt — то, от чего он и стоит), а спрашивается — до scrypt,
@@ -180,7 +185,7 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     const net = ipBucket(clientIp(req.headers, req.socket.remoteAddress));   // R5-25: сеть адреса (IPv6 — /64)
     const tooMany = (limiter: { retryAfterSec(key: string): number }, key: string): Response => {
       res.setHeader('Retry-After', String(limiter.retryAfterSec(key)));
-      return res.status(429).json({ error: 'Слишком много попыток входа. Попробуйте позже' });
+      return res.status(429).json({ error: tr('srv:account.tooManyLogins', 'Слишком много попыток входа. Попробуйте позже') });
     };
     const creds = parseCreds(req.body, 'login');
     if (!creds.ok) return res.status(creds.status).json({ error: creds.error });
@@ -199,7 +204,7 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     if (!limits.loginLookup.take(lookupKey)) return tooMany(limits.loginLookup, lookupKey);
     const user = await getUserByName(username);
     // R7-13: героя с таким ником нет — сверять нечего: ни scrypt, ни бакета входа (бакет ника на каждый мусорный ник рос бы без конца).
-    if (!user) { known.names.delete(who); return res.status(401).json({ error: 'Неверный логин или пароль' }); }
+    if (!user) { known.names.delete(who); return res.status(401).json({ error: tr('srv:account.badLogin', 'Неверный логин или пароль') }); }
     limits.loginLookup.refund(lookupKey);
     known.names.add(who);
     // ⭐ R11-05: БАКЕТЫ НИКА — РАНЬШЕ БАКЕТА АДРЕСА. Раньше адрес списывался первым, и попытка, которой отказал потолок ника, всё равно
@@ -227,13 +232,13 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
       nick.refund(who); limits.loginOk.refund(who);
       if (!device) limits.login.refund(net);
       res.setHeader('Retry-After', String(scryptGate.retryAfterSec()));
-      return res.status(503).json({ error: 'Сервер занят. Попробуйте через несколько секунд' });
+      return res.status(503).json({ error: tr('srv:account.busy', 'Сервер занят. Попробуйте через несколько секунд') });
     }
     let ok: boolean;
     try { ok = await verifyPassword(password, user.passHash, user.passSalt); } finally { scryptGate.done(); }
     if (!ok) {
       limits.loginOk.refund(who);
-      return res.status(401).json({ error: 'Неверный логин или пароль' });
+      return res.status(401).json({ error: tr('srv:account.badLogin', 'Неверный логин или пароль') });
     }
     // ⭐ R9-10: бакету адреса — только СВОЙ токен назад, а не весь бакет. Раньше здесь был `reset`: вход в собственный аккаунт
     // (регистрация даёт их пять на сеть в сутки) стирал все неудачи адреса — девять неверных паролей к чужим никам, один верный
@@ -244,21 +249,21 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     const token = await createSession(user.id);
     noteSession(token, user.id);   // R10-04: сессию завёл этот процесс — бакет адреса ей не нужен
     res.json({ token, userId: user.id, username: user.username, device: deviceToken(who) });
-  }));
+  })));
 
   /**
    * Ф3.4: выйти на ВСЕХ устройствах. Единственный способ обезвредить уведённый токен, не дожидаясь
    * его срока. Сюда же должна звать смена пароля, когда она появится: пароль сменили, а старые
    * сессии продолжают играть — это не защита.
    */
-  app.post('/api/logout-all', ah(async (req, res) => {
+  app.post('/api/logout-all', inLang(ah(async (req, res) => {
     const userId = await requireAuth(req, res); if (!userId) return;
     const n = await deleteSessionsOfUser(userId);
     console.log(`[dm-server] отозваны все сессии пользователя ${userId}: ${n}`);
     res.json({ ok: true, revoked: n });
-  }));
+  })));
 
-  app.post('/api/logout', ah(async (req, res) => {
+  app.post('/api/logout', inLang(ah(async (req, res) => {
     const token = bearer(req);
     // Токен не того вида сессией не бывает — удалять нечего, в базу незачем (R4-02).
     if (isSessionToken(token)) {
@@ -270,50 +275,50 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
       const net = ipBucket(clientIp(req.headers, req.socket.remoteAddress));
       if (!familiar && !limits.authIp.take(net)) {
         res.setHeader('Retry-After', String(limits.authIp.retryAfterSec(net)));
-        return res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
+        return res.status(429).json({ error: tr('srv:account.tooOften', 'Слишком часто. Попробуйте позже') });
       }
       known.sessions.delete(key);
       if (await deleteSession(token) && !familiar) limits.authIp.refund(net);
     }
     res.json({ ok: true });
-  }));
+  })));
 
   // ── Персонажи (принадлежат пользователю) ───────────────────────────────────────
-  app.get('/api/characters', ah(async (req, res) => {
+  app.get('/api/characters', inLang(ah(async (req, res) => {
     const userId = await requireAuth(req, res); if (!userId) return;
     res.json({ characters: await listCharacters(userId) });
-  }));
+  })));
 
-  app.post('/api/characters', accountJson, ah(async (req, res) => {
+  app.post('/api/characters', accountJson, inLang(ah(async (req, res) => {
     // R4-02: имя — до базы, даже до проверки сессии: сейв героя (jsonb) с U+0000 или непарным суррогатом база не примет.
     const parsed = parseNewCharacter(req.body);
     if (!parsed.ok) return res.status(parsed.status).json({ error: parsed.error });
     const { name, classId } = parsed.value;
-    if (!config.get('classes').some((c) => c.id === classId && c.enabled !== false)) return res.status(422).json({ error: 'Неизвестный или отключённый класс' });
+    if (!config.get('classes').some((c) => c.id === classId && c.enabled !== false)) return res.status(422).json({ error: tr('srv:account.unknownClass', 'Неизвестный или отключённый класс') });
     const userId = await requireAuth(req, res); if (!userId) return;
     // R3-04: круг «создал → переложил стартовый комплект → удалил» — не чаще лимита (сам комплект ничего не стоит).
     // ⭐ R11-06: лимит — ДО подсчёта героев в базе (раньше подсчёт шёл первым, и поток запросов при полном ростере гнал его без
     // предела); отказ «ростер полон» токен возвращает — героя не создали.
     if (!limits.charCreate.take(userId)) {
       res.setHeader('Retry-After', String(limits.charCreate.retryAfterSec(userId)));
-      return res.status(429).json({ error: 'Слишком часто создаёте героев. Попробуйте позже' });
+      return res.status(429).json({ error: tr('srv:account.tooManyHeroes', 'Слишком часто создаёте героев. Попробуйте позже') });
     }
-    const full = (): Response => { limits.charCreate.refund(userId); return res.status(409).json({ error: `Лимит ${MAX_CHARS} персонажей` }); };
+    const full = (): Response => { limits.charCreate.refund(userId); return res.status(409).json({ error: tr('srv:account.heroLimit', 'Лимит {max} персонажей', { max: MAX_CHARS }) }); };
     if (await countCharacters(userId) >= MAX_CHARS) return full();
     const charId = randomUUID();
     const save = newCharacterSave(config, classId, name, charId); // авторитетный стартовый сейв
     // R4-30: подсчёт выше — быстрый отказ; потолок держит сама запись (параллельные запросы подсчёт проходят все).
     if (await createCharacter(charId, userId, save, MAX_CHARS) === null) return full();
     res.json({ character: { charId, name: save.name, classId: save.classId, level: save.level } });
-  }));
+  })));
 
-  app.delete('/api/characters/:charId', ah<{ charId: string }>(async (req, res) => {
+  app.delete('/api/characters/:charId', inLang(ah<{ charId: string }>(async (req, res) => {
     // R4-02: id из пути — до базы (`%00` раньше доезжал до Postgres и отвечал 500).
-    if (!isCharId(req.params.charId)) return res.status(400).json({ error: 'Неверный id персонажа' });
+    if (!isCharId(req.params.charId)) return res.status(400).json({ error: tr('srv:account.badCharId', 'Неверный id персонажа') });
     const userId = await requireAuth(req, res); if (!userId) return;
     const ch = await getCharacter(req.params.charId);
-    if (!ch || ch.userId !== userId) return res.status(404).json({ error: 'Персонаж не найден' });
+    if (!ch || ch.userId !== userId) return res.status(404).json({ error: tr('srv:account.charNotFound', 'Персонаж не найден') });
     await deleteCharacter(req.params.charId, userId);
     res.json({ ok: true });
-  }));
+  })));
 }

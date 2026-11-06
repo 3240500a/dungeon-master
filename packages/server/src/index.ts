@@ -6,7 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
-import { CONFIG_GAME_REV_HEADER, CONFIG_REV_HEADER, ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
+import { CONFIG_GAME_REV_HEADER, CONFIG_REV_HEADER, ConfigRegistry, configSchemas, type ConfigKey, type Locales } from '@dm/shared';
 import { configWatcher } from './configWatch.js';
 import { startConfigSync } from './configSync.js';
 import { liveConfig } from './configLive.js';
@@ -29,6 +29,7 @@ import { installInternalRoutes, internalReader, drainProcess, installCrashDrain,
 import { installStatic } from './net/staticRoutes.js';
 import { listenWithRetry } from './net/listen.js';
 import { installAccountRoutes, bearer, isCharId } from './net/accountRoutes.js';
+import { installTextScope } from './net/textScope.js';
 import { sessionUser, primeKnown, setRoutePassKey } from './net/authSession.js';
 import { setDeviceKey } from './net/deviceToken.js';
 import { limits } from './net/rateLimit.js';
@@ -527,6 +528,9 @@ app.get('/api/dev/characters/:charId', ah<{ charId: string }>(async (req, res) =
 
 // ── Аккаунты и ростер героев: `/api/register|login|logout|logout-all`, `/api/characters` — `net/accountRoutes.ts`
 // (R4-02: строки запроса проверяются правилом провода ДО базы). Регистрируются ЗДЕСЬ — до раздачи статики ниже.
+// ⭐ i18n Ф1 (06.11): область языка игрока — один раз на процесс (AsyncLocalStorage): тексты сервера (виды, отказы, ответы входа) собираются
+// на языке того, для кого они (`net/textScope.ts`). Модуль ставит её и сам при загрузке; здесь — явно, до первого маршрута.
+installTextScope();
 installAccountRoutes(app, { config });
 
 /**
@@ -606,7 +610,8 @@ if (ROLE === 'gateway' || ROLE === 'single') {
   const { initClusterSchema } = await import('./cluster/registry.js');
   await initClusterSchema();
   // R6-20: состояние кластера читается по правилу `/metrics` — с самой машины или ключом чтения метрик.
-  installGatewayRoutes(app, { canRead: internalReader({ nodeId: process.env.DM_NODE_ID ?? 'node-0' }) });
+  // ⭐ i18n Ф1 (06.11): отказы маршрута — на языке игрока (таблица `locales` живого конфига)
+  installGatewayRoutes(app, { canRead: internalReader({ nodeId: process.env.DM_NODE_ID ?? 'node-0' }), locales: () => config.get('locales') as Locales });
 }
 
 // ⭐ 08.10 (Д1): релизы контента режет гейтвей (и одиночный процесс) — тот, кто принимает правки редакторов. Первый релиз — сразу после старта:

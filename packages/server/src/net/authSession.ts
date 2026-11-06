@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { WIRE_TOKEN_RE } from '@dm/shared';
+import { WIRE_TOKEN_RE, tr } from '@dm/shared';
 import { getSession, listLiveSessions, listUsernames } from '../db/db.js';
 import { limits, known, clientIp, ipBucket, type RateLimiter } from './rateLimit.js';
 
@@ -99,13 +99,14 @@ export async function primeKnown(o: { names?: boolean } = {}): Promise<{ session
 export async function sessionUser(
   req: Request, res: Response, token: string | null, perAccount: RateLimiter = limits.account,
 ): Promise<string | null> {
-  if (typeof token !== 'string' || !WIRE_TOKEN_RE.test(token)) { res.status(401).json({ error: 'Требуется вход' }); return null; }
+  // ⭐ i18n Ф1 (ревизия 06.11): отказы — на языке запроса (ростер, выход, маршрут гейтвея идут в области `withRequestLang`; вне её — источник)
+  if (typeof token !== 'string' || !WIRE_TOKEN_RE.test(token)) { res.status(401).json({ error: tr('srv:account.authRequired', 'Требуется вход') }); return null; }
   const key = sessionKey(token);
   const seen = known.sessions.get(key);
   const net = ipBucket(clientIp(req.headers, req.socket.remoteAddress));
   const tooMany = (retrySec: number): null => {
     res.setHeader('Retry-After', String(retrySec));
-    res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
+    res.status(429).json({ error: tr('srv:account.tooOften', 'Слишком часто. Попробуйте позже') });
     return null;
   };
   if (seen !== undefined) {
@@ -120,7 +121,7 @@ export async function sessionUser(
     if (seen !== undefined) perAccount.refund(seen);   // база не ответила — запрос ответа не получил, потолок аккаунта не платит
     throw e;
   }
-  if (!userId) { known.sessions.delete(key); res.status(401).json({ error: 'Требуется вход' }); return null; }
+  if (!userId) { known.sessions.delete(key); res.status(401).json({ error: tr('srv:account.authRequired', 'Требуется вход') }); return null; }
   known.sessions.add(key, userId);
   if (seen === undefined) {
     limits.authIp.refund(net);

@@ -4,8 +4,9 @@ import type { AccountStash } from '../types/stash.js';
 import { ESSENCE_FAMILY } from '../formulas/salvage.js';
 import { MATERIAL_STEPS, materialId } from '../formulas/craft.js';
 import { addToWallet, availableMaterials, canAffordBoth, spendBoth } from './materials.js';
-import { describeCost, materialsRaised, priceRaised, PRICE_CHANGED, type ActionResult } from './townActions.js';
+import { describeCost, materialsRaised, priceRaised, type ActionResult } from './townActions.js';
 import { gradeRoman } from './salvagePreview.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /**
  * ⭐ ОБМЕН СЫРЬЯ У КУЗНЕЦА («Обмен», решение владельца 06.10): отдаёшь сырьё семьи F — получаешь ТОТ ЖЕ сорт семьи F′. Курс
@@ -73,9 +74,9 @@ export function exchangeUnitGold(reg: ConfigRegistry, grade: number, toId: strin
 /** Сырьё, которое можно отдать: известное конфигу, не эссенция. */
 export function exchangeSource(reg: ConfigRegistry, fromId: string): { ok: boolean; reason?: string; family?: string; grade?: number; name?: string } {
   const def = reg.get('craft-materials').find((m) => m.id === fromId);
-  if (!def) return { ok: false, reason: 'Кузнец не знает такого сырья' };
-  if (def.family === ESSENCE_FAMILY) return { ok: false, reason: 'Эссенцию не меняют — это валюта чар' };
-  return { ok: true, family: def.family, grade: def.tier, name: def.name };
+  if (!def) return { ok: false, reason: tr('srv:exchange.unknownMaterial', 'Кузнец не знает такого сырья') };
+  if (def.family === ESSENCE_FAMILY) return { ok: false, reason: tr('srv:exchange.essenceNo', 'Эссенцию не меняют — это валюта чар') };
+  return { ok: true, family: def.family, grade: def.tier, name: cfgRowText(reg, 'craft-materials', def) };
 }
 
 /**
@@ -93,8 +94,9 @@ export function exchangeTargets(reg: ConfigRegistry, fromId: string): { family: 
     seen.add(m.family);
     const id = materialId(m.family, src.grade!);
     const def = mats.find((x) => x.id === id);
-    if (!def) { out.push({ family: m.family, id, name: id, ok: false, reason: `у семьи нет ${gradeRoman(src.grade!)} сорта` }); continue; }
-    out.push(def.enabled ? { family: m.family, id, name: def.name, ok: true } : { family: m.family, id, name: def.name, ok: false, reason: `«${def.name}» ещё не в игре` });
+    if (!def) { out.push({ family: m.family, id, name: id, ok: false, reason: tr('srv:exchange.noGrade', 'у семьи нет {grade} сорта', { grade: gradeRoman(src.grade!) }) }); continue; }
+    const name = cfgRowText(reg, 'craft-materials', def);
+    out.push(def.enabled ? { family: m.family, id, name, ok: true } : { family: m.family, id, name, ok: false, reason: tr('srv:exchange.notLive', '«{name}» ещё не в игре', { name }) });
   }
   return out;
 }
@@ -108,21 +110,21 @@ export function exchangeQuote(
 ): ExchangeQuote {
   const base: ExchangeQuote = { ok: false, from: fromId, to: '', grade: 0, give: Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0, spend: 0, get: 0, gold: 0, unitGold: 0 };
   const k = exchangeTuning(reg);
-  if (!k.enabled) return { ...base, reason: 'Кузнец сейчас не меняет сырьё' };
+  if (!k.enabled) return { ...base, reason: tr('srv:exchange.off', 'Кузнец сейчас не меняет сырьё') };
   const src = exchangeSource(reg, fromId);
   if (!src.ok) return { ...base, reason: src.reason };
   base.grade = src.grade!;
-  if (toFamily === src.family) return { ...base, reason: 'Выбери другую семью — та же не меняется' };
+  if (toFamily === src.family) return { ...base, reason: tr('srv:exchange.sameFamily', 'Выбери другую семью — та же не меняется') };
   const target = exchangeTargets(reg, fromId).find((t) => t.family === toFamily);
-  if (!target) return { ...base, reason: toFamily === ESSENCE_FAMILY ? 'Эссенцию не меняют — это валюта чар' : 'Нет такой семьи сырья' };
+  if (!target) return { ...base, reason: toFamily === ESSENCE_FAMILY ? tr('srv:exchange.essenceNo', 'Эссенцию не меняют — это валюта чар') : tr('srv:exchange.noFamily', 'Нет такой семьи сырья') };
   base.to = target.id;
-  if (!target.ok) return { ...base, reason: `Нельзя: ${target.reason}` };
+  if (!target.ok) return { ...base, reason: tr('srv:exchange.cannot', 'Нельзя: {reason}', { reason: target.reason }) };
   const { get, spend } = exchangeYield(reg, base.give);
   const unitGold = exchangeUnitGold(reg, src.grade!, target.id);
   const q: ExchangeQuote = { ...base, spend, get, unitGold, gold: get * unitGold };
-  if (get <= 0) return { ...q, reason: `Мало: курс ${k.give} → ${k.get} — отдай хотя бы ${exchangeMinGive(reg)}` };
-  if (have && (have[fromId] ?? 0) < spend) return { ...q, reason: `Не хватает: ${src.name} ${spend} (есть ${have[fromId] ?? 0})` };
-  if (gold !== undefined && gold < q.gold) return { ...q, reason: `Недостаточно золота: нужно ${q.gold} (есть ${gold})` };
+  if (get <= 0) return { ...q, reason: tr('srv:exchange.tooFew', 'Мало: курс {give} → {get} — отдай хотя бы {min}', { give: k.give, get: k.get, min: exchangeMinGive(reg) }) };
+  if (have && (have[fromId] ?? 0) < spend) return { ...q, reason: tr('srv:exchange.lacking', 'Не хватает: {name} {spend} (есть {have})', { name: src.name, spend, have: have[fromId] ?? 0 }) };
+  if (gold !== undefined && gold < q.gold) return { ...q, reason: tr('srv:exchange.noGold', 'Недостаточно золота: нужно {need} (есть {have})', { need: q.gold, have: gold }) };
   return { ...q, ok: true };
 }
 
@@ -132,7 +134,7 @@ function exchangeYieldDropped(reg: ConfigRegistry, q: ExchangeQuote, minYield: R
   const broken = !minYield || typeof minYield !== 'object' || Array.isArray(minYield)
     || Object.entries(minYield).some(([id, n]) => typeof n !== 'number' || !Number.isFinite(n) || n < 0
       || n > (id === q.to ? q.get : 0));
-  return broken ? { ok: false, reason: `${PRICE_CHANGED}: обмен даст ${describeCost(reg, { [q.to]: q.get })}` } : null;
+  return broken ? { ok: false, reason: tr('srv:consent.exchange', 'Цена изменилась: обмен даст {cost}', { cost: describeCost(reg, { [q.to]: q.get }) }) } : null;
 }
 
 /**
@@ -153,15 +155,15 @@ export function forgeExchange(
     if (raised) return raised;
   }
   if (!q.ok) return { ok: false, reason: q.reason };
-  if (save.gold < q.gold) return { ok: false, reason: `Недостаточно золота: нужно ${q.gold} (есть ${save.gold})` };
+  if (save.gold < q.gold) return { ok: false, reason: tr('srv:exchange.noGold', 'Недостаточно золота: нужно {need} (есть {have})', { need: q.gold, have: save.gold }) };
   const cost = { [q.from]: q.spend };
   if (!canAffordBoth(save.inventory, wallet, cost)) {
     const have = availableMaterials(save.inventory, wallet)[q.from] ?? 0;
-    return { ok: false, reason: `Не хватает: ${describeCost(reg, cost)} (есть ${have})` };
+    return { ok: false, reason: tr('srv:exchange.lackingCost', 'Не хватает: {cost} (есть {have})', { cost: describeCost(reg, cost), have }) };
   }
   save.gold -= q.gold;
   spendBoth(save.inventory, wallet, cost);
   addToWallet(wallet, { [q.to]: q.get });
   stash.materials = wallet;
-  return { ok: true, summary: `Обмен: отдано ${describeCost(reg, cost)} → получено ${describeCost(reg, { [q.to]: q.get })} (в сундук) · ${q.gold} золота` };
+  return { ok: true, summary: tr('srv:exchange.done', 'Обмен: отдано {given} → получено {got} (в сундук) · {gold} золота', { given: describeCost(reg, cost), got: describeCost(reg, { [q.to]: q.get }), gold: q.gold }) };
 }

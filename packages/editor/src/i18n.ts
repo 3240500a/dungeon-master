@@ -1,7 +1,7 @@
 import {
   ConfigRegistry, Localizer, SOURCE_LANG, composeItemName, localeCoverage, localeLangs,
-  localesSchema, pickForm, walkConfigText,
-  type ConfigText, type FormSet, type Lang, type Locales, type NameFragment, type NameShape,
+  localesSchema, pickForm, walkConfigText, srvCorpusRows,
+  type ConfigText, type FormSet, type Lang, type Locales, type NameFragment, type NameShape, type SrvText,
 } from '@dm/shared';
 import type { CraftIo } from './craft.js';
 
@@ -16,6 +16,8 @@ import type { CraftIo } from './craft.js';
  *     обещание: это буквально то, что увидит игрок, включая порядок слов и согласование.
  *  2. **ТАБЛИЦА ПЕРЕВОДОВ С КОЛОНКОЙ НА ЯЗЫК.** Корпус набирается тем же `walkConfigText`, что и
  *     извлекатель (`npm run i18n`), так что страница не может показать «не те» строки.
+ *     ⭐ i18n Ф2 (06.11): рядом — ФРАЗЫ КОДА СЕРВЕРА (`srv:`, снимок `corpus.srv.json` того же извлекателя): «таблицы» `srv:<область>`
+ *     в том же списке, правятся так же; у фразы по числу — поле на каждую категорию числа ПЕРЕВОДИМОГО языка (`Intl.PluralRules`).
  *  3. **ФОРМЫ У СОГЛАСУЕМЫХ ФРАГМЕНТОВ.** У прилагательного ступени или аффикса — четыре поля вместо
  *     одного (род и число), и это ЕДИНСТВЕННЫЙ способ получить «Кровавая секира» вместо «Кровавый
  *     секира» на языке, про который в коде ничего не знают.
@@ -63,15 +65,23 @@ const FORM_KEYS: ReadonlyArray<[string, string]> = [
  */
 const AGREEING_FIELDS: ReadonlySet<string> = new Set(['adj']);
 const AGREEING_TABLES: ReadonlySet<string> = new Set(['item-tiers']);
-const isAgreeing = (row: ConfigText): boolean =>
+/** Строка корпуса вкладки: текст конфига (`cfg:`) или фраза кода сервера (`srv:`, ⭐ i18n Ф2). */
+type CorpusRow = ConfigText | SrvText;
+const isSrv = (row: CorpusRow): row is SrvText => row.key.startsWith('srv:');
+const isAgreeing = (row: CorpusRow): boolean => !isSrv(row) && (
   AGREEING_FIELDS.has(row.field)
   || (AGREEING_TABLES.has(row.table) && row.field === 'name')
-  || (row.field === 'word' && /(ый|ий|ой)$/.test(row.source));
+  || (row.field === 'word' && /(ый|ий|ой)$/.test(row.source)));
+
+/** ⭐ i18n Ф2: категории числа языка (`one`/`other` у английского, `one`/`few`/`many`/`other` у русского) — поля перевода фразы по числу. */
+function pluralKeys(l: Lang): string[] {
+  try { return [...new Intl.PluralRules(l).resolvedOptions().pluralCategories]; } catch { return ['one', 'other']; }
+}
 
 /** Состояние страницы (переживает перерисовку). */
 let tab: 'preview' | 'strings' = 'preview';
 let lang: Lang = 'en';
-let table: string = 'items-base';
+let table: string = 'items.base';
 let filter = '';
 let previewBaseId = '';
 let previewTierId = '';
@@ -179,7 +189,7 @@ function renderPreview(host: HTMLElement, data: Record<string, unknown>, redraw:
 
   const spec = {
     shape: previewShape,
-    base: frag(`cfg:items-base/${base.id}/name`, base.name),
+    base: frag(`cfg:items.base/${base.id}/name`, base.name),
     agreement: base.gender,
     tier: previewShape === 'tiered' && tier?.name ? frag(`cfg:item-tiers/${tier.id}/name`, tier.name) : undefined,
     prefix: previewShape === 'magic' && p?.word ? frag(`cfg:affixes/${p.id}/word`, p.word) : undefined,
@@ -222,8 +232,9 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
   const locales = localesOf(data);
   const langs = localeLangs(locales).filter((l) => l !== SOURCE_LANG);
   if (!langs.includes(lang)) lang = langs[0] ?? SOURCE_LANG;
-  const corpus = walkConfigText(data);
-  const tables = [...new Set(corpus.map((r) => r.table))].sort();
+  // ⭐ i18n Ф2 (06.11): корпус вкладки — конфиг И фразы кода сервера (`srv:` — «таблицы» по областям, в конце списка)
+  const corpus: CorpusRow[] = [...walkConfigText(data), ...srvCorpusRows()];
+  const tables = [...new Set(corpus.map((r) => r.table))].sort((a, b) => Number(a.startsWith('srv:')) - Number(b.startsWith('srv:')) || a.localeCompare(b));
   if (!tables.includes(table)) table = tables[0] ?? '';
   const strings = stringsOf(locales, lang);
 
@@ -231,8 +242,9 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
   card.append(el('div', CSS.h, '📝 Строки под перевод'),
     el('div', CSS.sub,
       `Корпус набран тем же обходчиком, что и «npm run i18n», поэтому здесь ровно те строки, которые видит `
-      + `игрок: ${corpus.length} на ${tables.length} таблиц. Русский не переводят — он лежит в самих данных `
-      + `и служит запасом, если перевода нет.`));
+      + `игрок: ${corpus.length} на ${tables.length} таблиц (из них фраз кода сервера, «srv:…», — ${corpus.filter(isSrv).length}). `
+      + `Русский не переводят — он лежит в самих данных и в коде и служит запасом, если перевода нет. Подстановки `
+      + `{вида} переводу нужны те же, что у источника.`));
 
   // ── шапка: язык, покрытие, таблица, поиск ──
   const bar = el('div', 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px');
@@ -255,7 +267,7 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
   for (const t of tables) {
     const o = document.createElement('option');
     o.value = t; o.selected = t === table;
-    o.textContent = `${t} (${corpus.filter((r) => r.table === t).length})`;
+    o.textContent = `${t.startsWith('srv:') ? `код сервера · ${t.slice(4)}` : t} (${corpus.filter((r) => r.table === t).length})`;
     tsel.appendChild(o);
   }
   tsel.addEventListener('change', () => { table = tsel.value; redraw(); });
@@ -283,7 +295,31 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid #1e1e28';
     const cell = el('td', CSS.td);
-    if (isAgreeing(r)) {
+    if (isSrv(r) && r.forms) {
+      // ⭐ i18n Ф2: фраза по числу — поле на категорию числа ПЕРЕВОДИМОГО языка; источник подсказкой (`{n}` подставляется само)
+      const cats = pluralKeys(lang);
+      const box = el('div', `display:grid;grid-template-columns:repeat(${cats.length},1fr);gap:4px`);
+      const cur = strings[r.key];
+      const forms: Record<string, string> = typeof cur === 'string' ? { other: cur } : { ...(cur ?? {}) };
+      for (const cat of cats) {
+        const wrap = el('div');
+        wrap.appendChild(el('div', 'font-size:9px;color:#5f5f78;padding-left:2px', cat));
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = forms[cat] ?? '';
+        inp.placeholder = r.forms[cat] ?? r.source;
+        inp.style.cssText = CSS.frm;
+        inp.addEventListener('change', () => {
+          const next: Record<string, string> = { ...forms };
+          if (inp.value.trim()) next[cat] = inp.value.trim(); else delete next[cat];
+          if (Object.keys(next).length) strings[r.key] = next; else delete strings[r.key];
+          redraw();
+        });
+        wrap.appendChild(inp);
+        box.appendChild(wrap);
+      }
+      cell.appendChild(box);
+    } else if (isAgreeing(r)) {
       // ⭐ Согласуемому фрагменту нужны ФОРМЫ: одна строка дала бы «Кровавый секира».
       const box = el('div', 'display:grid;grid-template-columns:repeat(4,1fr);gap:4px');
       const cur = strings[r.key];
@@ -318,7 +354,10 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
       });
       cell.appendChild(inp);
     }
-    tr.append(el('td', CSS.key, r.field), el('td', CSS.src, r.source), cell, el('td', CSS.key, r.key));
+    const src = isSrv(r) && r.forms ? Object.entries(r.forms).map(([k, v]) => `${k}: ${v}`).join('\n') : r.source;
+    const srcCell = el('td', CSS.src, src);
+    if (isSrv(r)) srcCell.style.whiteSpace = 'pre-line';
+    tr.append(el('td', CSS.key, r.field), srcCell, cell, el('td', CSS.key, r.key));
     tbl.appendChild(tr);
   }
   card.appendChild(tbl);

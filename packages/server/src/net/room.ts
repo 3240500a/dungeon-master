@@ -8,9 +8,9 @@ import {
   sealReroll,   // Ф5-6′: перекат вида печати — та же команда провода, другое правило обмена
   craftAction, enchantAction, sketchAction, fullJournal, legacyGateOpen, serverMaterialsConsent, normalizeJournal, normalizeCraftNonces, shopConsumableIds, SHOP_CONSUMABLE_STOCK, shopBuyPrice,
   stashMove, stashDims, stashTabCount,
-  mergeRunBuffs, sealBuffs, sealDef, sealFitsBiome, sealLive, sealTierMul, sealSlots, sealBundleSize, spendSeals, parseSealKey, SEAL_REFORGE_REPEAT,   // Ф5-1…Ф5-3: печати отрезка
+  mergeRunBuffs, sealBuffs, sealDef, sealFitsBiome, sealLive, sealTierMul, sealSlots, sealBundleSize, spendSeals, parseSealKey, SEAL_TEXT,   // Ф5-1…Ф5-3: печати отрезка
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor, pruneBoardQuests,
-  isDifficultyUnlocked, waypointStart, isWaypoint, depthRecordOf, nextWaypointAfter, WAYPOINT_DEPTH_LIMIT, applyDeathPenalty, parseTownCommand, PRICE_CHANGED, CONFIG_CONSENT_CMDS, configChanged, buildChanged,
+  isDifficultyUnlocked, waypointStart, isWaypoint, depthRecordOf, nextWaypointAfter, WAYPOINT_DEPTH_LIMIT, applyDeathPenalty, parseTownCommand, CONFIG_CONSENT_CMDS, configChanged, buildChanged,
   noteNodeId, sameRun, runRecords, visitedNode, foldRunRecords, putRunRecords, putRunRecord, mergeNodeState, noteVisited, runNodeDepth, runNodeLane, RUN_NODES_MAX, isDotKind, activeAbilityOf,
   hasLineOfSight, findPath, worldToCell, playerSnapshot, PROTOCOL_VERSION, findFree, cellFree, bodyOf, putBody, arenaReturn, arenaAwayBody, keepLaterCooldowns, vitalsForSave, savedCooldowns,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
@@ -21,8 +21,11 @@ import {
   type LastTarget, type PendingAttrs, type HeroFloor, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
   respecView, questsView, socketsView, socketNodes, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
-  runVoteQuestion, runDeathFrame, runMapLegend, RUN_MAP_GEOM, type RunDeathState, type Lang, type EquipSlot, type SealGains,
+  runVoteQuestion, runDeathFrame, runMapLegend, RUN_MAP_GEOM, type RunDeathState, type EquipSlot, type SealGains,
   craftWindowView, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
+  tr, textLang, SOURCE_LANG,   // ⭐ i18n Ф1 (06.11): шов текста сервера
+  // ⭐ i18n Ф2 (06.11): запечённые имена кадров (вещи, монстры, задания) — на языке получателя
+  NAMED_FRAMES, localizeFrame, localizeDeep, localizeDelta, monsterDisplayName, questDisplay, type MonsterNameSrc, type WorldDelta,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -37,6 +40,7 @@ import { SessionTelemetry, tallyForge } from './telemetry.js';
 import { craftFullJournalOn, craftFullJournalNotice, isProduction, stationCheckOff } from './devFlags.js';
 import { upsertPlaySession } from '../db/telemetry.js';
 import { serverBuild } from '../buildStamp.js';
+import { inTextLang, scopeCodeOf } from './textScope.js';
 
 /**
  * D10: СИД ИЗ КРИПТОГРАФИЧЕСКОГО ИСТОЧНИКА. Раньше каждый бросок сервера (перекатка, разбор,
@@ -247,8 +251,17 @@ export function warnSave(text: string, e: unknown): void {
   console.error(`${text}${muted}:`, e);
 }
 
-/** Итог команды города — он же тело кадра `cmdResult` (D3). */
-type CmdOutcome = { ok: boolean; reason?: string; uid?: string; unlocked?: string[]; summary?: string };
+/**
+ * Итог команды города — он же тело кадра `cmdResult` (D3). ⭐ i18n Ф1 (06.11): `code` — машинный код отказа (`CmdCode`): причина теперь на
+ * языке игрока, и решать по её тексту клиенту больше нельзя. Код выводится из КЛЮЧА фразы (`textScope.codeOfTextKey`), а не из перевода.
+ */
+type CmdOutcome = { ok: boolean; reason?: string; uid?: string; unlocked?: string[]; summary?: string; code?: string };
+/** ⭐ i18n Ф1: код отказа по фразе причины, выданной в области этой команды (`scopeCodeOf`); есть свой — свой. Удача кода не несёт. */
+const withCode = <T extends CmdOutcome>(out: T): T => {
+  if (out.ok || out.code !== undefined) return out;
+  const code = scopeCodeOf(out.reason);
+  return code === undefined ? out : { ...out, code };
+};
 /**
  * Итог исполнения. `early` — отказ ДО исполнения (не то место, лимит частоты): сейв не трогали, и слать его
  * клиенту незачем (R1-11). ⭐ R16 C-04: `later` — исход придёт после записи в базу (подъём выброшенного, K3): ответ уйдёт тогда, а
@@ -306,7 +319,7 @@ const ALTAR_USE_R = 56;
 /** ⭐ Ф5-6: сколько ключей заявок перековки помнит комната. Повтор приходит вскоре за оригиналом, а не через час. */
 const SEAL_NONCES_KEEP = 64;
 
-const CRAFT_CLOSED = 'Кузнец ещё не куёт';
+const CRAFT_CLOSED = (): string => tr('srv:room.craftClosed', 'Кузнец ещё не куёт');
 /**
  * D1: флаг разработчика — ворота журнала кузнеца открыты для проверок ковки (в базу не пишется ничего:
  * журнал аккаунта остаётся своим). Читается на каждый вызов — стенд переключает его без пересборки.
@@ -364,38 +377,38 @@ const EXIT_REACH_STEPS = 6;
 /** Потолок обхода поиска пути к точке перехода: все клетки в `EXIT_REACH_STEPS` шагах (их не больше 85) — поиск не бежит по этажу. */
 const EXIT_REACH_SEARCH = 128;
 /** Что говорить тому, кто зовёт переход издалека (R3-01, R4-01): кадр `error` с кодом `far`. */
-const FAR_EXIT = 'Подойдите к выходу';
-const FAR_PORTAL = 'Подойдите к порталу';
+const FAR_EXIT = (): string => tr('srv:room.farExit', 'Подойдите к выходу');
+const FAR_PORTAL = (): string => tr('srv:room.farPortal', 'Подойдите к порталу');
 /** R5-07: ответ на любое действие в комнате, замороженной сливом процесса. */
-const FROZEN = 'Сервер перезапускается — войдите через несколько секунд';
+const FROZEN = (): string => tr('srv:room.frozen', 'Сервер перезапускается — войдите через несколько секунд');
 /** ⭐ V-B2-04: подъём выброшенного соседом по аккаунту, чья запись без вещи ещё не легла (`holdThrown`). */
-const HELD_DROP = 'Вещь ещё сохраняется у выбросившего — поднимите через мгновение';
+const HELD_DROP = (): string => tr('srv:room.heldDrop', 'Вещь ещё сохраняется у выбросившего — поднимите через мгновение');
 /** ⭐ V-B2-04: сколько подъём ждёт запись выбросившего (честная — миллисекунды; дольше — база тонет, и кадры поднявшего за ней не стоят). */
 const HELD_WAIT_MS = 3_000;
 /** ⭐ C-07: пауза после сбоя записи сессии, в которую выброс вещи записи сразу не ставит (`holdThrown`), а подъём выброшенного — не пишет (`pickThrown`). */
 const DROP_WRITE_BACKOFF_MS = 5_000;
 /** ⭐ K3: подъём выброшенного, чья запись не легла (сбой базы, пауза C-07 после него), — вещь осталась на земле. */
-const PICK_UNSAVED = 'Не удалось сохранить подъём — вещь осталась на земле, поднимите через несколько секунд';
+const PICK_UNSAVED = (): string => tr('srv:room.pickUnsaved', 'Не удалось сохранить подъём — вещь осталась на земле, поднимите через несколько секунд');
 /** ⭐ K3: эту вещь уже поднимают — запись поднимающего в пути (`carrying`). */
-const PICKING = 'Вещь уже поднимают';
+const PICKING = (): string => tr('srv:room.picking', 'Вещь уже поднимают');
 /** Подъём не состоялся: дропа нет, далеко, за стеной, сумка полна (как отказ `pickupDropById`). */
-const PICK_FAR = 'Далеко или инвентарь полон';
+const PICK_FAR = (): string => tr('srv:room.pickFar', 'Далеко или инвентарь полон');
 /** ⭐ R16 C-01: запись подъёма легла, а клетки в сумке, пока писали, заняли (покупка, добыча, снятое) — вещь осталась на земле за героем. */
-const PICK_FULL = 'Инвентарь полон — вещь осталась на земле';
+const PICK_FULL = (): string => tr('srv:room.pickFull', 'Инвентарь полон — вещь осталась на земле');
 /** ⭐ R20-07: герой погиб, пока шла запись подъёма, — вещь на земле (`pickThrown`). */
-const PICK_DIED = 'Герой погиб, пока вещь поднималась, — она осталась на земле';
+const PICK_DIED = (): string => tr('srv:room.pickDied', 'Герой погиб, пока вещь поднималась, — она осталась на земле');
 /** R5-19: взять задание с доски, пережившей свой срок, — сперва новая доска. */
-const BOARD_RENEWED = 'Доска обновилась — выбери задание заново';
+const BOARD_RENEWED = (): string => tr('srv:room.boardRenewed', 'Доска обновилась — выбери задание заново');
 /** R7-18: купить с прилавка, чьё поколение сменилось, — сперва новый прилавок. */
-const STOCK_RENEWED = 'Прилавок обновился — выбери вещь заново';
+const STOCK_RENEWED = (): string => tr('srv:room.stockRenewed', 'Прилавок обновился — выбери вещь заново');
 /** ⭐ R8-08: переход, позванный при открытом голосовании (кадр `error`, код `vote`). */
-const VOTE_PENDING = 'Уже идёт голосование — ответьте на него';
+const VOTE_PENDING = (): string => tr('srv:room.votePending', 'Уже идёт голосование — ответьте на него');
 /** ⭐ R9-01: продолжение из города не дождалось свода забега из базы (кадр `error`, код `busy`). */
-const RESUME_FAILED = 'Не удалось продолжить забег — позовите спуск снова';
+const RESUME_FAILED = (): string => tr('srv:room.resumeFailed', 'Не удалось продолжить забег — позовите спуск снова');
 /** ⭐ R12-11: команда сундука, пока продолжение забега из города ждёт свод из базы (`transact`). */
-const RESUMING = 'Пати уходит в забег — повторите через мгновение';
+const RESUMING = (): string => tr('srv:room.resuming', 'Пати уходит в забег — повторите через мгновение');
 /** ⭐ R9-08: пока голосовали за спуск из города, сменилось, что он начнёт (кадр `error`, код `vote`). */
-const VOTE_CHANGED = 'Пати изменилась — спуск начал бы не то, за что голосовали. Позовите заново';
+const VOTE_CHANGED = (): string => tr('srv:room.voteChanged', 'Пати изменилась — спуск начал бы не то, за что голосовали. Позовите заново');
 /**
  * ⭐ D1 (правило общего забега, docs/MULTIPLAYER.md): голос за продолжение своего забега не прошёл («нет» другого или срок `VOTE_TIMEOUT_MS`) —
  * право «Соло» (`Room.soloRight`) и эта строка (кадр `error`, код `vote`, `solo: true`) каждому участнику, сказавшему «за» (⭐ R23-01; раньше —
@@ -403,23 +416,23 @@ const VOTE_CHANGED = 'Пати изменилась — спуск начал б
  * «Продолжить без пати»: `leave` по живому сокету и `join{resume, solo}` (`EntryFlow.toEntry`). Строка — для клиентов без кнопки: тот же путь
  * — экран входа (в браузере — F5) и «Продолжить без пати».
  */
-const SOLO_HINT = 'Пати не идёт. Можно продолжить забег без неё — бесплатно, в своей комнате («Продолжить без пати»); напарники придут к вам, когда позовут спуск или нажмут «Продолжить»';
+const SOLO_HINT = (): string => tr('srv:room.soloHint', 'Пати не идёт. Можно продолжить забег без неё — бесплатно, в своей комнате («Продолжить без пати»); напарники придут к вам, когда позовут спуск или нажмут «Продолжить»');
 /** R5-04: «за» спуск посреди боя, вдали от выхода (тот же код `far` — клиент показывает текст). */
-const FAR_FIGHT = 'Сначала выйдите из боя — или подойдите к выходу';
+const FAR_FIGHT = (): string => tr('srv:room.farFight', 'Сначала выйдите из боя — или подойдите к выходу');
 /** ⭐ R14-02: спуск (завершение финала), позванный пати без живых подключённых (тот же код `far`). */
-const DEAD_PARTY = 'Живых в пати нет — дальше идти некому: ждите напарника или уходите в город';
+const DEAD_PARTY = (): string => tr('srv:room.deadParty', 'Живых в пати нет — дальше идти некому: ждите напарника или уходите в город');
 /** ⭐ 14.10 (Г3, правка 7): «Завершить забег» нажато не в подземелье (город, арена) — отказ со словами, см. `finish`. */
-const FINISH_NOT_IN_RUN = 'Завершить забег можно только в подземелье — у портала привала или у точки входа; из города забег закрывает «Забросить» в лобби';
+const FINISH_NOT_IN_RUN = (): string => tr('srv:room.finishNotInRun', 'Завершить забег можно только в подземелье — у портала привала или у точки входа; из города забег закрывает «Забросить» в лобби');
 /** Код закрытия сокета, чья сессия потеряла право писать (R1-01): клиент уходит в лобби и входит заново — из базы. */
 const WS_STALE = 4009;
 /**
  * ⭐ R4-25: отказ голосу за спуск, который переписал бы ЧУЖОЙ припаркованный забег голосующего (кадр `error`, код `run`).
  * Раньше спуск молча ставил всем забег хозяина (или новый) — и «Завершить» со штрафом обходилось входом к другу.
  */
-const RUN_CLASH = 'У вас незавершённый забег — продолжите или завершите его';
+const RUN_CLASH = (): string => tr('srv:room.runClash', 'У вас незавершённый забег — продолжите или завершите его');
 /** ⭐ V2: продолжение забега, который идёт в другой комнате (кадр `error`, код `run`). */
 export function runElsewhereMsg(code: string): string {
-  return `Этот забег идёт в комнате ${code} — войдите к пати по коду`;
+  return tr('srv:room.runElsewhere', 'Этот забег идёт в комнате {code} — войдите к пати по коду', { code });
 }
 /**
  * ⭐ R4-20: сколько тиков без кадров ввода (≈ треть секунды при 30 Гц) комната ещё применяет последний. Дальше — стоять:
@@ -1089,6 +1102,8 @@ export class Room implements Tickable {
    * попасть и уклониться. Раньше её помнил клиент (по событиям `hit` и определениям монстров), теперь — сервер, по своим ударам.
    */
   private lastTargets = new Map<string, LastTarget>();
+  /** ⭐ i18n Ф2 (06.11): из чего собрано имя последней цели (заготовка, редкость, аффиксы) — лист героя показывает его на языке игрока. */
+  private lastTargetSrc = new Map<string, MonsterNameSrc>();
   /** ⭐ С-аудит (29.10): «дойдёт ли монстр» меры опасности — один поиск на пару точек за тик (`reaches`); сброс — смена области и открытая дверь. */
   private reachMemo: { world: unknown; grid: unknown; obstacles: unknown; t: number; seen: Map<string, boolean> } | null = null;
   /** ⭐ С-аудит F1: монстры, которые сейчас в виде комнаты (`roomView`; гистерезис выхода). Сбрасывается на смене этажа. */
@@ -1307,6 +1322,11 @@ export class Room implements Tickable {
     const client: Client = { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), dedup: new CommandDedup<CmdOutcome>(),
       invalidLog: logThrottle(INVALID_WARN_MS), stale: false, reasons: new Map(), fieldWrite: false, writeFailedAt: 0, inputSeen: true, inputAge: 0, unsure: [],
       tm: new SessionTelemetry(), tmRow: null, tmFlushedAt: Date.now(), tmWrite: Promise.resolve(), baselined: false, delta: new SnapshotDelta(), visible: new Set() };
+    // ⭐ i18n Ф2 (06.11): язык — С ПЕРВОГО КАДРА входа. Вход идёт в области языка соединения (`RoomManager.inConnLang`: `join.lang` или кадр
+    // `lang`), а запись языка комнатой (`setLang` из `seat`) — ПОСЛЕ кадров входа: без этого `joined.save`, прилавок и доска заданий ушли бы
+    // иноязычному игроку с русскими именами вещей и заданий. Язык области уже проверен (включён) менеджером.
+    const joinLang = textLang();
+    if (joinLang !== SOURCE_LANG) client.lang = joinLang;
     this.clients.set(pid, client);
     // R2-02: аккаунт — в сущность игрока: выброшенное им помечается, и чужой аккаунт его не поднимет.
     // R4-06: ушёл с этого же экземпляра этажа — встаёт там же и таким же (здоровье, дебаффы, откаты, смерть).
@@ -2135,7 +2155,7 @@ export class Room implements Tickable {
   private refuseFrozen(pid: string): boolean {
     if (!this.frozen) return false;
     const c = this.clients.get(pid);
-    if (c) this.send(c.ws, { t: 'error', code: 'busy', msg: FROZEN });
+    if (c) this.sendText(c, () => ({ t: 'error', code: 'busy', msg: FROZEN() }));
     return true;
   }
 
@@ -2312,7 +2332,7 @@ export class Room implements Tickable {
       const run = save?.run;
       if (!c || !save || !run?.config || run.deadAt !== undefined) continue;
       this.soloOk.set(save.charId, runLedgerKey(run.config));
-      this.send(c.ws, { t: 'error', code: 'vote', msg: SOLO_HINT, solo: true });
+      this.sendText(c, () => ({ t: 'error', code: 'vote', msg: SOLO_HINT(), solo: true }));
     }
   }
 
@@ -2388,22 +2408,30 @@ export class Room implements Tickable {
    * один `cmdResult` (D3) — после `saveUpdate`, чтобы к ответу у него уже был новый сейв.
    */
   async handleCmd(pid: string, raw: unknown, rawId?: unknown): Promise<void> {
+    // ⭐ i18n Ф1 (06.11): ВСЯ команда — в области языка игрока (переживает `await` транзакции и ответ «после записи»), и с журналом кодов
+    // фраз: код отказа (`cmdResult.code`) узнаётся по ключу причины, выданной ЭТОЙ командой.
+    return this.inLang(this.clients.get(pid), () => this.handleCmdIn(pid, raw, rawId), new Map());
+  }
+
+  private async handleCmdIn(pid: string, raw: unknown, rawId?: unknown): Promise<void> {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (!c || !p) return;
     // ⭐ R5-07: заморожена сливом — отказ ДО всего (в окно номеров не попадает: повтор после рестарта исполнится честно).
     if (this.frozen) {
       const fid = cmdIdOf(rawId);
-      this.send(c.ws, { t: 'cmdResult', ...(typeof fid === 'number' ? { id: fid } : {}), cmd: cmdNameOf(raw), ok: false, reason: FROZEN });
+      this.send(c.ws, { t: 'cmdResult', ...(typeof fid === 'number' ? { id: fid } : {}), cmd: cmdNameOf(raw), ok: false, reason: FROZEN(), code: 'frozen' });
       return;
     }
     let replied = false;
-    const answer = (id: number | undefined, cmd: string, out: CmdOutcome): void => {
+    const answer = (id: number | undefined, cmd: string, res: CmdOutcome): void => {
       replied = true;
+      const out = withCode(res);
       // Только поля протокола: итог действия может нести служебное (`moved` у сдачи сырья и т. п.).
       this.send(c.ws, {
         t: 'cmdResult', ...(id !== undefined ? { id } : {}), cmd, ok: out.ok,
         ...(out.reason !== undefined ? { reason: out.reason } : {}),
+        ...(out.code !== undefined ? { code: out.code } : {}),
         ...(out.uid !== undefined ? { uid: out.uid } : {}),
         ...(out.unlocked !== undefined ? { unlocked: out.unlocked } : {}),
         ...(typeof out.summary === 'string' ? { summary: out.summary } : {}),
@@ -2422,7 +2450,7 @@ export class Room implements Tickable {
       // перечень лишних ключей, чистка сообщения для лога) шёл без предела, кроме потолка кадров соединения.
       if (!limits.townCmd.take(c.userId)) {
         counters.cmdTownRateLimited++;   // R2-25: свой счётчик — поток команд не выглядит злоупотреблением кузницей
-        const out: CmdOutcome = { ok: false, reason: 'Слишком часто' };
+        const out: CmdOutcome = { ok: false, reason: tr('srv:room.tooOften', 'Слишком часто') };
         this.send(c.ws, { t: 'error', code: 'cmd', msg: out.reason! });
         answer(id ?? undefined, cmdNameOf(raw), out);
         return;
@@ -2433,7 +2461,7 @@ export class Room implements Tickable {
         // R1-10: номер — ЧУЖОЕ значение: `String()` на `{"toString":1}` бросает, и невалидная команда
         // превращалась в «ошибку сервера» с немым стеком в логе на каждый кадр.
         this.warnInvalid(c, p.save.charId, cmdNameOf(raw), parsed.ok ? `номер команды ${describeUntrusted(rawId).slice(0, 32)}` : parsed.error);
-        const out: CmdOutcome = { ok: false, reason: 'Неверная команда' };
+        const out: CmdOutcome = { ok: false, reason: tr('srv:room.badCommand', 'Неверная команда') };
         this.send(c.ws, { t: 'error', code: 'cmd', msg: out.reason! });
         answer(id ?? undefined, cmdNameOf(raw), out);
         return;
@@ -2447,8 +2475,10 @@ export class Room implements Tickable {
         this.resync(pid);
         // ⭐ R16 C-04: оригинал ещё ждёт своей записи (`later`) — повтору его итог, когда он будет, а не «уже получена».
         const pending = id !== undefined && c.dedup.outcome(id) === undefined ? c.laterCmds?.get(id) : undefined;
-        if (pending) { void pending.then((out) => { try { answer(id, command.cmd, out); } catch { /* сокет уже мёртв */ } }); return; }
-        answer(id, command.cmd, c.dedup.outcome(id) ?? { ok: false, reason: 'Команда уже получена' });
+        // ⭐ i18n Ф1 (ревизия 06.11): итог — из памяти повторов, если оригинал её уже записал (`finish` подписан на тот же промис РАНЬШЕ): там
+        // он с кодом отказа (`withCode` в области оригинала); сырой итог `pending` кода не несёт, а журнал кодов области повтора его не знает
+        if (pending) { void pending.then((out) => { try { answer(id, command.cmd, c.dedup.outcome(id) ?? out); } catch { /* сокет уже мёртв */ } }); return; }
+        answer(id, command.cmd, c.dedup.outcome(id) ?? { ok: false, reason: tr('srv:room.duplicate', 'Команда уже получена') });
         return;
       }
 
@@ -2458,10 +2488,11 @@ export class Room implements Tickable {
       } catch (e) {
         counters.cmdFailed++;
         console.error(`[room ${this.code}] команда «${command.cmd}» игрока ${p.save.charId} упала:`, e);
-        run = { ok: false, reason: 'Ошибка сервера, попробуйте ещё раз' };
+        run = { ok: false, reason: tr('srv:room.serverError', 'Ошибка сервера, попробуйте ещё раз') };
       }
       const finish = (res: RunOutcome): void => {
-        const { early, later: _later, ...out } = res;
+        const { early, later: _later, ...rest } = res;
+        const out = withCode(rest);   // ⭐ i18n Ф1: код — до памяти повторов: повтор отвечает тем же итогом (и кодом) уже из другой области
         c.dedup.settle(id, out);
         if (!out.ok) {
           this.send(c.ws, { t: 'error', code: 'cmd', msg: out.reason ?? '' });
@@ -2484,7 +2515,7 @@ export class Room implements Tickable {
         const settled = run.later.catch((e: unknown): CmdOutcome => {
           counters.cmdFailed++;
           console.error(`[room ${this.code}] команда «${command.cmd}» игрока ${p.save.charId} упала:`, e);
-          return { ok: false, reason: 'Ошибка сервера, попробуйте ещё раз' };
+          return { ok: false, reason: tr('srv:room.serverError', 'Ошибка сервера, попробуйте ещё раз') };
         });
         if (id !== undefined) (c.laterCmds ??= new Map()).set(id, settled);
         void settled.then((res) => {
@@ -2495,7 +2526,7 @@ export class Room implements Tickable {
             counters.cmdFailed++;
             console.error(`[room ${this.code}] обработка команды игрока ${p.save.charId} упала:`, e);
             if (!replied) {
-              try { answer(id, command.cmd, { ok: false, reason: 'Ошибка сервера, попробуйте ещё раз' }); } catch { /* сокет уже мёртв */ }
+              try { answer(id, command.cmd, { ok: false, reason: tr('srv:room.serverError', 'Ошибка сервера, попробуйте ещё раз') }); } catch { /* сокет уже мёртв */ }
             }
           }
         });
@@ -2507,7 +2538,7 @@ export class Room implements Tickable {
       counters.cmdFailed++;
       console.error(`[room ${this.code}] обработка команды игрока ${p.save.charId} упала:`, e);
       if (!replied) {
-        try { answer(undefined, cmdNameOf(raw), { ok: false, reason: 'Ошибка сервера, попробуйте ещё раз' }); } catch { /* сокет уже мёртв */ }
+        try { answer(undefined, cmdNameOf(raw), { ok: false, reason: tr('srv:room.serverError', 'Ошибка сервера, попробуйте ещё раз') }); } catch { /* сокет уже мёртв */ }
       }
     }
   }
@@ -2555,7 +2586,7 @@ export class Room implements Tickable {
     if (!cmdAllowedIn(command.cmd, this.area)) {
       counters.cmdOutOfPlace++;
       this.warnClient(c, `команда «${command.cmd}» вне города (область ${this.area}), игрок ${save.charId}`);
-      return { ok: false, reason: 'Это доступно только в городе', early: true };
+      return { ok: false, reason: tr('srv:room.townOnly', 'Это доступно только в городе'), early: true };
     }
     // ⭐ С7 (29.10): СТАНЦИЯ ГОРОДА — РЯДОМ. Лавка, кузница и сундук — объекты площади: команду станции сервер исполняет, только если герой
     // у неё (`STATION_USE_R` от центра). Раньше проверялось лишь «в городе», и изменённый клиент ковал и торговал с любого края площади.
@@ -2569,13 +2600,13 @@ export class Room implements Tickable {
     // успех: иначе перебор несуществующих uid был бы бесплатным.
     if (FORGE_RATE_CMDS.has(command.cmd) && !limits.forgeCmd.take(c.userId)) {   // R4-17: по аккаунту
       counters.cmdRateLimited++;
-      return { ok: false, reason: 'Слишком часто', early: true };
+      return { ok: false, reason: tr('srv:room.tooOften', 'Слишком часто'), early: true };
     }
     // ⭐ R12-13: и чтение сундука аккаунта — своим потолком: отказ и «открыть» платили полное чтение из базы, как успех.
     // ⭐ R14-13: и свой счётчик — перекладка у сундука не должна выглядеть злоупотреблением кузницей (R2-25).
     if (STASH_READ_CMDS.has(command.cmd) && !limits.stashRead.take(c.userId)) {
       counters.cmdStashRateLimited++;
-      return { ok: false, reason: 'Слишком часто', early: true };
+      return { ok: false, reason: tr('srv:room.tooOften', 'Слишком часто'), early: true };
     }
     // ⭐ V-B3-07: СОГЛАСИЕ НА КОНФИГ — окно кузницы, лавки или разбора нарисовано с конфига `cfgRev`, а у сервера уже другой (правка
     // хозяина живьём, клиент не перечитал). Отказ до всего, причина — «Цена изменилась»: клиент по ней перечитывает конфиг. Раньше
@@ -2610,7 +2641,7 @@ export class Room implements Tickable {
   }
   /** D13: ковка и зачарование — только пока кузнец открыт (`balance.craft.live`). ⭐ R22-03: и это — перед самим действием (`guard`). */
   private craftClosed(): CmdOutcome | null {
-    return this.cfg.get('balance').craft.live ? null : { ok: false, reason: CRAFT_CLOSED };
+    return this.cfg.get('balance').craft.live ? null : { ok: false, reason: CRAFT_CLOSED() };
   }
 
   /** Само исполнение команды. Схема уже проверена — аргументы нужных типов и длин. `later` — исход после записи (R16 C-04). */
@@ -2627,7 +2658,8 @@ export class Room implements Tickable {
         // кадр прилавка (десятки КБ) уходил всей комнате на каждый отказ: `buy{maxGold:0}` без золота отказывает всегда, и 92 байта
         // команды оборачивались кадром в ~27 КБ каждому в пати, 10 раз в секунду, — до разрыва медленного канала соседа.
         const refreshed = (r: CmdOutcome): CmdOutcome => {
-          if (!r.ok && r.reason?.startsWith(PRICE_CHANGED) && limits.cmdResync.take(c.userId)) this.send(c.ws, this.shopFrame());
+          // ⭐ i18n Ф1 (06.11): «цена изменилась» — по КОДУ фразы (её ключу), а не по началу строки: причина уже на языке игрока
+          if (!r.ok && withCode(r).code === 'priceChanged' && limits.cmdResync.take(c.userId)) this.send(c.ws, this.shopFrame());
           return r;
         };
         // R2-04: зелья лавки — свои у комнаты (не сток героя): купленное уходит только отсюда.
@@ -2638,7 +2670,7 @@ export class Room implements Tickable {
           if (!on.includes(potion.baseId)) {
             this.consumables = this.consumables.filter((i) => on.includes(i.baseId));
             this.showShop();
-            return refreshed({ ok: false, reason: 'нет в ассортименте' });
+            return refreshed({ ok: false, reason: tr('srv:room.notInStock', 'нет в ассортименте') });
           }
           const r = buyItem(this.cfg, save, potion, command.maxGold);
           if (r.ok) { this.consumables = this.consumables.filter((i) => i !== potion); this.showShop(); }
@@ -2650,20 +2682,20 @@ export class Room implements Tickable {
           this.restock();
           this.showShop();
           this.broadcastQuestBoard();
-          return { ok: false, reason: STOCK_RENEWED };
+          return { ok: false, reason: STOCK_RENEWED() };
         }
         // ⭐ R14-09: базу вещи выключили в редакторе, пока сток стоит (правка живьём, как у зелий — R11-13), — не продаётся, и с прилавка
         // долой. Сток катается с проверкой включённости (`rollGear`), но живёт до срока (10 минут) — и хотфикс сломанной базы продавал её.
         if (found && !this.gearOn()(found)) {
           this.showShop();
-          return refreshed({ ok: false, reason: 'нет в ассортименте' });
+          return refreshed({ ok: false, reason: tr('srv:room.notInStock', 'нет в ассортименте') });
         }
         // R1-03: истина — сток героя. Его же могла показывать и другая комната (хозяин ушёл, в старой остался
         // сосед), и там вещь уже купили: одна и та же вещь (тот же uid) не продаётся дважды.
         const stock = this.stock;
         const item = found && (!stock || stock.shop.includes(found)) ? found : undefined;
         if (found && !item) this.showShop();
-        const r = item ? buyItem(this.cfg, save, item, command.maxGold) : { ok: false, reason: 'нет в ассортименте' };
+        const r = item ? buyItem(this.cfg, save, item, command.maxGold) : { ok: false, reason: tr('srv:room.notInStock', 'нет в ассортименте') };
         if (r.ok) {
           if (stock) {
             stock.shop = stock.shop.filter((i) => i.uid !== command.uid);   // вышел-зашёл — не вернётся
@@ -2723,9 +2755,9 @@ export class Room implements Tickable {
         // несохранённая перековка (откат в безопасную сторону), а сохранённую игрок увидит в сумке и не будет повторять.
         // ⚠ 23.10 (находка ревизии): ВИД ОБМЕНА — ЧАСТЬ КЛЮЧА. Перековка и перекат делят одну память ключей, и
         // без `op` повтор с тем же ключом, но другим видом обмена получал «уже исполнено» НЕ ИСПОЛНИВШИСЬ.
-        if ((command.seals === undefined) === (command.card === undefined)) return { ok: false, reason: 'Неверная заявка перековки' };   // ⭐ С6: связка или карточка
+        if ((command.seals === undefined) === (command.card === undefined)) return { ok: false, reason: tr('srv:room.badSealRequest', 'Неверная заявка перековки') };   // ⭐ С6: связка или карточка
         const key = command.nonce ? `${save.charId}:${command.op === 'reroll' ? 'r' : 'u'}:${command.nonce}` : null;
-        if (key && this.sealNonces.has(key)) return { ok: true, summary: SEAL_REFORGE_REPEAT };
+        if (key && this.sealNonces.has(key)) return { ok: true, summary: SEAL_TEXT.reforgeRepeat() };   // ⭐ i18n Ф2: на языке игрока
         // ⚠ Через `withAccount`: запас печатей — сумка И СУНДУК (решение владельца 17.10), а сундук —
         // общий на аккаунт и живёт в базе: его и сейв надо писать ОДНОЙ транзакцией (D7/D8), иначе падение
         // между записями дало бы печать и в сундуке, и в сумке. Причина журнала — `forgeSeal` (аудит знает `forge*`).
@@ -2805,9 +2837,9 @@ export class Room implements Tickable {
       case 'bind': return setBinding(this.cfg, save, command.slot, command.value);
       // ⭐ R14-05: мёртвый не бросает (`dropToGround`) — отказ своим словом, как зелье мёртвому.
       case 'drop': {
-        if (this.session.world.players[pid]?.alive === false) return { ok: false, reason: 'Мёртвые не бросают' };
+        if (this.session.world.players[pid]?.alive === false) return { ok: false, reason: tr('srv:room.deadNoDrop', 'Мёртвые не бросают') };
         const thrown = this.session.dropToGround(pid, command.uid);
-        if (!thrown) return { ok: false, reason: 'Нет предмета' };
+        if (!thrown) return { ok: false, reason: tr('srv:room.noItem', 'Нет предмета') };
         this.holdThrown(c, pid, thrown);   // ⭐ V-B2-04: чужой руке — после записи выбросившего без неё
         return { ok: true };
       }
@@ -2817,13 +2849,13 @@ export class Room implements Tickable {
         // вещь не пустит: каждая следующая запись подобравшего падала бы на ней. Добыча с монстров — общая.
         const drop = this.session.world.drops.find((d) => d.id === command.dropId);
         if (drop?.owner !== undefined && drop.owner !== c.userId) {
-          return { ok: false, reason: 'Это выбросил игрок другого аккаунта — передавать вещи между аккаунтами нельзя' };
+          return { ok: false, reason: tr('srv:room.foreignDrop', 'Это выбросил игрок другого аккаунта — передавать вещи между аккаунтами нельзя') };
         }
         // ⭐ K3: выброшенное игроком — в сумку только после записи поднимающего с ним (`pickThrown`); добыча — сразу, как прежде.
         // ⭐ R16 C-04: ответ — когда запись ляжет (`later`), а кадры соединения за ней не стоят (и за записью выбросившего — тоже).
         if (drop?.kind === 'item' && drop.owner !== undefined) return { ok: true, later: this.pickupThrown(c, pid, save, drop) };
         // ⭐ V-B2-04: удержанное (`heldBy`) — только выброшенное, а оно выше; сюда оно не доходит, и подъём по id его не берёт (`foreignDrop`).
-        if (drop?.heldBy !== undefined && drop.heldBy !== save.charId) return { ok: false, reason: HELD_DROP };
+        if (drop?.heldBy !== undefined && drop.heldBy !== save.charId) return { ok: false, reason: HELD_DROP() };
         // ⭐ R16 C-12: подъём кликом — тем же путём событий, что [E] и автоподбор тика (`absorb`): сбор для заданий, наблюдения, золото и
         // сырьё (их события `takeDrop` кладёт в буфер тика — между тиками он уже отдан, R4-01). Раньше клик только рассылал «поднято».
         let got: ReturnType<GameSession['pickupDropById']> = null;
@@ -2831,7 +2863,7 @@ export class Room implements Tickable {
         const took = got as ReturnType<GameSession['pickupDropById']>;
         if (took?.item) events.push({ type: 'item-picked', playerId: pid, item: took.item, x: took.x, y: took.y });
         this.absorb(events, false);   // сейв — ответом команды
-        return took ? { ok: true } : { ok: false, reason: PICK_FAR };
+        return took ? { ok: true } : { ok: false, reason: PICK_FAR() };
       }
       case 'acceptQuest': {
         const windowMs = Math.max(0, this.cfg.get('balance').townRestockSec) * 1000;
@@ -2842,7 +2874,7 @@ export class Room implements Tickable {
           this.restock();
           this.showShop();
           this.broadcastQuestBoard();
-          return { ok: false, reason: BOARD_RENEWED };
+          return { ok: false, reason: BOARD_RENEWED() };
         }
         const found = this.questBoard.find((q) => q.id === command.questId);
         // R1-03: как у прилавка — истина в стоке героя; принятое в другой комнате с той же доски не берётся дважды.
@@ -2853,7 +2885,7 @@ export class Room implements Tickable {
         // R4-33: срок — между поколениями досок (`stock.at`), а не от принятия: честно обновлённая доска даёт сразу.
         const quota = { now: Date.now(), windowMs, boardAt: stock?.at };
         // R6-13: начатое задание того же вида вытесняется только с согласия игрока (`replace` — клиент спросил).
-        const r = def ? acceptQuest(save, def, quota, command.replace === true) : { ok: false, reason: 'Нет на доске' };
+        const r = def ? acceptQuest(save, def, quota, command.replace === true) : { ok: false, reason: tr('srv:room.notOnBoard', 'Нет на доске') };
         if (r.ok && def) {
           if (stock) this.questBoard = stock.board = stock.board.filter((q) => q.id !== def.id);   // вышел-зашёл — не вернётся
           else this.questBoard = this.questBoard.filter((q) => q.id !== def.id);
@@ -2863,7 +2895,9 @@ export class Room implements Tickable {
         return r;
       }
       case 'turnInQuest': {
-        const name = save.activeQuestDefs.find((d) => d.id === command.questId)?.name ?? command.questId;
+        // ⭐ i18n Ф2 (06.11): имя — на языке игрока СЕЙЧАС (команда идёт в его области): после сдачи определения в журнале уже нет
+        const was = save.activeQuestDefs.find((d) => d.id === command.questId);
+        const name = was ? questDisplay(this.cfg, was).name : command.questId;
         const r = turnInQuest(this.cfg, save, command.questId);
         if (r.ok) this.questEvent(pid, 'turned-in', command.questId, name);
         return r;
@@ -2871,7 +2905,7 @@ export class Room implements Tickable {
       default: {
         // Схема пропускает только известные команды; сюда можно попасть, лишь забыв ветку.
         const never: never = command;
-        return { ok: false, reason: `неизвестная команда ${String((never as { cmd?: unknown }).cmd)}` };
+        return { ok: false, reason: tr('srv:room.unknownCommand', 'неизвестная команда {cmd}', { cmd: String((never as { cmd?: unknown }).cmd) }) };
       }
     }
   }
@@ -2884,14 +2918,14 @@ export class Room implements Tickable {
    */
   private useConsumable(pid: string, uid: string): { ok: boolean; reason?: string } {
     const p = this.session.world.players[pid];
-    if (!p || !this.session.snapshotOf(pid)) return { ok: false, reason: 'нет игрока' };
-    if (!p.alive) return { ok: false, reason: 'Мёртвые не пьют' };
-    if (p.stunTimer > 0) return { ok: false, reason: 'Оглушён' };
+    if (!p || !this.session.snapshotOf(pid)) return { ok: false, reason: tr('srv:room.noPlayer', 'нет игрока') };
+    if (!p.alive) return { ok: false, reason: tr('srv:room.deadNoDrink', 'Мёртвые не пьют') };
+    if (p.stunTimer > 0) return { ok: false, reason: tr('srv:room.stunned', 'Оглушён') };
     const inBelt = p.save.belt.findIndex((it) => it?.uid === uid);
     const item = inBelt >= 0 ? p.save.belt[inBelt] : p.save.inventory.find((it) => it.uid === uid);
-    if (!item?.use) return { ok: false, reason: 'не расходник' };
+    if (!item?.use) return { ok: false, reason: tr('srv:room.notConsumable', 'не расходник') };
     // Единый эффект (пояс ввода — тот же). ⚠ C-11 (бафф-зелья): база выпитого — её бафф (`use.buffMods`) тоже действие.
-    if (!this.session.drink(pid, item.use, item.baseId)) return { ok: false, reason: 'Нет эффекта' };
+    if (!this.session.drink(pid, item.use, item.baseId)) return { ok: false, reason: tr('srv:room.noEffect', 'Нет эффекта') };
     // расход
     if (inBelt >= 0) p.save.belt[inBelt] = null;
     else { const i = p.save.inventory.findIndex((it) => it.uid === uid); if (i >= 0) p.save.inventory.splice(i, 1); }
@@ -2932,7 +2966,7 @@ export class Room implements Tickable {
       // и голос проходил сразу: труп у выхода, напарник закрыл вкладку при 1 HP — спуск хоронил только сбежавшего (R6-01), а мёртвого
       // `enterFloor` оживлял на новом узле полным (с финала — завершение забега): «штраф одной смерти, забег цел» вместо вайпа (R13-02).
       // Уход такой пати — в город (`return` мёртвого, R13-02) или возвратом застрявших по сроку (`checkStranded`).
-      if (this.stranded()) { this.tellFar(pid, DEAD_PARTY); return; }
+      if (this.stranded()) { this.tellFar(pid, DEAD_PARTY()); return; }
       // ⭐ R3-01: СПУСК — ОТ ВЫХОДА. Раньше проверялись только голосование и пауза, и
       // модифицированный клиент спускался прямо с точки входа через полторы секунды после каждого этажа: двадцать этажей
       // за полминуты, ни одного рычага и двери, а `enterNode` писал прогресс сложности — тиры открывались без единого
@@ -2948,7 +2982,7 @@ export class Room implements Tickable {
       const exits = this.session.world.exits ?? [];
       const chosen = targetNodeId ? node.edges.findIndex((e) => e.to === targetNodeId) : -1;
       const idx = chosen >= 0 ? (near(exits[chosen]) ? chosen : -1) : exits.findIndex((e, i) => i < node.edges.length && near(e));
-      if (idx < 0) { this.tellFar(pid, FAR_EXIT); return; }
+      if (idx < 0) { this.tellFar(pid, FAR_EXIT()); return; }
       const target = node.edges[idx]!.to;
       if (this.runClash(pid, false)) { this.tellBlocked(pid, 'run'); return; }   // R4-25
       // ⭐ Г2: цель может лежать за краем окна — её слой строится отдельно (один слой, цена та же: Р1), иначе
@@ -2990,12 +3024,12 @@ export class Room implements Tickable {
     // сборки, самодельные клиенты) и он же держит правило, если кнопку когда-нибудь снова покажут в городе.
     // Код — `far`, тот же, что у остальных отказов этой двери (`tellFar`): клиенты уже умеют показать его
     // строкой, а новый код потребовал бы правки каждого клиента ради того же смысла «здесь нельзя».
-    if (this.area !== 'dungeon') { this.tellFar(pid, FINISH_NOT_IN_RUN); return; }
+    if (this.area !== 'dungeon') { this.tellFar(pid, FINISH_NOT_IN_RUN()); return; }
     if (this.votePending(pid) || !this.voteAllowed(pid)) return;
     // ⭐ R14-02: пати без живых подключённых вперёд не идёт и сама забег не закрывает — её уводит `return` мёртвого
     // (R13-02) или возврат застрявших по сроку (`checkStranded`). Иначе труп у портала закрывал бы забег за пати.
-    if (this.stranded()) { this.tellFar(pid, DEAD_PARTY); return; }
-    if (!this.canLeave(pid)) { this.tellFar(pid, FAR_PORTAL); return; }
+    if (this.stranded()) { this.tellFar(pid, DEAD_PARTY()); return; }
+    if (!this.canLeave(pid)) { this.tellFar(pid, FAR_PORTAL()); return; }
     // ⭐ R23-02: и в подземелье — со сроком: к нему молчащие голос не держат (`voteReady`).
     this.vote = { kind: 'descend', by: pid, finish: true, yes: new Set([pid]), no: new Set(), until: this.voteUntil() };
     this.broadcast(this.voteStartFrame(this.vote));
@@ -3067,7 +3101,7 @@ export class Room implements Tickable {
     const v = this.vote;
     if (!v) return false;
     const c = this.clients.get(pid);
-    if (c && !v.yes.has(pid)) this.send(c.ws, { t: 'error', code: 'vote', msg: VOTE_PENDING });
+    if (c && !v.yes.has(pid)) this.sendText(c, () => ({ t: 'error', code: 'vote', msg: VOTE_PENDING() }));
     return true;
   }
   /** Текущий узел забега (по runNodeId в runPlan). */
@@ -3094,9 +3128,9 @@ export class Room implements Tickable {
     return path.length > 0 && path.length <= EXIT_REACH_STEPS;
   }
   /** Отказ перехода издалека — инициатору кадр `error` с кодом `far` (честный клиент видит подсказку, а не молчание). */
-  private tellFar(pid: string, msg: string): void {
+  private tellFar(pid: string, msg: string | (() => string)): void {
     const c = this.clients.get(pid);
-    if (c) this.send(c.ws, { t: 'error', code: 'far', msg });
+    if (c) this.sendText(c, () => ({ t: 'error', code: 'far', msg: typeof msg === 'function' ? msg() : msg }));   // ⭐ i18n Ф1: фраза — на его языке
   }
   /**
    * R4-14: может ли игрок уйти из подземелья в город — мёртв или стоит у точки входа (портал возврата) или у портала узла.
@@ -3209,10 +3243,10 @@ export class Room implements Tickable {
    * клиент показывает текст; `run` — чужой забег под перезаписью).
    */
   private tellBlocked(pid: string, why: 'far' | 'fight' | 'run'): void {
-    if (why === 'far') { this.tellFar(pid, FAR_PORTAL); return; }
-    if (why === 'fight') { this.tellFar(pid, FAR_FIGHT); return; }
+    if (why === 'far') { this.tellFar(pid, FAR_PORTAL()); return; }
+    if (why === 'fight') { this.tellFar(pid, FAR_FIGHT()); return; }
     const c = this.clients.get(pid);
-    if (c) this.send(c.ws, { t: 'error', code: 'run', msg: RUN_CLASH });
+    if (c) this.sendText(c, () => ({ t: 'error', code: 'run', msg: RUN_CLASH() }));
   }
   /** Игрок дёрнул рычаг: сессия открывает его дверь (если рядом) → броадкаст всем. */
   /**
@@ -3429,9 +3463,9 @@ export class Room implements Tickable {
   private async pickupThrown(c: Client, pid: string, save: SaveState, drop: Extract<DropEntity, { kind: 'item' }>): Promise<CmdOutcome> {
     if (drop.heldBy !== undefined && drop.heldBy !== save.charId) {
       await this.heldSettled(drop.heldBy);
-      if (this.clients.get(pid) !== c) return { ok: false, reason: 'Нет персонажа' };
-      if (this.frozen) return { ok: false, reason: FROZEN };
-      if (drop.heldBy !== undefined) return { ok: false, reason: HELD_DROP };
+      if (this.clients.get(pid) !== c) return { ok: false, reason: tr('srv:room.noCharacter', 'Нет персонажа') };
+      if (this.frozen) return { ok: false, reason: FROZEN() };
+      if (drop.heldBy !== undefined) return { ok: false, reason: HELD_DROP() };
     }
     return this.pickThrown(c, pid, drop.id);
   }
@@ -3455,21 +3489,21 @@ export class Room implements Tickable {
   private pickThrown(c: Client, pid: string, dropId: number): Promise<CmdOutcome> {
     const d = this.session.pickable(pid, dropId);
     const p = this.session.world.players[pid];
-    if (!p || !d || d.kind !== 'item' || d.owner === undefined) return Promise.resolve({ ok: false, reason: PICK_FAR });
-    if (this.carrying.has(d)) return Promise.resolve({ ok: false, reason: PICKING });
-    if (c.writeFailedAt && monoMs() - c.writeFailedAt < DROP_WRITE_BACKOFF_MS) return Promise.resolve({ ok: false, reason: PICK_UNSAVED });
+    if (!p || !d || d.kind !== 'item' || d.owner === undefined) return Promise.resolve({ ok: false, reason: PICK_FAR() });
+    if (this.carrying.has(d)) return Promise.resolve({ ok: false, reason: PICKING() });
+    if (c.writeFailedAt && monoMs() - c.writeFailedAt < DROP_WRITE_BACKOFF_MS) return Promise.resolve({ ok: false, reason: PICK_UNSAVED() });
     const dims = this.cfg.get('balance').inventory;
-    if (!findFree(p.save.inventory, d.item.gridW, d.item.gridH, dims)) return Promise.resolve({ ok: false, reason: PICK_FAR });
+    if (!findFree(p.save.inventory, d.item.gridW, d.item.gridH, dims)) return Promise.resolve({ ok: false, reason: PICK_FAR() });
     this.carrying.add(d);
     const job = this.queued(c, async (): Promise<CmdOutcome> => {
       // Пока ждали очередь: сессию сняли, начался слив, вещь удержал другой — подъёма нет, вещь где была.
-      if (this.clients.get(pid) !== c || c.stale) return { ok: false, reason: 'Нет персонажа' };
-      if (this.frozen) return { ok: false, reason: FROZEN };
-      if (d.heldBy !== undefined && d.heldBy !== p.save.charId) return { ok: false, reason: HELD_DROP };
+      if (this.clients.get(pid) !== c || c.stale) return { ok: false, reason: tr('srv:room.noCharacter', 'Нет персонажа') };
+      if (this.frozen) return { ok: false, reason: FROZEN() };
+      if (d.heldBy !== undefined && d.heldBy !== p.save.charId) return { ok: false, reason: HELD_DROP() };
       // ⭐ R16 C-01: и правила подъёма (`pickable`) — снова: пока ждали, герой погиб или оглушён, ушёл от вещи, землю сменили.
-      if (this.session.pickable(pid, d.id) !== d) return { ok: false, reason: PICK_FAR };
+      if (this.session.pickable(pid, d.id) !== d) return { ok: false, reason: PICK_FAR() };
       const pos = findFree(p.save.inventory, d.item.gridW, d.item.gridH, dims);
-      if (!pos) return { ok: false, reason: PICK_FAR };
+      if (!pos) return { ok: false, reason: PICK_FAR() };
       c.carry = { drop: d, pos };
       const deaths = this.deathsBy.get(p.save) ?? 0;   // R20-07
       let r: WriteResult;
@@ -3478,14 +3512,14 @@ export class Room implements Tickable {
       } finally {
         c.carry = undefined;
       }
-      if (r !== 'ok') return { ok: false, reason: r === 'failed' ? PICK_UNSAVED : 'Нет персонажа' };
+      if (r !== 'ok') return { ok: false, reason: r === 'failed' ? PICK_UNSAVED() : tr('srv:room.noCharacter', 'Нет персонажа') };
       // ⭐ R20-07: ГЕРОЙ ПОГИБ, ПОКА ШЛА ЗАПИСЬ (или погиб и ожил: вайп — город, спуск пати), — поднятое не в сумку. Правила подъёма сверялись только
       // до записи: тик убивал героя в её окне, штраф смерти катал сумку без вещи, а легшая запись клала её в сумку мёртвого — мимо броска потери и
       // вопреки «мёртвые не поднимают» (C-13, R14-05). Теперь — на земле за ним (`keepThrown`), как у всякого, кто поднять не может: его запись
       // без вещи метку снимает.
       if (!p.alive || (this.deathsBy.get(p.save) ?? 0) !== deaths) {
         this.keepThrown(c, p, d);
-        return { ok: false, reason: PICK_DIED };
+        return { ok: false, reason: PICK_DIED() };
       }
       // Легла — вещь в строке поднявшего: с земли в сумку. Клетку, пока писали, могла занять команда (покупка, снятое, добыча) — тогда первая
       // свободная.
@@ -3497,7 +3531,7 @@ export class Room implements Tickable {
         // вне сетки (`pos: null`) и возвращал перекладкой. Теперь вещь — на земле, как выброшенная, чья строка её ещё держит (V-B2-04): за
         // поднимавшим (`heldBy`), и его запись без неё (`writeSoon`; ушёл — прощальная или дописка копии) снимает метку.
         this.keepThrown(c, p, d);
-        return { ok: false, reason: PICK_FULL };
+        return { ok: false, reason: PICK_FULL() };
       }
       const i = this.session.world.drops.indexOf(d);
       if (i >= 0) this.session.world.drops.splice(i, 1);
@@ -3599,17 +3633,17 @@ export class Room implements Tickable {
   ): Promise<TxResult> {
     return this.queued(c, async (): Promise<TxResult> => {
       const p = this.session.world.players[pid];
-      if (!p || this.clients.get(pid) !== c) return { ok: false, reason: 'Нет персонажа' };
+      if (!p || this.clients.get(pid) !== c) return { ok: false, reason: tr('srv:room.noCharacter', 'Нет персонажа') };
       const loaded = account ? await loadAccountStash(c.userId, this.cfg) : undefined;
       // Пока ждали базу, игрок мог уйти (сокет закрыт, прощальная запись уже в очереди за нами) — тогда
       // действовать не над кем: его сейв сейчас пишут на выход, а ответ всё равно не дойдёт.
-      if (this.clients.get(pid) !== c) return { ok: false, reason: 'Нет персонажа' };
-      if (this.frozen) return { ok: false, reason: FROZEN };   // R5-07: пока ждали базу, начался слив — не исполняем
+      if (this.clients.get(pid) !== c) return { ok: false, reason: tr('srv:room.noCharacter', 'Нет персонажа') };
+      if (this.frozen) return { ok: false, reason: FROZEN() };   // R5-07: пока ждали базу, начался слив — не исполняем
       // ⭐ R12-11: голос за продолжение забега прошёл, переход ждёт свод из базы (`resumeFromLedger`) — сейв на удержание не берём.
       // Барьер R1-05 (`checkVote` ждёт удержанных) стоит только до голоса: удержанный в этом окне сейв уезжал в подземелье, а неудача
       // его записи откатывала к городскому снимку всё, что случилось уже там (штраф смерти, опыт, квесты).
-      if (loaded && this.resuming) return { ok: false, reason: RESUMING };
-      if (!anywhere && this.area !== 'town') return { ok: false, reason: 'Это доступно только в городе' };
+      if (loaded && this.resuming) return { ok: false, reason: RESUMING() };
+      if (!anywhere && this.area !== 'town') return { ok: false, reason: tr('srv:room.townOnly', 'Это доступно только в городе') };
       const lost = guard?.();
       if (lost) return { ...lost, early: true };   // ⭐ R22-03: согласие потеряно, пока ждали, — до действия, ничего не тронуто
       const save = p.save;
@@ -3659,7 +3693,7 @@ export class Room implements Tickable {
         // R1-01, R2-09: база отказала по версии сейва или исход фиксации неизвестен — сессию уже сняли
         // (`dropStale`): дописывать действие некому, а откатывать память к «до» НЕЛЬЗЯ — в базе оно могло
         // остаться, и откат дал бы вещь и там, и в памяти (выбросить — и она у двоих).
-        if (c.stale) return { ok: false, reason: 'Нет персонажа' };
+        if (c.stale) return { ok: false, reason: tr('srv:room.noCharacter', 'Нет персонажа') };
         if (!loaded) {
           tallyForge(c.tm, why);
           return r;
@@ -3672,7 +3706,7 @@ export class Room implements Tickable {
         // ⭐ R14-04: откачена к «до действия» — снимку записи с неизвестным исходом (ушёл, пока она шла) копия уже не продолжение: легла та
         // запись — отказ по версии прощальной и есть правда (действие в базе), поверх неё «до действия» не пишется.
         c.unsure = [];
-        return { ok: false, reason: 'Не удалось сохранить, попробуйте ещё раз' };
+        return { ok: false, reason: tr('srv:room.saveFailed', 'Не удалось сохранить, попробуйте ещё раз') };
       } finally {
         if (loaded) {
           this.session.saveHeld.delete(pid);
@@ -3715,7 +3749,7 @@ export class Room implements Tickable {
     if (this.refuseFrozen(pid) || this.area === 'town' || this.votePending(pid) || !this.voteAllowed(pid)) return;
     // R4-14: и звать, и голосовать «за» — только у портала (или мёртвым): см. `castVote`, `checkVote`.
     if (this.area === 'dungeon' && !this.canLeave(pid)) {
-      this.tellFar(pid, FAR_PORTAL);
+      this.tellFar(pid, FAR_PORTAL());
       return;
     }
     this.vote = { kind: 'town', by: pid, yes: new Set([pid]), no: new Set(), until: this.voteUntil() };   // D1, R23-02: со сроком — с арены и из подземелья
@@ -3803,7 +3837,7 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     if (!c) return false;
     if ((this.movedAt && monoMs() - this.movedAt < VOTE_COOLDOWN_MS) || this.resuming) {   // R9-01: продолжение ещё ждёт базу
-      this.send(c.ws, { t: 'error', code: 'rate', msg: 'Подождите немного' });
+      this.sendText(c, () => ({ t: 'error', code: 'rate', msg: tr('srv:room.waitABit', 'Подождите немного') }));
       return false;
     }
     return true;
@@ -3838,7 +3872,7 @@ export class Room implements Tickable {
       if (this.vote.kind === 'descend' && this.area === 'town' && this.vote.plan
         && planKey(this.vote.plan) !== planKey(this.descendPlan(this.vote.diffId, this.vote.runCfg, this.vote.wantDepth))) {
         this.endVote();
-        this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });
+        this.broadcastText(() => ({ t: 'error', code: 'vote', msg: VOTE_CHANGED() }));
         return;
       }
       // ⭐ C-12: НОВЫЙ ЗАБЕГ — В ТИРЕ, ОТКРЫТОМ ХОТЬ ОДНОМУ ИЗ ТЕХ, КТО УХОДИТ. Тир сверялся только с позвавшим и только на старте голосования
@@ -3848,7 +3882,7 @@ export class Room implements Tickable {
       if (this.vote.kind === 'descend' && this.area === 'town' && this.vote.plan && !this.vote.plan.resume
         && !this.tierOpenHere(this.vote.plan.difficultyId)) {
         this.endVote();
-        this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });
+        this.broadcastText(() => ({ t: 'error', code: 'vote', msg: VOTE_CHANGED() }));
         return;
       }
       const v = this.vote;
@@ -3992,7 +4026,7 @@ export class Room implements Tickable {
     }
     // ⭐ V2: забег идёт в другой комнате этой ноды — не продолжение, а отказ (голос мог пройти раньше, чем та вошла).
     const busyNow = this.hooks.runBusy?.(key, this);
-    if (busyNow) { this.broadcast({ t: 'error', code: 'run', msg: runElsewhereMsg(busyNow), roomCode: busyNow }); return; }   // R18-04: и кодом
+    if (busyNow) { this.broadcastText(() => ({ t: 'error', code: 'run', msg: runElsewhereMsg(busyNow), roomCode: busyNow })); return; }   // R18-04: и кодом
     this.resuming = true;
     this.resumeClaim = key;   // ⭐ перепрогон R20
     const takenMeanwhile = watchRunTakes(key);   // ⭐ перепрогон R18
@@ -4038,25 +4072,25 @@ export class Room implements Tickable {
     stored: RunNodeState[] | undefined, elsewhere: string | null, taken: boolean,
   ): boolean {
     if (this.frozen || this.area !== 'town' || this.clients.size === 0) return false;
-    if (!stored) { this.broadcast({ t: 'error', code: 'busy', msg: RESUME_FAILED }); return false; }
+    if (!stored) { this.broadcastText(() => ({ t: 'error', code: 'busy', msg: RESUME_FAILED() })); return false; }
     const run = host.run!.config;
     const h = this.parkedHost();
     if (!h?.run?.config || h.charId !== charId || runLedgerKey(h.run.config) !== key) {
-      this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });   // хозяин забега ушёл, пока ждали, — не то, за что голосовали
+      this.broadcastText(() => ({ t: 'error', code: 'vote', msg: VOTE_CHANGED() }));   // хозяин забега ушёл, пока ждали, — не то, за что голосовали
       return false;
     }
     // R10-07: вошедший без голоса или спуск уже не тот (глубина, хозяин) — не переход, а отмена: позвать заново, окно покажет правду.
     const joined = [...this.clients.keys()].some((pid) => !voters.has(pid));
     if (joined || (voted.plan && planKey(voted.plan) !== planKey(this.descendPlan(voted.diffId, voted.runCfg)))) {
-      this.broadcast({ t: 'error', code: 'vote', msg: VOTE_CHANGED });
+      this.broadcastText(() => ({ t: 'error', code: 'vote', msg: VOTE_CHANGED() }));
       return false;
     }
     // ⭐ V2: пока ждали базу, забег взяла другая комната — этой ноды (сверка сейчас) или другой (кластер): к пати туда, а не второй раз здесь.
     const busy = this.hooks.runBusy?.(key, this) ?? elsewhere;
-    if (busy) { this.broadcast({ t: 'error', code: 'run', msg: runElsewhereMsg(busy), roomCode: busy }); return false; }   // R18-04: и кодом
+    if (busy) { this.broadcastText(() => ({ t: 'error', code: 'run', msg: runElsewhereMsg(busy), roomCode: busy })); return false; }   // R18-04: и кодом
     // ⭐ Перепрогон R18: пока ждали реестр и базу, забег брала другая комната процесса и уже отдала его — прочитанный свод мог её взятого не видеть:
     // не узел по нему, а повтор (голос заново — свод заново).
-    if (taken) { this.broadcast({ t: 'error', code: 'busy', msg: RESUME_FAILED }); return false; }
+    if (taken) { this.broadcastText(() => ({ t: 'error', code: 'busy', msg: RESUME_FAILED() })); return false; }
     if (stored.length) {
       for (const c of this.clients.values()) {
         const r = this.session.world.players[c.pid]?.save.run;
@@ -4196,7 +4230,7 @@ export class Room implements Tickable {
   private tellRunElsewhere(pid: string, code: string): void {
     const c = this.clients.get(pid);
     // ⭐ R18-04: код держателя — и полем кадра (как отказы входа, C-05, C-08): клиент может предложить «к пати», а не только показать текст.
-    if (c) this.send(c.ws, { t: 'error', code: 'run', msg: runElsewhereMsg(code), roomCode: code });
+    if (c) this.sendText(c, () => ({ t: 'error', code: 'run', msg: runElsewhereMsg(code), roomCode: code }));
   }
   /** Финал забега: забег окончен + возврат в город. */
   private finishRun(): void {
@@ -4360,7 +4394,7 @@ export class Room implements Tickable {
     // R9-01: запись узла (и принесённое из сейвов участников) — в свод базы; уходит с чекпойнтом ниже (`persistAll`).
     if (folded) this.markLedger();
     this.markLedger(nodeId);
-    this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
+    this.broadcastArea();   // ⭐ F5: только открытое
     for (const [id, cl] of this.clients) { delete cl.deathState; this.pushHero(id); }   // ⭐ С2: строка HUD — по новой области; ⭐ С6: смерть забыта
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
@@ -4630,7 +4664,7 @@ export class Room implements Tickable {
       if (from === 'dungeon' && save.run?.config && this.runConfig && sameRun(save.run.config, this.runConfig)) delete save.run.deadAt;
       ensureMainQuest(this.cfg, save);
     }
-    this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
+    this.broadcastArea();   // ⭐ F5: только открытое
     for (const [id, cl] of this.clients) { delete cl.deathState; this.pushHero(id); }   // ⭐ С2: строка HUD — по новой области; ⭐ С6: смерть забыта
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
@@ -4675,7 +4709,7 @@ export class Room implements Tickable {
       const rc = this.clients.get(pid); if (rc) delete rc.deathState;   // ⭐ С6: ожил — память окна смерти сброшена
       i++;
     }
-    this.broadcast({ t: 'areaChanged', floor: this.clientFloor() });   // ⭐ F5: только открытое
+    this.broadcastArea();   // ⭐ F5: только открытое
     for (const [id, cl] of this.clients) { delete cl.deathState; this.pushHero(id); }   // ⭐ С2: строка HUD — по новой области; ⭐ С6: смерть забыта
     this.broadcastPeerInfo();
     this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
@@ -4947,12 +4981,43 @@ export class Room implements Tickable {
     if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
   }
 
-  /** ⭐ С8: язык интерфейса игрока — только включённый язык таблицы `locales`; прочее — язык-источник (поле снимается). */
-  setLang(pid: string, lang: string | undefined): void {
+  /**
+   * ⭐ С8: язык интерфейса игрока — только включённый язык таблицы `locales`; прочее — язык-источник (поле снимается).
+   * ⭐ i18n Ф1 (06.11): язык сменился — лист героя уходит заново (его текст собран на прежнем); `announce` (кадр `lang`) — и `langChanged`
+   * с языком, который сервер принял: клиент по нему перезапрашивает открытые окна (виды). Возвращает принятый язык.
+   */
+  setLang(pid: string, lang: string | undefined, announce = false): string {
     const c = this.clients.get(pid);
-    if (!c) return;
+    if (!c) return SOURCE_LANG;
+    const before = c.lang;
     const ok = typeof lang === 'string' && localeLangs(this.cfg.get('locales') as Locales | undefined, { enabledOnly: true }).includes(lang);
     if (ok) c.lang = lang; else delete c.lang;
+    const now = c.lang ?? SOURCE_LANG;
+    if ((before ?? SOURCE_LANG) !== now) { delete c.heroSent; this.pushHero(pid); }
+    if (announce) this.send(c.ws, { t: 'langChanged', lang: now });
+    return now;
+  }
+
+  /** ⭐ i18n Ф1 (06.11): `fn` — на языке клиента `c` (область текста, `textScope.ts`); нет клиента или языка — язык-источник. */
+  private inLang<T>(c: Client | undefined, fn: () => T, codes?: Map<string, string>): T {
+    let locales: Locales | undefined;
+    try { locales = c?.lang ? this.cfg.get('locales') as Locales : undefined; } catch { locales = undefined; }
+    return inTextLang(locales, c?.lang, fn, codes);
+  }
+  /** ⭐ i18n Ф1: кадр с текстом — одному клиенту, собранный на ЕГО языке (вызов мог прийти из чужой области: тик, чужая команда). */
+  private sendText(c: Client, build: () => ServerFrame): void {
+    this.inLang(c, () => this.send(c.ws, build()));
+  }
+  /** ⭐ i18n Ф1: кадр с текстом — всей комнате, каждому на его языке; собирается и сериализуется раз на язык, а не на игрока. */
+  private broadcastText(build: () => ServerFrame): void {
+    const byLang = new Map<string, string>();
+    for (const c of this.clients.values()) {
+      if (!c.ws.open) continue;
+      const lang = c.lang ?? SOURCE_LANG;
+      let msg = byLang.get(lang);
+      if (msg === undefined) { msg = this.inLang(c, () => JSON.stringify(build())); byLang.set(lang, msg); }
+      c.ws.send(msg);
+    }
   }
 
   /**
@@ -4960,6 +5025,10 @@ export class Room implements Tickable {
    * команды). Отказ — строкой (`reason`); частота — на аккаунт (`limits.viewReq`). Вид ничего не меняет: ни сейва, ни мира, ни базы.
    */
   viewRequest(pid: string, id: number, kind: ViewKind, args: Record<string, unknown> | undefined): void {
+    this.inLang(this.clients.get(pid), () => this.viewRequestIn(pid, id, kind, args));   // ⭐ i18n Ф1: вид — на языке игрока
+  }
+
+  private viewRequestIn(pid: string, id: number, kind: ViewKind, args: Record<string, unknown> | undefined): void {
     const c = this.clients.get(pid);
     if (!c || this.frozen) return;
     const answer = (out: { ok: boolean; view?: unknown; reason?: string }): void => this.send(c.ws, { t: 'view', id, kind, ...out });
@@ -4969,11 +5038,16 @@ export class Room implements Tickable {
       seen: () => (p ? this.itemsSeen(p.save, c.stashSeen ?? null).length : 0),
     };
     const cost = viewCost(kind, args ?? {}, work);
-    if (!limits.viewReq.takeCost(c.userId, cost)) { answer({ ok: false, reason: 'Слишком часто' }); return; }
-    if (!p) { answer({ ok: false, reason: 'Нет персонажа' }); return; }
+    if (!limits.viewReq.takeCost(c.userId, cost)) { answer({ ok: false, reason: tr('srv:room.tooOften', 'Слишком часто') }); return; }
+    if (!p) { answer({ ok: false, reason: tr('srv:room.noCharacter', 'Нет персонажа') }); return; }
     let out: { ok: boolean; view?: unknown; reason?: string };
     try { out = this.viewOf(pid, kind, args ?? {}); }
-    catch (e) { console.error(`[room ${this.code}] вид «${kind}» игрока ${p.save.charId} упал:`, e); out = { ok: false, reason: 'Ошибка сервера' }; }
+    catch (e) { console.error(`[room ${this.code}] вид «${kind}» игрока ${p.save.charId} упал:`, e); out = { ok: false, reason: tr('srv:room.viewServerError', 'Ошибка сервера') }; }
+    // ⭐ i18n Ф2 (06.11): вещи и задания, лежащие в модели окна целиком (испечённые имена), — на языке игрока; источник — тот же объект
+    if (c.lang && out.view !== undefined) {
+      const view = localizeDeep(this.cfg, out.view);
+      if (view !== out.view) { out = { ...out, view }; counters.textFramesLocalized++; }
+    }
     // ⭐ С-аудит (29.10): кадр собирается ОДИН раз — его длина и есть счёт за байты: длиннее цены (`VIEW_BYTES_PER_TOKEN` на токен) —
     // доплата в долг (`charge`), следующие запросы аккаунта ждут пополнения.
     const text = JSON.stringify({ t: 'view', id, kind, ...out });
@@ -4988,14 +5062,15 @@ export class Room implements Tickable {
     const c = this.clients.get(pid)!;
     const save = this.session.world.players[pid]!.save;
     const stash = c.stashSeen ?? null;
-    const opts = { lang: c.lang as Lang | undefined };
+    // ⭐ i18n Ф1 (06.11): язык — область текста (`viewRequest`), одна на фразы окна и тексты конфига; явный язык видам не нужен
+    const opts = {};
     switch (kind) {
       case 'hero': return this.heroView(pid, args);
       case 'item': return this.itemView(pid, args);
       case 'bench': {
         const uid = argId(args.uid);
         const v = uid !== null ? forgeBenchView(this.cfg, save, stash, uid) : null;
-        return v ? { ok: true, view: v } : { ok: false, reason: 'Вещи нет' };
+        return v ? { ok: true, view: v } : { ok: false, reason: tr('srv:room.noSuchItem', 'Вещи нет') };
       }
       // Прилавок — тот же список, что у кадра `shop` и у команды `buy` (`shopListed`); вне города — только скупка (стока нет).
       case 'shop': return { ok: true, view: shopView(this.cfg, save, stash, this.area === 'town' ? this.shopListed() : []) };
@@ -5007,7 +5082,7 @@ export class Room implements Tickable {
       }
       case 'segment': {
         const picked = argCounts(args.picked);
-        if (picked === undefined) return { ok: false, reason: 'Неверный запрос вида' };
+        if (picked === undefined) return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
         const seg = this.segment;
         const v = runSegmentView(this.cfg, save, {
           depth: this.area === 'dungeon' ? this.depth : 0, biomeId: this.session.world.biomeId, tierId: this.difficultyId,
@@ -5026,7 +5101,7 @@ export class Room implements Tickable {
         return { ok: true, view: { ...v, legendNote: runMapLegendNote(access.portalsAt, access.contentCycle), legend: runMapLegend(), r: RUN_MAP_GEOM.r } };
       }
       case 'craft': return this.craftViewOf(pid, args);
-      default: return { ok: false, reason: `Вид «${kind}» сервер ещё не считает` };
+      default: return { ok: false, reason: tr('srv:room.viewUnknown', 'Вид «{kind}» сервер ещё не считает', { kind }) };
     }
   }
 
@@ -5042,7 +5117,7 @@ export class Room implements Tickable {
     const save = this.session.world.players[pid]!.save;
     const stash = c.stashSeen;
     const cls = argId(args.weaponClass);
-    if (!cls || !this.cfg.get('weapon-anatomy').some((a) => a.id === cls)) return { ok: false, reason: 'Неверный запрос вида' };
+    if (!cls || !this.cfg.get('weapon-anatomy').some((a) => a.id === cls)) return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
     const hands = argInt(args.hands);
     const st: CraftWindowState = initialCraftState(this.cfg, cls, hands === 1 || hands === 2 ? hands : undefined);
     const parts = args.parts;
@@ -5082,7 +5157,7 @@ export class Room implements Tickable {
     switch (args.part) {
       case 'menu': {
         const uid = argId(args.uid);
-        if (uid === null || !save.inventory.some((it) => it.uid === uid)) return { ok: false, reason: 'Вещи нет' };
+        if (uid === null || !save.inventory.some((it) => it.uid === uid)) return { ok: false, reason: tr('srv:room.noSuchItem', 'Вещи нет') };
         return { ok: true, view: { items: itemMenuView(this.cfg, save, stash, uid, this.area === 'town') } };
       }
       case 'tips': {
@@ -5092,18 +5167,18 @@ export class Room implements Tickable {
         const seen = this.itemsSeen(save, stash);
         if (args.uids === undefined) return { ok: true, view: itemTipsView(this.cfg, save, seen.slice(0, VIEW_TIPS_MAX)) };
         const uids = Array.isArray(args.uids) ? args.uids : null;
-        if (!uids || uids.length > VIEW_TIPS_MAX) return { ok: false, reason: 'Неверный запрос вида' };
+        if (!uids || uids.length > VIEW_TIPS_MAX) return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
         const want = new Set(uids.map(argId).filter((u): u is string => u !== null));
         return { ok: true, view: itemTipsView(this.cfg, save, seen.filter((it) => want.has(it.uid))) };
       }
       case 'equip': {
         const uid = argId(args.uid), cell = argId(args.cell);
         const item = uid !== null ? this.itemsSeen(save, stash).find((it) => it.uid === uid) : undefined;
-        if (!item || cell === null || !(EQUIP_CELLS as readonly string[]).includes(cell)) return { ok: false, reason: 'Неверный запрос вида' };
+        if (!item || cell === null || !(EQUIP_CELLS as readonly string[]).includes(cell)) return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
         return { ok: true, view: paperdollEquipView(this.cfg, save, item, cell as EquipSlot) };
       }
       case 'materials': return { ok: true, view: materialsView(this.cfg, stash?.materials ?? null, save.inventory) };
-      default: return { ok: false, reason: 'Неверный запрос вида' };
+      default: return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
     }
   }
 
@@ -5127,7 +5202,7 @@ export class Room implements Tickable {
     });
     if (ok) return null;
     const name = TOWN_STATIONS.find((s) => s.panel === panels[0])?.label ?? panels[0]!;
-    return `Подойдите ближе: ${name}`;
+    return tr('srv:room.stationFar', 'Подойдите ближе: {name}', { name });
   }
 
   /** ⭐ С7: отказ «спуск или арена из города не у портала»; `null` — можно. */
@@ -5136,7 +5211,7 @@ export class Room implements Tickable {
     const p = this.session.world.players[pid];
     const at = townPortalAt(this.session.world.grid);
     if (!p || !at) return null;
-    return (p.pos.x - at.x) ** 2 + (p.pos.y - at.y) ** 2 <= STATION_USE_R * STATION_USE_R ? null : 'Подойдите к порталу';
+    return (p.pos.x - at.x) ** 2 + (p.pos.y - at.y) ** 2 <= STATION_USE_R * STATION_USE_R ? null : tr('srv:room.stationFarPortal', 'Подойдите к порталу');
   }
 
   /** R5-03: узел древа — тогл (аура, стойка): его каст срабатывает по нажатию, а не удержанием. ⭐ С0: нажатие от удержания отличает сервер (`setInput`). */
@@ -5680,7 +5755,7 @@ export class Room implements Tickable {
     counters.ledgerConfiscated += n;
     console.error(`[room ${this.code}] леджер отклонил запись ${save.charId}: ${e.message} — изъято вещей: ${n}, запись повторяется`);
     if (this.clients.get(c.pid) === c) {
-      this.send(c.ws, { t: 'error', code: 'ledger', msg: 'Вещь с чужого аккаунта изъята: передавать вещи между аккаунтами нельзя' });
+      this.sendText(c, () => ({ t: 'error', code: 'ledger', msg: tr('srv:room.ledgerConfiscated', 'Вещь с чужого аккаунта изъята: передавать вещи между аккаунтами нельзя') }));
       this.sendSave(c.pid);
     }
     return true;
@@ -5956,7 +6031,7 @@ export class Room implements Tickable {
           .map((m) => live.get(m.id))
           .filter((m): m is NonNullable<typeof m> => !!m)
           .map((m) => ({ id: m.id, def: monsterDefView(m.def, MONSTER_DEF_DEBUG), x: m.pos.x, y: m.pos.y }));
-        if (info.length) { const msg = JSON.stringify({ t: 'monsterInfo', monsters: info } satisfies ServerFrame); c.ws.send(msg); bytes += msg.length; }
+        if (info.length) { const msg = JSON.stringify(this.namedFor(c, { t: 'monsterInfo', monsters: info } satisfies ServerFrame)); c.ws.send(msg); bytes += msg.length; }   // ⭐ i18n Ф2: имена — на его языке
       }
       c.visible = new Set(view.monsters.map((m) => m.id));
 
@@ -5966,14 +6041,15 @@ export class Room implements Tickable {
       // Отладка провода: рядом с двоичным кадром шлём эталон ТОГО ЖЕ тика текстом, чтобы
       // диагностика могла сравнить поле за полем. Только по явной переменной окружения.
       if (WIRE_VERIFY) c.ws.send(JSON.stringify({ t: 'snapshot', snap: view } satisfies ServerFrame));
+      // ⭐ i18n Ф2 (06.11): кадр и так свой у каждого — вещи вновь показанной добычи в нём на языке получателя (`deltaFor`)
       if (!c.baselined || forceFull) {
-        const buf = encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(view), sum });
+        const buf = encodeWorldFrame({ kind: WIRE_FULL, delta: this.deltaFor(c, snapshotToDelta(view)), sum });
         c.ws.send(buf);
         c.delta.prime(view);
         c.baselined = true;
         bytes += buf.length;
       } else {
-        const buf = encodeWorldFrame({ kind: WIRE_DELTA, delta: c.delta.next(view)!, sum });
+        const buf = encodeWorldFrame({ kind: WIRE_DELTA, delta: this.deltaFor(c, c.delta.next(view)!), sum });
         c.ws.send(buf);
         bytes += buf.length;
       }
@@ -6016,12 +6092,16 @@ export class Room implements Tickable {
     // ⭐ ВОШЕДШИЙ НА ЖИВОЙ ЭТАЖ (реконнект, «Продолжить», вход по коду) — определения ВСЕХ, кто уже здесь: список знакомых — на комнату,
     // и тех, кого комната знала до его входа, рассылка новых ему не пришлёт никогда. Раньше они оставались у него без определения —
     // веб их не рисовал вовсе, Unity — капсулами до конца этажа. Перед его первым (полным) кадром, тем же порядком «сначала определения».
-    let knownMsg: string | undefined;
+    let known: Extract<ServerFrame, { t: 'monsterInfo' }>['monsters'] | undefined;
+    const knownMsgs = new Map<string, string>();   // ⭐ i18n Ф2 (06.11): раз на язык (имена монстров); у русской комнаты — один
     for (const c of this.clients.values()) {
       if (!c.ws.open || c.baselined) continue;
+      known ??= infoOf(snap.monsters.filter((m) => this.known.has(m.id)));
+      const lang = c.lang ?? SOURCE_LANG;
+      let knownMsg = knownMsgs.get(lang);
       if (knownMsg === undefined) {
-        const known = infoOf(snap.monsters.filter((m) => this.known.has(m.id)));
-        knownMsg = known.length ? JSON.stringify({ t: 'monsterInfo', monsters: known } satisfies ServerFrame) : '';
+        knownMsg = known.length ? JSON.stringify(this.namedFor(c, { t: 'monsterInfo', monsters: known } satisfies ServerFrame)) : '';
+        knownMsgs.set(lang, knownMsg);
       }
       if (knownMsg) c.ws.send(knownMsg);
     }
@@ -6030,33 +6110,59 @@ export class Room implements Tickable {
     // Полный кадр: по расписанию, при первом кадре комнаты — и лениво, если кто-то подключился
     // и ещё не имеет базиса.
     const roomFull = forceFull || !this.roomDelta.ready;
+    let fullDelta: WorldDelta | undefined;
     let fullBuf: Uint8Array | undefined;
+    let delta: WorldDelta | undefined;
     let deltaBuf: Uint8Array | undefined;
     if (roomFull) {
-      fullBuf = encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(snap), sum });
+      fullDelta = snapshotToDelta(snap);
+      fullBuf = encodeWorldFrame({ kind: WIRE_FULL, delta: fullDelta, sum });
       this.roomDelta.prime(snap);
     } else {
-      deltaBuf = encodeWorldFrame({ kind: WIRE_DELTA, delta: this.roomDelta.next(snap)!, sum });
+      delta = this.roomDelta.next(snap)!;
+      deltaBuf = encodeWorldFrame({ kind: WIRE_DELTA, delta, sum });
     }
+    // ⭐ i18n Ф2 (06.11): КАДР МИРА — РАЗ НА ЯЗЫК, и только когда в нём вещь-добыча (`du`) с другим именем. Русская комната (и любой тик
+    // без новой добычи) — один буфер на всех, как раньше; иной язык — свой буфер, закодированный один раз на тик (`langBufs`).
+    const foreign = this.foreignHere();
+    let langBufs: Map<string, Uint8Array> | undefined;
+    const bufOf = (c: Client, isFull: boolean): Uint8Array => {
+      const base = isFull ? (fullBuf ??= encodeWorldFrame({ kind: WIRE_FULL, delta: (fullDelta ??= snapshotToDelta(snap)), sum })) : deltaBuf!;
+      if (!foreign || !c.lang) return base;
+      const key = `${c.lang}|${isFull ? 'f' : 'd'}`;
+      langBufs ??= new Map();
+      let b = langBufs.get(key);
+      if (b === undefined) {
+        const d = isFull ? (fullDelta ??= snapshotToDelta(snap)) : delta!;
+        const ld = this.inLang(c, () => localizeDelta(this.cfg, d));
+        b = ld === d ? base : encodeWorldFrame({ kind: isFull ? WIRE_FULL : WIRE_DELTA, delta: ld, sum });
+        if (b !== base) counters.worldLangEncodes++;
+        langBufs.set(key, b);
+      }
+      return b;
+    };
 
     let bytes = 0;
     let sent = 0;
     for (const c of this.clients.values()) {
       if (!c.ws.open) continue;
       if (WIRE_VERIFY) c.ws.send(JSON.stringify({ t: 'snapshot', snap } satisfies ServerFrame));
-      if (roomFull || !c.baselined) {
-        fullBuf ??= encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(snap), sum });
-        c.ws.send(fullBuf);
-        c.baselined = true;
-        bytes += fullBuf.length;
-      } else {
-        c.ws.send(deltaBuf!);
-        bytes += deltaBuf!.length;
-      }
+      const buf = bufOf(c, roomFull || !c.baselined);
+      if (roomFull || !c.baselined) c.baselined = true;
+      c.ws.send(buf);
+      bytes += buf.length;
       sent++;
     }
     counters.snapshotFrames += sent;
     counters.snapshotBytes += bytes;
+  }
+
+  /**
+   * ⭐ i18n Ф2 (06.11): дельта мира для клиента `c` — вещи вновь показанной добычи на его языке; источник — та же дельта. Режим области
+   * интереса кодирует кадр каждому и так, поэтому лишним кодированием (`worldLangEncodes`) это не считается.
+   */
+  private deltaFor(c: Client, d: WorldDelta): WorldDelta {
+    return c.lang ? this.inLang(c, () => localizeDelta(this.cfg, d)) : d;
   }
 
   /**
@@ -6234,6 +6340,15 @@ export class Room implements Tickable {
    * ⭐ С-аудит F5 (29.10): ОБЛАСТЬ ДЛЯ КЛИЕНТА. В подземелье — только открытые пати куски (`maskFloor`): сетка без них — стены, объекты и
    * интерактивы — на открытых. Вошедшему посреди этажа — всё, что пати уже открыла. Город и арена — целиком.
    */
+  /**
+   * ⭐ i18n Ф1 (06.11): кадр области — всем, подписи интерактивов ([E]) — на языке каждого. Область собирается ОДИН раз (у неё побочные
+   * действия: открытое пати, `revealTick`), на язык пересобираются только подписи — тем же `floorInteractables`, что и в `clientFloor`.
+   */
+  private broadcastArea(): void {
+    const floor = this.clientFloor();
+    this.broadcastText(() => ({ t: 'areaChanged', floor: { ...floor, interactables: floorInteractables(floor, this.runPlan ?? undefined) } }));
+  }
+
   private clientFloor(): FloorInit {
     const f = this.currentFloorInit();
     if (this.area !== 'dungeon' || VIEW_RADIUS <= 0) return f;
@@ -6270,9 +6385,10 @@ export class Room implements Tickable {
     const before = new Set(this.revealed);
     for (const k of fresh) this.revealed.add(k);
     const r = revealOf(this.currentFloorInit(), fresh, before);
-    r.interactables = floorInteractables({ area: 'dungeon', exits: r.exits, decor: r.decor, spawn: this.session.world.spawn, altar: r.altar, levers: r.levers,
-      chests: r.chests, grid: this.session.world.grid, runNodeId: this.session.world.runNodeId }, this.runPlan ?? undefined, { spawn: false });
-    this.broadcast(r);
+    // ⭐ i18n Ф1 (06.11): подписи интерактивов — на языке каждого получателя (куски одни на всех, подписи — на язык)
+    const at = { area: 'dungeon' as const, exits: r.exits, decor: r.decor, spawn: this.session.world.spawn, altar: r.altar, levers: r.levers,
+      chests: r.chests, grid: this.session.world.grid, runNodeId: this.session.world.runNodeId };
+    this.broadcastText(() => ({ ...r, interactables: floorInteractables(at, this.runPlan ?? undefined, { spawn: false }) }));
   }
 
   private currentFloorInit(): FloorInit {
@@ -6330,6 +6446,9 @@ export class Room implements Tickable {
     if (changed.length) this.broadcast({ t: 'peerInfo', peers: changed });
   }
   private sendSave(pid: string): void {
+    this.inLang(this.clients.get(pid), () => this.sendSaveIn(pid));   // ⭐ i18n Ф1: кадры одного игрока — на его языке
+  }
+  private sendSaveIn(pid: string): void {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (c && p) this.send(c.ws, { t: 'saveUpdate', save: clientSave(p.save) });   // R14-10: без сида забега
@@ -6343,6 +6462,9 @@ export class Room implements Tickable {
    * не шлётся: зовут на каждый сейв, смену аур и стоек и смену области.
    */
   private pushHero(pid: string): void {
+    this.inLang(this.clients.get(pid), () => this.pushHeroIn(pid));   // ⭐ i18n Ф1: лист героя — на его языке, кто бы его ни будил
+  }
+  private pushHeroIn(pid: string): void {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (!c || !p) return;
@@ -6375,10 +6497,22 @@ export class Room implements Tickable {
     };
   }
 
+  /** ⭐ i18n Ф2 (06.11): последняя цель героя для листа — имя на языке области (`monsterDisplayName`); источник — запись как есть. */
+  private lastTargetShown(pid: string): LastTarget | null {
+    const lt = this.lastTargets.get(pid);
+    const src = this.lastTargetSrc.get(pid);
+    if (!lt || !src) return lt ?? null;
+    const name = monsterDisplayName(this.cfg, src);
+    return name === lt.name ? lt : { ...lt, name };
+  }
+
   /** ⭐ С2: последняя цель героя `by` — монстр `id` (имя, меткость, уклонение — его определения). */
   private noteTarget(by: string, id: number): void {
     const m = this.session.world.monsters.find((x) => x.id === id);
-    if (m) this.lastTargets.set(by, { name: m.def.name, accuracy: m.def.accuracy, evade: m.def.evade });
+    if (m) {
+      this.lastTargets.set(by, { name: m.def.name, accuracy: m.def.accuracy, evade: m.def.evade });
+      this.lastTargetSrc.set(by, { id: m.def.id, name: m.def.name, rarity: m.def.rarity, affixes: m.def.affixes });
+    }
   }
 
   /**
@@ -6391,26 +6525,26 @@ export class Room implements Tickable {
       case 'tree': return { ok: true, view: skillTreeView(this.cfg, p.save) };
       // ⭐ С4: стойки города — сбросы и цена ранга мастера, журнал заданий (доска — та, что у кадра `questBoard`), гнёзда, бинды
       case 'respec': return { ok: true, view: respecView(this.cfg, p.save) };
-      case 'quests': return { ok: true, view: questsView(p.save, this.questBoard) };
+      case 'quests': return { ok: true, view: questsView(p.save, this.questBoard, this.cfg) };
       case 'sockets': return { ok: true, view: socketsView(this.cfg, p.save) };
       case 'bind': return { ok: true, view: bindView(this.cfg, p.save) };
       case 'mastery': return { ok: true, view: masteryTreeView(this.cfg, p.save) };   // ⭐ С4: древо мастерства — доступность и цены сервером
       case 'sheet': break;
-      default: return { ok: false, reason: 'Неверный запрос вида' };
+      default: return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
     }
     const pending: PendingAttrs = {};
     let sum = 0;
     const raw = args.pending;
     if (raw !== undefined) {
-      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, reason: 'Неверный запрос вида' };
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
       for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-        if (!(ATTRIBUTES as readonly string[]).includes(k) || typeof v !== 'number' || !Number.isInteger(v) || v < 0) return { ok: false, reason: 'Неверный запрос вида' };
+        if (!(ATTRIBUTES as readonly string[]).includes(k) || typeof v !== 'number' || !Number.isInteger(v) || v < 0) return { ok: false, reason: tr('srv:room.badViewRequest', 'Неверный запрос вида') };
         pending[k as keyof PendingAttrs] = v; sum += v;
       }
     }
-    if (sum > p.save.unspentAttributePoints) return { ok: false, reason: 'Столько свободных очков нет' };
+    if (sum > p.save.unspentAttributePoints) return { ok: false, reason: tr('srv:room.notEnoughPoints', 'Столько свободных очков нет') };
     const blocks = sheetView(this.cfg, p.save, p.toggles, { hp: p.hp, mana: p.mana, stamina: p.stamina },
-      { lastTarget: this.lastTargets.get(pid) ?? null, pending });
+      { lastTarget: this.lastTargetShown(pid), pending });
     return { ok: true, view: { blocks } };
   }
   /** Шлёт клиенту полный слепок его аккаунт-сундука из базы (на stashOpen и на входе). */
@@ -6459,7 +6593,35 @@ export class Room implements Tickable {
   private send(ws: GameConn, frame: ServerFrame): void {
     if (!ws.open) return;
     if (frame.t === 'died' || frame.t === 'voteStart') frame = this.personal(ws, frame);
+    else if (NAMED_FRAMES.has(frame.t) && this.foreignHere()) frame = this.namedFor(this.clientOf(ws), frame);   // ⭐ i18n Ф2
     ws.send(JSON.stringify(frame));
+  }
+  /** Клиент соединения `ws` (комната — до восьми игроков: обход дешевле второго индекса, который пришлось бы держать в согласии). */
+  private clientOf(ws: GameConn): Client | undefined {
+    for (const x of this.clients.values()) if (x.ws === ws) return x;
+    return undefined;
+  }
+  /**
+   * ⭐ i18n Ф2 (06.11): есть ли в комнате иноязычный игрок. Нет (русская комната) — ни один кадр не трогается и не кодируется второй раз:
+   * провод побайтово прежний, а горячий путь стоит одного обхода восьми клиентов на кадр с именами.
+   */
+  private foreignHere(): boolean {
+    for (const c of this.clients.values()) if (c.lang) return true;
+    return false;
+  }
+  /**
+   * ⭐ i18n Ф2: кадр с запечёнными именами (сейв, сундук, прилавок, доска заданий, события, монстры, виды) — для получателя `c` на ЕГО
+   * языке (`localizeFrame`: имя вещи пересобрано из её данных, задание и монстр — из конфига). Источник и чужой кадр — как есть.
+   */
+  private namedFor(c: Client | undefined, frame: ServerFrame): ServerFrame {
+    if (!c?.lang) return frame;
+    const out = this.inLang(c, () => localizeFrame(this.cfg, frame, (id) => this.questOf(c.pid, id)));
+    if (out !== frame) counters.textFramesLocalized++;
+    return out;
+  }
+  /** Определение задания по id — доска комнаты, затем журнал героя (для имени в событии `quest`). */
+  private questOf(pid: string, questId: string): QuestDef | undefined {
+    return this.questBoard.find((q) => q.id === questId) ?? this.session.world.players[pid]?.save.activeQuestDefs.find((d) => d.id === questId);
   }
   /**
    * ⭐ С6 (29.10): КАДРЫ С ТЕКСТОМ ПОЛУЧАТЕЛЯ. Окно смерти (`died`: надписи, плашка, «открывает ли») помнит потери этого героя, вопрос
@@ -6467,8 +6629,10 @@ export class Room implements Tickable {
    * без памяти и без чужого прогресса.
    */
   private personal(ws: GameConn, frame: ServerFrame): ServerFrame {
-    let c: Client | undefined;
-    for (const x of this.clients.values()) if (x.ws === ws) { c = x; break; }
+    const c = this.clientOf(ws);
+    return this.inLang(c, () => this.personalIn(c, frame));   // ⭐ i18n Ф1: текст получателя — на ЕГО языке
+  }
+  private personalIn(c: Client | undefined, frame: ServerFrame): ServerFrame {
     if (frame.t === 'died') {
       const dv = runDeathFrame(c?.deathState ?? null, frame);
       if (c) c.deathState = dv.state;
@@ -6476,16 +6640,31 @@ export class Room implements Tickable {
     }
     if (frame.t === 'voteStart') {
       const p = c ? this.session.world.players[c.pid] : undefined;
-      return { ...frame, question: runVoteQuestion(frame, this.cfg, p?.save.difficultyProgress ?? null, { lang: c?.lang as Lang | undefined }) };
+      return { ...frame, question: runVoteQuestion(frame, this.cfg, p?.save.difficultyProgress ?? null) };
     }
     return frame;
   }
   private broadcast(frame: ServerFrame): void {
     if (frame.t === 'died' || frame.t === 'voteStart') { for (const c of this.clients.values()) this.send(c.ws, frame); return; }
+    if (NAMED_FRAMES.has(frame.t) && this.foreignHere()) { this.broadcastNamed(frame); return; }   // ⭐ i18n Ф2: раз на язык
     const msg = JSON.stringify(frame);
     let sent = 0;
     for (const c of this.clients.values()) if (c.ws.open) { c.ws.send(msg); sent++; }
     if (frame.t === 'snapshot') { counters.snapshotFrames += sent; counters.snapshotBytes += msg.length * sent; }
+  }
+  /**
+   * ⭐ i18n Ф2 (06.11): кадр с запечёнными именами — всей комнате (кроме `except`), сериализованный РАЗ НА ЯЗЫК: русские получают ту же
+   * строку, что и раньше, иноязычные — свою (`namedFor`). Зовётся только при иноязычном игроке в комнате (`foreignHere`).
+   */
+  private broadcastNamed(frame: ServerFrame, except?: string): void {
+    const byLang = new Map<string, string>();
+    for (const [pid, c] of this.clients) {
+      if (pid === except || !c.ws.open) continue;
+      const lang = c.lang ?? SOURCE_LANG;
+      let msg = byLang.get(lang);
+      if (msg === undefined) { msg = JSON.stringify(this.namedFor(c, frame)); byLang.set(lang, msg); }
+      c.ws.send(msg);
+    }
   }
   /**
    * ⭐ С-аудит F8 (29.10): СОБЫТИЯ ТИКА — КАЖДОМУ СВОИ. Личное героя (золото с итогом кошелька, опыт, сырьё, подбор, задания, откаты) уходит
@@ -6505,18 +6684,26 @@ export class Room implements Tickable {
       pub.push(e);
     }
     if (!mine) { this.broadcast({ t: 'events', events: pub }); return; }
-    const pubMsg = pub.length ? JSON.stringify({ t: 'events', events: pub } satisfies ServerFrame) : '';
+    // ⭐ i18n Ф2 (06.11): общая строка — раз на ЯЗЫК (имена выпавших вещей и убитых монстров); у русской комнаты — одна, как раньше
+    const pubMsgs = new Map<string, string>();
+    const pubMsgOf = (c: Client): string => {
+      const lang = c.lang ?? SOURCE_LANG;
+      let m = pubMsgs.get(lang);
+      if (m === undefined) { m = pub.length ? JSON.stringify(this.namedFor(c, { t: 'events', events: pub } satisfies ServerFrame)) : ''; pubMsgs.set(lang, m); }
+      return m;
+    };
     for (const [pid, c] of this.clients) {
       if (!c.ws.open) continue;
       const own = events.filter((e) => 'playerId' in e && e.playerId === pid && (PRIVATE_EVENTS.has(e.type) || e.type === 'swing'));
-      if (!own.length) { if (pubMsg) c.ws.send(pubMsg); continue; }
+      if (!own.length) { const pubMsg = pubMsgOf(c); if (pubMsg) c.ws.send(pubMsg); continue; }
       // Порядок событий тика сохраняем: своё — на своих местах, чужое личное выпало.
       const out = events.filter((e) => !('playerId' in e) || e.playerId === pid || !PRIVATE_EVENTS.has(e.type))
         .map((e) => (e.type === 'swing' && e.playerId !== pid ? { ...e, cooldownMs: 0 } : e));
-      c.ws.send(JSON.stringify({ t: 'events', events: out } satisfies ServerFrame));
+      c.ws.send(JSON.stringify(this.namedFor(c, { t: 'events', events: out } satisfies ServerFrame)));   // ⭐ i18n Ф2: на его языке
     }
   }
   private broadcastExcept(pid: string, frame: ServerFrame): void {
+    if (NAMED_FRAMES.has(frame.t) && this.foreignHere()) { this.broadcastNamed(frame, pid); return; }   // ⭐ i18n Ф2: раз на язык
     const msg = JSON.stringify(frame);
     for (const [id, c] of this.clients) if (id !== pid && c.ws.open) c.ws.send(msg);
   }

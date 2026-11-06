@@ -23,6 +23,7 @@
  */
 
 import { counters } from './metrics.js';
+import { outsideTextScope } from './textScope.js';
 
 /** Комната, которую умеет тикать планировщик. */
 export interface Tickable {
@@ -83,7 +84,10 @@ export class TickScheduler {
   private ensureRunning(now: number): void {
     if (this.timer) return;
     this.wakeAt = now;
-    this.schedule(now);
+    // ⭐ i18n Ф1 (ревизия 06.11): цепочка таймеров тика — ВНЕ области языка. `setTimeout` наследует контекст AsyncLocalStorage того, кто
+    // разбудил планировщик (первый вход, реконнект — область языка игрока), и все тики всех комнат шли бы на его языке и с его журналом
+    // кодов (`textScope.ts`); тексты тика получателю собирает его область (`Room.sendText` / `broadcastText` / `namedFor`).
+    outsideTextScope(() => this.schedule(now));
   }
 
   /** Планирует следующее пробуждение так, чтобы сетка опроса не дрейфовала. */

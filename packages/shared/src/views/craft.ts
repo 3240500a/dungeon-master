@@ -2,10 +2,11 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { CraftParts, Item, Rarity } from '../types/items.js';
 import {
   CRAFT_SLOT_ROLE, FORM_UNPRICED, anatomyOf, baseTierRange, clampStep, craftMissing, craftTiers, craftWeapon, defaultParts, enchantCost,
-  enchantSlots, finishOf, keyVariantsByBase, partById, rolledFormMult, sketchable, statusKindOf, stepLabel, tierOfSteps, variantsFor,
+  enchantSlots, finishOf, keyVariantsByBase, partById, resolveParts, rolledFormMult, sketchable, statusKindOf, stepLabel, tierOfSteps, variantsFor,
   type CraftInput, type CraftJournal,
 } from '../formulas/craft.js';
-import { CRAFT_SLOT_LIST, baseOfKeyPart, familiesOf, keySlotOf, slotName, type CraftSlot, type WeaponPart } from '../formulas/craftType.js';
+import { CRAFT_SLOT_LIST, baseOfKeyPart, familiesOf, keySlotOf, slotName, typeDisplay, type CraftSlot, type WeaponPart } from '../formulas/craftType.js';
+import { itemDisplayName } from '../formulas/itemDisplay.js';
 import { axisOf, balanceAxisOf, bladeCaption, bladeStats } from '../formulas/bladeStats.js';
 import { describeItem, rangeLabel, slotSuffix } from '../formulas/itemDescribe.js';
 import { craftFits, describeCost, enchantMaterials } from '../economy/townActions.js';
@@ -13,6 +14,7 @@ import { itemLabels } from './townItem.js';
 import { compareView } from './heroCard.js';
 import { weaponLookSig } from '../session/weapon3d.js';
 import type { SaveState } from '../types/save.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /**
  * ⭐ С5 (29.10): ОКНО КОВКИ — СЕРВЕРОМ. Модель окна целиком (классы, семейство, шапка с типом и ступенью, эскизы, «Вся вещь из», четыре
@@ -46,8 +48,8 @@ export interface CraftWindowState {
 
 /** Порядок классов в окне. */
 export const CRAFT_CLASS_ORDER: readonly string[] = ['sword', 'dagger', 'axe', 'mace', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'];
-const RARITY_NAME: Record<string, string> = { common: 'обычная', uncommon: 'нечастая', rare: 'редкая' };
-const FORM_NAME: Record<string, string> = { falchion: 'фальшион', sabre: 'сабля' };
+const RARITY_NAME: Record<string, string> = { get common() { return tr('srv:partRarity.common', 'обычная'); }, get uncommon() { return tr('srv:partRarity.uncommon', 'нечастая'); }, get rare() { return tr('srv:partRarity.rare', 'редкая'); } };
+const FORM_NAME: Record<string, string> = { get falchion() { return tr('srv:bladeFormName.falchion', 'фальшион'); }, get sabre() { return tr('srv:bladeFormName.sabre', 'сабля'); } };
 export const CRAFT_IDLE_CLASS = 'Кузнец сейчас не куёт этот класс';
 export const CRAFT_IDLE_FAMILY = 'Кузнец сейчас не куёт это семейство';
 const pct = (x: number, d = 0): string => `${(x * 100).toFixed(d)} %`;
@@ -64,7 +66,7 @@ export function forgeableFamilies(reg: ConfigRegistry, weaponClass: string): num
 /** Почему семейство окна не куётся; пусто — куётся. */
 export function craftIdleReason(reg: ConfigRegistry, weaponClass: string, hands: number): string {
   if (defaultParts(reg, weaponClass, hands, 2)) return '';
-  return forgeableFamilies(reg, weaponClass).length ? CRAFT_IDLE_FAMILY : CRAFT_IDLE_CLASS;
+  return forgeableFamilies(reg, weaponClass).length ? tr('srv:craft.idleFamily', CRAFT_IDLE_FAMILY) : tr('srv:craft.idleClass', CRAFT_IDLE_CLASS);
 }
 function blankParts(): CraftParts {
   const out = {} as CraftParts;
@@ -123,11 +125,11 @@ export function craftRollVerdict(item: Item, ranges: Ranges | undefined, floor: 
   const k = item.damageMult ?? 1, r = (v: number): number => Math.round(v * k);
   const q = item.baseRoll ? ((item.baseRoll.minDamage ?? 0.5) + (item.baseRoll.maxDamage ?? 0.5)) / 2 : 0.5;
   const pos = floor >= 1 ? 100 : Math.round((Math.max(0, q - floor) / (1 - floor)) * 100);
-  return ` · урон ${r(mn)}–${r(mx)} из вилки ${rangeLabel(ranges.minDamage, k)}–${rangeLabel(ranges.maxDamage, k)} · бросок ${pos} % вилки`;
+  return tr('srv:craft.rollVerdict', ' · урон {mn}–{mx} из вилки {rangeMin}–{rangeMax} · бросок {pos} % вилки', { mn: r(mn), mx: r(mx), rangeMin: rangeLabel(ranges.minDamage, k), rangeMax: rangeLabel(ranges.maxDamage, k), pos });
 }
 function partCaption(reg: ConfigRegistry, p: WeaponPart): string {
   const b = bladeStats(reg, p);
-  return b ? bladeCaption(b) : p.caption;
+  return b ? bladeCaption(b) : cfgRowText(reg, 'weapon-parts', p, 'caption');
 }
 function bladeMeasureLine(reg: ConfigRegistry, p: WeaponPart): string {
   const b = bladeStats(reg, p), g = p.geom;
@@ -135,10 +137,10 @@ function bladeMeasureLine(reg: ConfigRegistry, p: WeaponPart): string {
   const br = b.bracket;
   const fk = b.form ? reg.get('balance').craft.blade.forms[b.form] : undefined;
   return [
-    `клинок ${g.len} см${br ? ` · вилка «${br.name}» ${br.lo}–${br.hi} см` : ' · вне вилок'}${b.outOfBracket && br ? ' (вне вилки — ось в упоре)' : ''} → место ${signed(b.place, '', 2)}, ось ${signed(b.axis, '', 2)}`,
-    `ширина ${g.width} см${br ? ` (эталон ${br.width})` : ''} → разброс ×${fx(b.spread, 2)}`,
-    `центр тяжести ${pct(g.bal)} длины → баланс клинка ${signed(b.balance, '', 2)}`,
-    fk && b.form ? `${FORM_NAME[b.form]}: длина ${signed(fk.length, '', 2)}, баланс ${signed(fk.balance, '', 2)}` : '',
+    tr('srv:craft.bladeLen', 'клинок {len} см{bracket}{out} → место {place}, ось {axis}', { len: g.len, bracket: br ? tr('srv:craft.bladeBracket', ' · вилка «{name}» {lo}–{hi} см', { name: cfgRowText(reg, 'balance', br), lo: br.lo, hi: br.hi }) : tr('srv:craft.bladeNoBracket', ' · вне вилок'), out: b.outOfBracket && br ? tr('srv:craft.bladeOut', ' (вне вилки — ось в упоре)') : '', place: signed(b.place, '', 2), axis: signed(b.axis, '', 2) }),
+    tr('srv:craft.bladeWidth', 'ширина {width} см{ref} → разброс ×{spread}', { width: g.width, ref: br ? tr('srv:craft.bladeWidthRef', ' (эталон {width})', { width: br.width }) : '', spread: fx(b.spread, 2) }),
+    tr('srv:craft.bladeCenter', 'центр тяжести {pct} длины → баланс клинка {balance}', { pct: pct(g.bal), balance: signed(b.balance, '', 2) }),
+    fk && b.form ? tr('srv:craft.bladeForm', '{form}: длина {length}, баланс {balance}', { form: FORM_NAME[b.form], length: signed(fk.length, '', 2), balance: signed(fk.balance, '', 2) }) : '',
   ].filter(Boolean).join('\n');
 }
 function partEffect(reg: ConfigRegistry, slot: CraftSlot, part: WeaponPart, st: CraftWindowState, baseId: string | undefined): string {
@@ -147,28 +149,28 @@ function partEffect(reg: ConfigRegistry, slot: CraftSlot, part: WeaponPart, st: 
   if (slot === 'strike') {
     const b = bladeStats(reg, part);
     const axis = b?.axis ?? part.axis;
-    const out = [`урон ×${fx(1 + k.strike.damagePct * axis, 2)}`, `скорость ×${fx(1 - k.strike.attackSpeed * axis, 2)}`];
-    if (b) out.push(`разброс ×${fx(b.spread, 2)}`);
+    const out = [tr('srv:craft.effDamage', 'урон ×{mult}', { mult: fx(1 + k.strike.damagePct * axis, 2) }), tr('srv:craft.effSpeed', 'скорость ×{mult}', { mult: fx(1 - k.strike.attackSpeed * axis, 2) })];
+    if (b) out.push(tr('srv:craft.effSpread', 'разброс ×{spread}', { spread: fx(b.spread, 2) }));
     if (b?.form) out.push(FORM_NAME[b.form]!);
     return out.join(' · ');
   }
   const axis = part.axis;
   if (slot === 'grip') {
     const r = k.gripK ** axis, a = k.gripK ** (-2 * axis);
-    return ['bow', 'crossbow', 'wand', 'staff'].includes(weaponClass) ? 'только вид (§5.2)' : `дальность ×${fx(r, 2)} · дуга ×${fx(a, 2)}`;
+    return ['bow', 'crossbow', 'wand', 'staff'].includes(weaponClass) ? tr('srv:craft.effLookOnly', 'только вид (§5.2)') : tr('srv:craft.effReachArc', 'дальность ×{reach} · дуга ×{arc}', { reach: fx(r, 2), arc: fx(a, 2) });
   }
-  if (slot === 'bind') return axis > 0 ? 'больше префиксов' : axis < 0 ? 'больше суффиксов' : 'поровну';
+  if (slot === 'bind') return axis > 0 ? tr('srv:craft.effPrefixes', 'больше префиксов') : axis < 0 ? tr('srv:craft.effSuffixes', 'больше суффиксов') : tr('srv:craft.effEven', 'поровну');
   const strike = partById(reg, st.parts.strike.id);
   const bal = strike ? balanceAxisOf(reg, strike, part) : axis;
-  const lead = strike && bladeStats(reg, strike) ? `баланс ${signed(bal, '', 2)}: ` : '';
+  const lead = strike && bladeStats(reg, strike) ? tr('srv:craft.effBalance', 'баланс {bal}: ', { bal: signed(bal, '', 2) }) : '';
   const base = reg.get('items.base').find((b) => b.id === baseId);
   const own = base?.baseStats.filter((m) => m.stat === 'blockChance' && m.kind === 'flat').reduce((s, m) => s + m.value, 0) ?? 0;
-  const floor = weaponClass === 'bow' ? (bal < 0 ? ' (в ноль)' : '') : base && own + k.headBlock * bal < 0 ? ` (у базы ${fx(own * 100, 0)} % — в ноль)` : '';
-  const brace = (weaponClass === 'bow' ? `стойкость ${signed(k.headInterrupt * bal * 100, ' п.п.', 1)}` : `блок ${signed(k.headBlock * bal * 100, ' п.п.', 1)}`) + floor;
+  const floor = weaponClass === 'bow' ? (bal < 0 ? tr('srv:craft.effZero', ' (в ноль)') : '') : base && own + k.headBlock * bal < 0 ? tr('srv:craft.effBaseZero', ' (у базы {own} % — в ноль)', { own: fx(own * 100, 0) }) : '';
+  const brace = (weaponClass === 'bow' ? tr('srv:craft.effInterrupt', 'стойкость {v}', { v: signed(k.headInterrupt * bal * 100, tr('srv:compare.pp', ' п.п.'), 1) }) : tr('srv:craft.effBlock', 'блок {v}', { v: signed(k.headBlock * bal * 100, tr('srv:compare.pp', ' п.п.'), 1) })) + floor;
   const kind = base?.kind === 'weapon' ? statusKindOf(reg, base) : undefined;
   if (base && !(kind && k.bite[kind])) return `${lead}${brace}`;
-  const name = kind ? reg.get('debuffs').find((d) => d.id === kind)?.name.toLowerCase() ?? kind : 'статус';
-  return `${lead}${brace} · ${name} ${bal < 0 ? 'чаще' : bal > 0 ? 'реже' : 'как есть'}`;
+  const name = kind ? cfgRowText(reg, 'debuffs', reg.get('debuffs').find((d) => d.id === kind))?.toLowerCase() ?? kind : tr('srv:craft.effStatus', 'статус');
+  return `${lead}${brace} · ${name} ${bal < 0 ? tr('srv:craft.effMore', 'чаще') : bal > 0 ? tr('srv:craft.effLess', 'реже') : tr('srv:craft.effSame', 'как есть')}`;
 }
 function sketchElsewhere(reg: ConfigRegistry, j: CraftJournal, p: WeaponPart, weaponClass: string, hands: number): string {
   if (p.slot !== keySlotOf(reg, weaponClass)) return '';
@@ -176,10 +178,10 @@ function sketchElsewhere(reg: ConfigRegistry, j: CraftJournal, p: WeaponPart, we
   if (here && j.bases.includes(here)) return '';
   const where = new Set<string>();
   for (const cls of p.classes as string[]) {
-    if (p.slot !== keySlotOf(reg, cls)) { where.add(reg.get('weapon-anatomy').find((a) => a.id === cls)?.name ?? cls); continue; }
+    if (p.slot !== keySlotOf(reg, cls)) { where.add(cfgRowText(reg, 'weapon-anatomy', reg.get('weapon-anatomy').find((a) => a.id === cls)) ?? cls); continue; }
     for (const h of [1, 2]) {
       const b = baseOfKeyPart(reg, cls, h, p);
-      if (b && j.bases.includes(b)) where.add(`«${reg.get('items.base').find((x) => x.id === b)?.name ?? b}»`);
+      if (b && j.bases.includes(b)) where.add(`«${cfgRowText(reg, 'items.base', reg.get('items.base').find((x) => x.id === b)) ?? b}»`);
     }
   }
   return [...where].join(', ');
@@ -189,13 +191,13 @@ function baseLine(reg: ConfigRegistry, baseId: string | undefined): string {
   if (!base || base.kind !== 'weapon') return '';
   const flat = (s: string): number | undefined => base.baseStats.find((m) => m.stat === s && m.kind === 'flat')?.value;
   const w = reg.get('weapon-weights').find((x) => x.id === base.weight);
-  const edge = base.physSub ? reg.get('phys-subtypes').find((p) => p.id === base.physSub)?.name.toLowerCase() : reg.get('magic-subtypes').find((m) => m.id === base.damageType)?.name?.toLowerCase();
+  const edge = base.physSub ? cfgRowText(reg, 'phys-subtypes', reg.get('phys-subtypes').find((p) => p.id === base.physSub))?.toLowerCase() : cfgRowText(reg, 'magic-subtypes', reg.get('magic-subtypes').find((m) => m.id === base.damageType))?.toLowerCase();
   const dmg = flat('minDamage') !== undefined ? `${flat('minDamage')}–${flat('maxDamage')}` : '';
-  return [base.name, dmg, base.hands === 2 ? 'двуручное' : 'одноручное', edge ?? 'без грани', w ? `вес: ${w.name.toLowerCase()}` : ''].filter(Boolean).join(' · ');
+  return [cfgRowText(reg, 'items.base', base), dmg, base.hands === 2 ? tr('srv:craft.twoHanded', 'двуручное') : tr('srv:craft.oneHanded', 'одноручное'), edge ?? tr('srv:craft.noEdge', 'без грани'), w ? tr('srv:craft.weight', 'вес: {weight}', { weight: cfgRowText(reg, 'weapon-weights', w).toLowerCase() }) : ''].filter(Boolean).join(' · ');
 }
 /** Тултип вещи окна: имя с подписью слота и строки `describeItem` с признаком аффикса. */
 function craftTip(reg: ConfigRegistry, it: Item) {
-  return { name: `${it.name}${slotSuffix(it)}`, rarity: it.rarity, lines: describeItem(it, itemLabels(reg)) };
+  return { name: `${itemDisplayName(reg, it)}${slotSuffix(it)}`, rarity: it.rarity, lines: describeItem(it, itemLabels(reg)) };   // ⭐ i18n Ф2: имя — на языке игрока
 }
 
 /** Что известно окну (у сервера — всё своё): журнал, сырьё (сумка + сундук), золото, сумка (null — место не проверяется). */
@@ -219,7 +221,7 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
   const anat = anatomyOf(reg, st.weaponClass);
   const tiers = craftTiers(reg);
   const mats = reg.get('craft-materials');
-  const matName = (id: string): string => mats.find((m) => m.id === id)?.name ?? id;
+  const matName = (id: string): string => cfgRowText(reg, 'craft-materials', mats.find((m) => m.id === id)) ?? id;
   const matOn = (id: string): boolean => mats.find((m) => m.id === id)?.enabled !== false;
   const keySlot = keySlotOf(reg, st.weaponClass);
   const busy = !!st.busy;
@@ -230,45 +232,51 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
 
   const classes = [...reg.get('weapon-anatomy')].sort((x, y) => CRAFT_CLASS_ORDER.indexOf(x.id) - CRAFT_CLASS_ORDER.indexOf(y.id)).map((a) => {
     const idle = !forgeableFamilies(reg, a.id).length;
-    return { id: a.id, name: a.name, on: a.id === st.weaponClass, idle, disabled: busy };
+    return { id: a.id, name: cfgRowText(reg, 'weapon-anatomy', a), on: a.id === st.weaponClass, idle, disabled: busy };
   });
   const fams = familiesOf(reg, st.weaponClass);
   const family = fams.length > 1
-    ? { chips: fams.map((h) => ({ h, label: h === 2 ? 'Двуручное' : 'Одноручное', on: h === st.hands, idle: !defaultParts(reg, st.weaponClass, h, 2), disabled: busy })) }
-    : { text: fams[0] === 2 ? 'Семейство одно: двуручное' : 'Семейство одно: одноручное' };
+    ? { chips: fams.map((h) => ({ h, label: h === 2 ? tr('srv:craft.famTwo', 'Двуручное') : tr('srv:craft.famOne', 'Одноручное'), on: h === st.hands, idle: !defaultParts(reg, st.weaponClass, h, 2), disabled: busy })) }
+    : { text: fams[0] === 2 ? tr('srv:craft.famOnlyTwo', 'Семейство одно: двуручное') : tr('srv:craft.famOnlyOne', 'Семейство одно: одноручное') };
 
   const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 };
   const pv = craftWeapon(reg, input, { journal: j, materialsOn: true });
   const idle = craftIdleReason(reg, st.weaponClass, st.hands);
   const why = idle || pv.reason;
   const type = pv.type;
+  // ⭐ i18n Ф2 (06.11): имя, подзаголовок и формула типа — на языке игрока (`typeDisplay`); в имя вещи тип печётся источником (`craftedName`)
+  const rp = type?.ok ? resolveParts(reg, st.weaponClass, st.hands, st.parts) : undefined;
+  const typeShown = type?.ok && rp?.ok ? typeDisplay(reg, st.weaponClass, st.hands, rp.parts, type) : type;
   const { q, tier } = tierOfSteps(reg, st.parts);
   const w = reg.get('balance').craft.tierFromParts.weights;
   const head = {
-    name: type?.ok ? type.name : '—',
-    tier: `${tiers[tier]?.id} ${tiers[tier]?.name}`, tierOk: pv.ok,
-    tierTitle: `Средний уровень материала по массе: Q = (${w.strike}·${st.parts.strike.step} + ${st.parts.grip.step} + ${st.parts.bind.step} + ${st.parts.head.step}) / ${w.strike + w.grip + w.bind + w.head} = ${q}`,
+    name: type?.ok ? typeShown!.name : '—',
+    tier: `${tiers[tier]?.id} ${cfgRowText(reg, 'item-tiers', tiers[tier])}`, tierOk: pv.ok,
+    tierTitle: tr('srv:craft.tierTitle', 'Средний уровень материала по массе: Q = ({ws}·{s1} + {s2} + {s3} + {s4}) / {wsum} = {q}', { ws: w.strike, s1: st.parts.strike.step, s2: st.parts.grip.step, s3: st.parts.bind.step, s4: st.parts.head.step, wsum: w.strike + w.grip + w.bind + w.head, q }),
     q: `Q = ${fx(q, 2)}`,
-    subtitle: type?.ok && type.subtitle ? type.subtitle : null,
-    formula: type?.ok && type.formula ? type.formula : null,
-    mech: type?.ok ? `механика: ${baseLine(reg, type.baseId)}` : null,
+    subtitle: type?.ok && typeShown!.subtitle ? typeShown!.subtitle : null,
+    formula: type?.ok && typeShown!.formula ? typeShown!.formula : null,
+    mech: type?.ok ? tr('srv:craft.mech', 'механика: {baseLine}', { baseLine: baseLine(reg, type.baseId) }) : null,
     why: !pv.ok && why ? `⚠ ${why}` : null,
   };
 
   let sketch: { text: string; confirm?: string; disabled?: boolean } | null = null;
   if (sketches > 0) {
     const pk = st.sketchPick ? partById(reg, st.sketchPick) : undefined;
-    if (!pk) sketch = { text: `✦ Эскизов: ${sketches} — открой закрытую деталь на выбор: нажми на неё в списке (✦). Ключевую форму неоткрытого типа эскиз не открывает — тип открывает разбор.` };
+    if (!pk) sketch = { text: tr('srv:craft.sketchHint', '✦ Эскизов: {sketches} — открой закрытую деталь на выбор: нажми на неё в списке (✦). Ключевую форму неоткрытого типа эскиз не открывает — тип открывает разбор.', { sketches }) };
     else {
       const where = sketchElsewhere(reg, j, pk, st.weaponClass, st.hands);
       sketch = {
-        text: `✦ Открыть «${pk.name}» эскизом? Эскизов останется ${sketches - 1} — вернуть эскиз нельзя.` + (where ? ` Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: ${where}.` : ''),
-        confirm: st.busy === 'sketch' ? '⏳ открываю…' : '✦ Открыть эскизом', disabled: !!st.busy,
+        // ⭐ i18n Ф1 (06.11): два предложения целиком (с «где ковать» и без), а не хвост-приставка
+        text: where
+          ? tr('srv:craft.sketchConfirmWhere', '✦ Открыть «{name}» эскизом? Эскизов останется {left} — вернуть эскиз нельзя. Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: {where}.', { name: cfgRowText(reg, 'weapon-parts', pk), left: sketches - 1, where })
+          : tr('srv:craft.sketchConfirm', '✦ Открыть «{name}» эскизом? Эскизов останется {left} — вернуть эскиз нельзя.', { name: cfgRowText(reg, 'weapon-parts', pk), left: sketches - 1 }),
+        confirm: st.busy === 'sketch' ? tr('srv:craft.sketchBusy', '⏳ открываю…') : tr('srv:craft.sketchConfirmBtn', '✦ Открыть эскизом'), disabled: !!st.busy,
       };
     }
   }
 
-  const all = anat ? [1, 2, 3, 4, 5].map((k) => ({ label: `ст. ${k} · ${matName(`${anat[keySlot].family}-${k}`)}`, on: CRAFT_SLOT_LIST.every((s) => st.parts[s].step === k) })) : null;
+  const all = anat ? [1, 2, 3, 4, 5].map((k) => ({ label: tr('srv:craft.allSteps', 'ст. {k} · {mat}', { k, mat: matName(`${anat[keySlot].family}-${k}`) }), on: CRAFT_SLOT_LIST.every((s) => st.parts[s].step === k) })) : null;
 
   const order: CraftSlot[] = [keySlot, ...CRAFT_SLOT_LIST.filter((s) => s !== keySlot)];
   const slots = order.map((slot) => {
@@ -281,11 +289,11 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
       const elsewhere = bySketch && !baseOpen ? sketchElsewhere(reg, j, p, st.weaponClass, st.hands) : '';
       const on = p.id === st.parts[slot].id || (bySketch && st.sketchPick === p.id);
       rows.push({
-        id: p.id, text: `${open ? '' : bySketch ? '✦ ' : '🔒 '}${p.name}`, open, bySketch, on, rarity: p.rarity,
-        range: `ст.${p.stepMin}–${p.stepMax}`, axis: axisLabel(axisOf(reg, p)),
-        title: [partCaption(reg, p), p.lore, bladeMeasureLine(reg, p), `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`,
-          bySketch ? `✦ Открыть эскизом (эскизов: ${sketches})` : '',
-          elsewhere ? `Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: ${elsewhere}` : ''].filter(Boolean).join('\n'),
+        id: p.id, text: `${open ? '' : bySketch ? '✦ ' : '🔒 '}${cfgRowText(reg, 'weapon-parts', p)}`, open, bySketch, on, rarity: p.rarity,
+        range: tr('srv:craft.stepRange', 'ст.{stepMin}–{stepMax}', { stepMin: p.stepMin, stepMax: p.stepMax }), axis: axisLabel(axisOf(reg, p)),
+        title: [partCaption(reg, p), cfgRowText(reg, 'weapon-parts', p, 'lore'), bladeMeasureLine(reg, p), tr('srv:craft.partRarityLine', '{rarity} · материал: ступени {stepMin}–{stepMax}', { rarity: RARITY_NAME[p.rarity], stepMin: p.stepMin, stepMax: p.stepMax }),
+          bySketch ? tr('srv:craft.sketchOpen', '✦ Открыть эскизом (эскизов: {sketches})', { sketches }) : '',
+          elsewhere ? tr('srv:craft.sketchElsewhere', 'Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: {elsewhere}', { elsewhere }) : ''].filter(Boolean).join('\n'),
         disabled: (!open && !bySketch) || busy,
       });
     };
@@ -294,7 +302,7 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
         const baseOpen = j.bases.includes(g.baseId);
         const b = reg.get('items.base').find((x) => x.id === g.baseId);
         const hr = b ? baseTierRange(reg, b) : { lo: 0, hi: 6 };
-        const cap = hr.hi < tiers.length - 1 ? ` · до ${tiers[hr.hi]?.id}` : '';
+        const cap = hr.hi < tiers.length - 1 ? tr('srv:craft.tierCap', ' · до {id}', { id: tiers[hr.hi]?.id }) : '';
         rows.push({ head: `${baseOpen ? '' : '🔒 '}${baseLine(reg, g.baseId)}${cap}`, open: baseOpen });
         for (const p of g.variants) row(p, baseOpen);
       }
@@ -307,7 +315,7 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
         const id = `${sel.family || anat[slot].family}-${k}`;
         return {
           label: stepLabel(reg, anat, slot, sel, k), on: st.parts[slot].step === k, disabled: !inWin || busy,
-          title: inWin ? `${matName(id)} (${id})${matOn(id) ? '' : ' — ещё нет в игре'}` : `«${sel.name}» из этого не куётся: только ступени ${sel.stepMin}–${sel.stepMax}`,
+          title: inWin ? `${matName(id)} (${id})${matOn(id) ? '' : tr('srv:craft.matNotLive', ' — ещё нет в игре')}` : tr('srv:craft.partStepOut', '«{name}» из этого не куётся: только ступени {stepMin}–{stepMax}', { name: cfgRowText(reg, 'weapon-parts', sel), stepMin: sel.stepMin, stepMax: sel.stepMax }),
           dashed: inWin && !matOn(id),
         };
       });
@@ -315,57 +323,57 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
       const measure = bladeMeasureLine(reg, sel);
       const bk = reg.get('balance').craft.blade.balance;
       mat = {
-        label: `Материал · ${anat[slot].stepNames.length && !sel.family ? 'обработка' : matName(`${sel.family || anat[slot].family}-${st.parts[slot].step}`)}`,
+        label: tr('srv:craft.matLabel', 'Материал · {mat}', { mat: anat[slot].stepNames.length && !sel.family ? tr('srv:craft.matProcessing', 'обработка') : matName(`${sel.family || anat[slot].family}-${st.parts[slot].step}`) }),
         chips, caption: partCaption(reg, sel), effect: partEffect(reg, slot, sel, st, type?.baseId),
         effectTitle: measure || (slot === 'head' && strikeSel && bladeStats(reg, strikeSel)
-          ? `Точка баланса вещи: ${Math.round(bk.bladeShare * 100)} % — клинок, ${Math.round((1 - bk.bladeShare) * 100)} % — оголовье (+ поправка формы), в ±1.\nВес у руки — упор (блок), вес к концу — укус (статус грани).`
+          ? tr('srv:craft.balanceTitle', 'Точка баланса вещи: {blade} % — клинок, {head} % — оголовье (+ поправка формы), в ±1.\nВес у руки — упор (блок), вес к концу — укус (статус грани).', { blade: Math.round(bk.bladeShare * 100), head: Math.round((1 - bk.bladeShare) * 100) })
           : null),
       };
     }
-    return { slot, title: anat ? slotName(anat, slot, st.hands) : slot, key: isKey, role: CRAFT_SLOT_ROLE[slot], rows, mat };
+    return { slot, title: anat ? slotName(anat, slot, st.hands, reg) : slot, key: isKey, role: CRAFT_SLOT_ROLE[slot], rows, mat };
   });
 
   const shown = st.crafted ?? pv.item;
   const left: Record<string, unknown> = {
     tip: shown ? craftTip(reg, shown) : null,
-    cap: shown?.affixCap ? `Ёмкость: ${shown.affixCap.prefix} преф. + ${shown.affixCap.suffix} суф. — примет при зачаровании` : null,
-    noItem: shown ? null : why || 'Не собирается',
+    cap: shown?.affixCap ? tr('srv:craft.capacity', 'Ёмкость: {prefix} преф. + {suffix} суф. — примет при зачаровании', { prefix: shown.affixCap.prefix, suffix: shown.affixCap.suffix }) : null,
+    noItem: shown ? null : why || tr('srv:craft.notAssembled', 'Не собирается'),
     notes: (pv.bake?.notes ?? []).map((n) => `⚠ ${n}`),
   };
   const finishes = reg.get('balance').craft.finish;
   if (finishes.length > 1 && pv.cost && anat) {
     const strikeMat = pv.cost.lines.find((l) => l.slot === 'strike');
     left.finish = {
-      head: `Доводка: ${slotName(anat, 'strike', st.hands)} — поднимает нижнюю границу урона, верх вилки не растёт`,
+      head: tr('srv:craft.finishHead', 'Доводка: {slot} — поднимает нижнюю границу урона, верх вилки не растёт', { slot: slotName(anat, 'strike', st.hands, reg) }),
       chips: finishes.map((f, i) => {
-        const extra = f.strikeUnits <= 0 && f.goldMult === 1 ? 'без надбавки' : `+${f.strikeUnits} ${strikeMat ? matName(strikeMat.id) : ''} · золото ×${fx(f.goldMult, 2)}`;
-        return { label: f.name, on: (st.finish ?? 0) === i, title: `${extra}\nНиже ${Math.round(f.floor * 100)} % вилки урон не выпадет` };
+        const extra = f.strikeUnits <= 0 && f.goldMult === 1 ? tr('srv:craft.finishNone', 'без надбавки') : tr('srv:craft.finishExtra', '+{strikeUnits} {mat} · золото ×{goldMult}', { strikeUnits: f.strikeUnits, mat: strikeMat ? matName(strikeMat.id) : '', goldMult: fx(f.goldMult, 2) });
+        return { label: cfgRowText(reg, 'balance', f), on: (st.finish ?? 0) === i, title: tr('srv:craft.finishFloor', '{extra}\nНиже {floor} % вилки урон не выпадет', { extra, floor: Math.round(f.floor * 100) }) };
       }),
     };
   }
   if (pv.cost && anat) {
     const lines = pv.cost.lines.map((l) => {
       const need = pv.cost!.materials[l.id] ?? 0, have = wallet[l.id] ?? 0;
-      return { text: `${slotName(anat, l.slot, st.hands)}: ${matName(l.id)} — ${l.n}  (есть ${have})`, ok: have >= need };
+      return { text: tr('srv:craft.costLine', '{slot}: {mat} — {n}  (есть {have})', { slot: slotName(anat, l.slot, st.hands, reg), mat: matName(l.id), n: l.n, have }), ok: have >= need };
     });
     const fc = pv.cost.finish;
     let fin: unknown = null;
     if (fc && fc.n > 0) {
       const need = pv.cost.materials[fc.id] ?? 0, have = wallet[fc.id] ?? 0;
-      fin = { text: `${fc.name}: ${matName(fc.id)} — ${fc.n}  (всего ${need}, есть ${have})`, ok: have >= need };
+      fin = { text: tr('srv:craft.costFinish', '{name}: {mat} — {n}  (всего {need}, есть {have})', { name: fc.name, mat: matName(fc.id), n: fc.n, need, have }), ok: have >= need };
     }
     left.cost = {
-      head: `Цена: каждая деталь своим материалом (форма ×${fx(pv.cost.mult, 2)})`, lines, finish: fin,
-      gold: { text: `Золото — ${pv.cost.gold}  (есть ${v.gold})`, ok: v.gold >= pv.cost.gold },
+      head: tr('srv:craft.costHead', 'Цена: каждая деталь своим материалом (форма ×{mult})', { mult: fx(pv.cost.mult, 2) }), lines, finish: fin,
+      gold: { text: tr('srv:craft.costGold', 'Золото — {gold}  (есть {have})', { gold: pv.cost.gold, have: v.gold }), ok: v.gold >= pv.cost.gold },
     };
   }
   const lack = pv.cost ? craftMissing(wallet, v.gold, pv.cost) : null;
-  const short = lack ? [...(Object.keys(lack.materials).length ? [describeCost(reg, lack.materials)] : []), ...(lack.gold > 0 ? [`${lack.gold} золота`] : [])] : [];
+  const short = lack ? [...(Object.keys(lack.materials).length ? [describeCost(reg, lack.materials)] : []), ...(lack.gold > 0 ? [tr('srv:forge.goldAmount', '{gold} золота', { gold: lack.gold })] : [])] : [];
   const bag = v.bag ?? undefined;
   const noRoom = pv.ok && !short.length && !!pv.item && !!pv.cost && !!bag && !craftFits(reg, bag, pv.cost.materials, pv.item);
   left.craft = {
-    label: st.busy === 'craft' ? '⏳ куём…' : '🔨 Ковать', disabled: !pv.ok || busy || short.length > 0 || noRoom,
-    title: !pv.ok && why ? why : short.length ? `Не хватает: ${short.join(' · ')}` : noRoom ? 'Нет места в сумке' : null,
+    label: st.busy === 'craft' ? tr('srv:craft.crafting', '⏳ куём…') : tr('srv:craft.craftBtn', '🔨 Ковать'), disabled: !pv.ok || busy || short.length > 0 || noRoom,
+    title: !pv.ok && why ? why : short.length ? tr('srv:forge.lacking', 'Не хватает: {parts}', { parts: short.join(' · ') }) : noRoom ? tr('srv:town.noRoomInBag', 'Нет места в сумке') : null,
   };
   if (st.crafted) {
     const item = st.crafted;
@@ -376,21 +384,21 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
       const essN = Object.values(ess)[0] ?? 0;
       const essHave = wallet[Object.keys(ess)[0] ?? ''] ?? 0;
       const fit = enchantSlots(reg, item, r);
-      const why = item.rarity !== 'normal' ? 'Вещь уже зачарована'
-        : !craftedInBag ? 'Надетую не зачаровать: сперва сними её в сумку'
-        : item.broken ? 'Сперва почини'
-        : !fit ? 'Кузнец не знает такой вещи'
-        : Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? 'Этой вещи некуда принять свойства'
-        : !fit.fillable ? 'Кузнецу не хватит свойств на форму этой вещи'
-        : rolledFormMult(reg, item, r) === undefined ? FORM_UNPRICED
-        : v.gold < cost ? `Недостаточно золота: нужно ${cost}`
-        : Object.keys(essLack).length ? `Не хватает материалов: ${describeCost(reg, essLack)}` : '';
+      const why = item.rarity !== 'normal' ? tr('srv:forge.alreadyEnchanted', 'Вещь уже зачарована')
+        : !craftedInBag ? tr('srv:craft.enchantWorn', 'Надетую не зачаровать: сперва сними её в сумку')
+        : item.broken ? tr('srv:forge.repairFirst', 'Сперва почини')
+        : !fit ? tr('srv:forge.unknownItem', 'Кузнец не знает такой вещи')
+        : Math.min(fit.slots.maxAffixes, fit.slots.maxPrefix + fit.slots.maxSuffix) <= 0 ? tr('srv:forge.noAffixRoom', 'Этой вещи некуда принять свойства')
+        : !fit.fillable ? tr('srv:forge.formTooBig', 'Кузнецу не хватит свойств на форму этой вещи')
+        : rolledFormMult(reg, item, r) === undefined ? tr('srv:forge.formUnpriced', FORM_UNPRICED)
+        : v.gold < cost ? tr('srv:town.noGoldNeed', 'Недостаточно золота: нужно {cost}', { cost })
+        : Object.keys(essLack).length ? tr('srv:town.noMaterials', 'Не хватает материалов: {cost}', { cost: describeCost(reg, essLack) }) : '';
       return {
-        label: st.busy === 'enchant' ? '⏳ зачаровываю…' : `✦ ${r === 'magic' ? 'Магический' : 'Редкий'}${essN > 0 ? ` · эссенция ${essN} (есть ${essHave})` : ''}${Number.isFinite(cost) ? ` · ${cost} з.` : ''}`,
+        label: st.busy === 'enchant' ? tr('srv:craft.enchanting', '⏳ зачаровываю…') : `✦ ${r === 'magic' ? tr('srv:craft.enchantMagic', 'Магический') : tr('srv:craft.enchantRare', 'Редкий')}${essN > 0 ? tr('srv:craft.enchantEssence', ' · эссенция {essN} (есть {essHave})', { essN, essHave }) : ''}${Number.isFinite(cost) ? tr('srv:craft.enchantGold', ' · {cost} з.', { cost }) : ''}`,
         disabled: !!why || busy, title: why || null, cost: num(cost), essence: ess,
       };
     });
-    left.equip = craftedInBag ? { label: st.busy === 'equip' ? '⏳ надеваю…' : 'Надеть', disabled: busy } : null;
+    left.equip = craftedInBag ? { label: st.busy === 'equip' ? tr('srv:craft.equipping', '⏳ надеваю…') : tr('srv:craft.equip', 'Надеть'), disabled: busy } : null;
     left.fresh = { disabled: busy };
   }
   left.message = st.message ? { text: st.message, bad: st.message.startsWith('Не') } : null;
@@ -400,7 +408,7 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
 /** ⭐ С5: строка итога ковки «Скована: имя · урон … · бросок N % вилки» — по скованной вещи и предпросмотру выбранной в окне сборки. */
 export function craftVerdict(reg: ConfigRegistry, st: CraftWindowState, journal: CraftJournal, item: Item): string {
   const pv = craftWeapon(reg, { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 }, { journal, materialsOn: true });
-  return `Скована: ${item.name}${craftRollVerdict(item, pv.ranges, pv.cost?.finish?.floor ?? 0)}`;
+  return tr('srv:craft.verdict', 'Скована: {name}{roll}', { name: itemDisplayName(reg, item), roll: craftRollVerdict(item, pv.ranges, pv.cost?.finish?.floor ?? 0) });
 }
 
 /**

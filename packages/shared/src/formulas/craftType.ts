@@ -1,6 +1,10 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import { ruAgree } from './ruAgree.js';
+import { cfgRowKey, cfgRowText, cfgRowTextWith, textLocalizer, tr } from '../i18n/tr.js';
+import { SOURCE_LANG } from '../i18n/keys.js';
+import { normalizeAgreement } from '../i18n/forms.js';
+import type { Localizer } from '../i18n/index.js';
 
 /**
  * КЛАССИФИКАТОР ТИПОВ ОРУЖИЯ (docs/CRAFT_WEAPONS.md §3.3) — «что за меч получился».
@@ -49,9 +53,11 @@ export function keySlotOf(reg: ConfigRegistry, weaponClass: string): CraftSlot {
 }
 
 /** Имя гнезда с учётом хвата: у булавы «Рукоять» одноручная и «Древко» двуручное. */
-export function slotName(anat: WeaponAnatomy, slot: CraftSlot, hands: number): string {
+export function slotName(anat: WeaponAnatomy, slot: CraftSlot, hands: number, reg?: ConfigRegistry): string {
   const s = anat[slot];
-  return hands === 2 && s.name2h ? s.name2h : s.name;
+  const field = hands === 2 && s.name2h ? 'name2h' : 'name';
+  // ⭐ i18n Ф1 (06.11): с реестром — на языке игрока (`cfgRowText` по самой строке анатомии); без — исходник, как было
+  return reg ? cfgRowText(reg, 'weapon-anatomy', s, field) : s[field] ?? s.name;
 }
 
 export function keyTagOf(anat: WeaponAnatomy): TagDef | undefined {
@@ -116,11 +122,20 @@ const lowFirst = (s: string): string => (s ? s[0]!.toLowerCase() + s.slice(1) : 
 const tidy = (s: string): string => s.replace(/\s+/g, ' ').replace(/\s+,/g, ',').trim();
 
 /**
+ * ⭐ i18n Ф2 (06.11): ЯЗЫК ТЕКСТА ТИПА — разрешитель и реестр (ключ фрагмента берётся по самой строке таблицы, `cfgRowKey`). Нет —
+ * исходник как есть: имя типа ПЕЧЁТСЯ в имя скованной вещи (`craftedName`) и потому собирается языком-источником; показ на языке игрока
+ * собирает тот же шаблон с переведёнными фрагментами (`typeDisplay`, `itemDisplayName`).
+ */
+export interface TypeLang { loc: Localizer; reg: ConfigRegistry }
+
+/**
  * Подставляет значения тегов в шаблон: `{noun}`, `{base}`, `{гнездо.тег}` (= имя значения),
  * `{гнездо.тег.поле}` (name / code / adj / with / epoch). Прилагательное (`adj`) согласуется по
  * роду имени; эпоха (`epoch`) — оборот в родительном («ранней эпохи») и не склоняется.
+ * ⭐ i18n Ф2: `L` — язык фрагментов (шаблон и `extra` зовущий переводит сам); прилагательное — формой перевода под род, запас арифметикой
+ * — только на языке-источнике (как у `composeItemName`).
  */
-function fill(tpl: string, anat: WeaponAnatomy, parts: PartSet, gender: Gender, extra: { noun?: string; base?: string }): string {
+function fill(tpl: string, anat: WeaponAnatomy, parts: PartSet, gender: Gender, extra: { noun?: string; base?: string }, L?: TypeLang): string {
   const out = tpl.replace(/\{([^}]+)\}/g, (_, ref: string) => {
     if (ref === 'noun') return extra.noun ?? '';
     if (ref === 'base') return lowFirst(extra.base ?? '');
@@ -131,7 +146,10 @@ function fill(tpl: string, anat: WeaponAnatomy, parts: PartSet, gender: Gender, 
     const v = tagEntry(anat, slot, key, id);
     if (!v) return '';
     const raw = String((v as Record<string, unknown>)[field] ?? '');
-    return field === 'adj' ? agree(raw, gender) : raw || (field === 'name' ? v.id : '');
+    if (!L || L.loc.lang === SOURCE_LANG) return field === 'adj' ? agree(raw, gender) : raw || (field === 'name' ? v.id : '');
+    const k = raw ? cfgRowKey(L.reg, 'weapon-anatomy', v, field) : undefined;
+    if (field === 'adj') return k && L.loc.forms(k) !== undefined ? L.loc.form(k, normalizeAgreement(gender), raw) : (k ? L.loc.text(k, raw) : raw);
+    return (k ? L.loc.text(k, raw) : raw) || (field === 'name' ? v.id : '');
   });
   return upFirst(tidy(out));
 }
@@ -157,18 +175,20 @@ export interface TypeInfo {
 
 const EMPTY: TypeInfo = { ok: false, name: '', gender: 'm', subtitle: '', source: '', fantasy: false, formula: '', fallback: true };
 
-/** Строка-формула по ссылкам классификатора. */
-export function typeFormula(anat: WeaponAnatomy, row: WeaponTypes, parts: PartSet): string {
+/** Строка-формула по ссылкам классификатора. ⭐ i18n Ф2: `L` — язык подписей (заголовок свода, подпись тега, имя значения; код — как есть). */
+export function typeFormula(anat: WeaponAnatomy, row: WeaponTypes, parts: PartSet, L?: TypeLang): string {
+  const txt = (table: 'weapon-anatomy' | 'weapon-types', r: object, field: string, raw: string): string =>
+    (L && raw ? cfgRowTextWith(L.loc, L.reg, table, r, field) : raw);
   const bits = row.formula.refs.map((ref) => {
     const [slot, key] = ref.split('.') as [CraftSlot, string];
     const def = anat[slot]?.tags.find((t) => t.key === key);
     const p = parts[slot];
     if (!def || !p) return '';
     const v = def.values.find((x) => x.id === tagValue(anat, slot, p, key));
-    const label = def.label || def.name.toLowerCase();
-    return v ? `${label} ${v.code || v.name || v.id}` : '';
+    const label = def.label ? txt('weapon-anatomy', def, 'label', def.label) : txt('weapon-anatomy', def, 'name', def.name).toLowerCase();
+    return v ? `${label} ${v.code || (v.name ? txt('weapon-anatomy', v, 'name', v.name) : '') || v.id}` : '';
   }).filter(Boolean);
-  return (row.formula.title ? `${row.formula.title}: ` : '') + bits.join(' · ');
+  return (row.formula.title ? `${txt('weapon-types', row.formula, 'title', row.formula.title)}: ` : '') + bits.join(' · ');
 }
 
 /**
@@ -178,32 +198,70 @@ export function typeFormula(anat: WeaponAnatomy, row: WeaponTypes, parts: PartSe
 export function resolveType(reg: ConfigRegistry, weaponClass: string, hands: number, parts: PartSet): TypeInfo {
   const anat = anatomyRow(reg, weaponClass);
   const row = typesRow(reg, weaponClass);
-  if (!anat || !row) return { ...EMPTY, reason: 'Классификатора для этого класса нет' };
+  if (!anat || !row) return { ...EMPTY, reason: tr('srv:forge.noClassifier', 'Классификатора для этого класса нет') };
   const keyPart = parts[anat.keySlot as CraftSlot];
   const baseId = keyPart ? baseOfKeyPart(reg, weaponClass, hands, keyPart) : undefined;
   const base = reg.get('items.base').find((b) => b.id === baseId && b.enabled !== false);
   if (!base || base.kind !== 'weapon' || base.weaponClass !== weaponClass || (base.hands ?? 1) !== hands) {
-    return { ...EMPTY, reason: `«${keyPart?.name ?? '?'}» не задаёт тип в этом семействе` };
+    return { ...EMPTY, reason: tr('srv:forge.partNoType', '«{name}» не задаёт тип в этом семействе', { name: cfgRowText(reg, 'weapon-parts', keyPart) ?? '?' }) };
   }
   const formula = typeFormula(anat, row, parts);
+  const t = typeTexts(anat, row, base, hands, parts);
+  // ⚠ порядок полей — прежний (тип уезжает в модели окон, эталон Unity сверяет JSON побайтово)
+  if (!t.fallback) {
+    return {
+      ok: true, baseId: base.id, typeId: t.typeId, gender: t.gender, fallback: false, formula,
+      name: t.name, subtitle: t.subtitle, source: t.source, fantasy: t.fantasy,
+    };
+  }
+  return { ok: true, baseId: base.id, gender: t.gender, fallback: true, formula, source: '', fantasy: false, name: t.name, subtitle: t.subtitle };
+}
+
+/**
+ * ИМЯ И ПОДЗАГОЛОВОК ТИПА по деталям — одно правило на печать (`L` нет — язык-источник, `resolveType`) и на показ (`typeDisplay`): первое
+ * сработавшее правило `names` или шаблон-фолбэк. ⭐ i18n Ф2 (06.11): с `L` шаблон, существительное и имя базы — переводом своих строк.
+ */
+function typeTexts(
+  anat: WeaponAnatomy, row: WeaponTypes, base: { name: string; gender?: string | null }, hands: number, parts: PartSet, L?: TypeLang,
+): Pick<TypeInfo, 'typeId' | 'gender' | 'fallback' | 'name' | 'subtitle' | 'source' | 'fantasy'> {
+  const txt = (r: object, field: string, raw: string): string => (L && raw ? cfgRowTextWith(L.loc, L.reg, 'weapon-types', r, field) : raw);
+  const baseName = L ? cfgRowTextWith(L.loc, L.reg, 'items.base', base) : base.name;
   const rule = row.names.find((r) => r.enabled !== false && matchWhen(anat, r.when, hands, parts));
   if (rule) {
     const g = rule.gender as Gender;
     return {
-      ok: true, baseId: base.id, typeId: rule.id, gender: g, fallback: false, formula,
-      name: fill(rule.name, anat, parts, g, { base: base.name }),
-      subtitle: rule.subtitle ? fill(rule.subtitle, anat, parts, g, { base: base.name }) : '',
+      typeId: rule.id, gender: g, fallback: false,
+      name: fill(txt(rule, 'name', rule.name), anat, parts, g, { base: baseName }, L),
+      subtitle: rule.subtitle ? fill(txt(rule, 'subtitle', rule.subtitle), anat, parts, g, { base: baseName }, L) : '',
       source: rule.source, fantasy: rule.fantasy,
     };
   }
   const noun = row.fallback.noun.find((n) => matchWhen(anat, n.when, hands, parts));
   const g = (noun?.gender ?? base.gender ?? 'm') as Gender;
-  const extra = { noun: noun?.text, base: base.name };
+  const extra = { noun: noun?.text !== undefined ? txt(noun, 'text', noun.text) : undefined, base: baseName };
   return {
-    ok: true, baseId: base.id, gender: g, fallback: true, formula, source: '', fantasy: false,
-    name: fill(row.fallback.template, anat, parts, g, extra) || base.name,
-    subtitle: row.fallback.subtitle ? fill(row.fallback.subtitle, anat, parts, g, extra) : '',
+    gender: g, fallback: true, source: '', fantasy: false,
+    name: fill(txt(row.fallback, 'template', row.fallback.template), anat, parts, g, extra, L) || baseName,
+    subtitle: row.fallback.subtitle ? fill(txt(row.fallback, 'subtitle', row.fallback.subtitle), anat, parts, g, extra, L) : '',
   };
+}
+
+/**
+ * ⭐ i18n Ф2 (06.11): ТИП ДЛЯ ПОКАЗА — имя, подзаголовок и строка-формула на языке ОБЛАСТИ (`textLocalizer`; нет области — ровно поля
+ * `type`). `type` — итог `resolveType` по тем же деталям: от него берутся проверка (тип собрался) и база.
+ */
+export function typeDisplay(
+  reg: ConfigRegistry, weaponClass: string, hands: number, parts: PartSet, type: TypeInfo, loc: Localizer | null = textLocalizer(),
+): Pick<TypeInfo, 'name' | 'subtitle' | 'formula' | 'gender'> {
+  const same = { name: type.name, subtitle: type.subtitle, formula: type.formula, gender: type.gender };
+  if (!type.ok || !loc || loc.lang === SOURCE_LANG) return same;
+  const anat = anatomyRow(reg, weaponClass);
+  const row = typesRow(reg, weaponClass);
+  const base = reg.get('items.base').find((b) => b.id === type.baseId);
+  if (!anat || !row || !base) return same;
+  const L: TypeLang = { loc, reg };
+  const t = typeTexts(anat, row, base, hands, parts, L);
+  return { name: t.name, subtitle: t.subtitle, formula: typeFormula(anat, row, parts, L), gender: t.gender };
 }
 
 // ── Кодекс типов: что игрок уже может собрать ────────────────────────────────────────────────────
@@ -221,7 +279,7 @@ export interface TypeReach {
  */
 export function typeReach(reg: ConfigRegistry, open: { bases: string[]; variants: string[] }, weaponClass: string, rule: TypeRule): TypeReach {
   const anat = anatomyRow(reg, weaponClass);
-  if (!anat) return { available: false, missing: ['нет анатомии класса'] };
+  if (!anat) return { available: false, missing: [tr('srv:forge.noAnatomy', 'нет анатомии класса')] };
   const handsList = familiesOf(reg, weaponClass).filter((h) => !rule.when.hands?.length || rule.when.hands.includes(String(h)));
   let best: string[] | null = null;
   for (const h of handsList) {
@@ -239,13 +297,13 @@ export function typeReach(reg: ConfigRegistry, open: { bases: string[]; variants
       if (!hit) {
         const want = conds.map(([k, vals]) => {
           const key = k.slice(slot.length + 1);
-          return vals.map((v) => (key === 'id' ? pool.find((p) => p.id === v)?.name : tagEntry(anat, slot, key, v)?.name) || v).join(' / ');
+          return vals.map((v) => (key === 'id' ? cfgRowText(reg, 'weapon-parts', pool.find((p) => p.id === v)) : cfgRowText(reg, 'weapon-anatomy', tagEntry(anat, slot, key, v))) || v).join(' / ');
         }).join(', ');
-        missing.push(`${slotName(anat, slot, h)}: ${want || 'нет открытой детали'}`);
+        missing.push(`${slotName(anat, slot, h, reg)}: ${want || tr('srv:forge.noOpenPart', 'нет открытой детали')}`);
       }
     }
     if (!missing.length) return { available: true, missing: [] };
     if (!best || missing.length < best.length) best = missing;
   }
-  return { available: false, missing: best ?? ['нет семейства'] };
+  return { available: false, missing: best ?? [tr('srv:forge.noFamily', 'нет семейства')] };
 }

@@ -8,6 +8,7 @@ export * from './microFight.js';
 export * from './aggregate.js';
 export * from './netTypes.js';
 export * from './serialize.js';
+export * from './frameText.js';   // ⭐ i18n Ф2 (06.11): запечённые имена кадров — на языке получателя
 export * from './interactables.js';
 export * from './reveal.js';
 export * from './weapon3d.js';

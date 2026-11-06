@@ -1,5 +1,6 @@
 import type { MonsterGearRoll } from '../types/world.js';
 import type { MaterialCost } from '../economy/materials.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ЧТО МОНСТР НОСИТ — ТО С НЕГО И ПАДАЕТ (docs/ECONOMY.md).
@@ -216,13 +217,13 @@ export function canSalvage(
   // ⭐⭐ Ф5-1: ПЕЧАТЬ НЕ РАЗБИРАЕТСЯ — шов один для кузнеца, поля и отказа сервера. Разбор печати в сырьё
   // сделал бы из топлива отрезка обычный доход БЕЗ боя — та же дыра, из-за которой отвергнута катаная схема.
   // Перековка «три печати → одна ступенью выше» — СВОЕ действие кузницы (Ф5-6′), а не разбор.
-  if (item.kind === 'seal') return { ok: false, reason: SEAL_NO_SALVAGE };
+  if (item.kind === 'seal') return { ok: false, reason: tr('srv:salvage.sealNo', SEAL_NO_SALVAGE) };
   // Явный выключатель (`uniqueSalvage`), а не «ступень 0» у редкости: прежний `rarityTier.unique = 0` глушил заодно и тела боссов.
-  if (item.rarity === 'unique' && !t.uniqueSalvage) return { ok: false, reason: UNIQUE_NO_SALVAGE };
-  if (item.parts) return { ok: false, reason: 'Скованную вещь переплавляют, а не разбирают' };
+  if (item.rarity === 'unique' && !t.uniqueSalvage) return { ok: false, reason: tr('srv:salvage.uniqueNo', UNIQUE_NO_SALVAGE) };
+  if (item.parts) return { ok: false, reason: tr('srv:salvage.craftedMelt', 'Скованную вещь переплавляют, а не разбирают') };
   const rule = salvageRuleFor(item, weaponClass, rules);
-  if (!rule?.yields?.length) return { ok: false, reason: 'Эту вещь не из чего разбирать' };
-  if (salvageMult(item, t, inField) <= 0) return { ok: false, reason: 'Разбор ничего не даст' };
+  if (!rule?.yields?.length) return { ok: false, reason: tr('srv:salvage.nothingToSalvage', 'Эту вещь не из чего разбирать') };
+  if (salvageMult(item, t, inField) <= 0) return { ok: false, reason: tr('srv:salvage.nothingWill', 'Разбор ничего не даст') };
   return { ok: true };
 }
 

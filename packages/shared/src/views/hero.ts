@@ -37,6 +37,7 @@ import { PERCENT_STATS, STAT_LABEL } from '../formulas/itemDescribe.js';
 import { STATUS_CHANCE_CAP, debuffIcon, debuffLabel, isDotKind, statusChance, type DebuffApply, type DebuffKind } from '../world/debuffs.js';
 import { waypointHint } from '../dungeon/run/labels.js';
 import { dmgName, elementOf } from './heroText.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 export * from './heroCard.js';
 export * from './heroTree.js';
@@ -145,15 +146,15 @@ const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
 
 /** Инфо-строка HUD: «Ур. N · город / этаж N · сложность · монстры ур.X · метка · Золото · Очки». */
 export function hudInfo(cfg: ConfigRegistry, save: SaveState, floor: HeroFloor): string {
-  let loc = 'город';
+  let loc = tr('srv:hero.hudTown', 'город');
   if (floor.area === 'dungeon') {
     const diffs = cfg.get('difficulties');
     const diff = diffs.find((x) => x.id === floor.difficultyId) ?? diffs.find((x) => x.id === 'normal') ?? diffs[0]!;
     const cl = floor.challengeLevel ?? floorMonsterLevel(diff, floor.depth);
     const access = cfg.get('balance').dungeonAccess;
-    loc = `этаж ${floor.depth} · ${diff.name} · монстры ур.${cl} · ${waypointHint(floor.depth, access.portalsAt, access.contentCycle)}`;
+    loc = tr('srv:hero.hudFloor', 'этаж {depth} · {difficulty} · монстры ур.{cl} · {waypoint}', { depth: floor.depth, difficulty: cfgRowText(cfg, 'difficulties', diff), cl, waypoint: waypointHint(floor.depth, access.portalsAt, access.contentCycle) });
   }
-  return `Ур. ${save.level}  ·  ${loc}  ·  Золото ${save.gold}  ·  Очки: атр ${save.unspentAttributePoints} / скилл ${save.unspentSkillPoints}`;
+  return tr('srv:hero.hudInfo', 'Ур. {level}  ·  {loc}  ·  Золото {gold}  ·  Очки: атр {attr} / скилл {skill}', { level: save.level, loc, gold: save.gold, attr: save.unspentAttributePoints, skill: save.unspentSkillPoints });
 }
 
 /** ⭐ Замена `DmSheet.Hud`: полосы от полного максимума, зоны резерва аур/стоек, «(−N)» у маны, опыт, инфо-строка. */
@@ -180,7 +181,7 @@ export function hudView(cfg: ConfigRegistry, save: SaveState, toggles: readonly 
 /** ⭐ Замена `DmSheet.MasterBlock`: уровень и опыт, урон, броня, крит, HP, мана — строки через `\n`. */
 export function masterBlock(cfg: ConfigRegistry, save: SaveState, toggles: readonly string[], opts: HeroOpts = {}): string {
   const d = heroCalc(cfg, save, toggles, opts).derived;
-  return `Уровень: ${save.level} · Опыт: ${save.xp}\nУрон: ${R(d.minDamage)}–${R(d.maxDamage)} · Броня: ${R(d.armor)} · Крит: ${R(d.critChance * 100)}%\nHP: ${R(d.maxHp)} · Мана: ${R(d.maxMana)}`;
+  return tr('srv:hero.masterBlock', 'Уровень: {level} · Опыт: {xp}\nУрон: {minDamage}–{maxDamage} · Броня: {armor} · Крит: {critChance}%\nHP: {maxHp} · Мана: {maxMana}', { level: save.level, xp: save.xp, minDamage: R(d.minDamage), maxDamage: R(d.maxDamage), armor: R(d.armor), critChance: R(d.critChance * 100), maxHp: R(d.maxHp), maxMana: R(d.maxMana) });
 }
 
 // ── лист персонажа (progression/panels.ts characterPanel) ──────────────────────────────────────────
@@ -206,7 +207,7 @@ export function poolText(h: HeroNumbers, pool: PoolIndex, cur: number, bar: bool
   const s = `${R(cur)} / ${R(max)}`;
   if (!bar || pool === 0) return s;
   const res = Math.round(max * (pool === 1 ? h.reserveMana : h.reserveStamina));
-  return res > 0 ? `${s} · резерв ${res}` : s;
+  return res > 0 ? tr('srv:hero.poolReserve', '{s} · резерв {res}', { s, res }) : s;
 }
 
 const RES: [keyof DerivedStats, DamageType][] = [['resFire', 'fire'], ['resCold', 'cold'], ['resLightning', 'lightning'], ['resPoison', 'poison']];
@@ -220,10 +221,10 @@ const BONUS_EXCLUDE = new Set<string>([
   ...AILMENT_KINDS.flatMap((k) => [`${k}ChancePct`, `${k}PowerPct`, `${k}DurPct`]),
 ]);
 const ATTR_TIPS: Record<Attribute, string> = {
-  strength: 'Урон ближним оружием и требования по силе для экипировки.',
-  dexterity: 'Урон дальним оружием, меткость и уклонение.',
-  intelligence: 'Урон магией, максимум маны и реген маны.',
-  vitality: 'Максимум здоровья и реген HP.',
+  get strength() { return tr('srv:attrTip.strength', 'Урон ближним оружием и требования по силе для экипировки.'); },
+  get dexterity() { return tr('srv:attrTip.dexterity', 'Урон дальним оружием, меткость и уклонение.'); },
+  get intelligence() { return tr('srv:attrTip.intelligence', 'Урон магией, максимум маны и реген маны.'); },
+  get vitality() { return tr('srv:attrTip.vitality', 'Максимум здоровья и реген HP.'); },
 };
 const HOTKEYS = ['Shift', 'Q', 'Alt'];
 
@@ -271,16 +272,16 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     row([label, `▮${Math.max(0, Math.min(100, frac * 100))}%`, `${Math.round(frac * 100)}%`], tip);
 
   // шапка
-  blocks.push({ rows: [row([lines(save.name, `${cls?.name ?? save.classId} · Уровень ${save.level}`)])] });
+  blocks.push({ rows: [row([lines(save.name, tr('srv:hero.headClass', '{cls} · Уровень {level}', { cls: cfgRowText(cfg, 'classes', cls) ?? save.classId, level: save.level }))])] });
 
   // полосы
   const xpb = xpProgress(save.level, save.xp, bal.xpTable);
   blocks.push({
     rows: [
-      barLine('Здоровье', live.hp, d.maxHp, true, delta(d.maxHp, pd.maxHp), poolText(h, 0, live.hp, true)),
-      barLine('Мана', live.mana, d.maxMana, true, delta(d.maxMana, pd.maxMana), poolText(h, 1, live.mana, true)),
-      barLine('Выносливость', live.stamina, d.maxStamina, true, delta(d.maxStamina, pd.maxStamina), poolText(h, 2, live.stamina, true)),
-      barLine('Опыт', xpb.frac * 100, 100, false, undefined, xpb.max ? 'макс. уровень' : `${xpb.into} / ${xpb.need} · ${Math.round(xpb.frac * 100)}%`),
+      barLine(tr('srv:hero.barHp', 'Здоровье'), live.hp, d.maxHp, true, delta(d.maxHp, pd.maxHp), poolText(h, 0, live.hp, true)),
+      barLine(tr('srv:hero.barMana', 'Мана'), live.mana, d.maxMana, true, delta(d.maxMana, pd.maxMana), poolText(h, 1, live.mana, true)),
+      barLine(tr('srv:hero.barStamina', 'Выносливость'), live.stamina, d.maxStamina, true, delta(d.maxStamina, pd.maxStamina), poolText(h, 2, live.stamina, true)),
+      barLine(tr('srv:hero.barXp', 'Опыт'), xpb.frac * 100, 100, false, undefined, xpb.max ? tr('srv:hero.maxLevel', 'макс. уровень') : `${xpb.into} / ${xpb.need} · ${Math.round(xpb.frac * 100)}%`),
     ],
   });
 
@@ -288,35 +289,32 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
   const auras = activeToggleInfos(cfg, toggles);
   if (auras.length) {
     blocks.push({
-      title: 'Активные ауры/стойки',
-      rows: auras.map((a) => row([lines(`${a.name}${a.reservePct > 0 ? ` · резерв ${Math.round(a.reservePct * 100)}% маны` : ''}`, a.description)])),
+      title: tr('srv:hero.togglesTitle', 'Активные ауры/стойки'),
+      rows: auras.map((a) => row([lines(`${a.name}${a.reservePct > 0 ? tr('srv:hero.toggleReserve', ' · резерв {reservePct}% маны', { reservePct: Math.round(a.reservePct * 100) }) : ''}`, a.description)])),
     });
   }
 
   // мощь — как меряет сервер (надетое + сумка и пояс, ступени вещей)
   const pw = effectiveLevel(save, bal.power, carriedGear(save), cfg.get('item-tiers'));
   blocks.push({
-    rows: [row(['Мощь (эфф. уровень)', String(pw.total)],
-      'Эффективный уровень персонажа = уровень + гир + мастерства.\n' +
-      `Уровень ${pw.level} + гир +${pw.gearBonus} + мастерства +${pw.passiveBonus} = ${pw.total}.\n` +
-      'Гир — лучшее в каждый слот из надетого и того, что можешь надеть из сумки.\n' +
-      'Задаёт стартовую сложность подземелья при выборе тира.')],
+    rows: [row([tr('srv:hero.power', 'Мощь (эфф. уровень)'), String(pw.total)],
+      tr('srv:hero.powerTip', 'Эффективный уровень персонажа = уровень + гир + мастерства.\nУровень {level} + гир +{gearBonus} + мастерства +{passiveBonus} = {total}.\nГир — лучшее в каждый слот из надетого и того, что можешь надеть из сумки.\nЗадаёт стартовую сложность подземелья при выборе тира.', { level: pw.level, gearBonus: pw.gearBonus, passiveBonus: pw.passiveBonus, total: pw.total }))],
   });
 
   const mitig = Math.round((d.armor / (d.armor + 30 + 5 * save.level)) * 100);
 
   // атрибуты
   blocks.push({
-    title: `Атрибуты · очков: ${remaining}`,
+    title: tr('srv:hero.attrsTitle', 'Атрибуты · очков: {remaining}', { remaining }),
     rows: ATTRIBUTES.map((key) => {
       const own = h.permanent[key], eff = h.effective[key], gearB = eff - own;
-      const split = gearB !== 0 ? `Своя (с мастерствами): ${own} · от гира: ${gearB > 0 ? '+' : ''}${gearB} = ${eff}` : `Своя (с мастерствами): ${own}`;
+      const split = gearB !== 0 ? tr('srv:hero.attrSplitGear', 'Своя (с мастерствами): {own} · от гира: {sign}{gearB} = {eff}', { own, sign: gearB > 0 ? '+' : '', gearB, eff }) : tr('srv:hero.attrSplit', 'Своя (с мастерствами): {own}', { own });
       return row([STAT_LABEL[key] ?? key, String(eff), pending(key) > 0 ? `+${pending(key)}` : undefined], `${split}\n${ATTR_TIPS[key]}`);
     }),
   });
 
   // наступление — оружием «как его держат» (им бьёт сервер)
-  const off: SheetBlock = { title: 'Наступление', rows: [] };
+  const off: SheetBlock = { title: tr('srv:hero.offenseTitle', 'Наступление'), rows: [] };
   const scaling = bal.weaponAttrScaling;
   const weights = cfg.get('weapon-weights');
   const weapon = h.held;
@@ -329,9 +327,9 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
   const typeLines = (bt: ByType): string =>
     DAMAGE_TYPES.filter((t) => bt[t].max > 0).map((t) => `■ ${dmgName(cfg, t)}: ${R(bt[t].min)}–${R(bt[t].max)}`).join('\n') || '—';
   const weaponTip = (): string => {
-    const attrName = weapon?.damageKind === 'magical' ? 'Интеллекта' : (weapon?.attackType ?? 'melee') === 'ranged' ? 'Ловкости' : 'Силы';
+    const attrName = weapon?.damageKind === 'magical' ? tr('srv:hero.attrInt', 'Интеллекта') : (weapon?.attackType ?? 'melee') === 'ranged' ? tr('srv:hero.attrDex', 'Ловкости') : tr('srv:hero.attrStr', 'Силы');
     const pctRows: string[] = [];
-    if (d.damagePct) pctRows.push(`весь урон +${R(d.damagePct * 100)}%`);
+    if (d.damagePct) pctRows.push(tr('srv:hero.bonusAll', 'весь урон +{damagePct}%', { damagePct: R(d.damagePct * 100) }));
     for (const [pk, t] of [['physPct', 'physical'], ['firePct', 'fire'], ['coldPct', 'cold'], ['lightningPct', 'lightning'], ['poisonPct', 'poison']] as const) {
       if (d[pk]) pctRows.push(`${dmgName(cfg, t)} +${R(d[pk] * 100)}%`);
     }
@@ -339,8 +337,8 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     for (const [ak, t] of [['addFire', 'fire'], ['addCold', 'cold'], ['addLightning', 'lightning'], ['addPoison', 'poison']] as const) {
       if (d[ak]) addRows.push(`■ +${R(d[ak])} ${dmgName(cfg, t)}`);
     }
-    const bonus = pctRows.length || addRows.length ? `\nБонусы урона:\n${[...addRows, ...pctRows].join('\n')}` : '';
-    return `Урон базовой атаки по типам:\n${typeLines(byType)}\nТип базы — по оружию. Растёт от базы оружия и ${attrName}; стихийные добавки — с аффиксов гира/скиллов.${bonus}`;
+    const bonus = pctRows.length || addRows.length ? tr('srv:hero.bonusBlock', '\nБонусы урона:\n{v}', { v: [...addRows, ...pctRows].join('\n') }) : '';
+    return tr('srv:hero.weaponTip', 'Урон базовой атаки по типам:\n{byType}\nТип базы — по оружию. Растёт от базы оружия и {attrName}; стихийные добавки — с аффиксов гира/скиллов.{bonus}', { byType: typeLines(byType), attrName, bonus });
   };
 
   const tree = cfg.get('skill-tree');
@@ -394,12 +392,12 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
   const strengthStr = (b: DebuffApply, pMul: number): string => {
     const pdv = (b.magPerDamage ?? 0) * pMul * 100, m = b.mag * pMul * 100, m2 = (b.mag2 ?? 0) * pMul * 100;
     switch (b.kind) {
-      case 'bleed': case 'burn': case 'poison': return `${pdv.toFixed(1)}% урона/сек`;
-      case 'wound': return `−${m.toFixed(0)}% урона · −${m2.toFixed(0)}% скор.`;
-      case 'sunder': return `+${m.toFixed(0)}% получ. урона`;
-      case 'daze': return `−${m.toFixed(0)}% брони · ${m2.toFixed(0)}% стан`;
-      case 'shock': return `+${m.toFixed(0)}% получ. урона`;
-      case 'freeze': return `−${m.toFixed(0)}% скор. · ${m2.toFixed(0)}% сковать`;
+      case 'bleed': case 'burn': case 'poison': return tr('srv:hero.dotPerSec', '{pdv}% урона/сек', { pdv: pdv.toFixed(1) });
+      case 'wound': return tr('srv:hero.woundStr', '−{m}% урона · −{m2}% скор.', { m: m.toFixed(0), m2: m2.toFixed(0) });
+      case 'sunder': return tr('srv:hero.takenMore', '+{m}% получ. урона', { m: m.toFixed(0) });
+      case 'daze': return tr('srv:hero.dazeStr', '−{m}% брони · {m2}% стан', { m: m.toFixed(0), m2: m2.toFixed(0) });
+      case 'shock': return tr('srv:hero.takenMore', '+{m}% получ. урона', { m: m.toFixed(0) });
+      case 'freeze': return tr('srv:hero.freezeStr', '−{m}% скор. · {m2}% сковать', { m: m.toFixed(0), m2: m2.toFixed(0) });
       default: return '';
     }
   };
@@ -409,21 +407,21 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     const ls = attackAilments(binding).map((b) => {
       const cMul = 1 + d.ailmentPct + kNum(b.kind, 'ChancePct');
       const chance = statusChance(b.chance, cMul);
-      const capTag = b.chance * cMul > STATUS_CHANCE_CAP ? ' (потолок)' : '';
+      const capTag = b.chance * cMul > STATUS_CHANCE_CAP ? tr('srv:hero.capTag', ' (потолок)') : '';
       const durS = (b.durationMs * (1 + d.ailmentDurPct + kNum(b.kind, 'DurPct'))) / 1000;
       const pMul = 1 + d.ailmentPct + kNum(b.kind, 'PowerPct');
-      return `${debuffIcon(debuffsCfg, b.kind)} ${debuffLabel(debuffsCfg, b.kind)} — шанс ${Math.round(chance * 100)}%${capTag} · ${durS.toFixed(1)}с · ${strengthStr(b, pMul)}${b.maxStacks > 1 ? ` (до ${b.maxStacks} стак.)` : ''}`;
+      return tr('srv:hero.ailmentLine', '{icon} {label} — шанс {chance}%{capTag} · {dur}с · {power}{stacks}', { icon: debuffIcon(debuffsCfg, b.kind), label: debuffLabel(debuffsCfg, b.kind), chance: Math.round(chance * 100), capTag, dur: durS.toFixed(1), power: strengthStr(b, pMul), stacks: b.maxStacks > 1 ? tr('srv:hero.stacksUpTo', ' (до {maxStacks} стак.)', { maxStacks: b.maxStacks }) : '' });
     });
     const wsc = save.equipment.weapon?.stunChance;
-    if (wsc) ls.push(`💥 Стан — ${Math.round(wsc * 100)}%`);
-    return ls.length ? `\nНакладывает:\n${ls.join('\n')}\n(до сопротивления цели)` : '';
+    if (wsc) ls.push(tr('srv:hero.stunLine', '💥 Стан — {wsc}%', { wsc: Math.round(wsc * 100) }));
+    return ls.length ? tr('srv:hero.appliesBlock', '\nНакладывает:\n{ls}\n(до сопротивления цели)', { ls: ls.join('\n') }) : '';
   };
   const dmgRow = (label: string, binding: string | null | undefined): SheetRow => {
     if (binding === 'attack') {
       const dlt = dMaxInc > 0 || dMinInc > 0 ? (dMinInc === dMaxInc ? `+${dMaxInc}` : `+${dMinInc}–${dMaxInc}`) : undefined;
-      return row([label, `${R(dmgMin)}–${R(dmgMax)} (ДПС ~${atkDps})`, dlt], weaponTip() + ailmentTip('attack'));
+      return row([label, tr('srv:hero.attackValue', '{dmgMin}–{dmgMax} (ДПС ~{atkDps})', { dmgMin: R(dmgMin), dmgMax: R(dmgMax), atkDps }), dlt], weaponTip() + ailmentTip('attack'));
     }
-    if (!binding) return row([label, 'не назначено']);
+    if (!binding) return row([label, tr('srv:hero.unbound', 'не назначено')]);
     const node = nodeOf(binding);
     const resd = resolvedOf(binding);
     const active = (resd?.active ?? node?.effect.active) as
@@ -437,86 +435,86 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
       let sdps: number, rateTip: string;
       if (active.category === 'attack') {
         const r = Math.max(0.2, d.attackSpeed * active.speed);
-        sdps = Math.round(sdmg * r); rateTip = `темп ${(1 / r).toFixed(2)} с/удар`;
+        sdps = Math.round(sdmg * r); rateTip = tr('srv:hero.tempo', 'темп {v} с/удар', { v: (1 / r).toFixed(2) });
       } else {
         const ct = active.castTimeSec / Math.max(0.2, d.castSpeed);
-        sdps = ct > 0 ? Math.round(sdmg / ct) : sdmg; rateTip = `каст ${ct.toFixed(2)} с`;
+        sdps = ct > 0 ? Math.round(sdmg / ct) : sdmg; rateTip = tr('srv:hero.castTime', 'каст {ct} с', { ct: ct.toFixed(2) });
       }
-      const costTip = `${active.manaCost} ${active.resource === 'stamina' ? 'выносл.' : 'маны'}`
-        + (resd?.extraCost ? ` + ${resd.extraCost.amount} ${resd.extraCost.pool === 'mana' ? 'маны' : 'выносл.'}` : '');
-      return row([label, `${sdmg} (ДПС ~${sdps})`],
-        `${node.name}: урон ${sdmg}, ${rateTip}, ДПС ~${sdps}. Цена ${costTip}.\nУрон по типам:\n${typeLines(sbt)}` + ailmentTip(binding));
+      const costTip = `${active.manaCost} ${active.resource === 'stamina' ? tr('srv:hero.stamShort', 'выносл.') : tr('srv:hero.mana', 'маны')}`
+        + (resd?.extraCost ? ` + ${resd.extraCost.amount} ${resd.extraCost.pool === 'mana' ? tr('srv:hero.mana', 'маны') : tr('srv:hero.stamShort', 'выносл.')}` : '');
+      return row([label, tr('srv:hero.skillValue', '{sdmg} (ДПС ~{sdps})', { sdmg, sdps })],
+        tr('srv:hero.skillTip', '{name}: урон {sdmg}, {rateTip}, ДПС ~{sdps}. Цена {costTip}.\nУрон по типам:\n{sbt}', { name: cfgRowText(cfg, 'skill-tree', node), sdmg, rateTip, sdps, costTip, sbt: typeLines(sbt) }) + ailmentTip(binding));
     }
     if (node && active) {
-      const kind = active.category === 'curse' ? 'проклятие' : active.category === 'aura' ? 'аура' : active.category === 'stance' ? 'стойка' : 'бафф';
-      return row([label, '—'], `${node.name}: ${kind} — без прямого урона.`);
+      const kind = active.category === 'curse' ? tr('srv:hero.kindCurse', 'проклятие') : active.category === 'aura' ? tr('srv:hero.kindAura', 'аура') : active.category === 'stance' ? tr('srv:hero.kindStance', 'стойка') : tr('srv:hero.kindBuff', 'бафф');
+      return row([label, '—'], tr('srv:hero.noDirectDamage', '{name}: {kind} — без прямого урона.', { name: cfgRowText(cfg, 'skill-tree', node), kind }));
     }
     return row([label, '—']);
   };
-  off.rows.push(dmgRow('Урон (ЛКМ)', save.mouseLeft));
-  off.rows.push(dmgRow('Урон (ПКМ)', save.mouseRight));
-  save.hotbar.forEach((b, i) => { if (b) off.rows.push(dmgRow(`Урон (${HOTKEYS[i]})`, b)); });
-  off.rows.push(statRow('Скор. атаки', `${d.attackSpeed.toFixed(2)} /с`, 'Число базовых атак в секунду.'));
-  off.rows.push(statRow('Шанс крита', `${R(d.critChance * 100)}%`, `Вероятность нанести усиленный удар (×${d.critMultiplier.toFixed(2)}).`));
-  off.rows.push(statRow('Множ. крита', `×${d.critMultiplier.toFixed(2)}`, 'Во сколько раз крит-удар сильнее обычного.'));
-  off.rows.push(statRow('Меткость', `${R(d.accuracy)}${hitPct != null ? ` · ${hitPct}%` : ''}`,
-    'Рейтинг атаки. Шанс попасть = меткость / (меткость + уклонение цели), 5–95%.' +
-    (lt ? `\nПо «${lt.name}» (последний): ${hitPct}% попасть.` : '\nАтакуй монстра — покажу реальный шанс по нему.'),
+  off.rows.push(dmgRow(tr('srv:hero.dmgLmb', 'Урон (ЛКМ)'), save.mouseLeft));
+  off.rows.push(dmgRow(tr('srv:hero.dmgRmb', 'Урон (ПКМ)'), save.mouseRight));
+  save.hotbar.forEach((b, i) => { if (b) off.rows.push(dmgRow(tr('srv:hero.dmgHotkey', 'Урон ({key})', { key: HOTKEYS[i] }), b)); });
+  off.rows.push(statRow(tr('srv:hero.atkSpeed', 'Скор. атаки'), tr('srv:hero.perSecond', '{v} /с', { v: d.attackSpeed.toFixed(2) }), tr('srv:hero.atkSpeedTip', 'Число базовых атак в секунду.')));
+  off.rows.push(statRow(tr('srv:hero.crit', 'Шанс крита'), `${R(d.critChance * 100)}%`, tr('srv:hero.critTip', 'Вероятность нанести усиленный удар (×{critMultiplier}).', { critMultiplier: d.critMultiplier.toFixed(2) })));
+  off.rows.push(statRow(tr('srv:hero.critMult', 'Множ. крита'), `×${d.critMultiplier.toFixed(2)}`, tr('srv:hero.critMultTip', 'Во сколько раз крит-удар сильнее обычного.')));
+  off.rows.push(statRow(tr('srv:hero.accuracy', 'Меткость'), `${R(d.accuracy)}${hitPct != null ? ` · ${hitPct}%` : ''}`,
+    tr('srv:hero.accuracyTip', 'Рейтинг атаки. Шанс попасть = меткость / (меткость + уклонение цели), 5–95%.') +
+    (lt ? tr('srv:hero.accuracyVs', '\nПо «{name}» (последний): {hitPct}% попасть.', { name: lt.name, hitPct }) : tr('srv:hero.accuracyHint', '\nАтакуй монстра — покажу реальный шанс по нему.')),
     delta(d.accuracy, pd.accuracy)));
-  off.rows.push(statRow('Скор. каста', `×${d.castSpeed.toFixed(2)}`, 'Множитель скорости каста: каст-тайм скиллов делится на неё. Растёт от Интеллекта.'));
-  if (d.armorPen > 0) off.rows.push(statRow('Пробой брони', `${R(d.armorPen * 100)}%`, 'Игнорирует эту долю брони цели при ударе.'));
+  off.rows.push(statRow(tr('srv:hero.castSpeed', 'Скор. каста'), `×${d.castSpeed.toFixed(2)}`, tr('srv:hero.castSpeedTip', 'Множитель скорости каста: каст-тайм скиллов делится на неё. Растёт от Интеллекта.')));
+  if (d.armorPen > 0) off.rows.push(statRow(tr('srv:hero.armorPen', 'Пробой брони'), `${R(d.armorPen * 100)}%`, tr('srv:hero.armorPenTip', 'Игнорирует эту долю брони цели при ударе.')));
   blocks.push(off);
 
   // защита
   blocks.push({
-    title: 'Защита',
+    title: tr('srv:hero.defenseTitle', 'Защита'),
     rows: [
-      statRow('Броня', R(d.armor), `Снижает получаемый физический урон. Сейчас: −${mitig}% (armor/(armor+30+5×ур.атакующего)).`),
-      statRow('Уклонение', `${R(d.evade)}${dodgePct != null ? ` · ${dodgePct}%` : ''}`,
-        'Рейтинг защиты. Снижает шанс врага попасть по тебе (сравнивается с его меткостью).' +
-        (lt ? `\nОт «${lt.name}» (последний): ${dodgePct}% увернуться.` : '\nАтакуй монстра — покажу реальный шанс уклонения от него.'),
+      statRow(tr('srv:hero.armor', 'Броня'), R(d.armor), tr('srv:hero.armorTip', 'Снижает получаемый физический урон. Сейчас: −{mitig}% (armor/(armor+30+5×ур.атакующего)).', { mitig })),
+      statRow(tr('srv:hero.evade', 'Уклонение'), `${R(d.evade)}${dodgePct != null ? ` · ${dodgePct}%` : ''}`,
+        tr('srv:hero.evadeTip', 'Рейтинг защиты. Снижает шанс врага попасть по тебе (сравнивается с его меткостью).') +
+        (lt ? tr('srv:hero.evadeVs', '\nОт «{name}» (последний): {dodgePct}% увернуться.', { name: lt.name, dodgePct }) : tr('srv:hero.evadeHint', '\nАтакуй монстра — покажу реальный шанс уклонения от него.')),
         delta(d.evade, pd.evade)),
-      statRow('Блок', `${R(d.blockChance * 100)}%`, 'Шанс полностью погасить удар (только от оружия/щита). Максимум 75%.'),
-      statRow('Здоровье', poolText(h, 0, live.hp, false), 'Текущее / максимум HP. При 0 — смерть.', delta(d.maxHp, pd.maxHp)),
-      statRow('Мана', poolText(h, 1, live.mana, false), 'Текущее / максимум маны для магических скиллов (и резерва аур).', delta(d.maxMana, pd.maxMana)),
-      statRow('Выносливость', poolText(h, 2, live.stamina, false), 'Текущее / максимум выносливости для боевых скиллов (и резерва стоек).', delta(d.maxStamina, pd.maxStamina)),
-      statRow('Реген HP', `${d.hpRegen.toFixed(1)} /с`, `Восстанавливает ${d.hpRegen.toFixed(1)} HP каждую секунду.`, delta(d.hpRegen, pd.hpRegen, 1, false, ' /с')),
-      statRow('Реген маны', `${d.manaRegen.toFixed(1)} /с`, `Восстанавливает ${d.manaRegen.toFixed(1)} маны каждую секунду.`, delta(d.manaRegen, pd.manaRegen, 1, false, ' /с')),
-      statRow('Реген вынос.', `${d.staminaRegen.toFixed(1)} /с`, `Восстанавливает ${d.staminaRegen.toFixed(1)} выносливости каждую секунду.`, delta(d.staminaRegen, pd.staminaRegen, 1, false, ' /с')),
-      ...(d.interruptResist > 0 ? [statRow('Стойк. к прерыв.', `${R(d.interruptResist * 100)}%`, 'Шанс НЕ сбить замах тяжёлого удара при стане/ошеломлении цели.')] : []),
+      statRow(tr('srv:hero.block', 'Блок'), `${R(d.blockChance * 100)}%`, tr('srv:hero.blockTip', 'Шанс полностью погасить удар (только от оружия/щита). Максимум 75%.')),
+      statRow(tr('srv:hero.barHp', 'Здоровье'), poolText(h, 0, live.hp, false), tr('srv:hero.hpTip', 'Текущее / максимум HP. При 0 — смерть.'), delta(d.maxHp, pd.maxHp)),
+      statRow(tr('srv:hero.barMana', 'Мана'), poolText(h, 1, live.mana, false), tr('srv:hero.manaTip', 'Текущее / максимум маны для магических скиллов (и резерва аур).'), delta(d.maxMana, pd.maxMana)),
+      statRow(tr('srv:hero.barStamina', 'Выносливость'), poolText(h, 2, live.stamina, false), tr('srv:hero.staminaTip', 'Текущее / максимум выносливости для боевых скиллов (и резерва стоек).'), delta(d.maxStamina, pd.maxStamina)),
+      statRow(tr('srv:hero.hpRegen', 'Реген HP'), tr('srv:hero.perSecond', '{v} /с', { v: d.hpRegen.toFixed(1) }), tr('srv:hero.hpRegenTip', 'Восстанавливает {hpRegen} HP каждую секунду.', { hpRegen: d.hpRegen.toFixed(1) }), delta(d.hpRegen, pd.hpRegen, 1, false, tr('srv:hero.perSecondSuffix', ' /с'))),
+      statRow(tr('srv:hero.manaRegen', 'Реген маны'), tr('srv:hero.perSecond', '{v} /с', { v: d.manaRegen.toFixed(1) }), tr('srv:hero.manaRegenTip', 'Восстанавливает {manaRegen} маны каждую секунду.', { manaRegen: d.manaRegen.toFixed(1) }), delta(d.manaRegen, pd.manaRegen, 1, false, tr('srv:hero.perSecondSuffix', ' /с'))),
+      statRow(tr('srv:hero.staminaRegen', 'Реген вынос.'), tr('srv:hero.perSecond', '{v} /с', { v: d.staminaRegen.toFixed(1) }), tr('srv:hero.staminaRegenTip', 'Восстанавливает {staminaRegen} выносливости каждую секунду.', { staminaRegen: d.staminaRegen.toFixed(1) }), delta(d.staminaRegen, pd.staminaRegen, 1, false, tr('srv:hero.perSecondSuffix', ' /с'))),
+      ...(d.interruptResist > 0 ? [statRow(tr('srv:hero.interrupt', 'Стойк. к прерыв.'), `${R(d.interruptResist * 100)}%`, tr('srv:hero.interruptTip', 'Шанс НЕ сбить замах тяжёлого удара при стане/ошеломлении цели.'))] : []),
     ],
   });
 
   // сопротивления и выдержка брони
-  const res: SheetBlock = { title: 'Сопротивления', rows: [] };
+  const res: SheetBlock = { title: tr('srv:hero.resTitle', 'Сопротивления'), rows: [] };
   for (const [key, el] of RES) {
     const name = dmgName(cfg, el);
     const v = d[key];
-    res.rows.push(resRow(name, v, `Снижает урон стихии «${name}» на ${Math.round(v * 100)}%. Максимум — 75%.`));
+    res.rows.push(resRow(name, v, tr('srv:hero.resTip', 'Снижает урон стихии «{name}» на {v}%. Максимум — 75%.', { name, v: Math.round(v * 100) })));
   }
-  res.rows.push(row(['Стойкость к физ. статусам']));
+  res.rows.push(row([tr('srv:hero.physPoise', 'Стойкость к физ. статусам')]));
   const gear = Object.values(save.equipment).filter((it): it is Item => !!it);
   for (const k of ['wound', 'bleed', 'sunder', 'daze'] as DebuffKind[]) {
     const poise = armorPoise(gear, k, cfg.get('armor-classes'));
     const lab = debuffLabel(debuffsCfg, k);
-    res.rows.push(resRow(`${debuffIcon(debuffsCfg, k)} ${lab}`, poise, `Выдержка от брони: снижает шанс И длительность статуса «${lab}» на ${Math.round(poise * 100)}%. Максимум — 60%.`));
+    res.rows.push(resRow(`${debuffIcon(debuffsCfg, k)} ${lab}`, poise, tr('srv:hero.poiseTip', 'Выдержка от брони: снижает шанс И длительность статуса «{lab}» на {poise}%. Максимум — 60%.', { lab, poise: Math.round(poise * 100) })));
   }
   blocks.push(res);
 
   // статусы: урон итоговым % по типам, «бездомные» бонусы, наложение статусов
-  const ail: SheetBlock = { title: 'Статусы', rows: [] };
+  const ail: SheetBlock = { title: tr('srv:hero.ailmentsTitle', 'Статусы'), rows: [] };
   const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
   const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
-  if (d.damagePct) ail.rows.push(statRow('Весь урон', `+${R(d.damagePct * 100)}%`, 'Множитель ко ВСЕМ типам урона (складывается с типовыми ниже).'));
+  if (d.damagePct) ail.rows.push(statRow(tr('srv:hero.allDamage', 'Весь урон'), `+${R(d.damagePct * 100)}%`, tr('srv:hero.allDamageTip', 'Множитель ко ВСЕМ типам урона (складывается с типовыми ниже).')));
   for (const t of DAMAGE_TYPES) {
     const combined = d.damagePct + perPct[t];
     const parts: string[] = [];
     if (combined) parts.push(`+${R(combined * 100)}%`);
-    if (addFlat[t]) parts.push(`+${R(addFlat[t])} плоск.`);
+    if (addFlat[t]) parts.push(tr('srv:hero.flatBonus', '+{addFlat} плоск.', { addFlat: R(addFlat[t]) }));
     if (!parts.length) continue;
     const name = dmgName(cfg, t);
     ail.rows.push(statRow(name, parts.join(' · '),
-      `Итоговый бонус к урону «${name}»: общий +${R(d.damagePct * 100)}% + типовой +${R(perPct[t] * 100)}%${addFlat[t] ? ` · плоско +${R(addFlat[t])}` : ''}.`));
+      tr('srv:hero.typeBonusTip', 'Итоговый бонус к урону «{name}»: общий +{damagePct}% + типовой +{perPct}%{flat}.', { name, damagePct: R(d.damagePct * 100), perPct: R(perPct[t] * 100), flat: addFlat[t] ? tr('srv:hero.flatPart', ' · плоско +{addFlat}', { addFlat: R(addFlat[t]) }) : '' })));
   }
   const agg = new Map<string, { stat: string; kind: StatModifier['kind']; value: number }>();
   for (const md of h.mods) {
@@ -531,28 +529,28 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     if (num === 0) continue;
     ail.rows.push(statRow(STAT_LABEL[e.stat] ?? e.stat, `${num > 0 ? '+' : '−'}${Math.abs(num)}${isPct ? '%' : ''}`));
   }
-  ail.rows.push(row(['Наложение статусов']));
-  ail.rows.push(statRow('Все статусы', `шанс/сила +${R(d.ailmentPct * 100)}%  ·  длит. +${R(d.ailmentDurPct * 100)}%`,
-    'Глобальные бонусы к наложению ВСЕХ статусов (шанс, сила, длительность). Складываются с бонусами по видам.'));
+  ail.rows.push(row([tr('srv:hero.ailmentApply', 'Наложение статусов')]));
+  ail.rows.push(statRow(tr('srv:hero.allAilments', 'Все статусы'), tr('srv:hero.allAilmentsValue', 'шанс/сила +{ailmentPct}%  ·  длит. +{ailmentDurPct}%', { ailmentPct: R(d.ailmentPct * 100), ailmentDurPct: R(d.ailmentDurPct * 100) }),
+    tr('srv:hero.allAilmentsTip', 'Глобальные бонусы к наложению ВСЕХ статусов (шанс, сила, длительность). Складываются с бонусами по видам.')));
   for (const k of AILMENT_KINDS) {
     const c = dd[`${k}ChancePct`]!, p = dd[`${k}PowerPct`]!, du = dd[`${k}DurPct`]!;
     if (!c && !p && !du) continue;
     const parts: string[] = [];
-    if (c) parts.push(`шанс +${R(c * 100)}%`);
-    if (p) parts.push(`сила +${R(p * 100)}%`);
-    if (du) parts.push(`длит. +${R(du * 100)}%`);
+    if (c) parts.push(tr('srv:hero.chancePart', 'шанс +{c}%', { c: R(c * 100) }));
+    if (p) parts.push(tr('srv:hero.powerPart', 'сила +{p}%', { p: R(p * 100) }));
+    if (du) parts.push(tr('srv:hero.durPart', 'длит. +{du}%', { du: R(du * 100) }));
     const lab = debuffLabel(debuffsCfg, k);
-    ail.rows.push(statRow(lab, parts.join('  ·  '), `Бонусы к наложению статуса «${lab}» (ветки скиллов/гир).`));
+    ail.rows.push(statRow(lab, parts.join('  ·  '), tr('srv:hero.ailmentKindTip', 'Бонусы к наложению статуса «{lab}» (ветки скиллов/гир).', { lab })));
   }
   blocks.push(ail);
 
   // прочее
   blocks.push({
-    title: 'Прочее',
+    title: tr('srv:hero.otherTitle', 'Прочее'),
     rows: [
-      statRow('Скор. движения', R(d.moveSpeed), `Итоговая скорость перемещения (база 120). Бонусы: ${d.moveSpeed >= 120 ? '+' : ''}${R((d.moveSpeed / 120 - 1) * 100)}%.`),
-      statRow('Золото', String(save.gold), 'Валюта: магазин, кузница, дерево мастерства.'),
-      statRow('Макс. глубина', String(save.maxDepth), 'Самый глубокий достигнутый этаж.'),
+      statRow(tr('srv:hero.moveSpeed', 'Скор. движения'), R(d.moveSpeed), tr('srv:hero.moveSpeedTip', 'Итоговая скорость перемещения (база 120). Бонусы: {sign}{pct}%.', { sign: d.moveSpeed >= 120 ? '+' : '', pct: R((d.moveSpeed / 120 - 1) * 100) })),
+      statRow(tr('srv:hero.gold', 'Золото'), String(save.gold), tr('srv:hero.goldTip', 'Валюта: магазин, кузница, дерево мастерства.')),
+      statRow(tr('srv:hero.maxDepth', 'Макс. глубина'), String(save.maxDepth), tr('srv:hero.maxDepthTip', 'Самый глубокий достигнутый этаж.')),
     ],
   });
   return blocks;

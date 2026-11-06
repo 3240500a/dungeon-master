@@ -2,6 +2,7 @@ import type { RunPlan } from '../dungeon/run/types.js';
 import { runNodeLabel, waypointHint } from '../dungeon/run/labels.js';
 import { isWaypoint, portalPlaces, type WaypointPlaces } from '../formulas/power.js';
 import { hex6, jsNum, runNodeColor } from './runCommon.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ С-views (29.10): КАРТА ЗАБЕГА (M) — раскладку считает СЕРВЕР по своему плану (`Room.runPlan` + `runNodeId`).
@@ -26,7 +27,7 @@ export function runMapLegend(): { type: string; label: string; color: string }[]
  * (предложено поле `legendNote`, см. отчёт); места — та же нормализация, что у `isWaypoint`.
  */
 export function runMapLegendNote(places: WaypointPlaces, cycle: number): string {
-  return `⌂ — привал с порталом в город (места ${portalPlaces(places, cycle).join(', ')} круга)`;
+  return tr('srv:runMap.legendNote', '⌂ — привал с порталом в город (места {places} круга)', { places: portalPlaces(places, cycle).join(', ') });
 }
 
 /** C# `RunMapCol`. */
@@ -55,7 +56,7 @@ export function runMapPanelView(
   plan: PlanLike | null | undefined, currentNodeId: string | null | undefined, places: WaypointPlaces, cycle: number,
 ): RunMapModel {
   const v: RunMapModel = { empty: null, head: null, width: 0, height: 0, cols: [], nodes: [], edges: [] };
-  if (!plan) { v.empty = RUN_MAP_EMPTY; return v; }
+  if (!plan) { v.empty = tr('srv:runMap.empty', RUN_MAP_EMPTY); return v; }
   const G = RUN_MAP_GEOM;
   const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
   // столбцы — в порядке первого появления слоя, внутри — по полосе (сортировка устойчивая, как `OrderBy` C#)
@@ -82,7 +83,7 @@ export function runMapPanelView(
     });
   }
   const hint = cur ? ` · ${waypointHint(cur.depth, places, cycle)}` : '';
-  v.head = `Биом ${jsNum(plan.biomeId)} · тир ${jsNum(plan.tier)} · этажи ${jsNum(minDepth)}–${jsNum(maxDepth)}${hint}`;
+  v.head = tr('srv:runMap.head', 'Биом {biome} · тир {tier} · этажи {from}–{to}{hint}', { biome: jsNum(plan.biomeId), tier: jsNum(plan.tier), from: jsNum(minDepth), to: jsNum(maxDepth), hint });
   const nextIds = new Set((cur?.edges ?? []).map((e) => e?.to).filter((t): t is string => typeof t === 'string'));
   for (const n of nodes) {
     if (typeof n.id !== 'string' || !pos.has(n.id)) continue;

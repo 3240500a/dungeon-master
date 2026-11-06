@@ -7,6 +7,7 @@ import {
   carriedSeals, parseSealKey, sealBuffs, sealDef, sealFitsBiome, sealLive, sealSlots, sealTierDef, sealTierMul, type SealGains,
 } from '../economy/seals.js';
 import { cfgTextOf, csFixed, csRound, isNum, ordinal, str, type CfgText, type RunViewOptions } from './runCommon.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ С-views (29.10): АЛТАРЬ ОТРЕЗКА НА ЭТАЖЕ-МЕТКЕ — модель считает СЕРВЕР.
@@ -21,19 +22,19 @@ import { cfgTextOf, csFixed, csRound, isNum, ordinal, str, type CfgText, type Ru
 
 /** Тексты алтаря отрезка — C# константы `Altar.Segment*`. */
 export const RUN_SEGMENT_TEXT = {
-  title: 'Алтарь отрезка',
-  apply: 'Применить на отрезок',
-  asIs: 'Идти как есть',
-  noMods: 'Печатей в сумке нет — отрезок пойдёт как есть. Печати падают с элиты, редких, из сундуков и с боссов.',
-  free: 'Заход на алтарь бесплатен: можно идти как есть, печать тратится только на вставку.',
-  slots: 'Гнёзда',
-  summary: 'Что станет на отрезке',
-  hint: 'Это алтарь отрезка. Вставь печать — следующие этажи станут опаснее И богаче. Можно и не вставлять.',
+  get title() { return tr('srv:segmentText.title', 'Алтарь отрезка'); },
+  get apply() { return tr('srv:segmentText.apply', 'Применить на отрезок'); },
+  get asIs() { return tr('srv:segmentText.asIs', 'Идти как есть'); },
+  get noMods() { return tr('srv:segmentText.noMods', 'Печатей в сумке нет — отрезок пойдёт как есть. Печати падают с элиты, редких, из сундуков и с боссов.'); },
+  get free() { return tr('srv:segmentText.free', 'Заход на алтарь бесплатен: можно идти как есть, печать тратится только на вставку.'); },
+  get slots() { return tr('srv:segmentText.slots', 'Гнёзда'); },
+  get summary() { return tr('srv:segmentText.summary', 'Что станет на отрезке'); },
+  get hint() { return tr('srv:segmentText.hint', 'Это алтарь отрезка. Вставь печать — следующие этажи станут опаснее И богаче. Можно и не вставлять.'); },
   hintId: 'altar',
-  paid: 'Оплаченное не отменяется: связка действует до следующей метки.',
-  notMine: 'Отрезок настраивает тот, кто начал забег.',
-  noAltar: 'Здесь алтаря нет.',
-  note: 'Выбранное действует ДО СЛЕДУЮЩЕЙ МЕТКИ, а не на весь забег.',
+  get paid() { return tr('srv:segmentText.paid', 'Оплаченное не отменяется: связка действует до следующей метки.'); },
+  get notMine() { return tr('srv:segmentText.notMine', 'Отрезок настраивает тот, кто начал забег.'); },
+  get noAltar() { return tr('srv:segmentText.noAltar', 'Здесь алтаря нет.'); },
+  get note() { return tr('srv:segmentText.note', 'Выбранное действует ДО СЛЕДУЮЩЕЙ МЕТКИ, а не на весь забег.'); },
 } as const;
 
 /** C# `SealCard`. */
@@ -108,7 +109,7 @@ export function runSealBundleLine(reg: ConfigRegistry, seals: Readonly<Record<st
     parts.push(sealTitle(reg, tx, def, parsed.tierId) + (n > 1 ? ` ×${n}` : ''));
   }
   parts.sort(ordinal);
-  return parts.length > 0 ? parts.join(', ') : 'ничего';
+  return parts.length > 0 ? parts.join(', ') : tr('srv:segment.nothing', 'ничего');
 }
 
 /**
@@ -127,7 +128,7 @@ export function runSegmentView(
   if (!isWaypoint(depth, access.portalsAt, access.contentCycle)) { v.line = RUN_SEGMENT_TEXT.noAltar; return v; }
   v.from = depth + 1;
   v.to = nextWaypointAfter(depth, access.portalsAt, access.contentCycle);
-  v.line = `Отрезок: этажи ${v.from}–${v.to} (до следующей метки)`;
+  v.line = tr('srv:segment.range', 'Отрезок: этажи {from}–{to} (до следующей метки)', { from: v.from, to: v.to });
   v.note = RUN_SEGMENT_TEXT.note;
   // ⭐ Ф6: первый заход объясняет. Отметку «видел» ставит сервер (`Room.altarPick` пишет `save.seen`).
   if (!(save.seen ?? []).includes(RUN_SEGMENT_TEXT.hintId)) v.hint = RUN_SEGMENT_TEXT.hint;
@@ -142,7 +143,7 @@ export function runSegmentView(
   const paid = facts.segment !== undefined ? facts.segment : save.run?.segment;
   if (paid && isNum(paid.from) && paid.from === v.from && paid.seals && typeof paid.seals === 'object' && Object.keys(paid.seals).length > 0) {
     v.paid = true;
-    v.line = `Отрезок ${v.from}–${v.to} уже настроен: ${runSealBundleLine(reg, paid.seals, opts)}`;
+    v.line = tr('srv:segment.paid', 'Отрезок {from}–{to} уже настроен: {bundle}', { from: v.from, to: v.to, bundle: runSealBundleLine(reg, paid.seals, opts) });
     v.note = RUN_SEGMENT_TEXT.paid;
     return v;
   }
@@ -170,8 +171,8 @@ export function runSegmentView(
     v.seals.push({
       key,
       name: sealTitle(reg, tx, def, parsed.tierId),
-      danger: sideLine(reg, names, def.danger, mul, 'Опаснее', solo),
-      reward: sideLine(reg, names, def.reward, mul, 'Богаче', solo),
+      danger: sideLine(reg, names, def.danger, mul, tr('srv:segment.danger', 'Опаснее'), solo),
+      reward: sideLine(reg, names, def.reward, mul, tr('srv:segment.reward', 'Богаче'), solo),
       desc: tx('seals', [def.id], 'desc', def.desc),
       carried: n,
       picked: got,
@@ -179,7 +180,7 @@ export function runSegmentView(
     });
   }
   v.seals.sort((a, b) => ordinal(a.name, b.name));
-  if (alien > 0) v.note = `${v.note === null ? '' : v.note + ' '}Печатей другого биома в сумке: ${alien} — здесь они не действуют.`;
+  if (alien > 0) v.note = tr('srv:segment.alien', '{note}Печатей другого биома в сумке: {alien} — здесь они не действуют.', { note: v.note === null ? '' : v.note + ' ', alien });
   // Свод — ТЕМИ ЖЕ числами, что применит сервер (потолки по статам, допуск связки, биом этажа).
   const buffs = sealBuffs(reg, pick, biome) as Readonly<Record<string, number>>;
   const rows = new Map(reg.get('run-mod-stats').map((s) => [s.id as string, s]));
@@ -198,7 +199,7 @@ export function runSegmentView(
   // ⭐ С6: ПРИМЕТ ЛИ СЕРВЕР ЭТОТ НАБОР — те же два отказа, что у `altarPick` (молча: кадр `altar` не команда): гнёзд меньше набранного,
   // печатей в сумке меньше набранных. И можно ли добавить ещё одну каждой карточки: степпер окна — по этому, своих пределов у него нет.
   const over = v.seals.find((s) => s.picked > s.carried);
-  v.refusal = v.used > v.slots ? `Гнёзд не хватает: набрано ${v.used} из ${v.slots}` : over ? `Столько печатей нет: «${over.name}» — ${over.carried}` : null;
+  v.refusal = v.used > v.slots ? tr('srv:segment.slotsOver', 'Гнёзд не хватает: набрано {used} из {slots}', { used: v.used, slots: v.slots }) : over ? tr('srv:segment.tooMany', 'Столько печатей нет: «{name}» — {carried}', { name: over.name, carried: over.carried }) : null;
   for (const s of v.seals) s.canAdd = !v.notMine && !v.paid && s.picked < s.carried && v.used < v.slots;
   return v;
 }

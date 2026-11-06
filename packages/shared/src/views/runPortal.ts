@@ -5,6 +5,7 @@ import {
   openWaypoints, type PowerBreakdown, type WaypointPlaces,
 } from '../formulas/power.js';
 import { cfgTextOf, isNum, jsNum, orStr, str, type CfgText, type RunViewOptions } from './runCommon.js';
+import { tr } from '../i18n/tr.js';
 
 /**
  * ⭐⭐ С-views (29.10): ОКНО «ПОРТАЛ» ГОРОДА — модель считает СЕРВЕР, Unity её только рисует.
@@ -104,7 +105,7 @@ export function runBossRankMark(rank: string): string {
 }
 /** Ранг словами (`BossRankName`). */
 export function runBossRankName(rank: string): string {
-  return rank === 'act' ? 'актовый босс' : rank === 'strong' ? 'крепкий босс' : 'мини-босс';
+  return rank === 'act' ? tr('srv:portal.bossAct', 'актовый босс') : rank === 'strong' ? tr('srv:portal.bossStrong', 'крепкий босс') : tr('srv:portal.bossMini', 'мини-босс');
 }
 
 /**
@@ -147,8 +148,12 @@ export function runChainMap(
     map.nodes.push({
       depth, place: bandDepth(depth, c), x, y, level, open: isOpen, pick: depth === pick, entry,
       label: String(depth),
-      title: `${entry ? 'Вход' : 'Портал'} — этаж ${depth}, монстры ур. ${level}. `
-        + (isOpen ? 'Можно начать отсюда.' : `Закрыт: ваш рекорд ${rec}.`),
+      // ⭐ i18n Ф1 (06.11): четыре предложения целиком (вход/портал × открыт/закрыт), а не склейка частей
+      title: entry
+        ? (isOpen ? tr('srv:portal.entryOpen', 'Вход — этаж {depth}, монстры ур. {level}. Можно начать отсюда.', { depth, level })
+          : tr('srv:portal.entryClosed', 'Вход — этаж {depth}, монстры ур. {level}. Закрыт: ваш рекорд {rec}.', { depth, level, rec }))
+        : (isOpen ? tr('srv:portal.markOpen', 'Портал — этаж {depth}, монстры ур. {level}. Можно начать отсюда.', { depth, level })
+          : tr('srv:portal.markClosed', 'Портал — этаж {depth}, монстры ур. {level}. Закрыт: ваш рекорд {rec}.', { depth, level, rec })),
     });
   }
 
@@ -164,7 +169,7 @@ export function runChainMap(
       const l = lv(d);
       boss = {
         depth: d, x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2), level: l,
-        rank, mark: runBossRankMark(rank), title: `${runBossRankName(rank)} — этаж ${d}, монстры ур. ${l}`,
+        rank, mark: runBossRankMark(rank), title: tr('srv:portal.bossLine', '{rank} — этаж {depth}, монстры ур. {level}', { rank: runBossRankName(rank), depth: d, level: l }),
       };
       break;
     }
@@ -186,21 +191,22 @@ export function runChainMap(
       link.strands.push({ points, main: l === mainIdx });
     }
     if (!boss && between > 0) {
-      link.gapText = `${between} эт.`;
+      link.gapText = tr('srv:portal.gap', '{between} эт.', { between });
       link.gapX = Math.round((a.x + b.x) / 2) + 20;
       link.gapY = Math.round((a.y + b.y) / 2);
     }
     map.links.push(link);
     // ⚠ Разделитель — на ЗВЕНЕ, пересекающем границу круга: узла с местом 1 не бывает (первое место круга не портал).
     const cirA = Math.ceil(a.depth / c), cirB = Math.ceil(b.depth / c);
-    if (cirB > cirA) map.dividers.push({ y: Math.round((a.y + b.y) / 2), circle: cirB, label: `круг ${cirB}` });
+    if (cirB > cirA) map.dividers.push({ y: Math.round((a.y + b.y) / 2), circle: cirB, label: tr('srv:portal.circle', 'круг {cirB}', { cirB }) });
   }
 
   map.height = map.nodes.length > 0 ? map.nodes[map.nodes.length - 1]!.y + G.pad : G.pad * 2;
-  map.start = `Старт: этаж ${pick} · монстры ур. ${lv(pick)}`
-    + (map.openCount > 1 ? ` · открыто меток: ${map.openCount}` : ' · других меток пока нет');
+  map.start = map.openCount > 1
+    ? tr('srv:portal.startOpen', 'Старт: этаж {pick} · монстры ур. {level} · открыто меток: {open}', { pick, level: lv(pick), open: map.openCount })
+    : tr('srv:portal.startAlone', 'Старт: этаж {pick} · монстры ур. {level} · других меток пока нет', { pick, level: lv(pick) });
   map.hidden = map.hiddenMarks.length > 0
-    ? `Выше ещё меток: ${map.hiddenMarks.length} (этажи 1–${map.hiddenMarks[map.hiddenMarks.length - 1]})`
+    ? tr('srv:portal.hiddenMarks', 'Выше ещё меток: {count} (этажи 1–{last})', { count: map.hiddenMarks.length, last: map.hiddenMarks[map.hiddenMarks.length - 1] })
     : null;
   return map;
 }
@@ -208,18 +214,18 @@ export function runChainMap(
 // ── модель окна (C# `Altar.Model`) ──────────────────────────────────────────────────────────────
 /** Тексты окна «Портал» — C# константы `Altar.*` (их рисует панель, модель их не несёт). */
 export const RUN_PORTAL_TEXT = {
-  title: 'Портал',
-  arenaButton: '⚔ PvP-арена (дуэль)',
-  arenaNote: 'Круглый зал: спавн в разных концах, урон по друг другу, гибель без потерь.',
-  biomeSection: 'Куда лететь (биом)',
-  restartButton: 'Начать сначала — этаж 1',
-  restartNote: 'Спуск с самого верха: первый отрезок без настроек, алтарь ждёт на метке.',
-  tiersSection: 'Маршрут — жмите «Войти»',
+  get title() { return tr('srv:portalText.title', 'Портал'); },
+  get arenaButton() { return tr('srv:portalText.arenaButton', '⚔ PvP-арена (дуэль)'); },
+  get arenaNote() { return tr('srv:portalText.arenaNote', 'Круглый зал: спавн в разных концах, урон по друг другу, гибель без потерь.'); },
+  get biomeSection() { return tr('srv:portalText.biomeSection', 'Куда лететь (биом)'); },
+  get restartButton() { return tr('srv:portalText.restartButton', 'Начать сначала — этаж 1'); },
+  get restartNote() { return tr('srv:portalText.restartNote', 'Спуск с самого верха: первый отрезок без настроек, алтарь ждёт на метке.'); },
+  get tiersSection() { return tr('srv:portalText.tiersSection', 'Маршрут — жмите «Войти»'); },
 } as const;
 
 /** Подпись тултипа скрытой метки (тот же текст, что у узла цепи) — Unity `AltarPanel` собирал его сам. */
 export function runHiddenMarkTitle(depth: number): string {
-  return `Портал — этаж ${depth}. Можно начать отсюда.`;
+  return tr('srv:portal.hiddenMarkTitle', 'Портал — этаж {depth}. Можно начать отсюда.', { depth });
 }
 
 /** Сейв как его читал C#-порт: недостающие поля — пустые (сервер всегда шлёт полный, но вид не должен падать на старом). */
@@ -252,7 +258,7 @@ export function runPortalView(reg: ConfigRegistry, rawSave: SaveState, sel: RunP
   const places: WaypointPlaces = access.portalsAt;
   const m: RunAltarModel = {
     power: { level: pw.level, gearBonus: pw.gearBonus, passiveBonus: pw.passiveBonus, total: pw.total },
-    head: `Мощь персонажа: ${pw.total} (ур. ${pw.level} + гир +${pw.gearBonus} + мастерства +${pw.passiveBonus})`,
+    head: tr('srv:portal.power', 'Мощь персонажа: {total} (ур. {level} + гир +{gearBonus} + мастерства +{passiveBonus})', { total: pw.total, level: pw.level, gearBonus: pw.gearBonus, passiveBonus: pw.passiveBonus }),
     biomeNote: null, biomes: [], templates: [], mods: [], tiers: [],
   };
 
@@ -274,8 +280,8 @@ export function runPortalView(reg: ConfigRegistry, rawSave: SaveState, sel: RunP
     const prev = i > 0 ? diffs[i - 1] : undefined;
     const tier: RunAltarTier = {
       id: diff.id, name: tx('difficulties', [diff.id], 'name', diff.name) ?? diff.name,
-      meta: `золото ×${jsNum(diff.goldMult)} · редкость ×${jsNum(diff.magicFind)}`,
-      line: `Монстры на 1-м этаже — ур. ${floorMonsterLevel(diff, 1)}, глубже — сложнее.`,
+      meta: tr('srv:portal.tierMult', 'золото ×{gold} · редкость ×{magic}', { gold: jsNum(diff.goldMult), magic: jsNum(diff.magicFind) }),
+      line: tr('srv:portal.tierLevel', 'Монстры на 1-м этаже — ур. {level}, глубже — сложнее.', { level: floorMonsterLevel(diff, 1) }),
       variant: null, lockText: null, unlocked, descend: null, restart: null, map: null, start: null,
     };
     if (unlocked) {
@@ -288,9 +294,7 @@ export function runPortalView(reg: ConfigRegistry, rawSave: SaveState, sel: RunP
       tier.start = {
         depth: pick,
         line: tier.map.start,
-        note: '⌂ — портал (отсюда можно начать), ✦/✧✧/★ — мини/крепкий/актовый босс. '
-          + `Открыты метки не глубже ВАШЕГО рекорда (${isNum(have) ? jsNum(have) : '0'}). `
-          + 'В пати старт зажимается по самому мелкому рекорду — точную глубину назовёт окно голосования.',
+        note: tr('srv:portal.startNote', '⌂ — портал (отсюда можно начать), ✦/✧✧/★ — мини/крепкий/актовый босс. Открыты метки не глубже ВАШЕГО рекорда ({record}). В пати старт зажимается по самому мелкому рекорду — точную глубину назовёт окно голосования.', { record: isNum(have) ? jsNum(have) : '0' }),
       };
       const rc = (): RunDescendFrame['runConfig'] => ({ ...(biome != null ? { biomeId: biome } : {}), modifiers: [] });
       tier.descend = { t: 'descend', difficultyId: diff.id, startDepth: pick, runConfig: rc() };
@@ -298,7 +302,7 @@ export function runPortalView(reg: ConfigRegistry, rawSave: SaveState, sel: RunP
     } else {
       const have = progress[prev?.id ?? ''];
       const prevName = prev ? tx('difficulties', [prev.id], 'name', prev.name) : null;
-      tier.lockText = `🔒 Пройди этаж ${jsNum(diff.unlockFloor)} на «${prevName ?? '—'}» (сейчас ${isNum(have) ? jsNum(have) : '0'})`;
+      tier.lockText = tr('srv:portal.tierLocked', '🔒 Пройди этаж {floor} на «{prev}» (сейчас {record})', { floor: jsNum(diff.unlockFloor), prev: prevName ?? '—', record: isNum(have) ? jsNum(have) : '0' });
     }
     m.tiers.push(tier);
   }

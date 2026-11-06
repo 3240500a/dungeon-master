@@ -15,7 +15,7 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { CraftJournal } from '../formulas/craft.js';
 import type { Item, SaveState } from '../types/index.js';
 import {
-  STARTER_KNOWN, canEnchantItem, canRepairItem, canRerollItem, canSalvageItem, canUpgradeItem, enchantMaterials, forgeGold, nextTierOf,
+  starterKnownText, canEnchantItem, canRepairItem, canRerollItem, canSalvageItem, canUpgradeItem, enchantMaterials, forgeGold, nextTierOf,
   repairCost, rerollMaterials, salvageMean, salvageRange, upgradeCost, upgradedItem,
 } from '../economy/townActions.js';
 import { availableMaterials, canAffordBoth } from '../economy/materials.js';
@@ -23,6 +23,7 @@ import { salvagePreview, type SalvageCardLine } from '../economy/salvagePreview.
 import { enchantCost } from '../formulas/craft.js';
 import { itemDescLines, journalOf, type StashView } from './townItem.js';
 import { disposePrompts } from './townSalvage.js';
+import { cfgRowText, tr } from '../i18n/tr.js';
 
 /** Тон строки карточки: ok — хватает, miss — нет, gain — прибавка, dim — пояснение или причина отказа, warn — оговорка. */
 export type LineState = 'ok' | 'miss' | 'gain' | 'dim' | 'warn';
@@ -60,10 +61,10 @@ export function benchTarget(reg: ConfigRegistry, item: Item): Item | undefined {
 
 /** Подпись шапки предпросмотра — тем же ответом, что `benchTarget` и главная карточка (R14-12). */
 export function benchTargetLabel(reg: ConfigRegistry, item: Item, target: Item | undefined): string {
-  if (item.broken) return target ? 'после починки' : 'кузнец не чинит';
-  if (target) return 'после улучшения';
-  if (item.parts) return 'скованную поднимает замена детали';
-  return nextTierOf(reg, item) ? 'улучшать нечего' : 'улучшать больше некуда';
+  if (item.broken) return target ? tr('srv:bench.afterRepair', 'после починки') : tr('srv:bench.noRepair', 'кузнец не чинит');
+  if (target) return tr('srv:bench.afterUpgrade', 'после улучшения');
+  if (item.parts) return tr('srv:bench.craftedByParts', 'скованную поднимает замена детали');
+  return nextTierOf(reg, item) ? tr('srv:bench.nothingToUpgrade', 'улучшать нечего') : tr('srv:bench.maxedOut', 'улучшать больше некуда');
 }
 
 /** Строка «было → станет» (C# кортеж `(was, will)` → DTO `{ was, will }`). */
@@ -107,7 +108,7 @@ export function benchPreview(reg: ConfigRegistry, item: Item): BenchPreview {
 function costLines(cost: Record<string, number>, have: Record<string, number>, nameOf: (id: string) => string): CostLine[] {
   return Object.entries(cost).map(([id, n]) => {
     const got = have[id] ?? 0;
-    return { text: `${nameOf(id)} ${n} (есть ${got})${got < n ? ' — не хватает' : ''}`, state: got >= n ? 'ok' : 'miss' };
+    return { text: tr('srv:bench.costLine', '{name} {n} (есть {got}){lack}', { name: nameOf(id), n, got, lack: got < n ? tr('srv:bench.lacking', ' — не хватает') : '' }), state: got >= n ? 'ok' : 'miss' };
   });
 }
 const cardLine = (l: SalvageCardLine): CostLine => ({ label: l.label, text: l.text, state: l.tone });
@@ -123,7 +124,7 @@ export function benchActions(
   const prices = reg.get('balance').forgePrices;
   const have = availableMaterials(inventory, stashWallet);
   const defs = reg.get('craft-materials');
-  const nameOf = (id: string): string => defs.find((m) => m.id === id)?.name ?? id;
+  const nameOf = (id: string): string => cfgRowText(reg, 'craft-materials', defs.find((m) => m.id === id)) ?? id;
   const out: BenchAction[] = [];
 
   if (item.broken) {
@@ -133,10 +134,10 @@ export function benchActions(
     const goldOk = gold >= price;
     const matsOk = !Object.keys(cost).length || canAffordBoth(inventory, stashWallet, cost);
     out.push({
-      id: 'repair', cmd: 'forgeRepair', title: '🔧 Починить', sub: 'снимет «сломано»',
+      id: 'repair', cmd: 'forgeRepair', title: tr('srv:bench.repair', '🔧 Починить'), sub: tr('srv:bench.repairSub', 'снимет «сломано»'),
       primary: true, enabled: can.ok && goldOk && matsOk, gold: can.ok ? price : undefined, materials: can.ok ? cost : undefined,
-      lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }] : [
-        { text: `${price} золота`, state: goldOk ? 'ok' : 'miss' },
+      lines: !can.ok ? [{ text: can.reason ?? tr('srv:bench.cannot', 'нельзя'), state: 'dim' }] : [
+        { text: tr('srv:forge.goldAmount', '{gold} золота', { gold: price }), state: goldOk ? 'ok' : 'miss' },
         ...costLines(cost, have, nameOf),
       ],
     });
@@ -147,14 +148,14 @@ export function benchActions(
     const price = forgeGold(reg, item, 'upgrade');
     const goldOk = gold >= price;
     out.push({
-      id: 'upgrade', cmd: 'forgeUpgrade', title: '🔨 Улучшить',
-      sub: item.parts ? 'скованная вещь' : !nt ? 'вещь на потолке' : can.ok ? `до «${nt.name}»` : 'кузнец не поднимает',
+      id: 'upgrade', cmd: 'forgeUpgrade', title: tr('srv:bench.upgrade', '🔨 Улучшить'),
+      sub: item.parts ? tr('srv:bench.subCrafted', 'скованная вещь') : !nt ? tr('srv:bench.subMaxed', 'вещь на потолке') : can.ok ? tr('srv:bench.subUpTo', 'до «{name}»', { name: cfgRowText(reg, 'item-tiers', nt) }) : tr('srv:bench.subNoUpgrade', 'кузнец не поднимает'),
       primary: true,
       enabled: can.ok && goldOk && canAffordBoth(inventory, stashWallet, cost),
       gold: can.ok ? price : undefined, materials: can.ok ? cost : undefined,
-      tip: can.ok ? 'Кузнечная вещь требует меньше атрибутов, чем найденная того же тира' : undefined,
-      lines: !can.ok ? [{ text: can.reason ?? 'нельзя', state: 'dim' }]
-        : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(cost, have, nameOf)],
+      tip: can.ok ? tr('srv:bench.craftedReqs', 'Кузнечная вещь требует меньше атрибутов, чем найденная того же тира') : undefined,
+      lines: !can.ok ? [{ text: can.reason ?? tr('srv:bench.cannot', 'нельзя'), state: 'dim' }]
+        : [{ text: tr('srv:forge.goldAmount', '{gold} золота', { gold: price }), state: goldOk ? 'ok' : 'miss' }, ...costLines(cost, have, nameOf)],
     });
   }
 
@@ -164,11 +165,11 @@ export function benchActions(
   const rrGold = gold >= rrPrice;
   const rrMats = rr.ok ? rerollMaterials(reg, item) : {};
   out.push({
-    id: 'reroll', cmd: 'forgeReroll', title: '🎲 Реролл', sub: `осталось ${left} из ${prices.rerollLimit}`,
+    id: 'reroll', cmd: 'forgeReroll', title: tr('srv:bench.reroll', '🎲 Реролл'), sub: tr('srv:bench.rerollsLeft', 'осталось {left} из {limit}', { left, limit: prices.rerollLimit }),
     primary: false, enabled: rr.ok && rrGold && canAffordBoth(inventory, stashWallet, rrMats),
     gold: rr.ok ? rrPrice : undefined, materials: rr.ok ? rrMats : undefined,
-    lines: !rr.ok ? [{ text: rr.reason ?? 'нельзя', state: 'dim' }]
-      : [{ text: `${rrPrice} золота`, state: rrGold ? 'ok' : 'miss' }, ...costLines(rrMats, have, nameOf), { text: 'перекатит аффиксы', state: 'dim' }],
+    lines: !rr.ok ? [{ text: rr.reason ?? tr('srv:bench.cannot', 'нельзя'), state: 'dim' }]
+      : [{ text: tr('srv:forge.goldAmount', '{gold} золота', { gold: rrPrice }), state: rrGold ? 'ok' : 'miss' }, ...costLines(rrMats, have, nameOf), { text: tr('srv:bench.rerollSub', 'перекатит аффиксы'), state: 'dim' }],
   });
 
   if (item.parts) {
@@ -177,15 +178,15 @@ export function benchActions(
       const can = canEnchantItem(reg, item, rarity);
       const price = enchantCost(reg, item, rarity);
       const goldOk = gold >= price;
-      const why = !live ? 'Кузнец ещё не зачаровывает' : can.ok ? undefined : can.reason ?? 'нельзя';
+      const why = !live ? tr('srv:bench.noEnchantYet', 'Кузнец ещё не зачаровывает') : can.ok ? undefined : can.reason ?? tr('srv:bench.cannot', 'нельзя');
       const ess = why ? {} : enchantMaterials(reg, item, rarity);
       out.push({
-        id: 'enchant', cmd: 'forgeEnchant', rarity, title: rarity === 'magic' ? '✦ Магический' : '✦ Редкий',
-        sub: rarity === 'magic' ? 'зачаровать до магической' : 'зачаровать до редкой',
+        id: 'enchant', cmd: 'forgeEnchant', rarity, title: rarity === 'magic' ? tr('srv:bench.enchantMagic', '✦ Магический') : tr('srv:bench.enchantRare', '✦ Редкий'),
+        sub: rarity === 'magic' ? tr('srv:bench.enchantMagicSub', 'зачаровать до магической') : tr('srv:bench.enchantRareSub', 'зачаровать до редкой'),
         primary: false, enabled: !why && goldOk && canAffordBoth(inventory, stashWallet, ess),
         gold: why ? undefined : price, materials: why ? undefined : ess,
         lines: why ? [{ text: why, state: 'dim' }]
-          : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(ess, have, nameOf), { text: 'свойства по форме вещи', state: 'dim' }],
+          : [{ text: tr('srv:forge.goldAmount', '{gold} золота', { gold: price }), state: goldOk ? 'ok' : 'miss' }, ...costLines(ess, have, nameOf), { text: tr('srv:bench.enchantNote', 'свойства по форме вещи'), state: 'dim' }],
       });
     }
   }
@@ -195,12 +196,13 @@ export function benchActions(
   const rng = salvageRange(reg, item, false);
   const four = [card.materials, card.essence, ...(card.catalog ? [card.catalog] : []), ...(card.sketch ? [card.sketch] : [])].map(cardLine);
   out.push({
-    id: 'salvage', cmd: 'forgeSalvage', title: card.verb === 'melt' ? '♻ Переплавить' : '♻ Разобрать', sub: 'вещь исчезнет',
+    id: 'salvage', cmd: 'forgeSalvage', title: card.verb === 'melt' ? tr('srv:bench.melt', '♻ Переплавить') : tr('srv:bench.salvage', '♻ Разобрать'), sub: tr('srv:bench.salvageSub', 'вещь исчезнет'),
     primary: false, enabled: can.ok,
     minYield: can.ok ? Object.fromEntries(Object.entries(rng.range).map(([id, r]) => [id, r.min])) : undefined,
     avgYield: (can.ok && salvageMean(reg, item, false)) || undefined,
     lines: can.ok ? four
-      : [{ text: can.reason ?? 'нельзя', state: 'dim' }, ...(can.reason === STARTER_KNOWN && card.catalog ? [cardLine(card.catalog)] : [])],
+      // ⭐ i18n Ф1 (06.11): отказ узнаём текстом ТОЙ ЖЕ области (`starterKnownText` — та же фраза на том же языке), а не исходником
+      : [{ text: can.reason ?? tr('srv:bench.cannot', 'нельзя'), state: 'dim' }, ...(can.reason === starterKnownText() && card.catalog ? [cardLine(card.catalog)] : [])],
     prompts: disposePrompts(reg, item, 'forge', journal),
   });
   return dropUndefined(out);
@@ -232,7 +234,7 @@ export function forgeBenchView(reg: ConfigRegistry, save: SaveState, stash: Stas
   if (!item) return null;
   const actions = benchActions(reg, item, save.gold, save.inventory, stash?.materials ?? {}, journalOf(stash));
   const deal = item.broken && actions.some((a) => a.id === 'salvage' && a.enabled)
-    ? `Починить за ${forgeGold(reg, item, 'repair')} и носить — или разобрать и забрать сырьё. Улучшать можно только починенное.`
+    ? tr('srv:bench.brokenHint', 'Починить за {gold} и носить — или разобрать и забрать сырьё. Улучшать можно только починенное.', { gold: forgeGold(reg, item, 'repair') })
     : null;
   return { uid, preview: benchPreview(reg, item), actions, deal };
 }
