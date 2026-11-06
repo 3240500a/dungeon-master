@@ -436,8 +436,8 @@ describe('⭐⭐ правка 15.10 (вечер): Г8-3 — поправка к�
     expect(JSON.stringify(d), 'повтор правки 10 — без изменений').toBe(once);
   });
 
-  it('⭐⭐ правка 11 — последняя ревизия: покрытие контента, и в заметке названы ВСЕ ТРИ дыры', () => {
-    expect(SEED_REV, 'последняя правка роадмапа').toBe(11);
+  it('⭐⭐ правка 11 — покрытие контента, и в заметке названы ВСЕ ТРИ дыры', () => {
+    expect(SEED_REV, 'правка 11 на месте').toBeGreaterThanOrEqual(11);
     const before = upTo(10);
     const d = upTo(10);
     migrateRoadmap(d);
@@ -457,5 +457,31 @@ describe('⭐⭐ правка 15.10 (вечер): Г8-3 — поправка к�
     const once = JSON.stringify(d);
     SEED_PATCHES.find((p) => p.rev === 11)!.apply(d);
     expect(JSON.stringify(d), 'повтор правки 11 — без изменений').toBe(once);
+  });
+
+  it('⭐⭐ правка 12 — последняя ревизия: имя студии, и в заметке названо НЕЗАКРЫТОЕ, а не только решение', () => {
+    expect(SEED_REV, 'последняя правка роадмапа').toBe(12);
+    const before = upTo(11);
+    const d = upTo(11);
+    migrateRoadmap(d);
+    for (const id of ['b6', 'm5-9', 'm5-2']) {
+      const was = item(before, id)?.note;
+      const now = item(d, id)!.note!;
+      if (was) expect(now.startsWith(was + '\n'), `${id}: старая заметка целиком и первой`).toBe(true);
+      expect(item(d, id)!.done, `${id}: галка прежняя`).toBe(item(before, id)!.done);
+    }
+    const note = item(d, 'b6')!.note!;
+    expect(note, 'имя названо').toMatch(/Eastfield Games/);
+    expect(note, 'домены названы').toMatch(/eastfieldgames\.com/);
+    // ⚠ Галку b6 эта заметка НЕ двигает: название игры было проверено ещё 10.09, здесь добавилось имя студии.
+    // Главное в заметке — не «решили», а что проверка НЕ полная и чем имя слабое: иначе роадмап врёт о готовности.
+    expect(note, 'сказано, что ЕС и Британия не закрыты').toMatch(/НЕ ЗАКРЫТО/);
+    expect(note, 'названа слабость имени').toMatch(/географические слова защищаются плохо/);
+    expect(note, 'шаблонный идентификатор назван как починенный').toMatch(/urp-blank/);
+    expect(item(d, 'm5-9')!.note, 'почта на домене добавлена к никам').toMatch(/адрес поддержки/);
+    expect(item(d, 'm5-2')!.note, 'разведены лого игры и знак студии').toMatch(/Логотипов тоже ДВА/);
+    const once = JSON.stringify(d);
+    SEED_PATCHES.find((p) => p.rev === 12)!.apply(d);
+    expect(JSON.stringify(d), 'повтор правки 12 — без изменений').toBe(once);
   });
 });

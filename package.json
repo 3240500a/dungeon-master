@@ -2,7 +2,9 @@
   "name": "dungeon-master",
   "version": "0.1.0",
   "private": true,
-  "description": "Браузерный dungeon-crawler в духе Diablo 2 (модульный, data-driven)",
+  "description": "Онлайн dungeon-crawler в духе Diablo 2 (сервер-авторитет, data-driven); клиент — Unity",
+  "author": "Eastfield Games",
+  "license": "UNLICENSED",
   "workspaces": [
     "packages/shared",
     "packages/craft-mesh",
