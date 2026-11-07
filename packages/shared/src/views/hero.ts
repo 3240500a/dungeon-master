@@ -186,19 +186,49 @@ export function masterBlock(cfg: ConfigRegistry, save: SaveState, toggles: reado
 
 // ── лист персонажа (progression/panels.ts characterPanel) ──────────────────────────────────────────
 
-/** = C# `DmSheet.Row`: ячейки слева направо, подсказка (нет — нет поля). */
-export interface SheetRow { cells: string[]; tip?: string }
-/** = C# `DmSheet.Block`: заголовок (нет — блок без рамки) и строки. */
-export interface SheetBlock { title?: string; rows: SheetRow[] }
-
-function row(cells: (string | undefined | null)[], tip?: string): SheetRow {
-  const r: SheetRow = { cells: cells.filter((c): c is string => typeof c === 'string' && c.length > 0) };
-  if (tip !== undefined) r.tip = tip;
-  return r;
-}
-
 /** Номер пула листа: 0 — здоровье, 1 — мана, 2 — выносливость. */
 export type PoolIndex = 0 | 1 | 2;
+
+/*
+ * ⭐ i18n (07.11, хвосты Ф1): МАШИННЫЕ ПОЛЯ ЛИСТА — чтобы окно Unity решало по ним, а не по тексту. Раньше `CharacterPanel` узнавал блок
+ * «Защита» и «Атрибуты…» по заголовку, строку пула — по подписи («Здоровье», `DmSheet.PoolLabels`), полосу — по ячейке «▮N%», цвет полосы
+ * — по подписи («Огонь», «Опыт»…), «+Δ» — по ведущему «+»: на первом переводе это ломается молча. Поля только ДОБАВЛЕНЫ (в конце объекта),
+ * текст ячеек — прежний.
+ */
+/** Блок листа (`SheetBlock.id`) — по порядку сборки. */
+export type SheetBlockId = 'head' | 'bars' | 'toggles' | 'power' | 'attributes' | 'offense' | 'defense' | 'resistances' | 'ailments' | 'other';
+/** Тон полосы (`SheetBar.tone`): пулы и опыт — шапка; стихии — сопротивления; `poise` — выдержка брони к физ. статусам. */
+export type SheetBarTone = 'hp' | 'mana' | 'stamina' | 'xp' | 'fire' | 'cold' | 'lightning' | 'poison' | 'poise';
+/** Полоса строки: `cell` — номер ячейки «▮N%» в `cells`, `pct` — то же N числом (0…100), `tone` — цвет. */
+export interface SheetBar { cell: number; pct: number; tone: SheetBarTone }
+
+/**
+ * = C# `DmSheet.Row`: ячейки слева направо, подсказка (нет — нет поля). ⭐ 07.11: `pool` — строка живого пула (окно обновляет её значение
+ * между кадрами вида), `bar` — полоса, `delta` — номер ячейки «+Δ» (превью набранных очков). Нет — нет поля.
+ */
+export interface SheetRow { cells: string[]; tip?: string; pool?: PoolIndex; bar?: SheetBar; delta?: number }
+/** = C# `DmSheet.Block`: заголовок (нет — блок без рамки) и строки. ⭐ 07.11: `id` — какой это блок (`SheetBlockId`). */
+export interface SheetBlock { title?: string; rows: SheetRow[]; id: SheetBlockId }
+
+/** Разметка строки: номера — в ячейках ДО отсева пустых (`row` пересчитывает их в номера `cells`; ячейка отсеяна — поля нет). */
+interface RowMarks { pool?: PoolIndex; bar?: { at: number; pct: number; tone: SheetBarTone }; delta?: number }
+
+function row(cells: (string | undefined | null)[], tip?: string, marks?: RowMarks): SheetRow {
+  const kept: string[] = [];
+  const at: number[] = [];
+  for (const c of cells) {
+    if (typeof c === 'string' && c.length > 0) { at.push(kept.length); kept.push(c); } else at.push(-1);
+  }
+  const r: SheetRow = { cells: kept };
+  if (tip !== undefined) r.tip = tip;
+  if (marks) {
+    if (marks.pool !== undefined) r.pool = marks.pool;
+    const b = marks.bar;
+    if (b && (at[b.at] ?? -1) >= 0) r.bar = { cell: at[b.at]!, pct: b.pct, tone: b.tone };
+    if (marks.delta !== undefined && (at[marks.delta] ?? -1) >= 0) r.delta = at[marks.delta]!;
+  }
+  return r;
+}
 const POOL_MAX = ['maxHp', 'maxMana', 'maxStamina'] as const;
 
 /** = C# `DmSheet.PoolText`: «cur / max», у полосы маны/выносливости с резервом — «· резерв N». */
@@ -210,7 +240,7 @@ export function poolText(h: HeroNumbers, pool: PoolIndex, cur: number, bar: bool
   return res > 0 ? tr('srv:hero.poolReserve', '{s} · резерв {res}', { s, res }) : s;
 }
 
-const RES: [keyof DerivedStats, DamageType][] = [['resFire', 'fire'], ['resCold', 'cold'], ['resLightning', 'lightning'], ['resPoison', 'poison']];
+const RES: [keyof DerivedStats, DamageType & SheetBarTone][] = [['resFire', 'fire'], ['resCold', 'cold'], ['resLightning', 'lightning'], ['resPoison', 'poison']];
 const AILMENT_KINDS: DebuffKind[] = ['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze'];
 /** Статы со своей строкой в других секциях листа — в «бездомных» бонусах их нет (веб BONUS_EXCLUDE). */
 const BONUS_EXCLUDE = new Set<string>([
@@ -264,25 +294,30 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     const shown = pct ? `${Math.round(diff * 100)}%` : digits > 0 ? diff.toFixed(digits) : String(Math.round(diff));
     return `+${shown}${suffix}`;
   };
-  const statRow = (label: string, value: string, tip?: string, dlt?: string): SheetRow => row([label, value, dlt], tip);
-  const barWidth = (cur: number, max: number): string => `${Math.max(0, Math.min(100, (max > 0 ? cur / max : 0) * 100))}%`;
-  const barLine = (label: string, cur: number, max: number, showFrac: boolean, dlt?: string, right?: string): SheetRow =>
-    row([label, right ?? (showFrac ? `${R(cur)} / ${R(max)}` : `${R(cur)}%`), dlt, `▮${barWidth(cur, max)}`]);
-  const resRow = (label: string, frac: number, tip: string): SheetRow =>
-    row([label, `▮${Math.max(0, Math.min(100, frac * 100))}%`, `${Math.round(frac * 100)}%`], tip);
+  const statRow = (label: string, value: string, tip?: string, dlt?: string, pool?: PoolIndex): SheetRow =>
+    row([label, value, dlt], tip, { delta: 2, ...(pool !== undefined ? { pool } : {}) });
+  const barPct = (cur: number, max: number): number => Math.max(0, Math.min(100, (max > 0 ? cur / max : 0) * 100));
+  const barLine = (label: string, cur: number, max: number, showFrac: boolean, dlt: string | undefined, right: string | undefined, tone: SheetBarTone, pool?: PoolIndex): SheetRow =>
+    row([label, right ?? (showFrac ? `${R(cur)} / ${R(max)}` : `${R(cur)}%`), dlt, `▮${barPct(cur, max)}%`], undefined,
+      { delta: 2, bar: { at: 3, pct: barPct(cur, max), tone }, ...(pool !== undefined ? { pool } : {}) });
+  const resRow = (label: string, frac: number, tip: string, tone: SheetBarTone): SheetRow => {
+    const pct = Math.max(0, Math.min(100, frac * 100));
+    return row([label, `▮${pct}%`, `${Math.round(frac * 100)}%`], tip, { bar: { at: 1, pct, tone } });
+  };
 
   // шапка
-  blocks.push({ rows: [row([lines(save.name, tr('srv:hero.headClass', '{cls} · Уровень {level}', { cls: cfgRowText(cfg, 'classes', cls) ?? save.classId, level: save.level }))])] });
+  blocks.push({ rows: [row([lines(save.name, tr('srv:hero.headClass', '{cls} · Уровень {level}', { cls: cfgRowText(cfg, 'classes', cls) ?? save.classId, level: save.level }))])], id: 'head' });
 
   // полосы
   const xpb = xpProgress(save.level, save.xp, bal.xpTable);
   blocks.push({
     rows: [
-      barLine(tr('srv:hero.barHp', 'Здоровье'), live.hp, d.maxHp, true, delta(d.maxHp, pd.maxHp), poolText(h, 0, live.hp, true)),
-      barLine(tr('srv:hero.barMana', 'Мана'), live.mana, d.maxMana, true, delta(d.maxMana, pd.maxMana), poolText(h, 1, live.mana, true)),
-      barLine(tr('srv:hero.barStamina', 'Выносливость'), live.stamina, d.maxStamina, true, delta(d.maxStamina, pd.maxStamina), poolText(h, 2, live.stamina, true)),
-      barLine(tr('srv:hero.barXp', 'Опыт'), xpb.frac * 100, 100, false, undefined, xpb.max ? tr('srv:hero.maxLevel', 'макс. уровень') : `${xpb.into} / ${xpb.need} · ${Math.round(xpb.frac * 100)}%`),
+      barLine(tr('srv:hero.barHp', 'Здоровье'), live.hp, d.maxHp, true, delta(d.maxHp, pd.maxHp), poolText(h, 0, live.hp, true), 'hp', 0),
+      barLine(tr('srv:hero.barMana', 'Мана'), live.mana, d.maxMana, true, delta(d.maxMana, pd.maxMana), poolText(h, 1, live.mana, true), 'mana', 1),
+      barLine(tr('srv:hero.barStamina', 'Выносливость'), live.stamina, d.maxStamina, true, delta(d.maxStamina, pd.maxStamina), poolText(h, 2, live.stamina, true), 'stamina', 2),
+      barLine(tr('srv:hero.barXp', 'Опыт'), xpb.frac * 100, 100, false, undefined, xpb.max ? tr('srv:hero.maxLevel', 'макс. уровень') : `${xpb.into} / ${xpb.need} · ${Math.round(xpb.frac * 100)}%`, 'xp'),
     ],
+    id: 'bars',
   });
 
   // ауры и стойки
@@ -291,6 +326,7 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     blocks.push({
       title: tr('srv:hero.togglesTitle', 'Активные ауры/стойки'),
       rows: auras.map((a) => row([lines(`${a.name}${a.reservePct > 0 ? tr('srv:hero.toggleReserve', ' · резерв {reservePct}% маны', { reservePct: Math.round(a.reservePct * 100) }) : ''}`, a.description)])),
+      id: 'toggles',
     });
   }
 
@@ -299,6 +335,7 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
   blocks.push({
     rows: [row([tr('srv:hero.power', 'Мощь (эфф. уровень)'), String(pw.total)],
       tr('srv:hero.powerTip', 'Эффективный уровень персонажа = уровень + гир + мастерства.\nУровень {level} + гир +{gearBonus} + мастерства +{passiveBonus} = {total}.\nГир — лучшее в каждый слот из надетого и того, что можешь надеть из сумки.\nЗадаёт стартовую сложность подземелья при выборе тира.', { level: pw.level, gearBonus: pw.gearBonus, passiveBonus: pw.passiveBonus, total: pw.total }))],
+    id: 'power',
   });
 
   const mitig = Math.round((d.armor / (d.armor + 30 + 5 * save.level)) * 100);
@@ -309,12 +346,13 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
     rows: ATTRIBUTES.map((key) => {
       const own = h.permanent[key], eff = h.effective[key], gearB = eff - own;
       const split = gearB !== 0 ? tr('srv:hero.attrSplitGear', 'Своя (с мастерствами): {own} · от гира: {sign}{gearB} = {eff}', { own, sign: gearB > 0 ? '+' : '', gearB, eff }) : tr('srv:hero.attrSplit', 'Своя (с мастерствами): {own}', { own });
-      return row([STAT_LABEL[key] ?? key, String(eff), pending(key) > 0 ? `+${pending(key)}` : undefined], `${split}\n${ATTR_TIPS[key]}`);
+      return row([STAT_LABEL[key] ?? key, String(eff), pending(key) > 0 ? `+${pending(key)}` : undefined], `${split}\n${ATTR_TIPS[key]}`, { delta: 2 });
     }),
+    id: 'attributes',
   });
 
   // наступление — оружием «как его держат» (им бьёт сервер)
-  const off: SheetBlock = { title: tr('srv:hero.offenseTitle', 'Наступление'), rows: [] };
+  const off: SheetBlock = { title: tr('srv:hero.offenseTitle', 'Наступление'), rows: [], id: 'offense' };
   const scaling = bal.weaponAttrScaling;
   const weights = cfg.get('weapon-weights');
   const weapon = h.held;
@@ -419,7 +457,7 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
   const dmgRow = (label: string, binding: string | null | undefined): SheetRow => {
     if (binding === 'attack') {
       const dlt = dMaxInc > 0 || dMinInc > 0 ? (dMinInc === dMaxInc ? `+${dMaxInc}` : `+${dMinInc}–${dMaxInc}`) : undefined;
-      return row([label, tr('srv:hero.attackValue', '{dmgMin}–{dmgMax} (ДПС ~{atkDps})', { dmgMin: R(dmgMin), dmgMax: R(dmgMax), atkDps }), dlt], weaponTip() + ailmentTip('attack'));
+      return row([label, tr('srv:hero.attackValue', '{dmgMin}–{dmgMax} (ДПС ~{atkDps})', { dmgMin: R(dmgMin), dmgMax: R(dmgMax), atkDps }), dlt], weaponTip() + ailmentTip('attack'), { delta: 2 });
     }
     if (!binding) return row([label, tr('srv:hero.unbound', 'не назначено')]);
     const node = nodeOf(binding);
@@ -475,34 +513,35 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
         (lt ? tr('srv:hero.evadeVs', '\nОт «{name}» (последний): {dodgePct}% увернуться.', { name: lt.name, dodgePct }) : tr('srv:hero.evadeHint', '\nАтакуй монстра — покажу реальный шанс уклонения от него.')),
         delta(d.evade, pd.evade)),
       statRow(tr('srv:hero.block', 'Блок'), `${R(d.blockChance * 100)}%`, tr('srv:hero.blockTip', 'Шанс полностью погасить удар (только от оружия/щита). Максимум 75%.')),
-      statRow(tr('srv:hero.barHp', 'Здоровье'), poolText(h, 0, live.hp, false), tr('srv:hero.hpTip', 'Текущее / максимум HP. При 0 — смерть.'), delta(d.maxHp, pd.maxHp)),
-      statRow(tr('srv:hero.barMana', 'Мана'), poolText(h, 1, live.mana, false), tr('srv:hero.manaTip', 'Текущее / максимум маны для магических скиллов (и резерва аур).'), delta(d.maxMana, pd.maxMana)),
-      statRow(tr('srv:hero.barStamina', 'Выносливость'), poolText(h, 2, live.stamina, false), tr('srv:hero.staminaTip', 'Текущее / максимум выносливости для боевых скиллов (и резерва стоек).'), delta(d.maxStamina, pd.maxStamina)),
+      statRow(tr('srv:hero.barHp', 'Здоровье'), poolText(h, 0, live.hp, false), tr('srv:hero.hpTip', 'Текущее / максимум HP. При 0 — смерть.'), delta(d.maxHp, pd.maxHp), 0),
+      statRow(tr('srv:hero.barMana', 'Мана'), poolText(h, 1, live.mana, false), tr('srv:hero.manaTip', 'Текущее / максимум маны для магических скиллов (и резерва аур).'), delta(d.maxMana, pd.maxMana), 1),
+      statRow(tr('srv:hero.barStamina', 'Выносливость'), poolText(h, 2, live.stamina, false), tr('srv:hero.staminaTip', 'Текущее / максимум выносливости для боевых скиллов (и резерва стоек).'), delta(d.maxStamina, pd.maxStamina), 2),
       statRow(tr('srv:hero.hpRegen', 'Реген HP'), tr('srv:hero.perSecond', '{v} /с', { v: d.hpRegen.toFixed(1) }), tr('srv:hero.hpRegenTip', 'Восстанавливает {hpRegen} HP каждую секунду.', { hpRegen: d.hpRegen.toFixed(1) }), delta(d.hpRegen, pd.hpRegen, 1, false, tr('srv:hero.perSecondSuffix', ' /с'))),
       statRow(tr('srv:hero.manaRegen', 'Реген маны'), tr('srv:hero.perSecond', '{v} /с', { v: d.manaRegen.toFixed(1) }), tr('srv:hero.manaRegenTip', 'Восстанавливает {manaRegen} маны каждую секунду.', { manaRegen: d.manaRegen.toFixed(1) }), delta(d.manaRegen, pd.manaRegen, 1, false, tr('srv:hero.perSecondSuffix', ' /с'))),
       statRow(tr('srv:hero.staminaRegen', 'Реген вынос.'), tr('srv:hero.perSecond', '{v} /с', { v: d.staminaRegen.toFixed(1) }), tr('srv:hero.staminaRegenTip', 'Восстанавливает {staminaRegen} выносливости каждую секунду.', { staminaRegen: d.staminaRegen.toFixed(1) }), delta(d.staminaRegen, pd.staminaRegen, 1, false, tr('srv:hero.perSecondSuffix', ' /с'))),
       ...(d.interruptResist > 0 ? [statRow(tr('srv:hero.interrupt', 'Стойк. к прерыв.'), `${R(d.interruptResist * 100)}%`, tr('srv:hero.interruptTip', 'Шанс НЕ сбить замах тяжёлого удара при стане/ошеломлении цели.'))] : []),
     ],
+    id: 'defense',
   });
 
   // сопротивления и выдержка брони
-  const res: SheetBlock = { title: tr('srv:hero.resTitle', 'Сопротивления'), rows: [] };
+  const res: SheetBlock = { title: tr('srv:hero.resTitle', 'Сопротивления'), rows: [], id: 'resistances' };
   for (const [key, el] of RES) {
     const name = dmgName(cfg, el);
     const v = d[key];
-    res.rows.push(resRow(name, v, tr('srv:hero.resTip', 'Снижает урон стихии «{name}» на {v}%. Максимум — 75%.', { name, v: Math.round(v * 100) })));
+    res.rows.push(resRow(name, v, tr('srv:hero.resTip', 'Снижает урон стихии «{name}» на {v}%. Максимум — 75%.', { name, v: Math.round(v * 100) }), el));
   }
   res.rows.push(row([tr('srv:hero.physPoise', 'Стойкость к физ. статусам')]));
   const gear = Object.values(save.equipment).filter((it): it is Item => !!it);
   for (const k of ['wound', 'bleed', 'sunder', 'daze'] as DebuffKind[]) {
     const poise = armorPoise(gear, k, cfg.get('armor-classes'));
     const lab = debuffLabel(debuffsCfg, k);
-    res.rows.push(resRow(`${debuffIcon(debuffsCfg, k)} ${lab}`, poise, tr('srv:hero.poiseTip', 'Выдержка от брони: снижает шанс И длительность статуса «{lab}» на {poise}%. Максимум — 60%.', { lab, poise: Math.round(poise * 100) })));
+    res.rows.push(resRow(`${debuffIcon(debuffsCfg, k)} ${lab}`, poise, tr('srv:hero.poiseTip', 'Выдержка от брони: снижает шанс И длительность статуса «{lab}» на {poise}%. Максимум — 60%.', { lab, poise: Math.round(poise * 100) }), 'poise'));
   }
   blocks.push(res);
 
   // статусы: урон итоговым % по типам, «бездомные» бонусы, наложение статусов
-  const ail: SheetBlock = { title: tr('srv:hero.ailmentsTitle', 'Статусы'), rows: [] };
+  const ail: SheetBlock = { title: tr('srv:hero.ailmentsTitle', 'Статусы'), rows: [], id: 'ailments' };
   const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
   const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
   if (d.damagePct) ail.rows.push(statRow(tr('srv:hero.allDamage', 'Весь урон'), `+${R(d.damagePct * 100)}%`, tr('srv:hero.allDamageTip', 'Множитель ко ВСЕМ типам урона (складывается с типовыми ниже).')));
@@ -552,6 +591,7 @@ export function sheetView(cfg: ConfigRegistry, save: SaveState, toggles: readonl
       statRow(tr('srv:hero.gold', 'Золото'), String(save.gold), tr('srv:hero.goldTip', 'Валюта: магазин, кузница, дерево мастерства.')),
       statRow(tr('srv:hero.maxDepth', 'Макс. глубина'), String(save.maxDepth), tr('srv:hero.maxDepthTip', 'Самый глубокий достигнутый этаж.')),
     ],
+    id: 'other',
   });
   return blocks;
 }

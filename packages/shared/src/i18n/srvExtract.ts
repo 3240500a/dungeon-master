@@ -2,6 +2,7 @@
  * ⭐⭐ i18n Ф2 (06.11): ИЗВЛЕКАТЕЛЬ ФРАЗ КОДА (`srv:`) — по синтаксическому дереву TypeScript, а не регуляркой. Каждый вызов
  * `tr('srv:…', 'исходник', …)` / `trn('srv:…', n, { one, few, many, other })` в `packages/shared/src` и `packages/server/src` — ключ
  * корпуса `corpus.srv.json`; из него берут переводчик (вкладка «🌐 Языки»), отчёт покрытия (`npm run i18n`) и сторож псевдоязыка.
+ * ⭐ 07.11: и `trWith(loc, 'srv:…', 'исходник', …)` — та же фраза с явным разрешителем (ключ — 2-й аргумент, исходник — 3-й).
  *
  * Почему дерево, а не регулярка: пример в комментарии (`tr.ts` показывает `tr('srv:forge.noRoom', …)` в шапке) — не ключ, а исходник,
  * переданный константой (`tr('srv:salvage.starterKnown', STARTER_KNOWN)`), — ключ; регулярка путает оба. Константа ищется по ИМЕНИ среди
@@ -86,22 +87,25 @@ export function extractSrvPhrases(files: ReadonlyArray<{ path: string; text: str
     return set && set.size === 1 ? [...set][0] : undefined;
   };
 
-  // ── вызовы `tr` / `trn` ──
+  // ── вызовы `tr` / `trWith` / `trn` ──
+  // ⭐ 07.11: `trWith(loc, key, source, params)` — та же фраза с явным разрешителем: ключ — 2-й аргумент, исходник — 3-й
   const phrases: SrvPhrase[] = [];
   for (const { path, sf } of parsed) {
     const where = (n: ts.Node): { file: string; line: number } => ({ file: path, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1 });
     const visit = (n: ts.Node): void => {
-      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && (n.expression.text === 'tr' || n.expression.text === 'trn')) {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && (n.expression.text === 'tr' || n.expression.text === 'trn' || n.expression.text === 'trWith')) {
         const fn = n.expression.text;
         const at = where(n);
-        const keyNode = n.arguments[0];
+        const shift = fn === 'trWith' ? 1 : 0;
+        const keyNode = n.arguments[shift];
         const key = keyNode ? lit(unwrap(keyNode)) : undefined;
         if (key === undefined) {
           problems.push(`${at.file}:${at.line}: ключ ${fn}() — не строковый литерал`);
         } else if (!SRV_KEY.test(key)) {
           problems.push(`${at.file}:${at.line}: ключ «${key}» не по форме srv:<область>.<camelCase>`);
-        } else if (fn === 'tr') {
-          const src = n.arguments[1] ? unwrap(n.arguments[1]) : undefined;
+        } else if (fn === 'tr' || fn === 'trWith') {
+          const srcArg = n.arguments[1 + shift];
+          const src = srcArg ? unwrap(srcArg) : undefined;
           const text = lit(src) ?? (src && ts.isIdentifier(src) ? constOf(src.text) : undefined);
           if (text === undefined) problems.push(`${at.file}:${at.line}: исходник «${key}» — не литерал и не константа с одним значением`);
           else phrases.push({ key, source: text, ...at });

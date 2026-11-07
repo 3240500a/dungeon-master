@@ -1,6 +1,7 @@
 import type { Request, Response, RequestHandler, ErrorRequestHandler } from 'express';
-import { tr } from '@dm/shared';
+import { tr, type Locales } from '@dm/shared';
 import { logThrottle } from './logThrottle.js';
+import { inTextLang, requestLang } from './textScope.js';
 
 /**
  * Express 4 не ловит отказ промиса из обработчика: необработанный `reject` уронил бы процесс.
@@ -105,14 +106,28 @@ export function holdRefusal(req: Request, res: Response): HeldRefusal {
  * клиента (кривой JSON, тело больше потолка — статус 4xx) — ответ JSON без лога; прочее — 500 и строка в лог через
  * глушитель. Ставится ПОСЛЕДНИМ, после всех ручек.
  */
-export const httpErrors: ErrorRequestHandler = (err: unknown, _req, res, next) => {
-  if (res.headersSent) { next(err); return; }
-  const e = err as { status?: unknown; statusCode?: unknown } | null;
-  const status = Number(e?.status ?? e?.statusCode);
-  if (status >= 400 && status < 500) {
-    res.status(status).json({ error: status === 413 ? 'Слишком большое тело запроса' : 'Неверный запрос' });
-    return;
-  }
-  warnHttp(err);
-  res.status(500).json({ error: 'Внутренняя ошибка' });
-};
+export const httpErrors: ErrorRequestHandler = httpErrorsWith(() => undefined);
+
+/**
+ * ⭐ i18n (07.11, хвосты Ф1): ОШИБКИ EXPRESS — НА ЯЗЫКЕ ЗАПРОСА. Обработчик ошибок стоит ПОСЛЕ ручек, а отказ разбора тела (кривой JSON, 413)
+ * случается ДО ручки — то есть до её области языка (`withRequestLang`): ответ уходил на источнике. Здесь язык выбирается заново, тем же
+ * правилом (`requestLang`: `lang` строки запроса → `Accept-Language` → источник; тела нет — разбор и упал). `locales` — лениво, таблица
+ * живого конфига; нет таблицы (`httpErrors`) — источник, русский побайтово прежний.
+ */
+export function httpErrorsWith(locales: () => Locales | undefined): ErrorRequestHandler {
+  return (err: unknown, req, res, next) => {
+    if (res.headersSent) { next(err); return; }
+    let table: Locales | undefined;
+    try { table = locales(); } catch { table = undefined; }
+    inTextLang(table, requestLang(req, table), () => {
+      const e = err as { status?: unknown; statusCode?: unknown } | null;
+      const status = Number(e?.status ?? e?.statusCode);
+      if (status >= 400 && status < 500) {
+        res.status(status).json({ error: status === 413 ? tr('srv:http.bodyTooLarge', 'Слишком большое тело запроса') : tr('srv:http.badRequest', 'Неверный запрос') });
+        return;
+      }
+      warnHttp(err);
+      res.status(500).json({ error: tr('srv:http.internalError', 'Внутренняя ошибка') });
+    });
+  };
+}

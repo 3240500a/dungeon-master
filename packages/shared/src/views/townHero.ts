@@ -95,8 +95,14 @@ export function questLines(def: QuestDef, prog: Pick<QuestProgress, 'status' | '
 }
 /** Соперник того же шаблона (C# кортеж `(questId, name, progress)?` → DTO `QuestRival`; нет — `null`). */
 export interface QuestRival { questId: string; name: string; progress: string }
-/** ⭐ С4: `canTurnIn` — задание выполнено и не сдано (то же условие, что у `turnInQuest`): кнопка «Забрать награду» — по нему, не по сейву. */
-export interface QuestEntry extends QuestLines { questId: string; name: string; description: string; rival: QuestRival | null; canTurnIn: boolean }
+/**
+ * ⭐ С4: `canTurnIn` — задание выполнено и не сдано (то же условие, что у `turnInQuest`): кнопка «Забрать награду» — по нему, не по сейву.
+ * ⭐ i18n (07.11, хвосты Ф1): `state` — статус МАШИННО (`active` / `completed` / `turned-in` прогресса героя; у доски — `null`): окно красило
+ * «выполнено» по тексту `status` (`QuestsPanel`), а текст на другом языке другой.
+ */
+export interface QuestEntry extends QuestLines {
+  questId: string; name: string; description: string; rival: QuestRival | null; canTurnIn: boolean; state: QuestProgress['status'] | null;
+}
 /**
  * ⭐ ЖУРНАЛ ЗАДАНИЙ (новый DTO `QuestsView`): активные (не сданные, с определением) — строки по прогрессу; доска — строки без прогресса и
  * соперник (`questRival`: «взять — прежнее пропадёт»; согласие уходит флагом `replace` команды `acceptQuest`).
@@ -107,7 +113,7 @@ export function questsView(save: SaveState, board: readonly QuestDef[], reg?: Co
   const shown = (def: QuestDef): QuestDef => (reg ? questDisplay(reg, def) : { ...def, ...boardQuestText(def) });
   const entry = (def: QuestDef, prog: QuestProgress | null, rival: QuestRival | null): QuestEntry => {
     const d = shown(def);
-    return { questId: def.id, name: d.name, description: d.description, ...questLines(def, prog), rival, canTurnIn: prog?.status === 'completed' };
+    return { questId: def.id, name: d.name, description: d.description, ...questLines(def, prog), rival, canTurnIn: prog?.status === 'completed', state: prog?.status ?? null };
   };
   const active: QuestEntry[] = [];
   for (const q of save.quests) {

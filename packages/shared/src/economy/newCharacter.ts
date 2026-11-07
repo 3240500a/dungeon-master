@@ -5,6 +5,7 @@ import { packInventory } from '../inventory/grid.js';
 import { SAVE_VERSION, type SaveState } from '../types/save.js';
 import type { Attribute, Attributes } from '../types/attributes.js';
 import type { Item } from '../types/items.js';
+import { tr } from '../i18n/tr.js';
 
 /** Базовая броня любого нового персонажа (поверх оружия класса). */
 const STARTER_ARMOR = ['leather-cap', 'leather-armor', 'leather-boots', 'leather-belt'];
@@ -94,7 +95,10 @@ export function newCharacterSave(reg: ConfigRegistry, classId: string, name: str
   packInventory(inventory, reg.get('balance').inventory);
   return {
     version: SAVE_VERSION,
-    name: name.trim() || 'Герой',
+    // ⭐ i18n (07.11, хвосты Ф1): имя по умолчанию — на языке области создания (сервер: `/api/characters` идёт в `withRequestLang`, и там
+    // пустое имя отсекает разбор — сюда доходят редактор, сим и фаззеры, им — источник). Имя — набранное игроком, в сейве оно уже не
+    // «перевод», а имя героя: показ его не пересобирает.
+    name: name.trim() || tr('srv:hero.defaultName', 'Герой'),
     charId,
     createdAt: Date.now(),
     classId: cls.id,

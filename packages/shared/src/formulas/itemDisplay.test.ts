@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { defaultConfigData } from '../config/defaults.js';
-import { CYRILLIC, Localizer, pseudoLocales, withTextLang, localizerFor } from '../i18n/index.js';
+import { CYRILLIC, Localizer, pseudoLocales, withTextLang, localizerFor, cfgRowTextWith } from '../i18n/index.js';
 import { createRng } from './rng.js';
 import { generateItem, itemFromBaseId, retierItem } from './itemgen.js';
 import { craftWeapon, enchantItem, shapeFoundWeapon } from './craft.js';
@@ -9,7 +9,7 @@ import { CRAFT_SLOT_LIST, familiesOf, partFits } from './craftType.js';
 import { itemDisplayName, itemNameRecomposes, localizeItem } from './itemDisplay.js';
 import { newCharacterSave } from '../economy/newCharacter.js';
 import { rollShopGear } from '../economy/shopGear.js';
-import { buildSeal, sealItem, sealTiers } from '../economy/seals.js';
+import { buildSeal, sealBundleLine, sealItem, sealTiers } from '../economy/seals.js';
 import { materialItem } from '../economy/materials.js';
 import { upgradedItem } from '../economy/townActions.js';
 import type { Item, Rarity } from '../types/items.js';
@@ -141,5 +141,55 @@ describe('⭐⭐ i18n Ф2: имя вещи для показа (`itemDisplayName
     expect(itemDisplayName(cfg, it, XX)).toBe('Меч, переименованный руками');
     const old = { ...byKind['drop.rare']!.find((x) => x.nameRoll)!, nameRoll: undefined };
     expect(itemDisplayName(cfg, old, XX), 'рар старше `nameRoll`: основу и эпитет не вывести — испечённое').toBe(old.name);
+  });
+});
+
+describe('⭐ i18n (07.11, хвосты Ф1): печать — шаблоном языка, память показа — с поколением реестра, имя героя по умолчанию', () => {
+  it('⭐ «вид + ступень» печати на другом языке — фразой-шаблоном (`srv:seal.nameTier`), источник — прежняя склейка пробелом', () => {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    const loc = structuredClone(xx) as Record<string, { strings: Record<string, unknown>; grammar: Record<string, unknown> }>;
+    // язык с другим порядком и без пробела (как `zh`): ступень впереди, разделитель — «·»
+    loc.xx!.strings['srv:seal.nameTier'] = '{tier}·{name}';
+    r.reload({ locales: loc });
+    const L = localizerFor(r.get('locales'), 'xx')!;
+    const def = r.get('seals')[0]!, tier = sealTiers(r)[0]!;
+    const it = buildSeal(r, def.id, tier.id, 1, 'seal-tpl')!;
+    expect(it.name, 'печать — языком-источником, склейкой пробелом').toBe(`${def.name} ${tier.name}`);
+    expect(itemNameRecomposes(r, it)).toBe('ok');
+    const shown = itemDisplayName(r, it, L);
+    expect(shown).toBe(`${cfgRowTextWith(L, r, 'balance', tier)}·${cfgRowTextWith(L, r, 'seals', def)}`);
+    expect(shown).not.toMatch(CYRILLIC);
+    // строка связки окна алтаря (`sealBundleLine` → `sealNameText`) — тем же шаблоном, а русский — побайтово прежний
+    const key = `${def.id}@${tier.id}`;
+    expect(withTextLang(r.get('locales'), 'xx', () => sealBundleLine(r, { [key]: 2 }))).toBe(`${shown} ×2`);
+    expect(sealBundleLine(r, { [key]: 2 })).toBe(`${def.name} ${tier.name} ×2`);
+  });
+
+  it('⭐ память показа помнит ПОКОЛЕНИЕ реестра: правка `items.base` без `locales` не оставляет иноязычному прежнее имя', () => {
+    const r = new ConfigRegistry();
+    r.loadAll();
+    r.reload({ locales: xx });
+    const L = localizerFor(r.get('locales'), 'xx')!;
+    const it = itemFromBaseId(r.get('items.base'), 'healing-potion', undefined, 'shop')!;
+    const before = itemDisplayName(r, it, L);
+    expect(before).not.toBe(it.name);
+    expect(itemDisplayName(r, it, L), 'та же вещь, тот же реестр — из памяти').toBe(before);
+    // база переименована (новая таблица, `locales` — та же): рецепт больше не собирает испечённое — показ обязан дать запас
+    const gen = r.generation();
+    const bases = structuredClone(r.get('items.base')).map((b) => (b.id === 'healing-potion' ? { ...b, name: `${b.name} (новое)` } : b));
+    r.reload({ 'items.base': bases });
+    expect(r.generation()).toBeGreaterThan(gen);
+    expect(localizerFor(r.get('locales'), 'xx'), 'разрешитель — тот же объект: память по нему одному устарела бы').toBe(L);
+    expect(itemDisplayName(r, it, L), 'после правки базы — испечённое (рецепт не сошёлся), а не прежний перевод').toBe(it.name);
+  });
+
+  it('⭐ имя героя по умолчанию — на языке области создания; источник — «Герой»', () => {
+    const cls = cfg.get('classes')[0]!.id;
+    expect(newCharacterSave(cfg, cls, '  ', 'h-ru').name).toBe('Герой');
+    const en = withTextLang(xx, 'xx', () => newCharacterSave(cfg, cls, '', 'h-xx').name);
+    expect(en).toBe(XX.text('srv:hero.defaultName', 'Герой'));
+    expect(en).not.toMatch(CYRILLIC);
+    expect(withTextLang(xx, 'xx', () => newCharacterSave(cfg, cls, 'Вася', 'h-v').name), 'набранное игроком — как есть').toBe('Вася');
   });
 });

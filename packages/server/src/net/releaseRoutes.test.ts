@@ -142,7 +142,8 @@ describe('⭐ Д3: каналы, раскатка, версия клиента',
     t += 10_000; pointers = { dev: P(9) };
     const r = await raw('/api/content/pointer?channel=live', {}, prodBase);
     expect(r.status).toBe(404);
-    expect(JSON.parse(r.body.toString())).toEqual({ error: 'канал не выпущен', channel: 'live' });
+    // ⭐ 07.11: `code` — машинное поле для клиента (добавлено; текст `error` — прежний)
+    expect(JSON.parse(r.body.toString())).toEqual({ error: 'канал не выпущен', channel: 'live', code: 'channelUnreleased' });
     expect(await getJson('/api/content/pointer?channel=dev', prodBase)).toMatchObject({ seq: 9, channel: 'dev' });
   });
 

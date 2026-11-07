@@ -71,8 +71,11 @@ export function forgeFamilies(reg: ConfigRegistry): Set<string> {
   return out;
 }
 
-/** C# `DmTown.MatCell`. */
-export interface MatCell { id: string; name: string; grade: number; stash: number; hand: number; have: boolean; color: string; bold: boolean; tip: string[] }
+/**
+ * C# `DmTown.MatCell`. ⭐ i18n (07.11, хвосты Ф1): `tipBag` — номер строки «В сумке N — часть потеряешь при смерти» в `tip` (−1 — её нет):
+ * окно сундука красило её зелёным по началу «В сумке » (`StashPanel.TipText`), а на другом языке начало другое.
+ */
+export interface MatCell { id: string; name: string; grade: number; stash: number; hand: number; have: boolean; color: string; bold: boolean; tip: string[]; tipBag: number }
 /** C# `DmTown.MatHead`. */
 export interface MatHead { grade: number; label: string; sub: string; color: string; bold: boolean }
 /** C# `DmTown.MatRow`: клетка `null` — такого сорта у семьи нет (выключен): столбцы не съезжают. */
@@ -91,8 +94,11 @@ export interface MaterialsView {
 
 type MatDef = { id: string; name: string; family: string; tier: number; sellPrice: number };
 
+/** Строки подсказки и номер строки «В сумке …» в них (`MatCell.tipBag`; −1 — нет). */
+interface CellTip { lines: string[]; bag: number }
+
 /** `holdings` — строки «В сундуке / В сумке» (подсказке стопки в сумке они не нужны: `materialNote`). */
-function cellTip(reg: ConfigRegistry, d: MatDef, stash: number, hand: number, forge: boolean, holdings = true): string[] {
+function cellTip(reg: ConfigRegistry, d: MatDef, stash: number, hand: number, forge: boolean, holdings = true): CellTip {
   const s = reg.get('balance').salvage;
   const g = d.tier;
   const src = gradeSources(reg, g).map((x) => (x.strikeOnly ? tr('srv:materials.strikeOnlyQuoted', '«{name}» (боевая часть)', { name: x.name }) : `«${x.name}»`)).join(', ');
@@ -107,9 +113,10 @@ function cellTip(reg: ConfigRegistry, d: MatDef, stash: number, hand: number, fo
   lines.push(tr('srv:materials.to', 'Куда: {to}{tiers}', { to: forge ? tr('srv:materials.toForge', 'ковка, подъём и починка') : tr('srv:materials.toUpgrade', 'подъём и починка (ковкой не используется)'), tiers: tiers ? tr('srv:materials.toTiers', ' — ступени {tiers}', { tiers }) : '' }));
   if (g === 1) lines.push(tr('srv:materials.gradeOneUse', 'Расходник любого подъёма и починки'));
   if (holdings) lines.push(tr('srv:materials.inStash', 'В сундуке {stash}', { stash }));
-  if (holdings && hand > 0) lines.push(tr('srv:materials.inBag', 'В сумке {hand} — часть потеряешь при смерти', { hand }));
+  let bag = -1;
+  if (holdings && hand > 0) { bag = lines.length; lines.push(tr('srv:materials.inBag', 'В сумке {hand} — часть потеряешь при смерти', { hand })); }
   lines.push(saleLine(d.sellPrice));
-  return lines;
+  return { lines, bag };
 }
 
 function essenceAbout(reg: ConfigRegistry): string[] {
@@ -124,11 +131,12 @@ function essenceAbout(reg: ConfigRegistry): string[] {
 
 const saleLine = (price: number): string => (price > 0 ? tr('srv:materials.sale', 'Продажа: {price} за штуку', { price }) : tr('srv:materials.noSale', 'Не продаётся'));
 
-function essenceTip(reg: ConfigRegistry, d: { name: string; sellPrice: number }, stash: number, hand: number): string[] {
+function essenceTip(reg: ConfigRegistry, d: { name: string; sellPrice: number }, stash: number, hand: number): CellTip {
   const lines = [cfgRowText(reg, 'craft-materials', d), tr('srv:materials.essenceKind', 'Не сырьё — валюта чар'), ...essenceAbout(reg), tr('srv:materials.inStash', 'В сундуке {stash}', { stash })];
-  if (hand > 0) lines.push(tr('srv:materials.inBag', 'В сумке {hand} — часть потеряешь при смерти', { hand }));
+  let bag = -1;
+  if (hand > 0) { bag = lines.length; lines.push(tr('srv:materials.inBag', 'В сумке {hand} — часть потеряешь при смерти', { hand })); }
   lines.push(saleLine(d.sellPrice));
-  return lines;
+  return { lines, bag };
 }
 
 /**
@@ -150,9 +158,10 @@ export function materialsView(reg: ConfigRegistry, stashWallet: Record<string, n
   const cell = (d: (typeof defs)[number]): MatCell => {
     const stash = Math.max(0, wallet[d.id] ?? 0);
     const hand = carriedMap[d.id] ?? 0;
+    const tip = cellTip(reg, d, stash, hand, forge.has(d.family));
     return {
       id: d.id, name: cfgRowText(reg, 'craft-materials', d), grade: d.tier, stash, hand, have: stash + hand > 0, color: gradeHex(d.tier), bold: d.tier >= MATERIAL_STEPS,
-      tip: cellTip(reg, d, stash, hand, forge.has(d.family)),
+      tip: tip.lines, tipBag: tip.bag,
     };
   };
   const ess = all.find((d) => d.id === ESSENCE_ID);
@@ -170,7 +179,8 @@ export function materialsView(reg: ConfigRegistry, stashWallet: Record<string, n
     essence: ess ? (() => {
       const stash = Math.max(0, wallet[ess.id] ?? 0);
       const hand = carriedMap[ess.id] ?? 0;
-      return { id: ess.id, name: cfgRowText(reg, 'craft-materials', ess), grade: ess.tier, stash, hand, have: stash + hand > 0, color: ESSENCE_HEX, bold: false, tip: essenceTip(reg, ess, stash, hand) };
+      const tip = essenceTip(reg, ess, stash, hand);
+      return { id: ess.id, name: cfgRowText(reg, 'craft-materials', ess), grade: ess.tier, stash, hand, have: stash + hand > 0, color: ESSENCE_HEX, bold: false, tip: tip.lines, tipBag: tip.bag };
     })() : null,
   };
 }
@@ -184,6 +194,6 @@ export function materialNote(reg: ConfigRegistry, item: Pick<Item, 'kind' | 'mat
   if (d.family === ESSENCE_FAMILY) return { color: ESSENCE_HEX, lines: [...essenceAbout(reg), saleLine(d.sellPrice)] };
   // ⭐ i18n Ф2 (ревизия 06.11): строки «В сундуке / В сумке» не собираются вовсе (`holdings: false`), а не вырезаются по русскому началу —
   // на переводе фильтр по тексту их бы пропустил
-  const tip = cellTip(reg, d, 0, 0, forgeFamilies(reg).has(d.family), false);
+  const tip = cellTip(reg, d, 0, 0, forgeFamilies(reg).has(d.family), false).lines;
   return { color: gradeHex(d.tier), lines: tip.slice(1) };
 }

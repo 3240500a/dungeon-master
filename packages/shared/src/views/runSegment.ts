@@ -4,7 +4,7 @@ import type { SaveState } from '../types/save.js';
 import { isWaypoint, nextWaypointAfter } from '../formulas/power.js';
 import { liveModStats, runModCount } from '../dungeon/run/runModEffects.js';
 import {
-  carriedSeals, parseSealKey, sealBuffs, sealDef, sealFitsBiome, sealLive, sealSlots, sealTierDef, sealTierMul, type SealGains,
+  carriedSeals, parseSealKey, sealBuffs, sealDef, sealFitsBiome, sealLive, sealSlots, sealTierDef, sealTierMul, sealTierPhrase, type SealGains,
 } from '../economy/seals.js';
 import { cfgTextOf, csFixed, csRound, isNum, ordinal, str, type CfgText, type RunViewOptions } from './runCommon.js';
 import { tr } from '../i18n/tr.js';
@@ -90,7 +90,7 @@ function sideLine(
 function sealTitle(reg: ConfigRegistry, tx: CfgText, def: Seal, tierId: string): string {
   const t = sealTierDef(reg, tierId);
   const name = tx('seals', [def.id], 'name', def.name) ?? def.name;
-  return t ? `${name} ${tx('balance', ['seals', 'tiers', t.id], 'name', t.name) ?? t.name}` : name;
+  return t ? sealTierPhrase(name, tx('balance', ['seals', 'tiers', t.id], 'name', t.name) ?? t.name) : name;   // ⭐ 07.11: шаблон языка, источник — та же склейка
 }
 
 /**

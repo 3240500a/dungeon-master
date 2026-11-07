@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { request as httpRequest, validateHeaderName, validateHeaderValue, type IncomingMessage } from 'node:http';
-import type { ConfigRegistry } from '@dm/shared';
+import { tr, type ConfigRegistry, type Locales } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { installShutdown, frameFailed } from './wsServer.js';
 import { MAX_BACKPRESSURE, MAX_FRAME_BYTES, isGameWsPath, routePassOf, type GameConn } from './conn.js';
@@ -8,6 +8,7 @@ import { clientIp } from './rateLimit.js';
 import { isProduction } from './devFlags.js';
 import { isLoopback, PROXY_HEADERS, LOCAL_PROOF_HEADER, proxyLinks } from './adminAccess.js';
 import { counters } from './metrics.js';
+import { inTextLang, requestLang } from './textScope.js';
 
 /**
  * Транспорт на uWebSockets.js (Ф1.6) — включается `DM_WS=uws`.
@@ -209,7 +210,7 @@ export function startUwsServer(cfg: ConfigRegistry, port: number, httpPort: numb
   const rooms = new RoomManager(cfg);
   const app = mountGameWs(uWS.App(), gameWsBehavior(uWS, (conn) => rooms.handleConnection(conn)));
 
-  app.any('/*', (res, req) => proxyToExpress(res, req, httpPort));
+  app.any('/*', (res, req) => proxyToExpress(res, req, httpPort, () => cfg.get('locales') as Locales));   // ⭐ i18n (07.11): отказы прокси — на языке запроса
 
   app.listen('0.0.0.0', port, (token) => {
     if (!token) {
@@ -305,10 +306,15 @@ export function gameWsBehavior(uWS: Pick<Uws, 'DISABLED'>, onConn: (conn: GameCo
  * (`proxyableRequest`) — 400 до пересылки; любой бросок, что всё же случился (в том числе в колбэке тела), — 400 и строка
  * в лог (через общий глушитель: поток таких запросов лог не топит).
  */
-export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void {
+export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number, locales?: () => Locales | undefined): void {
   // onAborted ОБЯЗАТЕЛЕН до первого await/асинхронного шага: без него uWS роняет процесс,
   // если клиент отвалился раньше ответа.
   let aborted = false;
+  // ⭐ i18n (07.11, хвосты Ф1): ОТКАЗЫ САМОГО ПРОКСИ (400, 413, 502) — НА ЯЗЫКЕ ЗАПРОСА. Они уходят до express, а значит до его области языка
+  // (`withRequestLang`): раньше — всегда на источнике. Язык решается сразу (запрос uWS живёт лишь до конца этого вызова), тем же правилом
+  // (`requestLang`: `lang` строки запроса → `Accept-Language`; тело прокси не разбирает), а фраза собирается в его области в миг отказа
+  // (502 приходит колбэком сокета — область языка через нативный колбэк uWS не доживает). Без таблицы — источник, русский побайтово прежний.
+  const say = proxyLang(req, locales);
   // R7-10: клиент ушёл — бросить и запрос к express (обработчик у uWS один: остальные — списком).
   const onAbort: (() => void)[] = [];
   /** R7-10: ответ express уже пошёл клиенту (`relayResponse`) — свой отказ прокси поверх него не пишет. */
@@ -325,20 +331,38 @@ export function proxyToExpress(res: UwsRes, req: UwsReq, httpPort: number): void
   };
   const badRequest = (e?: unknown): void => {
     if (e !== undefined) frameFailed(e);
-    refuse('400 Bad Request', '{"error":"Неверный запрос"}', true);
+    refuse('400 Bad Request', JSON.stringify({ error: say(() => tr('srv:http.badRequest', 'Неверный запрос')) }), true);
   };
   try {
-    forwardRequest(res, req, httpPort, () => aborted, refuse, badRequest, (f) => { onAbort.push(f); }, () => { relayed = true; });
+    forwardRequest(res, req, httpPort, () => aborted, refuse, badRequest, (f) => { onAbort.push(f); }, () => { relayed = true; }, say);
   } catch (e) {
     badRequest(e);
   }
+}
+
+/**
+ * ⭐ i18n (07.11): язык отказов прокси для запроса `req` — `fn` в области этого языка. Нет таблицы или включённых языков — `fn` как есть
+ * (источник), без области. Не бросает: битая таблица — источник.
+ */
+function proxyLang(req: UwsReq, locales: (() => Locales | undefined) | undefined): <T>(fn: () => T) => T {
+  if (!locales) return (fn) => fn();
+  let table: Locales | undefined;
+  let lang: string | undefined;
+  try {
+    table = locales();
+    const query = req.getQuery();
+    const asked = query ? new URLSearchParams(query).get('lang') ?? undefined : undefined;
+    lang = requestLang({ query: { lang: asked }, headers: { 'accept-language': req.getHeader('accept-language') || undefined } }, table);
+  } catch { table = undefined; lang = undefined; }
+  if (!lang) return (fn) => fn();
+  return (fn) => inTextLang(table, lang, fn);
 }
 
 /** Тело `proxyToExpress`: разбор, проверка и пересылка. Бросок отсюда ловит вызывающий. */
 function forwardRequest(
   res: UwsRes, req: UwsReq, httpPort: number, isAborted: () => boolean,
   refuse: (status: string, body: string, close?: boolean) => void, badRequest: (e?: unknown) => void,
-  onAbort: (f: () => void) => void, relaying: () => void,
+  onAbort: (f: () => void) => void, relaying: () => void, say: <T>(fn: () => T) => T,
 ): void {
   const method = req.getMethod().toUpperCase();
   const query = req.getQuery();
@@ -385,10 +409,11 @@ function forwardRequest(
     upstream.on('error', (e) => {
       const code = (e as NodeJS.ErrnoException).code;
       const cut = wrote && (code === 'ECONNRESET' || code === 'EPIPE');
+      // ⭐ i18n (07.11): диагностика может дойти до игрока (вход, ростер) — на языке запроса, с подстановками
       refuse('502 Bad Gateway', JSON.stringify({
-        error: cut
-          ? `express оборвал соединение, не дочитав тело (${(body.length / (1024 * 1024)).toFixed(1)} МБ) — его ответ пропал вместе со сбросом. Обычно это отказ входа или прав: войди заново и повтори`
-          : `прокси не достучался до express: ${e.message}`,
+        error: say(() => (cut
+          ? tr('srv:http.proxyCut', 'express оборвал соединение, не дочитав тело ({mb} МБ) — его ответ пропал вместе со сбросом. Обычно это отказ входа или прав: войди заново и повтори', { mb: (body.length / (1024 * 1024)).toFixed(1) })
+          : tr('srv:http.proxyUnreachable', 'прокси не достучался до express: {error}', { error: e.message }))),
       }));
     });
     // R12-01: соединение — прокси: пока оно открыто, express не верит на нём «петле без заголовков» без доказательства.
@@ -410,7 +435,7 @@ function forwardRequest(
   // ⭐ R4-11: тело — под потолком пути. Заявлено больше — отказ сразу, до тела; пришло больше (chunked, без длины) — отказ
   // на первом лишнем байте, накопленное выбрасывается, соединение закрывается (иначе клиент продолжал бы слать).
   const cap = bodyCapFor(req.getUrl());
-  const tooLarge = (): void => { refuse('413 Payload Too Large', '{"error":"Слишком большое тело запроса"}'); };
+  const tooLarge = (): void => { refuse('413 Payload Too Large', JSON.stringify({ error: say(() => tr('srv:http.bodyTooLarge', 'Слишком большое тело запроса')) })); };
   if (Number.isFinite(declared) && declared > cap) { tooLarge(); return; }
   const chunks: Buffer[] = [];
   let size = 0;

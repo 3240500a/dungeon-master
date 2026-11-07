@@ -13,7 +13,7 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { Item } from '../types/items.js';
 import type { QuestDef } from '../types/quest.js';
-import type { SessionEvent } from './session.js';
+import { HIT_BY_BLAST, HIT_BY_ENEMY, type SessionEvent } from './session.js';
 import type { ServerFrame } from './netTypes.js';
 import type { WorldDelta } from './delta.js';
 import { Localizer, SOURCE_LANG, cfgRowTextWith, textLocalizer, tr } from '../i18n/index.js';
@@ -76,6 +76,27 @@ export function monsterDisplayName(reg: ConfigRegistry, def: MonsterNameSrc): st
     /* показ имени не вправе уронить кадр */
   }
   return def.name;
+}
+
+/** Определение монстра по ИСПЕЧЁННОМУ имени (`by` удара): комната ищет среди монстров этажа; нет такого — `undefined`. */
+export type MonsterByName = (name: string) => MonsterNameSrc | undefined;
+
+/**
+ * ⭐ i18n (07.11, хвосты Ф1): ИМЯ НАПАДАЮЩЕГО (`hit.by` удара по герою) на языке области. Сессия кладёт туда испечённое имя монстра, «Враг»
+ * (снаряд без имени стрелка) или «<имя> (взрыв)» (конструкт), а в PvP — id игрока. Имя монстра узнаётся по определению (`lookup`: монстры,
+ * умершие в той же пачке событий, и монстры этажа комнаты) и пересобирается `monsterDisplayName` (со сверкой); хвост взрыва — шаблоном
+ * `srv:monster.blast`. Не узнано (id игрока, чужое имя) — как есть. Источник — как есть всегда.
+ */
+export function hitByDisplay(reg: ConfigRegistry, by: string, lookup: MonsterByName): string {
+  if (!foreign()) return by;
+  if (by === HIT_BY_ENEMY) return tr('srv:monster.enemy', HIT_BY_ENEMY);
+  const def = lookup(by);
+  if (def) return monsterDisplayName(reg, def);
+  if (by.endsWith(HIT_BY_BLAST)) {
+    const base = lookup(by.slice(0, -HIT_BY_BLAST.length));
+    if (base) return tr('srv:monster.blast', '{name} (взрыв)', { name: monsterDisplayName(reg, base) });
+  }
+  return by;
 }
 
 /** Снаряжение монстра словами (`gearRolls[].name` — имя вещи `monster-gear`, у кулаков — своё). */
@@ -151,15 +172,23 @@ export function localizeDeep<T>(reg: ConfigRegistry, value: T): T {
 
 /**
  * ⭐ СОБЫТИЯ ТИКА на языке области: вещь выпала/поднята — её имя, смерть монстра — его имя, задание — его имя (`questOf` — определение
- * по id: доска комнаты и журнал героя; нет — испечённое).
+ * по id: доска комнаты и журнал героя; нет — испечённое). ⭐ 07.11: удар по герою — имя нападающего (`hitByDisplay`): монстр узнаётся по
+ * испечённому имени среди умерших в этой же пачке и через `monsterOf` (монстры этажа комнаты); id игрока (PvP) — как есть.
  */
-export function localizeEvents(reg: ConfigRegistry, events: readonly SessionEvent[], questOf?: (questId: string) => QuestDef | undefined): SessionEvent[] {
+export function localizeEvents(reg: ConfigRegistry, events: readonly SessionEvent[], questOf?: (questId: string) => QuestDef | undefined,
+  monsterOf?: MonsterByName): SessionEvent[] {
   if (!foreign()) return events as SessionEvent[];
   let out: SessionEvent[] | undefined;
+  let died: Map<string, MonsterNameSrc> | undefined;
+  const lookup: MonsterByName = (name) => {
+    if (!died) { died = new Map(); for (const x of events) if (x.type === 'monster-died' && !died.has(x.def.name)) died.set(x.def.name, x.def); }
+    return died.get(name) ?? monsterOf?.(name);
+  };
   events.forEach((e, i) => {
     let next: SessionEvent = e;
     if (e.type === 'item-dropped' || e.type === 'item-picked') { const it = localizeItem(reg, e.item); if (it !== e.item) next = { ...e, item: it }; }
     else if (e.type === 'monster-died') { const d = localizeMonsterDef(reg, e.def); if (d !== e.def) next = { ...e, def: d }; }
+    else if (e.type === 'hit') { if (e.target === 'player' && e.by) { const by = hitByDisplay(reg, e.by, lookup); if (by !== e.by) next = { ...e, by }; } }
     else if (e.type === 'quest') {
       const def = questOf?.(e.questId);
       if (def && def.name === e.name) { const n = questDisplay(reg, def).name; if (n !== e.name) next = { ...e, name: n }; }
@@ -191,12 +220,14 @@ export const NAMED_FRAMES: ReadonlySet<ServerFrame['t']> = new Set<ServerFrame['
 
 /**
  * ⭐⭐ КАДР ДЛЯ ПОЛУЧАТЕЛЯ на языке области: вещи сейва, сундука, прилавка, видов и событий — с показанными именами, задания — с
- * переведёнными именами и описаниями, монстры — с именами. `questOf` — определение задания по id для событий. Источник — тот же кадр.
+ * переведёнными именами и описаниями, монстры — с именами. `questOf` — определение задания по id для событий, `monsterOf` — монстр по
+ * испечённому имени (имя нападающего в ударе по герою). Источник — тот же кадр.
  */
-export function localizeFrame(reg: ConfigRegistry, frame: ServerFrame, questOf?: (questId: string) => QuestDef | undefined): ServerFrame {
+export function localizeFrame(reg: ConfigRegistry, frame: ServerFrame, questOf?: (questId: string) => QuestDef | undefined,
+  monsterOf?: MonsterByName): ServerFrame {
   if (!foreign() || !NAMED_FRAMES.has(frame.t)) return frame;
   switch (frame.t) {
-    case 'events': { const events = localizeEvents(reg, frame.events, questOf); return events === frame.events ? frame : { ...frame, events }; }
+    case 'events': { const events = localizeEvents(reg, frame.events, questOf, monsterOf); return events === frame.events ? frame : { ...frame, events }; }
     case 'monsterInfo': {
       let changed = false;
       const monsters = frame.monsters.map((m) => { const def = localizeMonsterDef(reg, m.def); if (def === m.def) return m; changed = true; return { ...m, def }; });

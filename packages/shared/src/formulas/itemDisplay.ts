@@ -15,7 +15,7 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigKey, ConfigShapes } from '../config/schemas.js';
 import type { Item, RolledAffix } from '../types/items.js';
-import { Localizer, SOURCE_LANG, cfgRowKey, cfgRowTextWith, textLocalizer } from '../i18n/index.js';
+import { Localizer, SOURCE_LANG, cfgRowKey, cfgRowTextWith, textLocalizer, trWith } from '../i18n/index.js';
 import { composeItemName, type NameFragment } from './itemName.js';
 import { craftedName, partsOf, resolveParts } from './craft.js';
 import { resolveType, typeDisplay, type TypeInfo } from './craftType.js';
@@ -121,14 +121,20 @@ function gearRecipes(reg: ConfigRegistry, item: Item): Recipe[] {
   }
 }
 
-/** Рецепты печати: «Вид Ступень» (`sealName`) и вид без ступени (печать, собранная без неё). */
+/**
+ * Рецепты печати: «Вид Ступень» (`sealName`) и вид без ступени (печать, собранная без неё).
+ * ⭐ 07.11: на языке игрока «вид + ступень» — фразой-шаблоном языка (`srv:seal.nameTier`, как `sealTierPhrase`), а не склейкой пробелом;
+ * сверка с испечённым (источник) — РОВНО прежняя склейка `sealName`.
+ */
 function sealRecipes(reg: ConfigRegistry, item: Item): Recipe[] {
   const def = rowById(reg.get('seals'), item.sealId);
   if (!def) return [];
   const tier = reg.get('balance').seals.tiers.find((t) => t.id === item.sealTier);
   const name: Recipe = (L) => cfgRowTextWith(L, reg, 'seals', def);
   if (!tier) return [name];
-  return [(L) => `${name(L)} ${cfgRowTextWith(L, reg, 'balance', tier)}`, name];
+  return [(L) => (L === SRC
+    ? `${name(L)} ${cfgRowTextWith(L, reg, 'balance', tier)}`
+    : trWith(L, 'srv:seal.nameTier', '{name} {tier}', { name: name(L), tier: cfgRowTextWith(L, reg, 'balance', tier) })), name];
 }
 
 /** Рецепты вещи по её виду. */
@@ -141,8 +147,13 @@ function recipesOf(reg: ConfigRegistry, item: Item): Recipe[] {
   return gearRecipes(reg, item);
 }
 
-/** Память показа: вещь → (испечённое имя, разрешитель, итог). Сверка дорогая, а одна вещь в кадре сумки, подсказки и верстака — одна. */
-const memo = new WeakMap<object, { sig: string; loc: Localizer; out: string }>();
+/**
+ * Память показа: вещь → (испечённое имя, разрешитель, реестр и его поколение, итог). Сверка дорогая, а одна вещь в кадре сумки, подсказки и
+ * верстака — одна. ⭐ 07.11: разрешитель меняется только с таблицей `locales`, а рецепт читает и `items.base`, ступени, аффиксы, уники, рарные
+ * имена, тип ковки, печати, сырьё — поэтому в подписи и ПОКОЛЕНИЕ реестра (`generation`): правка любой таблицы без `locales` иначе
+ * оставила бы иноязычным прежнее имя до смены вещи.
+ */
+const memo = new WeakMap<object, { sig: string; loc: Localizer; reg: ConfigRegistry; gen: number; out: string }>();
 const sigOf = (item: Item): string => `${item.name}|${item.tier ?? ''}|${item.rarity}|${item.affixes.length}|${item.nameRoll?.noun ?? ''}|${item.nameRoll?.epithet ?? ''}`;
 
 /**
@@ -152,8 +163,9 @@ const sigOf = (item: Item): string => `${item.name}|${item.tier ?? ''}|${item.ra
 export function itemDisplayName(reg: ConfigRegistry, item: Item, loc: Localizer | null = textLocalizer()): string {
   if (!loc || loc.lang === SOURCE_LANG) return item.name;
   const sig = sigOf(item);
+  const gen = reg.generation();
   const was = memo.get(item);
-  if (was && was.loc === loc && was.sig === sig) return was.out;
+  if (was && was.loc === loc && was.reg === reg && was.gen === gen && was.sig === sig) return was.out;
   let out = item.name;
   try {
     for (const r of recipesOf(reg, item)) {
@@ -164,7 +176,7 @@ export function itemDisplayName(reg: ConfigRegistry, item: Item, loc: Localizer 
   } catch {
     out = item.name;
   }
-  memo.set(item, { sig, loc, out });
+  memo.set(item, { sig, loc, reg, gen, out });
   return out;
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import type { GameConn } from './conn.js';
 import {
-  ConfigRegistry, defaultConfigData, pseudoLocales, cyrillicLeaks, decodeWorldFrame, generateItem, createRng, monsterDefView,
+  ConfigRegistry, defaultConfigData, pseudoLocales, cyrillicLeaks, decodeWorldFrame, generateItem, createRng, monsterDefView, HIT_BY_BLAST, HIT_BY_ENEMY,
   type ServerFrame, type SaveState, type Item, type Locales, type SessionEvent, type ScaledMonster, type QuestDef, type WireFrame,
 } from '@dm/shared';
 import { unityViewsSample } from '@dm/shared/views/unityViews.testkit.js';
@@ -290,5 +290,58 @@ describe('⭐⭐ i18n Ф2: сторож утечек — провод игрок
     expect(eb.def.gearRolls?.map((g) => g.name), 'и снаряжение — испечённое').toEqual(view.gearRolls?.map((g) => g.name));
     expect(ea.def.name).not.toMatch(/[Ѐ-ӿ]/);
     expect(JSON.stringify(ea.def.gearRolls ?? [])).not.toMatch(/[Ѐ-ӿ]/);
+  });
+});
+
+describe('⭐ i18n (07.11, хвосты Ф1): удар по герою — имя нападающего (`hit.by`) на языке получателя', () => {
+  type Priv = {
+    monsterMelee(m: unknown, p: unknown): void; monsterShoot(m: unknown, p: unknown): void;
+    monsterPacket(m: unknown): { packet: unknown; attacker: unknown; debuffs: unknown[] };
+    hitPlayer(p: unknown, packet: unknown, attacker: unknown, onHit: unknown[], by: string, source?: unknown): void;
+  };
+  type Hit = Extract<SessionEvent, { type: 'hit' }>;
+  const hitsOn = (ws: FakeWs, pid: string, from: number): Hit[] => ws.frames.slice(from)
+    .flatMap((f) => (f.t === 'events' ? f.events : []))
+    .filter((e): e is Hit => e.type === 'hit' && e.target === 'player' && e.id === pid);
+
+  it('⭐⭐ монстр бьёт героя `xx` — вблизи, снарядом, взрывом, «Враг»: в его кадрах ни одной кириллической буквы; русскому — испечённое; id игрока — как есть', async () => {
+    const room = makeRoom();
+    const a = join(room, 'xx', 'Образец');
+    const b = join(room, undefined, 'Сосед');
+    await settle();
+    room.descend(a.pid);
+    (room as unknown as { castVote(pid: string, yes: boolean): void }).castVote(b.pid, true);
+    await settle();
+    room.step();
+    const world = room.session.world as RoomIn['session']['world'] & { projectiles: { ownerId?: number; pos: { x: number; y: number }; vel: { x: number; y: number } }[] };
+    const me = world.players[a.pid]!;
+    Object.assign(me, { hp: 1e9 });   // герой переживёт все удары: смерть сменила бы кадры
+    const mon = world.monsters.find((m) => m.alive)!;
+    const session = room.session as unknown as Priv & { collectEvents(fn: () => void): SessionEvent[] };
+    const fromA = a.ws.frames.length, fromB = b.ws.frames.length, rawA = a.ws.raw.length;
+    const broadcast = (e: SessionEvent[]): void => (room as unknown as { broadcastEvents(e: SessionEvent[]): void }).broadcastEvents(e);
+
+    // вблизи — настоящий удар монстра (`monsterMelee`), рассылка — настоящая (`broadcastEvents`)
+    broadcast(session.collectEvents(() => session.monsterMelee(mon, me)));
+    // взрыв конструкта и снаряд без имени стрелка — теми же строками, что кладёт сессия (`HIT_BY_BLAST`, `HIT_BY_ENEMY`)
+    const pk = session.monsterPacket(mon);
+    broadcast(session.collectEvents(() => session.hitPlayer(me, pk.packet, pk.attacker, [], `${mon.def.name}${HIT_BY_BLAST}`, mon)));
+    broadcast(session.collectEvents(() => session.hitPlayer(me, pk.packet, pk.attacker, [], HIT_BY_ENEMY, mon)));
+    // снаряд — тиком: монстр стреляет, снаряд — у героя (летит в нём же), столкновение — шагом комнаты
+    session.monsterShoot(mon, me);
+    const shot = world.projectiles.find((p) => p.ownerId === mon.id)!;
+    Object.assign(shot, { pos: { ...me.pos }, vel: { x: 0, y: 0 } });
+    room.step();
+    // PvP: `by` — id игрока, его не трогают
+    broadcast([{ type: 'hit', target: 'player', id: a.pid, by: b.pid, x: me.pos.x, y: me.pos.y, hit: true, blocked: false, crit: false, amount: 1, byType: {} as never, mat: 'flesh' as never }]);
+
+    const ha = hitsOn(a.ws, a.pid, fromA), hb = hitsOn(b.ws, a.pid, fromB);
+    expect(hb.map((e) => e.by), 'русскому — испечённое, слово в слово').toEqual(expect.arrayContaining([mon.def.name, `${mon.def.name}${HIT_BY_BLAST}`, HIT_BY_ENEMY, b.pid]));
+    expect(hb.filter((e) => e.by === mon.def.name).length, 'вблизи и снарядом').toBeGreaterThanOrEqual(2);
+    expect(ha.length).toBe(hb.length);
+    expect(ha.map((e) => e.by).join(' | ')).not.toMatch(/[Ѐ-ӿ]/);
+    expect(ha.some((e) => e.by === b.pid), 'id игрока — как есть').toBe(true);
+    expect(ha.find((e) => e.by?.endsWith(' (vzryv)')), 'хвост взрыва — шаблоном языка').toBeDefined();
+    expect(leaksOf(a.ws.raw.slice(rawA))).toEqual([]);
   });
 });

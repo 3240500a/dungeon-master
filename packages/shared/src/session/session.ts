@@ -169,6 +169,15 @@ const loadoutSig = (p: PlayerEntity): string =>
 const pickedEvent = (playerId: string, t: { item?: Item; x: number; y: number; thrown?: true }): SessionEvent =>
   ({ type: 'item-picked', playerId, item: t.item!, x: t.x, y: t.y, ...(t.thrown ? { thrown: true as const } : {}) });
 
+/**
+ * ⭐ i18n (07.11, хвосты Ф1): `by` удара по герою — ИСПЕЧЁННОЕ имя нападающего (язык-источник): имя монстра (`def.name`), снаряд без имени
+ * стрелка — `HIT_BY_ENEMY`, взрыв конструкта — имя монстра + `HIT_BY_BLAST`; в PvP — id игрока. Иноязычному получателю имя пересобирает
+ * показ (`frameText.hitByDisplay`): ему нужна ровно эта склейка, поэтому она здесь, одной константой на печать и разбор.
+ */
+export const HIT_BY_ENEMY = 'Враг';
+/** Хвост `by` взрыва конструкта (`overloadOnDeath`): «<имя монстра> (взрыв)». */
+export const HIT_BY_BLAST = ' (взрыв)';
+
 /** События тика — для вью (числа/эффекты) и статистики. */
 export type SessionEvent =
   // `mat` — ВО ЧТО попали (класс брони цели, `flesh` = тела). Звук удара берётся отсюда, а не из метки
@@ -1881,7 +1890,7 @@ export class GameSession {
         if (!p.alive) continue;
         if (vecLen(proj.pos.x - p.pos.x, proj.pos.y - p.pos.y) < proj.radius) {
           const src = w.monsters.find((mm) => mm.id === proj.ownerId);
-          this.hitPlayer(p, proj.packet, proj.attacker, proj.onHit ?? [], proj.attackerName ?? 'Враг', src);
+          this.hitPlayer(p, proj.packet, proj.attacker, proj.onHit ?? [], proj.attackerName ?? HIT_BY_ENEMY, src);
           return true;
         }
       }
@@ -2666,7 +2675,7 @@ export class GameSession {
       const p = this.world.players[id]!;
       if (!p.alive) continue;
       if (vecLen(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius + p.radius && this.hasLos(m.pos, p.pos)) {
-        this.hitPlayer(p, a.packet, a.attacker, a.debuffs, `${m.def.name} (взрыв)`, m);
+        this.hitPlayer(p, a.packet, a.attacker, a.debuffs, `${m.def.name}${HIT_BY_BLAST}`, m);
       }
     }
   }

@@ -295,6 +295,9 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
           bySketch ? tr('srv:craft.sketchOpen', '✦ Открыть эскизом (эскизов: {sketches})', { sketches }) : '',
           elsewhere ? tr('srv:craft.sketchElsewhere', 'Здесь её тип ещё закрыт (его открывает разбор) — ковать её можно: {elsewhere}', { elsewhere }) : ''].filter(Boolean).join('\n'),
         disabled: (!open && !bySketch) || busy,
+        // ⭐ i18n (07.11, хвосты Ф1): имя детали БЕЗ знака закрытой («✦ » / «🔒 » в `text`) — окно снимало знак разбором начала строки
+        // (`CraftPanel.PartName`)
+        name: cfgRowText(reg, 'weapon-parts', p),
       });
     };
     if (isKey) {

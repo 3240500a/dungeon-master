@@ -126,7 +126,8 @@ export function installReleaseRoutes(app: Express, deps: ReleaseRoutesDeps): Rel
     res.setHeader('Cache-Control', 'no-cache');
     if (abiQ !== deps.abi) return res.status(409).json({ error: 'abi', abi: deps.abi });
     const p = await pointerOf(channel, abiQ);
-    if (p === 'unreleased') return res.status(404).json({ error: 'канал не выпущен', channel });
+    // ⭐ i18n (07.11, хвосты Ф1): `code` — машинно: Unity узнавал «канал не выпущен» по тексту (`ContentSync.Pointer`, `Contains`)
+    if (p === 'unreleased') return res.status(404).json({ error: 'канал не выпущен', channel, code: 'channelUnreleased' });
     if (!p) { res.setHeader('Retry-After', '2'); return res.status(503).json({ error: 'релиза контента ещё нет' }); }
     const pick = pickRelease(p, p.channel, id);
     const gate = clientGate(build, p.minClient, p.latestClient);

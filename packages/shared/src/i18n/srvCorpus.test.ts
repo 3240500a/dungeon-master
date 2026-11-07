@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractSrvFromRepo, extractSrvPhrases, srvCorpusFileText, srvCorpusOf } from './srvExtract.js';
 import { SRV_CORPUS, srvCorpusRows } from './srvCorpus.js';
-import { localesSchema, placeholders } from './index.js';
+import { leadingMarker, localesSchema, placeholders, pseudoLocales } from './index.js';
 import { defaultConfigData } from '../config/defaults.js';
 
 /**
@@ -49,11 +49,18 @@ describe('⭐⭐ i18n Ф2: корпус фраз кода (`srv:`)', () => {
         "trn('srv:x.n', n, { one: '{n} раз', other: '{n} раза' });",
         "trn('srv:x.m', n, forms);",             // формы — не литерал
         '// tr(\'srv:x.comment\', \'в комментарии\') — не ключ',
+        // ⭐ 07.11: `trWith` — ключ вторым аргументом, исходник третьим
+        "trWith(loc, 'srv:x.w', '{name} {tier}', { name, tier });",
+        "trWith(L, 'srv:x.wc', A);",              // константа — можно
+        "trWith(loc, key, 'Пять');",              // ключ — не литерал
+        "trWith(loc, 'srv:x.wd', src);",          // исходник — не литерал и не константа
       ].join('\n'),
     }]);
-    expect(r.phrases.map((p) => p.key)).toEqual(['srv:x.one', 'srv:x.one', 'srv:x.c', 'srv:x.n']);
+    expect(r.phrases.map((p) => p.key)).toEqual(['srv:x.one', 'srv:x.one', 'srv:x.c', 'srv:x.n', 'srv:x.w', 'srv:x.wc']);
     expect(r.phrases.find((p) => p.key === 'srv:x.c')!.source).toBe('Раз');
-    expect(r.problems.length).toBe(5);
+    expect(r.phrases.find((p) => p.key === 'srv:x.w')!.source).toBe('{name} {tier}');
+    expect(r.phrases.find((p) => p.key === 'srv:x.wc')!.source).toBe('Раз');
+    expect(r.problems.length).toBe(7);
   });
 
   it('⭐ переводы `srv:` не сироты и держат те же `{слоты}`, что исходник', () => {
@@ -73,6 +80,32 @@ describe('⭐⭐ i18n Ф2: корпус фраз кода (`srv:`)', () => {
         }
       }
     }
+  });
+
+  it('⭐ ВЕДУЩИЙ ЗНАК ЦЕЛ (07.11): перевод `srv:`, чей исходник начинается с «⚠» (и «✦» / «🔒» / «▮»), начинается с того же знака', () => {
+    const table = localesSchema.parse(defaultConfigData.locales);
+    const bad: string[] = [];
+    const check = (lang: string, strings: Readonly<Record<string, unknown>>): void => {
+      for (const [k, v] of Object.entries(strings)) {
+        if (!k.startsWith('srv:')) continue;
+        const src = SRV_CORPUS[k];
+        if (src === undefined) continue;
+        for (const [form, s] of typeof src === 'string' ? [['', src] as const] : Object.entries(src)) {
+          const m = leadingMarker(s);
+          if (!m) continue;
+          const tv = typeof v === 'string' ? [v] : form && v && typeof v === 'object' ? [(v as Record<string, string>)[form]] : Object.values(v as Record<string, string>);
+          for (const t of tv) if (t && !t.startsWith(m)) bad.push(`${lang} ${k}: «${t}» без «${m}»`);
+        }
+      }
+    };
+    for (const [lang, pack] of Object.entries(table)) check(lang, pack.strings);
+    expect(bad).toEqual([]);
+    // контроль: знаки в корпусе кода есть (у «⚠» — оговорки и предупреждения), и псевдоязык сторожа утечек их сохраняет
+    const marked = Object.keys(SRV_CORPUS).filter((k) => { const s = SRV_CORPUS[k]!; return typeof s === 'string' && leadingMarker(s) === '⚠'; });
+    expect(marked.length, 'фраз кода с «⚠»').toBeGreaterThan(3);
+    const xx = pseudoLocales(undefined, defaultConfigData).xx!;
+    check('xx', xx.strings);
+    expect(bad).toEqual([]);
   });
 
   it('строки корпуса кода — в форме строк конфига (вкладка «Языки» и покрытие идут одним кодом)', () => {

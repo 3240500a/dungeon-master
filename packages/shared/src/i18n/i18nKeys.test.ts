@@ -5,7 +5,7 @@ import locales from '../config/data/locales.json' with { type: 'json' };
 import {
   I18N_INTERNAL_FIELDS, I18N_SKIP_TABLES, I18N_TEXT_FIELDS, Localizer, SOURCE_LANG,
   AGREEMENT_TOKENS, joinParts, keyPlaceholders, localeCoverage, localeLangs, localePackSchema, localesSchema,
-  localesStrictSchema, normalizeAgreement, pickForm, placeholders,
+  localesStrictSchema, normalizeAgreement, pickForm, placeholders, leadingMarker, LEADING_MARKERS,
   walkConfigText, type Locales,
 } from './index.js';
 
@@ -112,6 +112,24 @@ describe('локализация: таблица языков', () => {
         expect(got, `${lang}/${key}: слоты шаблона разошлись с источником — имя соберётся с дыркой`).toEqual(want);
       }
     }
+  });
+
+  it('⭐ ВЕДУЩИЙ ЗНАК ЦЕЛ (07.11): перевод строки, чей исходник начинается с «⚠» / «✦» / «🔒» / «▮», начинается с того же знака', () => {
+    const src = new Map(corpus.map((c) => [c.key, c.source]));
+    const bad: string[] = [];
+    for (const lang of localeLangs(table)) {
+      if (lang === SOURCE_LANG) continue;
+      for (const [key, v] of Object.entries(table[lang]?.strings ?? {})) {
+        const m = leadingMarker(src.get(key) ?? '');
+        if (!m) continue;
+        for (const t of typeof v === 'string' ? [v] : Object.values(v)) if (t && !t.startsWith(m)) bad.push(`${lang}/${key}: «${t}» без «${m}»`);
+      }
+    }
+    expect(bad).toEqual([]);
+    // сам сторож видит знак (сегодня таких исходников в конфиге может и не быть — правило ждёт первой строки со знаком)
+    expect(LEADING_MARKERS.length).toBeGreaterThan(0);
+    expect(leadingMarker('⚠ x')).toBe('⚠');
+    expect(leadingMarker('x ⚠')).toBeUndefined();
   });
 
   it('покрытие считается, а не записывается руками', () => {

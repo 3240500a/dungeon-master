@@ -10,6 +10,12 @@ import type { EventBus } from '../events/index.js';
 export class ConfigRegistry {
   private data = {} as ConfigShapes;
   private bus?: EventBus;
+  /**
+   * ⭐ i18n (07.11, хвосты Ф1): ПОКОЛЕНИЕ ДАННЫХ — +1 на каждую загрузку и правку (`loadAll`, `reload`), какой бы таблицы она ни касалась.
+   * Память производных от нескольких таблиц (показ имени вещи `itemDisplay`: база, ступени, аффиксы, тип ковки, печати…) сверяет его, а не
+   * перечень таблиц: забытая в перечне таблица дала бы прежний перевод после её правки.
+   */
+  private gen = 0;
 
   constructor(bus?: EventBus) {
     this.bus = bus;
@@ -29,6 +35,7 @@ export class ConfigRegistry {
     }
     if (opts?.cross !== false) this.crossCheck(staged, Object.keys(staged) as ConfigKey[], false);
     Object.assign(this.data, staged);
+    this.gen++;
   }
 
   /**
@@ -84,7 +91,13 @@ export class ConfigRegistry {
     if (opts?.cross !== false) this.crossCheck(Object.fromEntries(staged), staged.map(([key]) => key), true);   // R21-03: `cross: false` — как у `loadAll`
     const store = this.data as Record<string, unknown>;
     for (const [key, value] of staged) store[key] = value;
+    this.gen++;
     this.bus?.emit('config:reloaded', { keys: staged.map(([key]) => key) });
+  }
+
+  /** ⭐ i18n (07.11): поколение данных (`gen`) — меняется на каждой загрузке и правке; для памяти производных от нескольких таблиц. */
+  generation(): number {
+    return this.gen;
   }
 
   /** Возвращает сырые данные (для экспорта из редактора). */

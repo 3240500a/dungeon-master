@@ -4,7 +4,7 @@ import type { AccountStash } from '../types/stash.js';
 import { liveModStats } from '../dungeon/run/runModEffects.js';
 import {
   buildSeal, carriedSealsAll, liveSealDefs, parseSealKey, sealBiomeKey, sealDef, sealLive, sealNextTier, sealReforgeRules,
-  sealRerollCost, sealRerollRules, sealStackMax, sealTierDef, sealTierMul, sealTiers, sealsEnabled, spendSealsBoth, SEAL_TEXT, type SealGains,
+  sealRerollCost, sealRerollRules, sealStackMax, sealTierDef, sealTierMul, sealTierPhrase, sealTiers, sealsEnabled, spendSealsBoth, SEAL_TEXT, type SealGains,
 } from '../economy/seals.js';
 import { addToInventory } from '../inventory/grid.js';
 import { cfgTextOf, isNum, ordinal, type CfgText, type RunViewOptions } from './runCommon.js';
@@ -77,7 +77,7 @@ function tabsOf(stash: AccountStash | null | undefined): AccountStash['tabs'] | 
 function sealTitle(reg: ConfigRegistry, tx: CfgText, sealId: string, tierId: string, defName: string): string {
   const t = sealTierDef(reg, tierId);
   const name = tx('seals', [sealId], 'name', defName) ?? defName;
-  return t ? `${name} ${tx('balance', ['seals', 'tiers', t.id], 'name', t.name) ?? t.name}` : name;
+  return t ? sealTierPhrase(name, tx('balance', ['seals', 'tiers', t.id], 'name', t.name) ?? t.name) : name;   // ⭐ 07.11: шаблон языка, источник — та же склейка
 }
 
 /**
@@ -228,13 +228,15 @@ export function runReforgeView(reg: ConfigRegistry, save: SaveState, stash: Acco
  * (`dm.Stash == null`). Модель C# их не несёт — им нужны два новых поля DTO (`fee`, `source`, см. отчёт), а до того их можно
  * класть в кадр рядом с моделью.
  */
-export function runReforgeHead(reg: ConfigRegistry, view: RunReforgeModel, stashLoaded: boolean): { fee: string | null; feeGold: number; source: string | null } {
+export function runReforgeHead(reg: ConfigRegistry, view: RunReforgeModel, stashLoaded: boolean): { fee: string | null; feeGold: number; source: string | null; sourceWarn: boolean } {
   const cost = sealReforgeRules(reg).goldCost;
   return {
     // ⭐ С6: пошлина числом — согласие команды (`maxGold`): дороже сервер не возьмёт
     feeGold: cost,
     fee: cost > 0 ? tr('srv:reforge.fee', 'Пошлина кузнеца: {cost} золота', { cost }) : null,
     source: !stashLoaded ? RUN_REFORGE_TEXT.noStash : !view.off && view.cards.length > 0 ? RUN_REFORGE_TEXT.source : null,
+    // ⭐ i18n (07.11, хвосты Ф1): `source` — предупреждение (сундук не загрузился): окно красило его по ведущему «⚠» (`SealReforgeView.Draw`)
+    sourceWarn: !stashLoaded,
   };
 }
 

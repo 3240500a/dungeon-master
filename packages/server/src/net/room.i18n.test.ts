@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { createHash } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
-  ConfigRegistry, cfgKey, itemFromBaseId, newCharacterSave, sheetView, tr, type ServerFrame, type SaveState,
+  ConfigRegistry, cfgKey, itemFromBaseId, newCharacterSave, sheetView, tr, SRV_CORPUS, pseudoForms, type ServerFrame, type SaveState, type Interactable,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
 import { inTextLang, langFromAcceptLanguage, requestLang, scopeCodeOf } from './textScope.js';
@@ -118,6 +118,10 @@ beforeAll(async () => {
       'srv:consent.sellGold': XX('price changed: {gold}'),
       'srv:stash.noMaterialsInBag': XX('no materials'),
       'srv:lobby.noRoom': XX('no room'),
+      // ⭐ 07.11: подписи [E] (станции, портал, выходы, возврат, рычаги, сундуки, алтарь) — транслитом без кириллицы (кадр `interactables`)
+      ...Object.fromEntries(Object.entries(SRV_CORPUS)
+        .filter(([k]) => ['srv:interact.', 'srv:station.', 'srv:run.exit', 'srv:runNode.'].some((p) => k.startsWith(p)))
+        .map(([k, v]) => [k, pseudoForms(v)])),
     },
   };
   cfg.reload({ locales });
@@ -256,5 +260,143 @@ describe('i18n Ф1: область языка сервера (`textScope`)', () 
     expect(requestLang({ headers: { 'accept-language': 'xx' }, body: { lang: 'ru' } }, locales), 'явное поле — сверху').toBe('ru');
     expect(requestLang({ headers: { 'accept-language': 'en' } }, locales), 'en не включён').toBeUndefined();
     expect(requestLang({ headers: {}, query: { lang: 'zz' } }, locales)).toBeUndefined();
+  });
+});
+
+describe('⭐ i18n (07.11, хвосты Ф1): смена языка на лету — подписи [E] и лимит', () => {
+  type RoomX = RoomIn & {
+    descend(pid: string): void; castVote(pid: string, yes: boolean): void; step(emit?: boolean): void; area: string;
+    session: RoomIn['session'] & { world: { grid: unknown } };
+  };
+  /** Как клиент знает интерактивы области: `areaChanged` (или `joined`), затем каждый `reveal` с тех пор. */
+  const known = (ws: FakeConn): Interactable[] => {
+    let list: Interactable[] = [];
+    for (const f of ws.frames) {
+      if (f.t === 'joined' || f.t === 'areaChanged') list = [...(f.floor.interactables ?? [])];
+      else if (f.t === 'reveal') list.push(...(f.interactables ?? []));
+      else if (f.t === 'interactables') list = [...f.interactables];
+    }
+    return list;
+  };
+  /** Всё, кроме подписи, — ключом: точка, радиус, действие, окно, рычаг/сундук, выход. */
+  const shape = (l: readonly Interactable[]): string[] =>
+    l.map((i) => JSON.stringify({ ...i, label: undefined })).sort();
+  const cyr = /[Ѐ-ӿ]/;
+
+  it('⭐ город: `lang` → лист героя, `langChanged`, затем `interactables` — те же точки и действия, подписи на новом языке', async () => {
+    const h = seedChar('i18n-labels-town');
+    const ws = await joined(h, { fresh: true });
+    await settle();
+    const ru = known(ws);
+    expect(ru.length, 'станции и портал города').toBeGreaterThanOrEqual(6);
+    expect(ru.every((i) => cyr.test(i.label))).toBe(true);
+    const from = ws.frames.length;
+    ws.push({ t: 'lang', lang: 'xx' });
+    await until(() => ws.frames.slice(from).some((f) => f.t === 'interactables'));
+    const order = ws.frames.slice(from).map((f) => f.t).filter((t) => t === 'hero' || t === 'langChanged' || t === 'interactables');
+    expect(order, 'порядок: лист, подтверждение, подписи').toEqual(['hero', 'langChanged', 'interactables']);
+    const xx = ws.last('interactables')!.interactables;
+    expect(shape(xx), 'те же id/точки/действия').toEqual(shape(ru));
+    expect(xx.map((i) => i.label).join(' | ')).not.toMatch(cyr);
+    expect(xx.map((i) => i.label)).not.toEqual(ru.map((i) => i.label));
+    // обратно на источник — те же русские подписи, что пришли со входом
+    ws.push({ t: 'lang', lang: 'ru' });
+    await until(() => ws.all('interactables').length === 2);
+    expect(ws.last('interactables')!.interactables).toEqual(ru);
+    // тот же язык ещё раз — не смена: только подтверждение, ни листа, ни подписей
+    const n = ws.frames.length;
+    ws.push({ t: 'lang', lang: 'ru' });
+    await until(() => ws.frames.length > n);
+    await settle();
+    const again = ws.frames.slice(n).map((f) => f.t);
+    expect(again.filter((t) => t === 'langChanged').length).toBe(1);
+    expect(again.includes('hero') || again.includes('interactables'), 'не смена — ни листа, ни подписей').toBe(false);
+    ws.close();
+    await settle();
+  });
+
+  it('⭐ подземелье: подписи — по открытым кускам (как знает клиент), без нового `reveal`; id и точки — как у русского списка', async () => {
+    const h = seedChar('i18n-labels-dun');
+    const ws = await joined(h, { fresh: true });
+    await settle();
+    const pid = ws.last('joined')!.playerId;
+    const room = roomOf(pid) as unknown as RoomX;
+    room.descend(pid);
+    if (room.area !== 'dungeon') room.castVote(pid, true);
+    await until(() => ws.last('areaChanged')?.floor.area === 'dungeon');
+    await settle();
+    // ⭐ ревизия (07.11): этаж случайный — у входа могло не открыться ни выхода, ни рычага, ни сундука (предусловие падало в общем прогоне).
+    // Герой — к первому выходу, его кусок открывает настоящий `revealTick` (кадр `reveal`, как в игре): у клиента — и возврат, и выход забега
+    const w = room.session.world as unknown as {
+      players: Record<string, { pos: { x: number; y: number } }>; exits?: { x: number; y: number }[]; stairs?: { x: number; y: number };
+    };
+    const exit = (w.exits?.length ? w.exits : w.stairs ? [w.stairs] : [])[0];
+    expect(exit, 'у этажа забега есть выход').toBeDefined();
+    Object.assign(w.players[pid]!.pos, { x: exit!.x, y: exit!.y });
+    (room as unknown as { revealTick(): void }).revealTick();
+    await settle();
+    const ru = known(ws);
+    expect(ru.some((i) => i.act === 'return') && ru.some((i) => i.act === 'exit')).toBe(true);
+    const reveals = ws.all('reveal').length;
+    const from = ws.frames.length;
+    ws.push({ t: 'lang', lang: 'xx' });
+    await until(() => ws.frames.slice(from).some((f) => f.t === 'interactables'));
+    const xx = ws.last('interactables')!.interactables;
+    expect(shape(xx)).toEqual(shape(ru));
+    expect(xx.map((i) => i.label).join(' | ')).not.toMatch(cyr);
+    expect(ws.all('reveal').length, 'смена языка кусков не открывает').toBe(reveals);
+    ws.close();
+    await settle();
+  });
+
+  it('⭐ лимит видов исчерпан: язык сменён и `langChanged` сразу, лист и подписи — тиком, когда лимит пустит; следующий лист — полный', async () => {
+    const h = seedChar('i18n-lang-limit');
+    const ws = await joined(h, { fresh: true });
+    await settle();
+    const pid = ws.last('joined')!.playerId;
+    const room = roomOf(pid) as unknown as RoomX;
+    limits.viewReq.charge(h.userId, 10_000);   // в долг: следующие запросы аккаунта ждут
+    const from = ws.frames.length;
+    ws.push({ t: 'lang', lang: 'xx' });
+    await until(() => !!ws.frames.slice(from).find((f) => f.t === 'langChanged'));
+    await settle();
+    expect(ws.last('langChanged')).toEqual({ t: 'langChanged', lang: 'xx' });
+    const after = ws.frames.slice(from).map((f) => f.t);
+    expect(after.includes('hero') || after.includes('interactables'), 'над лимитом — ни листа, ни подписей').toBe(false);
+    // тик над лимитом — тоже ничего
+    room.step(false);
+    expect(ws.frames.slice(from).some((f) => f.t === 'hero' || f.t === 'interactables')).toBe(false);
+    // лимит пустил — тик дошлёт лист (на новом языке) и подписи
+    limits.viewReq.reset(h.userId);
+    room.step(false);
+    const late = ws.frames.slice(from);
+    expect(late.some((f) => f.t === 'hero')).toBe(true);
+    expect(JSON.stringify(ws.last('hero')!.view)).toContain(XX('town'));
+    expect(late.filter((f) => f.t === 'interactables').length).toBe(1);
+    expect(ws.last('interactables')!.interactables.map((i) => i.label).join(' | ')).not.toMatch(cyr);
+    // дошло — больше не повторяется
+    const n = ws.all('interactables').length;
+    room.step(false);
+    expect(ws.all('interactables').length).toBe(n);
+    ws.close();
+    await settle();
+  });
+
+  it('⭐ над лимитом лист, ушедший по другой причине до тика, — полный, на новом языке (`heroSent` снят)', async () => {
+    const h = seedChar('i18n-lang-full');
+    const ws = await joined(h, { fresh: true });
+    await settle();
+    const pid = ws.last('joined')!.playerId;
+    const room = roomOf(pid) as unknown as RoomX & { pushHero(pid: string): void };
+    limits.viewReq.charge(h.userId, 10_000);
+    ws.push({ t: 'lang', lang: 'xx' });
+    await until(() => !!ws.last('langChanged'));
+    const heroes = ws.all('hero').length;
+    room.pushHero(pid);   // сейв, ауры, смена области — тот же вызов
+    expect(ws.all('hero').length).toBe(heroes + 1);
+    expect(JSON.stringify(ws.last('hero')!.view)).toContain(XX('town'));
+    limits.viewReq.reset(h.userId);
+    ws.close();
+    await settle();
   });
 });

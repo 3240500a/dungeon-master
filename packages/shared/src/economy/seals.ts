@@ -140,7 +140,16 @@ export function sealName(def: Seal, tier?: { name: string }): string {
 /** ⭐ i18n Ф1 (06.11): имя печати со ступенью ДЛЯ ПОКАЗА — на языке игрока (`sealName` печёт имя предмета языком-источником). */
 export function sealNameText(reg: ConfigRegistry, def: Seal, tier?: { name: string }): string {
   const name = cfgRowText(reg, 'seals', def);
-  return tier ? `${name} ${cfgRowText(reg, 'balance', tier)}` : name;
+  return tier ? sealTierPhrase(name, cfgRowText(reg, 'balance', tier)) : name;
+}
+
+/**
+ * ⭐ i18n (07.11, хвосты Ф1): «вид + ступень» для ПОКАЗА — фразой-шаблоном языка (`srv:seal.nameTier`), а не склейкой через пробел: у
+ * другого языка свой порядок слов, а у `zh` пробела нет вовсе. Источник — `{name} {tier}`, ровно та склейка, что у `sealName` (русский
+ * побайтово прежний). ⚠ Печать (`sealName`) по-прежнему склеивает сама: испечённое имя — язык-источник, его сверяет показ.
+ */
+export function sealTierPhrase(name: string, tier: string): string {
+  return tr('srv:seal.nameTier', '{name} {tier}', { name, tier });
 }
 
 /**

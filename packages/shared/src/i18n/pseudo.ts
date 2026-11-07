@@ -1,5 +1,5 @@
 /**
- * ⭐⭐ i18n Ф2 (06.11): ПСЕВДОЯЗЫК — перевод, в котором КАЖДЫЙ ключ корпуса (`cfg:` конфига и `srv:` кода) есть, и ни в одном нет
+ * ⭐⭐ i18n Ф2 (06.11): ПСЕВДОЯЗЫК — перевод, в котором КАЖДЫЙ ключ корпуса (`cfg:` конфига, `srv:` кода сервера и ⭐ 07.11 `ui:` клиента Unity) есть, и ни в одном нет
  * кириллицы: исходник транслитерирован буква в букву («Нет места в сумке» → «Net mesta v sumke»), `{слоты}` и знаки (`⚠`, `·`, `«»`)
  * целы. Отсюда сторож утечек: всё, что сервер собрал на таком языке и в чём осталась хоть одна кириллическая буква, собрано МИМО шва —
  * литерал без `tr`, текст конфига без `cfgText`, запечённое имя без показа (`itemDisplayName`). Тот же приём (pseudo-localization) —
@@ -11,6 +11,7 @@ import { walkConfigText } from './keys.js';
 import type { FormSet } from './forms.js';
 import type { Lang } from './keys.js';
 import { SRV_CORPUS } from './srvCorpus.js';
+import { UI_CORPUS } from './uiCorpus.js';
 import type { LocalePack, Locales } from './index.js';
 
 const LOWER: Readonly<Record<string, string>> = {
@@ -39,12 +40,13 @@ export function pseudoForms(src: FormSet): FormSet {
 
 /**
  * Таблица языков `base` + псевдоязык `lang` (включён), переведённый целиком: все `cfg:` сырых данных `raw` (тот же обход, что у
- * извлекателя) и все `srv:` корпуса кода. Грамматика — пробел, без согласования (у транслита нет рода), заглавная — как у источника.
+ * извлекателя), все `srv:` корпуса кода и все `ui:` корпуса клиента. Грамматика — пробел, без согласования (у транслита нет рода), заглавная — как у источника.
  */
 export function pseudoLocales(base: Locales | undefined, raw: Record<string, unknown>, lang: Lang = 'xx'): Locales {
   const strings: Record<string, FormSet> = {};
   for (const c of walkConfigText(raw)) strings[c.key] = pseudoText(c.source);
   for (const [k, v] of Object.entries(SRV_CORPUS)) strings[k] = pseudoForms(v);
+  for (const [k, v] of Object.entries(UI_CORPUS)) strings[k] = pseudoForms(v);   // ⭐ 07.11: и фразы клиента Unity (`ui:`)
   const pack: LocalePack = {
     name: 'Pseudo', enabled: true, grammar: { join: ' ', agrees: false, capitalize: 'first' }, templates: {}, strings,
   };

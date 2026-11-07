@@ -187,6 +187,18 @@ export function textSlug(s: string): string {
   return out.join('').split('-').filter(Boolean).join('-');
 }
 
+/**
+ * ⭐ i18n (07.11, хвосты Ф1): ВЕДУЩИЕ ЗНАКИ, на которые опирался клиент, — перевод строки, чей исходник начинается с такого знака, обязан
+ * начинаться с ТОГО ЖЕ знака (сторожа `srvCorpus.test.ts` и `i18nKeys.test.ts`). Unity красил и разбирал текст по ним (`⚠` — оговорка /
+ * предупреждение, `✦` / `🔒` — деталь по эскизу / закрытая, `▮` — полоса листа); с машинными полями видов (`note`, `sourceWarn`, `name`,
+ * `bar`) это уже не опора, а подстраховка: старый клиент и окна, ещё не перешедшие на поля, не потеряют цвет на первом переводе.
+ */
+export const LEADING_MARKERS: readonly string[] = ['⚠', '✦', '🔒', '▮'];
+/** Ведущий знак строки из `LEADING_MARKERS` (нет — `undefined`). */
+export function leadingMarker(s: string): string | undefined {
+  return LEADING_MARKERS.find((m) => s.startsWith(m));
+}
+
 /** Подстановки `{имя}` в строке — для сторожа паритета: у перевода обязан быть ТОТ ЖЕ набор слотов. */
 export function placeholders(s: string): string[] {
   return [...s.matchAll(/\{([a-zA-Z0-9_.-]+)\}/g)].map((m) => m[1]!).sort();

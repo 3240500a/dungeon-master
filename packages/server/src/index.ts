@@ -36,7 +36,7 @@ import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
 import { installConfigWrites } from './net/configRoutes.js';
 import { installCraftMeshRoute } from './net/craftMeshRoutes.js';
-import { ah, httpErrors, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
+import { ah, httpErrorsWith, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 import { blobStore } from './content/blobStore.js';
@@ -641,7 +641,8 @@ if (ROLE === 'gateway' || ROLE === 'single') {
 }
 
 // ⭐ R6-21: ошибки express (кривой JSON, тело больше потолка) — ответом JSON без стека в логе; ставится после всех ручек.
-app.use(httpErrors);
+// ⭐ i18n (07.11): на языке запроса (`lang` строки запроса / `Accept-Language` — включённые языки таблицы `locales` живого конфига)
+app.use(httpErrorsWith(() => config.get('locales') as Locales));
 
 // Ф4.5: слив узла по команде (`POST /internal/drain`) — в `installInternalRoutes` выше, рядом с метриками.
 

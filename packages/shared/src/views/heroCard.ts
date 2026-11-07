@@ -62,8 +62,12 @@ function equippedWith(save: SaveState, weapon: Item | undefined): SaveState {
 
 // ── таблица «в руках → скую» ──────────────────────────────────────────────────────────────────────
 
-/** = C# `DmStats.CompareRow`: ячейки (шапка/строка — 4, раздел и оговорка — 1); `c3` — цвет третьей, `c4` — четвёртой (разница). */
-export interface CompareRow { cells: string[]; c3?: string; c4?: string }
+/**
+ * = C# `DmStats.CompareRow`: ячейки (шапка/строка — 4, раздел и оговорка — 1); `c3` — цвет третьей, `c4` — четвёртой (разница).
+ * ⭐ i18n (07.11, хвосты Ф1): `note: true` — строка-оговорка во всю ширину (красная), а не раздел: окно ковки узнавало её по ведущему «⚠»
+ * (`CraftPanel.CompareBox`). Нет — нет поля.
+ */
+export interface CompareRow { cells: string[]; c3?: string; c4?: string; note?: true }
 
 /** Цвета окна (`ui/kit.ts` COLORS) — те же, что C# `DmStats.Good/Bad/Dim/Accent`. */
 const COMPARE_COLORS = { good: '#8aa84a', bad: '#c85a48', dim: '#8f897c', accent: '#e39a3c' } as const;
@@ -124,7 +128,7 @@ export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName:
     sec(tr('srv:compare.secStatus', 'Статус: {name}', { name: s.name }));
     line(tr('srv:compare.statusChance', 'шанс за попадание'), x?.chance, y?.chance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, tr('srv:compare.pp', ' п.п.'), 1));
     line(tr('srv:compare.avgStacks', 'средних стаков'), x?.avgStacks, y?.avgStacks, (v) => `${fx(v, 2)} / ${s.maxStacks}`);
-    if (s.capped) rows.push({ cells: [tr('srv:compare.statusCap', '⚠ шанс упёрся в потолок {pct}: прибавка к шансу сверх него не работает', { pct: pct(s.chance, 0) })] });
+    if (s.capped) rows.push({ cells: [tr('srv:compare.statusCap', '⚠ шанс упёрся в потолок {pct}: прибавка к шансу сверх него не работает', { pct: pct(s.chance, 0) })], note: true });
   };
   if (a.status && b.status && a.status.kind !== b.status.kind) { statusRows(a.status, undefined); statusRows(undefined, b.status); }
   else if (a.status || b.status) statusRows(a.status, b.status);

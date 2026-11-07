@@ -16,6 +16,8 @@
  * раньше: ни одна функция ниже не меняет ни байта русского текста. Сервер ставит область на каждый путь одного игрока
  * (`server/src/net/textScope.ts`, AsyncLocalStorage — переживает `await` транзакций).
  *
+ * ⭐ 07.11: с явным разрешителем — `trWith(loc, key, source, params)` (там, где сборке передан `Localizer`, а не область).
+ *
  * ⚠ ПРАВИЛА ДЛЯ ИЗВЛЕКАТЕЛЯ (он находит ключи статически, без запуска):
  *  • ключ — СТРОКОВЫЙ ЛИТЕРАЛ вида `srv:<область>.<camelCase>`; один ключ — один исходный текст;
  *  • исходник — литерал (или `const` со строковым литеральным типом — тогда извлекатель берёт его тип);
@@ -106,7 +108,20 @@ function fill(raw: string, params: TextParams | undefined): string {
  * ⭐ Фраза кода на языке текущей области. Нет перевода — исходник (русский текст, ровно как сегодня). `{слоты}` — из `params`.
  */
 export function tr(key: string, source: string, params?: TextParams): string {
-  const loc = textLocalizer();
+  return phrase(textLocalizer(), key, source, params);
+}
+
+/**
+ * ⭐ i18n (07.11, хвосты Ф1): та же фраза кода, что `tr`, но языком `loc` ЯВНО, а не областью — там, где сборке уже передан разрешитель
+ * (`itemDisplay`: рецепт имени собирается и источником для сверки, и языком игрока). `null` — исходник. Правила извлекателя — те же:
+ * ключ (2-й аргумент) и исходник (3-й) — литералы (`srvExtract.ts` собирает и `trWith`).
+ */
+export function trWith(loc: Localizer | null, key: string, source: string, params?: TextParams): string {
+  return phrase(loc, key, source, params);
+}
+
+/** Общее тело `tr` / `trWith` (своё имя — извлекатель ищет вызовы `tr`/`trWith` с литеральным ключом, а здесь ключ — переменная). */
+function phrase(loc: Localizer | null, key: string, source: string, params: TextParams | undefined): string {
   const out = fill(loc ? loc.text(key, source) : source, params);
   if (observer) observer(key, out);
   return out;

@@ -81,6 +81,8 @@ const runNodeStateSchema = z.object({
 
 export const saveStateSchema = z.object({
   version: z.number().int(),
+  // ⚠ i18n (07.11): умолчание ДАННЫХ, а не текст игроку — им дочиняются сейвы, записанные до поля имени (такие сейвы — русского сервера,
+  // и имя, раз попав в сейв, уже не переводится). Новое имя по умолчанию даёт `newCharacterSave` (`srv:hero.defaultName`, язык области).
   name: z.string().default('Герой'),
   charId: z.string().default(''),
   createdAt: z.number().default(0),

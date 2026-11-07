@@ -306,12 +306,14 @@ describe('JSON видов = публичные поля C#-моделей (Newto
   const FIELDS: Record<string, string[]> = {
     'DmStats.Hero': ['derived', 'effective', 'permanent', 'reserveMana', 'reserveStamina'],
     'DmSheet.HudModel': ['hp', 'mana', 'stam', 'xp', 'manaReserve', 'stamReserve', 'hpText', 'manaText', 'stamText', 'info'],
-    'DmSheet.Block': ['title', 'rows'],
-    'DmSheet.Row': ['cells', 'tip'],
+    // ⭐ i18n (07.11, шов Unity): машинные поля листа — и в C# (`DmSheet.Block.id`, `Row.pool`/`bar`/`delta`, `DmSheet.Bar`)
+    'DmSheet.Block': ['title', 'rows', 'id'],
+    'DmSheet.Row': ['cells', 'tip', 'pool', 'bar', 'delta'],
+    'DmSheet.Bar': ['cell', 'pct', 'tone'],
     'DmStats.WeaponCard': ['hitMin', 'hitMax', 'hitAvg', 'aps', 'critChance', 'critMult', 'dps', 'attrBonus', 'block', 'interruptResist', 'knockdown', 'mass',
       'reqTotal', 'attackType', 'rangePx', 'arcDeg', 'area', 'status', 'requirements'],
     'DmStats.WeaponStatus': ['kind', 'name', 'baseChance', 'chance', 'rawChance', 'maxStacks', 'durationSec', 'avgStacks', 'capped'],
-    'DmStats.CompareRow': ['cells', 'c3', 'c4'],
+    'DmStats.CompareRow': ['cells', 'c3', 'c4', 'note'],   // ⭐ 07.11: `note` — C# `CraftViews.CompareRow.note`
     'DmSkillTree.Model': ['nodes', 'edges', 'labels', 'header'],
     'DmSkillTree.NodeV': ['id', 'x', 'y', 'size', 'sw', 'rx', 'shape', 'fill', 'stroke', 'tip', 'alloc', 'avail', 'notable'],
     'DmSkillTree.EdgeV': ['a', 'b', 'x1', 'y1', 'x2', 'y2', 'sw', 'op', 'stroke'],
@@ -332,7 +334,7 @@ describe('JSON видов = публичные поля C#-моделей (Newto
       check('DmSheet.HudModel', hudView(reg, c.save, c.toggles, live, floorOf(c)), bad);
       for (const b of sheetView(reg, c.save, c.toggles, live, { lastTarget: c.lastTarget, pending: c.pending })) {
         check('DmSheet.Block', b, bad);
-        for (const r of b.rows) check('DmSheet.Row', r, bad);
+        for (const r of b.rows) { check('DmSheet.Row', r, bad); if (r.bar) check('DmSheet.Bar', r.bar, bad); }
       }
       const t = skillTreeView(reg, c.save);
       check('DmSkillTree.Model', t, bad);

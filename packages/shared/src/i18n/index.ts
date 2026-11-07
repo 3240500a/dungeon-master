@@ -8,6 +8,7 @@ export * from './forms.js';
 export * from './name.js';
 export * from './tr.js';   // ⭐ i18n Ф1 (06.11): шов текста сервера — `tr` / `trn` / `cfgText` и область языка
 export * from './srvCorpus.js';   // ⭐ i18n Ф2 (06.11): корпус фраз кода `srv:` (снимок `corpus.srv.json`)
+export * from './uiCorpus.js';    // ⭐ i18n (07.11): корпус фраз клиента Unity `ui:` (снимок `corpus.ui.json`)
 export * from './pseudo.js';      // ⭐ i18n Ф2: псевдоязык — сторож утечек кириллицы
 
 /** Строки одного языка: ключ → форма (или набор форм). */

@@ -1,7 +1,7 @@
 import {
   ConfigRegistry, Localizer, SOURCE_LANG, composeItemName, localeCoverage, localeLangs,
-  localesSchema, pickForm, walkConfigText, srvCorpusRows,
-  type ConfigText, type FormSet, type Lang, type Locales, type NameFragment, type NameShape, type SrvText,
+  localesSchema, pickForm, walkConfigText, srvCorpusRows, uiCorpusRows,
+  type ConfigText, type FormSet, type Lang, type Locales, type NameFragment, type NameShape, type SrvText, type UiText,
 } from '@dm/shared';
 import type { CraftIo } from './craft.js';
 
@@ -18,6 +18,8 @@ import type { CraftIo } from './craft.js';
  *     извлекатель (`npm run i18n`), так что страница не может показать «не те» строки.
  *     ⭐ i18n Ф2 (06.11): рядом — ФРАЗЫ КОДА СЕРВЕРА (`srv:`, снимок `corpus.srv.json` того же извлекателя): «таблицы» `srv:<область>`
  *     в том же списке, правятся так же; у фразы по числу — поле на каждую категорию числа ПЕРЕВОДИМОГО языка (`Intl.PluralRules`).
+ *     ⭐ i18n (07.11, «литералы обвязки»): и ФРАЗЫ КЛИЕНТА UNITY (`ui:`, снимок `corpus.ui.json`) — «таблицы» `клиент Unity · <область>`
+ *     после фраз сервера, правятся так же (перевод уезжает в Unity таблицей `locales` конфига).
  *  3. **ФОРМЫ У СОГЛАСУЕМЫХ ФРАГМЕНТОВ.** У прилагательного ступени или аффикса — четыре поля вместо
  *     одного (род и число), и это ЕДИНСТВЕННЫЙ способ получить «Кровавая секира» вместо «Кровавый
  *     секира» на языке, про который в коде ничего не знают.
@@ -65,9 +67,14 @@ const FORM_KEYS: ReadonlyArray<[string, string]> = [
  */
 const AGREEING_FIELDS: ReadonlySet<string> = new Set(['adj']);
 const AGREEING_TABLES: ReadonlySet<string> = new Set(['item-tiers']);
-/** Строка корпуса вкладки: текст конфига (`cfg:`) или фраза кода сервера (`srv:`, ⭐ i18n Ф2). */
-type CorpusRow = ConfigText | SrvText;
-const isSrv = (row: CorpusRow): row is SrvText => row.key.startsWith('srv:');
+/** Строка корпуса вкладки: текст конфига (`cfg:`), фраза кода сервера (`srv:`, ⭐ i18n Ф2) или ⭐ 07.11 фраза клиента Unity (`ui:`). */
+type CorpusRow = ConfigText | SrvText | UiText;
+/** Фраза КОДА (сервера или клиента): ключ авторский, у фразы по числу — формы по категориям числа. */
+const isSrv = (row: CorpusRow): row is SrvText | UiText => row.key.startsWith('srv:') || row.key.startsWith('ui:');
+/** Порядок «таблиц» в списке: конфиг, фразы сервера, фразы клиента Unity. */
+const tableRank = (t: string): number => (t.startsWith('ui:') ? 2 : t.startsWith('srv:') ? 1 : 0);
+/** Подпись «таблицы» в выпадающем списке. */
+const tableTitle = (t: string): string => (t.startsWith('srv:') ? `код сервера · ${t.slice(4)}` : t.startsWith('ui:') ? `клиент Unity · ${t.slice(3)}` : t);
 const isAgreeing = (row: CorpusRow): boolean => !isSrv(row) && (
   AGREEING_FIELDS.has(row.field)
   || (AGREEING_TABLES.has(row.table) && row.field === 'name')
@@ -232,9 +239,10 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
   const locales = localesOf(data);
   const langs = localeLangs(locales).filter((l) => l !== SOURCE_LANG);
   if (!langs.includes(lang)) lang = langs[0] ?? SOURCE_LANG;
-  // ⭐ i18n Ф2 (06.11): корпус вкладки — конфиг И фразы кода сервера (`srv:` — «таблицы» по областям, в конце списка)
-  const corpus: CorpusRow[] = [...walkConfigText(data), ...srvCorpusRows()];
-  const tables = [...new Set(corpus.map((r) => r.table))].sort((a, b) => Number(a.startsWith('srv:')) - Number(b.startsWith('srv:')) || a.localeCompare(b));
+  // ⭐ i18n Ф2 (06.11): корпус вкладки — конфиг И фразы кода сервера (`srv:` — «таблицы» по областям, в конце списка); ⭐ 07.11 — и фразы
+  // клиента Unity (`ui:` — после сервера)
+  const corpus: CorpusRow[] = [...walkConfigText(data), ...srvCorpusRows(), ...uiCorpusRows()];
+  const tables = [...new Set(corpus.map((r) => r.table))].sort((a, b) => tableRank(a) - tableRank(b) || a.localeCompare(b));
   if (!tables.includes(table)) table = tables[0] ?? '';
   const strings = stringsOf(locales, lang);
 
@@ -242,7 +250,8 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
   card.append(el('div', CSS.h, '📝 Строки под перевод'),
     el('div', CSS.sub,
       `Корпус набран тем же обходчиком, что и «npm run i18n», поэтому здесь ровно те строки, которые видит `
-      + `игрок: ${corpus.length} на ${tables.length} таблиц (из них фраз кода сервера, «srv:…», — ${corpus.filter(isSrv).length}). `
+      + `игрок: ${corpus.length} на ${tables.length} таблиц (из них фраз кода сервера, «srv:…», — ${corpus.filter((r) => r.key.startsWith('srv:')).length}, `
+      + `фраз клиента Unity, «ui:…», — ${corpus.filter((r) => r.key.startsWith('ui:')).length}). `
       + `Русский не переводят — он лежит в самих данных и в коде и служит запасом, если перевода нет. Подстановки `
       + `{вида} переводу нужны те же, что у источника.`));
 
@@ -267,7 +276,7 @@ function renderStrings(host: HTMLElement, data: Record<string, unknown>, redraw:
   for (const t of tables) {
     const o = document.createElement('option');
     o.value = t; o.selected = t === table;
-    o.textContent = `${t.startsWith('srv:') ? `код сервера · ${t.slice(4)}` : t} (${corpus.filter((r) => r.table === t).length})`;
+    o.textContent = `${tableTitle(t)} (${corpus.filter((r) => r.table === t).length})`;
     tsel.appendChild(o);
   }
   tsel.addEventListener('change', () => { table = tsel.value; redraw(); });

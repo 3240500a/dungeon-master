@@ -10,6 +10,7 @@ import { emptyJournal, fullJournal, type CraftJournal } from '../formulas/craft.
 import { itemFromBaseId } from '../formulas/itemgen.js';
 import { respecRefusal } from '../economy/townActions.js';
 import { GOLDEN, readGolden, registryFromGolden } from './town.testkit.js';
+import type { MatCell } from './townMaterials.js';
 import {
   benchActions, benchTargetLabel, benchTarget, disposePrompts, forgeBenchView, glyphOf, itemMenuView, journalGainsOf, materialNote,
   materialsView, priceText, questLines, questsView, respecView, socketsView, bindSlotView, abbrev, itemTipView,
@@ -137,9 +138,13 @@ describe.skipIf(!g)('виды города ⇄ unity_panels.json', () => {
   });
 
   it('«Ресурсы» сундука и подсказка стопки сырья', () => {
+    // ⭐ i18n (07.11, хвосты Ф1): `tipBag` — машинное поле (номер строки «В сумке …» в `tip`), эталон его не знает — снято явно; смысл
+    // сторожат `machineFields.test.ts` и Unity `ViewsTownCheck`
+    const noBag = (c: MatCell | null): unknown => { if (!c) return c; const { tipBag: _b, ...rest } = c; return rest; };
     for (const m of g!.materials.cases) {
       const { carried, ...v } = materialsView(reg, m.wallet, m.inventory);
-      expect(json(v)).toEqual(m.view);
+      const shown = { ...v, rows: v.rows.map((r) => ({ ...r, cells: r.cells.map(noBag) })), essence: noBag(v.essence) };
+      expect(json(shown)).toEqual(m.view);
       expect(carried > 0).toBe((m.view.tab as string).includes('+'));
     }
     for (const nt of g!.materials.notes) expect(json(materialNote(reg, { kind: 'material', materialId: nt.id })), nt.id).toEqual(nt.note);
