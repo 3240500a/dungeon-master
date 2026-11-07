@@ -1,7 +1,7 @@
 {
  "policies": {
   "spelling": "британская орфография (владелец выбрал Sabre): Armour, Defence, Sceptre, Colour, Grey, Mould… — привести и уже переведённые строки en (Armor, Vigor → Armour, Vigour)",
-  "transliteration": "славянское оружие — НЕ транслитом, английским родовым словом (Рогатина → Bear Spear, Самострел → Stirrup Crossbow, Острога → Fish Spear); так же Сулица, Шестопёр, Ослоп, Чекан",
+  "transliteration": "славянское оружие — НЕ транслитом, английским родовым словом (Рогатина → Bear Spear, Самострел → Stirrup Crossbow, Острога → Fish Spear); так же Сулица, Шестопёр, Ослоп, Чекан — 07.11 применено к самому глоссарию: Шестопёр → Flanged Mace, Ослоп → Iron-Bound Club, Сулица → Javelin, Чекан → Hammer Axe (секира-чекан → Hammer-Poll Axe), Рогатина с перекладиной → Crossbar Bear Spear",
   "health": "Здоровье/HP → Health (не Life) везде, включая уже переведённые «Monster life», «maximum life»",
   "axe": "умение «Секира» → Axe (совпадает со словом оружия — решение владельца)",
   "cleave": "Cleave освободился (Секира → Axe): «Рассекающий удар» → Cleaving Strike; корень Рассек- → Cleav-",
@@ -9,7 +9,8 @@
   "wrath": "Кара небес → Heaven's Wrath: Wrath теперь у «Кары небес»; «Гнев» → Fury (развести)",
   "unbreakable": "нотабль «Несокрушимость» и кейстон «★ Несокрушимый» — оба Unbreakable (решение владельца)",
   "epoch": "имперская эпоха → of the Empire; остальные эпохи — по сетке Archaic / Early / Classical Age, если не режет слух",
-  "case": "P6: Title Case в именах, lowercase в подписях"
+  "case": "P6: Title Case в именах, lowercase в подписях",
+  "statWords": "имена узлов мастерства и умений берут слова листа героя (srv:stat.*): Crit Chance, Crit Multiplier, Move Speed, Poise, Health/Mana Regen; сопротивления — полным словом (Fire Resistance), в подписях листа — Fire Res."
  },
  "entries": [
   {
@@ -257,10 +258,11 @@
     "b-armor-light"
    ],
    "ru": "Лёгкая броня",
-   "en": "Light Armor",
+   "en": "Light Armour",
    "alts": [],
    "note": "группа armor; US-орфография, как Armor в en",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Light Armor → Light Armour"
   },
   {
    "group": "branch",
@@ -281,10 +283,11 @@
     "b-armor-plate"
    ],
    "ru": "Тяжёлая броня",
-   "en": "Heavy Armor",
+   "en": "Heavy Armour",
    "alts": [],
    "note": "группа armor",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Heavy Armor → Heavy Armour"
   },
   {
    "group": "branch",
@@ -505,10 +508,11 @@
     "group:armor"
    ],
    "ru": "Броня",
-   "en": "Armor",
+   "en": "Armour",
    "alts": [],
    "note": "только редактор",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Armor → Armour"
   },
   {
    "group": "branch",
@@ -738,12 +742,13 @@
     "b-axe1h-a2"
    ],
    "ru": "Раскол доспеха",
-   "en": "Split Armor",
+   "en": "Split Armour",
    "alts": [
     "Rend Armor"
    ],
    "note": "[active]; Раскол → Split; Sunder занят дебаффом «Увечье»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Split Armor → Split Armour"
   },
   {
    "group": "skill",
@@ -1023,10 +1028,11 @@
     "b-mace1h-a3"
    ],
    "ru": "Дробление брони",
-   "en": "Crush Armor",
+   "en": "Crush Armour",
    "alts": [],
    "note": "[active]; Дроб- → Crush",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Crush Armor → Crush Armour"
   },
   {
    "group": "skill",
@@ -1192,10 +1198,11 @@
     "b-dagger-p4"
    ],
    "ru": "Пробой брони",
-   "en": "Armor Penetration",
+   "en": "Armour Penetration",
    "alts": [],
    "note": "[passive]; как подпись стата armorPen",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Armor Penetration → Armour Penetration"
   },
   {
    "group": "skill",
@@ -1998,10 +2005,11 @@
     "b-crossbow-p4"
    ],
    "ru": "Бронебойность",
-   "en": "Armor Piercing",
+   "en": "Armour Piercing",
    "alts": [],
    "note": "[passive]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Armor Piercing → Armour Piercing"
   },
   {
    "group": "skill",
@@ -3070,13 +3078,14 @@
     "b-class-vorozheya-a5"
    ],
    "ru": "Порча брони",
-   "en": "Corrode Armor",
+   "en": "Corrode Armour",
    "alts": [
     "Hex of Rust",
     "Armor Hex"
    ],
    "note": "[active]; накладывает увечье (Sunder); Sunder Armor не берём — слово дебаффа",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Corrode Armor → Corrode Armour"
   },
   {
    "group": "skill",
@@ -3204,10 +3213,11 @@
     "b-aura-a1"
    ],
    "ru": "Аура гнева",
-   "en": "Aura of Wrath",
+   "en": "Aura of Fury",
    "alts": [],
    "note": "[active]; Гнев → Wrath",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Aura of Wrath → Aura of Fury"
   },
   {
    "group": "skill",
@@ -3383,12 +3393,13 @@
     "b-stance-a2"
    ],
    "ru": "Оборона",
-   "en": "Defense",
+   "en": "Defence",
    "alts": [
     "Guard"
    ],
    "note": "[active]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Defense → Defence"
   },
   {
    "group": "skill",
@@ -3917,10 +3928,11 @@
     "b-class-arbalest-p4"
    ],
    "ru": "Мастерство: Крит",
-   "en": "Mastery: Critical Chance",
+   "en": "Mastery: Crit Chance",
    "alts": [],
    "note": "[passive]; RU «Крит» = шанс крита (stat critChance)",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Mastery: Critical Chance → Mastery: Crit Chance"
   },
   {
    "group": "skill",
@@ -4289,10 +4301,11 @@
     "b-class-arbalest-p5"
    ],
    "ru": "Мастерство: Множ. крита",
-   "en": "Mastery: Critical Multiplier",
+   "en": "Mastery: Crit Multiplier",
    "alts": [],
    "note": "[passive]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Mastery: Critical Multiplier → Mastery: Crit Multiplier"
   },
   {
    "group": "skill",
@@ -4436,10 +4449,11 @@
     "p-vit-barrier-d2r2"
    ],
    "ru": "Броня 3%",
-   "en": "Armor 3%",
+   "en": "Armour 3%",
    "alts": [],
    "note": "[малый узел]; шаблон «<стат> N%»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Armor 3% → Armour 3%"
   },
   {
    "group": "mastery",
@@ -4748,12 +4762,13 @@
     "p-vit-life-d2m"
    ],
    "ru": "Реген HP 5%",
-   "en": "Life Regeneration 5%",
+   "en": "Health Regen 5%",
    "alts": [
     "Life Regen 5%"
    ],
    "note": "[малый узел]; Life Regeneration, не Regen-сленг",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Life Regeneration 5% → Health Regen 5%"
   },
   {
    "group": "mastery",
@@ -4772,10 +4787,11 @@
     "p-int-mana-d2m"
    ],
    "ru": "Реген маны 5%",
-   "en": "Mana Regeneration 5%",
+   "en": "Mana Regen 5%",
    "alts": [],
    "note": "[малый узел]; шаблон «<стат> N%»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Mana Regeneration 5% → Mana Regen 5%"
   },
   {
    "group": "mastery",
@@ -4792,10 +4808,11 @@
     "p-vit-life-d2l2"
    ],
    "ru": "Здоровье 2.5%",
-   "en": "Life 2.5%",
+   "en": "Health 2.5%",
    "alts": [],
    "note": "[малый узел]; шаблон «<стат> N%»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Life 2.5% → Health 2.5%"
   },
   {
    "group": "mastery",
@@ -4833,10 +4850,11 @@
     "p-vit-barrier-d2l2"
    ],
    "ru": "Стойкость к прерыв. 2.5%",
-   "en": "Interrupt Resistance 2.5%",
+   "en": "Poise 2.5%",
    "alts": [],
    "note": "[малый узел]; шаблон «<стат> N%»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Interrupt Resistance 2.5% → Poise 2.5%"
   },
   {
    "group": "mastery",
@@ -5174,12 +5192,13 @@
     "p-dex-precision-d2r2"
    ],
    "ru": "Шанс крита 3%",
-   "en": "Critical Chance 3%",
+   "en": "Crit Chance 3%",
    "alts": [
     "Crit Chance 3%"
    ],
    "note": "[малый узел]; без сленга crit: Critical Chance",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Critical Chance 3% → Crit Chance 3%"
   },
   {
    "group": "mastery",
@@ -5225,10 +5244,11 @@
     "p-dex-swift-d2m"
    ],
    "ru": "Скор. движения 1.5%",
-   "en": "Movement Speed 1.5%",
+   "en": "Move Speed 1.5%",
    "alts": [],
    "note": "[малый узел]; шаблон «<стат> N%»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Movement Speed 1.5% → Move Speed 1.5%"
   },
   {
    "group": "mastery",
@@ -5267,10 +5287,11 @@
     "p-dex-precision-d2m"
    ],
    "ru": "Множ. крита 3%",
-   "en": "Critical Multiplier 3%",
+   "en": "Crit Multiplier 3%",
    "alts": [],
    "note": "[малый узел]; шаблон «<стат> N%»",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Critical Multiplier 3% → Crit Multiplier 3%"
   },
   {
    "group": "mastery",
@@ -5778,13 +5799,14 @@
     "ax-chekan-ia"
    ],
    "ru": "Чекан, тип IА",
-   "en": "Chekan, Type IA",
+   "en": "Hammer Axe, Type IA",
    "alts": [
     "Axe-Hammer, Type IA"
    ],
    "note": "[axe]; Кирпичников: чеканы (топоры-молотки); в англ. литературе транслит chekan",
    "owner": false,
-   "changed": "owner снят — покрыто политикой транслита (запись «Рогатина»)"
+   "changed": "owner снят — покрыто политикой транслита (запись «Рогатина»)",
+   "policyAligned": "07.11 по политикам владельца: Chekan, Type IA → Hammer Axe, Type IA"
   },
   {
    "group": "weaponType",
@@ -5792,12 +5814,13 @@
     "ax-chekan-i"
    ],
    "ru": "Чекан, тип I",
-   "en": "Chekan, Type I",
+   "en": "Hammer Axe, Type I",
    "alts": [
     "Axe-Hammer, Type I"
    ],
    "note": "[axe]; Кирпичников 1966",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Chekan, Type I → Hammer Axe, Type I"
   },
   {
    "group": "weaponType",
@@ -5805,12 +5828,13 @@
     "ax-chekan-ii"
    ],
    "ru": "Чекан, тип II",
-   "en": "Chekan, Type II",
+   "en": "Hammer Axe, Type II",
    "alts": [
     "Axe-Hammer, Type II"
    ],
    "note": "[axe]; Кирпичников 1966",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Chekan, Type II → Hammer Axe, Type II"
   },
   {
    "group": "weaponType",
@@ -5930,12 +5954,13 @@
     "ax-sekira-chekan"
    ],
    "ru": "Секира-чекан",
-   "en": "Chekan Axe",
+   "en": "Hammer-Poll Axe",
    "alts": [
     "Hammer-Poll Axe"
    ],
    "note": "[axe]; Кирпичников 1976; секира-чекан = полотно + молоточек",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Chekan Axe → Hammer-Poll Axe"
   },
   {
    "group": "weaponType",
@@ -6015,12 +6040,13 @@
     "mc-flanged"
    ],
    "ru": "Шестопёр",
-   "en": "Shestopyor",
+   "en": "Flanged Mace",
    "alts": [
     "Flanged Mace"
    ],
    "note": "[mace]; русский шестопёр; англ. транслит shestopyor (Wikipedia), flanged mace — родовое",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Shestopyor → Flanged Mace"
   },
   {
    "group": "weaponType",
@@ -6124,10 +6150,11 @@
     "mc-oslop"
    ],
    "ru": "Ослоп",
-   "en": "Oslop",
+   "en": "Iron-Bound Club",
    "alts": [],
    "note": "[mace]; транслит; тяжёлая дубина с железом",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Oslop → Iron-Bound Club"
   },
   {
    "group": "weaponType",
@@ -6223,12 +6250,13 @@
     "sp-sulica"
    ],
    "ru": "{strike.form.adj} сулица",
-   "en": "{strike.form.adj} Sulitsa",
+   "en": "{strike.form.adj} Javelin",
    "alts": [
     "{strike.form.adj} Javelin"
    ],
    "note": "[spear]; сулица — славянский дротик; транслит sulitsa принят в англ.",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: {strike.form.adj} Sulitsa → {strike.form.adj} Javelin"
   },
   {
    "group": "weaponType",
@@ -6236,13 +6264,14 @@
     "sp-rogatina-bar"
    ],
    "ru": "Рогатина с перекладиной",
-   "en": "Crossbar Rogatina",
+   "en": "Crossbar Bear Spear",
    "alts": [
     "Boar Spear"
    ],
    "note": "[spear]; рогатина ≈ boar/bear spear; с перекладиной ближе всего к boar spear",
    "owner": false,
-   "changed": "owner снят — производное от «Рогатина»"
+   "changed": "owner снят — производное от «Рогатина»",
+   "policyAligned": "07.11 по политикам владельца: Crossbar Rogatina → Crossbar Bear Spear"
   },
   {
    "group": "weaponType",
@@ -6885,12 +6914,13 @@
     "wd-sceptre"
    ],
    "ru": "Скипетр",
-   "en": "Scepter",
+   "en": "Sceptre",
    "alts": [
     "Sceptre"
    ],
    "note": "[wand]; US-орфография",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Scepter → Sceptre"
   },
   {
    "group": "weaponType",
@@ -7389,12 +7419,13 @@
     "cfg:weapon-anatomy/sword/strike/tags/type/values/sabre/name"
    ],
    "ru": "саблевидный",
-   "en": "saber-like",
+   "en": "sabre-like",
    "alts": [
     "sabre-like"
    ],
    "note": "[name]; US-орфография",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: saber-like → sabre-like"
   },
   {
    "group": "anatomy",
@@ -9413,13 +9444,14 @@
     "cfg:weapon-anatomy/mace/strike/tags/form/values/flanged/name"
    ],
    "ru": "шестопёр",
-   "en": "Shestopyor",
+   "en": "Flanged Mace",
    "alts": [
     "Flanged Mace"
    ],
    "note": "[name]",
    "owner": false,
-   "changed": "шаблон булавы «{strike.form.name} {bind.mount.with}» ставит это значение головой имени — Title Case (исключение из P6)"
+   "changed": "шаблон булавы «{strike.form.name} {bind.mount.with}» ставит это значение головой имени — Title Case (исключение из P6)",
+   "policyAligned": "07.11 по политикам владельца: Shestopyor → Flanged Mace"
   },
   {
    "group": "anatomy",
@@ -9523,11 +9555,12 @@
     "cfg:weapon-anatomy/mace/strike/tags/form/values/oslop/name"
    ],
    "ru": "ослоп",
-   "en": "Oslop",
+   "en": "Iron-Bound Club",
    "alts": [],
    "note": "[name]",
    "owner": false,
-   "changed": "шаблон булавы «{strike.form.name} {bind.mount.with}» ставит это значение головой имени — Title Case (исключение из P6)"
+   "changed": "шаблон булавы «{strike.form.name} {bind.mount.with}» ставит это значение головой имени — Title Case (исключение из P6)",
+   "policyAligned": "07.11 по политикам владельца: Oslop → Iron-Bound Club"
   },
   {
    "group": "anatomy",
@@ -9547,13 +9580,14 @@
     "cfg:weapon-anatomy/mace/strike/tags/form/values/sprinkler/name"
    ],
    "ru": "моргенштерн",
-   "en": "Holy Water Sprinkler",
+   "en": "Morning Star",
    "alts": [
     "Morning Star"
    ],
    "note": "[name]; см. коллизию с base Morning Star",
    "owner": false,
-   "changed": "шаблон булавы «{strike.form.name} {bind.mount.with}» ставит это значение головой имени — Title Case (исключение из P6)"
+   "changed": "шаблон булавы «{strike.form.name} {bind.mount.with}» ставит это значение головой имени — Title Case (исключение из P6)",
+   "policyAligned": "07.11: Holy Water Sprinkler → Morning Star (как тип «Моргенштерн», решение владельца)"
   },
   {
    "group": "anatomy",
@@ -10107,12 +10141,13 @@
     "cfg:weapon-anatomy/spear/strike/tags/form/values/rogatina/name"
    ],
    "ru": "Рогатинное (IVА)",
-   "en": "Rogatina (IVA)",
+   "en": "Bear-Spear (IVA)",
    "alts": [
     "Bear-Spear (IVA)"
    ],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Rogatina (IVA) → Bear-Spear (IVA)"
   },
   {
    "group": "anatomy",
@@ -10120,10 +10155,11 @@
     "cfg:weapon-anatomy/spear/strike/tags/form/values/rogatina/adj"
    ],
    "ru": "рогатинный",
-   "en": "Rogatina",
+   "en": "Bear-Spear",
    "alts": [],
    "note": "[adj]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Rogatina → Bear-Spear"
   },
   {
    "group": "anatomy",
@@ -10269,10 +10305,11 @@
     "cfg:weapon-anatomy/spear/grip/tags/hold/values/one/name"
    ],
    "ru": "сулица 1,2–1,5 м",
-   "en": "sulitsa, 1.2–1.5 m",
+   "en": "javelin, 1.2–1.5 m",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: sulitsa, 1.2–1.5 m → javelin, 1.2–1.5 m"
   },
   {
    "group": "anatomy",
@@ -11226,10 +11263,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/barrel/name"
    ],
    "ru": "со стволом",
-   "en": "barreled",
+   "en": "barrelled",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: barreled → barrelled"
   },
   {
    "group": "anatomy",
@@ -12933,10 +12971,11 @@
     "sp-gr-long"
    ],
    "ru": "Длинное древко сулицы",
-   "en": "Long Sulitsa Shaft",
+   "en": "Long Javelin Shaft",
    "alts": [],
    "note": "[словарь деталей]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Long Sulitsa Shaft → Long Javelin Shaft"
   },
   {
    "group": "part-pattern",
@@ -12944,10 +12983,11 @@
     "sp-gr-plain"
    ],
    "ru": "Древко сулицы",
-   "en": "Sulitsa Shaft",
+   "en": "Javelin Shaft",
    "alts": [],
    "note": "[словарь деталей]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Sulitsa Shaft → Javelin Shaft"
   },
   {
    "group": "part-pattern",
@@ -13308,10 +13348,11 @@
     "cb-st-barrel"
    ],
    "ru": "Ложе со стволом",
-   "en": "Barreled Stock",
+   "en": "Barrelled Stock",
    "alts": [],
    "note": "[словарь деталей]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 по политикам владельца: Barreled Stock → Barrelled Stock"
   },
   {
    "group": "part-pattern",
