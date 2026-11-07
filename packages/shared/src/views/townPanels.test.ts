@@ -2,7 +2,8 @@
  * Виды города ⇄ эталон панелей Unity (`unity_panels.json`, PanelsCheck.cs): реестр — из снимка `config` эталона, каждый кейс разделов
  * `items` (верстак в трёх кошельках, подпись предпросмотра, глиф, вопросы, «что добавил бы в каталог»), `menu`, `materials`, `sockets`,
  * `prices`, `attrs.respec`, `quests`, `bind` — до буквы. Отличия от эталона (вид шлёт больше полей) — сняты явно и перечислены.
- * Не покрыты (не вид города): `attrs.alloc` (нарезка команд из ввода клиента), `belt` (поле сейва), `debuffs`, `auras` (HUD).
+ * Не покрыты (не вид города): `attrs.alloc` (нарезка команд из ввода клиента), `belt` (поле сейва). ⭐ i18n (07.11, этап 1): `debuffs` и
+ * `auras` (HUD) — покрыты: их текст теперь шлёт сервер (кадр `hero`: `auraLine`, `debuffLabels`); иконки и рамки — по-прежнему Unity.
  */
 import { describe, it, expect } from 'vitest';
 import type { Item, QuestDef, SaveState, EquipSlot } from '../types/index.js';
@@ -15,6 +16,7 @@ import {
   benchActions, benchTargetLabel, benchTarget, disposePrompts, forgeBenchView, glyphOf, itemMenuView, journalGainsOf, materialNote,
   materialsView, priceText, questLines, questsView, respecView, socketsView, bindSlotView, abbrev, itemTipView,
 } from './town.js';
+import { hudAuraLine, hudDebuffLabels } from './hero.js';
 
 type Golden = {
   config: Record<string, unknown>;
@@ -30,6 +32,8 @@ type Golden = {
   attrs: { respec: { name: string; save: SaveState; refund: number; refusal: string | null; refusalHigh: string | null }[] };
   quests: { board: QuestDef[]; saves: { name: string; save: Pick<SaveState, 'quests' | 'activeQuestDefs'>; rival: unknown[]; blocks: unknown[] }[]; boardBlocks: unknown[] };
   bind: { kits: { name: string; weapon: Item | null; offhand: Item | null }[]; nodes: { id: string; abbrev: string; attackLike: boolean; element: string; fits: boolean[] }[] };
+  auras: { toggles: string[]; line: string }[];
+  debuffs: { debuffs: Record<string, unknown>; strip: { kind: string; title: string; stacks: number }[] }[];
 };
 const g = readGolden<Golden>(GOLDEN.panels);
 const json = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -227,5 +231,22 @@ describe.skipIf(!g)('виды города ⇄ unity_panels.json', () => {
         expect(s.text).toBe(node.abbrev);
       });
     }
+  });
+
+  // ⭐ i18n (07.11, этап 1): HUD — строка аур и имена статусов теперь шлёт сервер (кадр `hero`: `auraLine`, `debuffLabels`); Unity собирал их
+  // сам по конфигу (`DmTown.AuraLine`, `DmTown.DebuffTitle`). Русский — до буквы замороженный эталон панелей Unity на его же конфиге.
+  it('⭐ HUD: строка аур (`hudAuraLine`) и подпись бейджа статуса «имя ×стаки» (`hudDebuffLabels`) — как рисовал Unity', () => {
+    for (const a of g!.auras) expect(hudAuraLine(reg, a.toggles), JSON.stringify(a.toggles)).toBe(a.line);
+    const labels = hudDebuffLabels(reg);
+    let titles = 0;
+    for (const d of g!.debuffs) {
+      for (const st of d.strip) {
+        // `DmTown.DebuffTitle`: имя, у стаков больше одного — « ×N» (число — как его пишет JS)
+        expect(`${labels[st.kind as keyof typeof labels]}${st.stacks > 1 ? ` ×${st.stacks}` : ''}`, st.kind).toBe(st.title);
+        titles++;
+      }
+    }
+    expect(titles, 'эталон покрывает статусы').toBeGreaterThanOrEqual(8);
+    expect(Object.keys(labels).sort(), 'все виды статусов').toEqual(['bleed', 'burn', 'daze', 'freeze', 'poison', 'shock', 'sunder', 'wound']);
   });
 });

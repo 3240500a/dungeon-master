@@ -1,12 +1,12 @@
 import express, { type Request, type Response, type RequestHandler } from 'express';
-import { configReplyOf } from './configEtag.js';
+import { configReplyOf, type ConfigReply } from './configEtag.js';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
-import { CONFIG_GAME_REV_HEADER, CONFIG_REV_HEADER, ConfigRegistry, configSchemas, type ConfigKey, type Locales } from '@dm/shared';
+import { ConfigRegistry, configSchemas, type ConfigKey, type Locales } from '@dm/shared';
 import { configWatcher } from './configWatch.js';
 import { startConfigSync } from './configSync.js';
 import { liveConfig } from './configLive.js';
@@ -34,7 +34,7 @@ import { sessionUser, primeKnown, setRoutePassKey } from './net/authSession.js';
 import { setDeviceKey } from './net/deviceToken.js';
 import { limits } from './net/rateLimit.js';
 import { installContentReads, assetStats } from './net/contentRoutes.js';
-import { installConfigWrites } from './net/configRoutes.js';
+import { installConfigRead, installConfigWrites } from './net/configRoutes.js';
 import { installCraftMeshRoute } from './net/craftMeshRoutes.js';
 import { ah, httpErrorsWith, queryText, warnHttp, holdRefusal } from './net/asyncRoute.js';
 import { stripGlbTextures } from './glbStrip.js';
@@ -223,26 +223,18 @@ installNodeFence(app, ROLE);
 // Раньше на каждый запрос шёл `structuredClone` всего реестра плюс `JSON.stringify`: 8,58 мс
 // блокировки цикла и 436 КБ тела. Один вход игрока съедал четверть тикового бюджета, сотня
 // входов в секунду — 86 % ядра на один этот роут.
-let configBody = '';
-let configEtag = '';
-/** ⭐ R16 C-07: ревизия сервера для этого тела — вкладка кладёт её в согласие команд кузницы и лавки (`cfgRev`), а не свою по разобранному. */
-let configRevision = '';
-/** ⭐ 08.10 (Д1): игровая ревизия того же снимка — согласие, которое правка картинки не сдвигает (`CONFIG_GAME_REV_HEADER`). */
-let configGameRevision = '';
+/**
+ * ⭐ R16 C-07: готовый ответ (тело, ETag, ревизия сервера — вкладка кладёт её в согласие команд кузницы и лавки, `cfgRev`; ⭐ 08.10 (Д1):
+ * игровая ревизия — согласие, которое правка картинки не сдвигает) — с одного снимка реестра. ⭐ i18n (07.11, шаг 9): `body` — игроку (таблица
+ * языков тонкая, её же режет релиз контента), `full` — редактору (`?locales=full`, `installConfigRead`).
+ */
+let configReply: ConfigReply = { body: '', etag: '', rev: '', gameRev: '', full: { body: '', etag: '' } };
 function rebuildConfigCache(): void {
   // ETag — по ВСЕМУ телу (см. `configEtag.ts`, там разобрано, чем стоила выборка); тело, ETag и ревизия — с одного снимка реестра.
-  ({ body: configBody, etag: configEtag, rev: configRevision, gameRev: configGameRevision } = configReplyOf(config));
+  configReply = configReplyOf(config);
 }
 
-
-app.get('/api/config', (req, res) => {
-  if (!isProduction(process.env)) res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
-  res.setHeader('ETag', configEtag);
-  res.setHeader(CONFIG_REV_HEADER, configRevision);
-  res.setHeader(CONFIG_GAME_REV_HEADER, configGameRevision);
-  if (req.headers['if-none-match'] === configEtag) return res.status(304).end();
-  res.type('application/json').send(configBody);
-});
+installConfigRead(app, () => configReply, { noStore: !isProduction(process.env) });
 
 // Правки редактора: валидируем → ПЕРСИСТИМ в базу → пересобираем живой конфиг. Переживает
 // рестарт сервера. balance действует сразу, статы монстров/лут — со следующего этажа.
@@ -629,7 +621,7 @@ if (ROLE === 'gateway' || ROLE === 'single') {
     } catch (e) { console.warn(`[dm-server] ${artFile}: ${(e as Error).message} — релиз без арта`); return undefined; }
   };
   releases = releaseCutter({
-    readInput: async () => ({ config: configBody, configRev: configRevision, gameRev: configGameRevision, pose: await getPoseStore(), art: readArt() }),
+    readInput: async () => ({ config: configReply.body, configRev: configReply.rev, gameRev: configReply.gameRev, pose: await getPoseStore(), art: readArt() }),   // ⭐ i18n (07.11): тело игрока — тонкие языки
     store: contentStore, record: (r) => recordRelease(r),
     log: (m) => console.log(`[dm-server] ${m}`),
   });

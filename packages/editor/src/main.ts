@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, dressingWarnings, decorWarnings, waypointWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
+import { CONFIG_FULL_URL, configSchemas, allStatKeys, schemeRequirements, lockedDifficulties, dressingWarnings, decorWarnings, waypointWarnings, OBJECT_FX_KINDS, resolveFloorSpec, generateFloorFor, type ConfigKey, type FloorAlgoParams, type FloorFeatures, type FloorConfig, type Biome, type Floor } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, fieldLabels, fieldPathLabels, renderEnum } from './form.js';
 import { DECOR_FIELD_LABELS, DECOR_PATH_LABELS, SET_ART_LABELS } from './decorLabels.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
@@ -500,9 +500,13 @@ function loadFromServer(): void {
   );
 }
 
-/** Живой конфиг сервера (`GET /api/config`): загрузка страницы и перечитывание таблицы после сброса (R22-08). */
+/**
+ * Живой конфиг сервера (`GET /api/config`): загрузка страницы и перечитывание таблицы после сброса (R22-08). ⭐ i18n (07.11, шаг 9): тело с
+ * ПОЛНОЙ таблицей языков (`CONFIG_FULL_URL`) — у игрока в теле только строки `ui:`, а вкладка «🌐 Языки» правит таблицу целиком, и база её
+ * записи (`__baseRev`) — ревизия полной таблицы, как у сервера.
+ */
 function readLiveConfig(): Promise<Record<string, unknown>> {
-  return fetch('/api/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() as Promise<Record<string, unknown>> : Promise.reject(new Error(String(r.status)))));
+  return fetch(CONFIG_FULL_URL, { cache: 'no-store' }).then((r) => (r.ok ? r.json() as Promise<Record<string, unknown>> : Promise.reject(new Error(String(r.status)))));
 }
 
 function entryLabel(entry: unknown, i: number): string {

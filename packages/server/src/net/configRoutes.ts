@@ -1,8 +1,9 @@
 import type { Express, Request, Response, RequestHandler } from 'express';
-import { configSchemas, configRevs, type ConfigKey, type ConfigRegistry } from '@dm/shared';
+import { CONFIG_GAME_REV_HEADER, CONFIG_REV_HEADER, configSchemas, configRevs, type ConfigKey, type ConfigRegistry } from '@dm/shared';
 import { ah } from './asyncRoute.js';
 import { configWriter } from '../configWrites.js';
 import type { LiveConfig } from '../configLive.js';
+import type { ConfigReply } from '../configEtag.js';
 
 /**
  * ЗАПИСЬ КОНФИГА ИЗ РЕДАКТОРА (dev-ручки): «Применить на сервере» (`POST /api/dev/config` → оверрайд в базе), «Применить везде»
@@ -37,6 +38,27 @@ export interface ConfigRouteDeps {
    * на диске — тот, что принят сервером» перед записью «в файл». Нет ручки — сверки нет (как было).
    */
   readFile?: (key: string) => unknown;
+}
+
+/**
+ * ЧТЕНИЕ КОНФИГА (`GET /api/config`) — тело готово заранее (`configReplyOf` на старте и на каждой пересборке, Ф0.7), ручка только отдаёт.
+ * ⭐ i18n (07.11, шаг 9): ДВА ВАРИАНТА ТЕЛА. По умолчанию — игроку: таблица языков тонкая (`playerLocales`: мета пакетов + `ui:`), его же
+ * режет релиз контента. `?locales=full` — редактору: полная таблица (вкладка «🌐 Языки», рабочая копия и сверка 409 по ревизии полной
+ * таблицы). Вариант — открытый, как и само чтение конфига: в переводах нет секретов, оба тела посчитаны заранее, а запись закрыта ролью
+ * (`/api/dev/config`) — тонкое тело в старой вкладке редактора даёт 409 на запись `locales`, а не стёртые переводы (база — ревизия ДРУГОЙ
+ * таблицы). У каждого варианта свой ETag (304 — по нему); ревизии (`CONFIG_REV_HEADER`, `CONFIG_GAME_REV_HEADER`) — одни: языки вне ревизий.
+ */
+export function installConfigRead(app: Express, reply: () => ConfigReply, o: { noStore: boolean }): void {
+  app.get('/api/config', (req, res) => {
+    const r = reply();
+    const v = req.query.locales === 'full' ? r.full : r;
+    if (o.noStore) res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
+    res.setHeader('ETag', v.etag);
+    res.setHeader(CONFIG_REV_HEADER, r.rev);
+    res.setHeader(CONFIG_GAME_REV_HEADER, r.gameRev);
+    if (req.headers['if-none-match'] === v.etag) return res.status(304).end();
+    res.type('application/json').send(v.body);
+  });
 }
 
 export function installConfigWrites(app: Express, deps: ConfigRouteDeps): void {

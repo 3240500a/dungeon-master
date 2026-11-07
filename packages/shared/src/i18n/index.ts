@@ -186,6 +186,31 @@ export function localeLangs(locales: Locales | undefined, opts?: { enabledOnly?:
 }
 
 /**
+ * ⭐ i18n (07.11, шаг 9 «тонкая раздача»): СТРОКИ ТАБЛИЦЫ ЯЗЫКОВ, КОТОРЫЕ НУЖНЫ ИГРОКУ. Текст конфига (`cfg:`) и фразы кода (`srv:`) сервер с
+ * Ф1 собирает сам на языке игрока; Unity переводит только СВОЮ обвязку — ключи `ui:` (`DmText.T` / `Tn`). Сверено по рантайму `Assets/DM`
+ * (07.11): таблицу читают только `DmLang` → `DmI18n.Loc` → `DmText`; сборка имени по `cfg:` (`ComposeItemName`) — только сторож `I18nCheck`
+ * (эталон, а не живой конфиг); последние четыре чтения текста конфига (имя класса, статусы, ауры, «Поднято») заменены текстом сервера.
+ */
+export const PLAYER_STRING_PREFIXES: readonly string[] = ['ui:'];
+
+/**
+ * ⭐ ТАБЛИЦА ЯЗЫКОВ ДЛЯ ИГРОКА — тело `/api/config` и конфиг релиза контента. У каждого пакета всё, кроме строк, как есть (`name`, `enabled`,
+ * `coverage`, `grammar`, `templates` — выбор языка в Unity и терпимый разбор `DmI18n.ValidPack`), а из строк — только `PLAYER_STRING_PREFIXES`.
+ * Полная таблица живёт в реестре сервера (он собирает текст) и уходит редактору (`/api/config?locales=full`: вкладка «🌐 Языки» и сверка 409
+ * по ревизии ПОЛНОЙ таблицы). Ревизии конфига вынос строк не сдвигает: `locales` — вне их (`CONFIG_TEXT_ONLY_KEYS`).
+ * ⚠ Без прототипа (как `localesSchema`): язык с кодом `__proto__` иначе переписал бы прототип ответа, а не лёг ключом.
+ */
+export function playerLocales(locales: Locales): Locales {
+  const out = Object.create(null) as Locales;
+  for (const [lang, pack] of Object.entries(locales)) {
+    const strings = Object.create(null) as LocalePack['strings'];
+    for (const [k, v] of Object.entries(pack.strings ?? {})) if (PLAYER_STRING_PREFIXES.some((pre) => k.startsWith(pre))) strings[k] = v;
+    out[lang] = { ...pack, strings };
+  }
+  return out;
+}
+
+/**
  * Доля ключей, переведённых на язык (считается, а не записывается руками). `keys` — полный корпус из
  * извлекателя: и `cfg:`, и `ui:`.
  */

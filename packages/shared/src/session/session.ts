@@ -195,8 +195,12 @@ export type SessionEvent =
    */
   | { type: 'item-picked'; playerId: string; item: Item; x: number; y: number; thrown?: true }
   | { type: 'gold'; playerId: string; amount: number; total: number }
-  /** Материалы с убитого монстра: id → количество. `x`/`y` — место смерти, чтобы клиент показал их там. */
-  | { type: 'materials'; playerId: string; gains: Record<string, number>; x: number; y: number }
+  /**
+   * Материалы с убитого монстра: id → количество. `x`/`y` — место смерти, чтобы клиент показал их там.
+   * ⭐ i18n (07.11, этап 1): `text` — готовая строка журнала «Поднято: Железная руда ×2, …» на языке получателя (`materialsPickedText`).
+   * Кладёт её КОМНАТА при рассылке (событие личное — получатель один); ядро её не ставит (сим, тесты и отчёты — без неё, как было).
+   */
+  | { type: 'materials'; playerId: string; gains: Record<string, number>; x: number; y: number; text?: string }
   | { type: 'xp'; playerId: string; amount: number }
   | { type: 'levelup'; playerId: string; level: number }
   | { type: 'player-died'; playerId: string }

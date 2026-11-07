@@ -272,6 +272,36 @@ describe('⭐⭐ i18n Ф2: сторож утечек — провод игрок
     expect(uniqItems(x1)[0]!.name).not.toBe(item.name);
   });
 
+  /**
+   * ⭐ i18n (07.11, ревью этапов): Unity шлёт `join.lang` ВСЕГДА — русский игрок входит с `ru`. Раньше `setLang` клал его полем, и каждая
+   * комната Unity шла путём «есть иноязычный» (`foreignHere`): кадры с именами — через карту языков, события — замыканием на тик. Источник —
+   * без поля, как у входа (`addPlayer`): та же цена, что у сторожа выше, и с явным `ru`.
+   */
+  it('⭐ русский с явным `ru` (как шлёт Unity) — комната русская: язык без поля, кадр мира один на всех, ни одной лишней сборки', async () => {
+    const room = makeRoom();
+    const a = join(room, 'ru', 'Образец'), b = join(room, undefined, 'Сосед');
+    await settle();
+    const r = room as unknown as { clients: Map<string, { lang?: string }>; foreignHere(): boolean; setLang(pid: string, lang: string | undefined, announce?: boolean): string };
+    expect(r.clients.get(a.pid)!.lang, 'источник — без поля, как у входа').toBeUndefined();
+    expect(r.foreignHere(), 'иноязычных в комнате нет').toBe(false);
+    expect(r.setLang(a.pid, 'ru', true), 'кадр `lang` с `ru` — тот же язык').toBe('ru');
+    expect(r.clients.get(a.pid)!.lang).toBeUndefined();
+    expect(a.ws.last('langChanged')).toEqual({ t: 'langChanged', lang: 'ru' });
+    const before = { t: counters.textFramesLocalized, w: counters.worldLangEncodes };
+    room.descend(a.pid);
+    (room as unknown as { castVote(pid: string, yes: boolean): void }).castVote(b.pid, true);
+    await settle();
+    const n1 = a.ws.bins.length, n2 = b.ws.bins.length;
+    for (let i = 0; i < 4; i++) room.step();
+    expect({ t: counters.textFramesLocalized - before.t, w: counters.worldLangEncodes - before.w }).toEqual({ t: 0, w: 0 });
+    const s1 = a.ws.bins.slice(n1), s2 = b.ws.bins.slice(n2);
+    expect(s1.length).toBeGreaterThan(0);
+    s1.forEach((buf, i) => expect(buf, `кадр мира ${i}: один буфер на всех`).toBe(s2[i]));
+    expect(r.setLang(a.pid, 'xx', true), 'иной язык — полем, как был').toBe('xx');
+    expect(r.clients.get(a.pid)!.lang).toBe('xx');
+    expect(r.foreignHere()).toBe(true);
+  });
+
   it('⚠ смерть монстра в событии и сеть: имя определения монстра — на языке получателя, русскому — испечённое (`monsterDefView` как был)', async () => {
     const room = makeRoom();
     const a = join(room, 'xx', 'Образец');

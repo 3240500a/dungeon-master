@@ -51,7 +51,8 @@ describe('⭐ i18n (07.11): отказы express до ручки — на язы
     expect(bad.status).toBe(400);
     expect(JSON.parse(bad.text)).toEqual({ error: PSEUDO('srv:http.badRequest') });
     expect(JSON.parse((await post(port, '/api/x?lang=xx', '{')).text)).toEqual({ error: PSEUDO('srv:http.badRequest') });
-    const big = await post(port, '/api/x', JSON.stringify({ s: 'x'.repeat(200) }), { 'accept-language': 'en-US, xx;q=0.5' });
+    // ⭐ i18n (07.11, этап 1): первым — язык, которого в таблице нет (`de`; `en` теперь включён и выиграл бы весом), — берётся следующий по весу
+    const big = await post(port, '/api/x', JSON.stringify({ s: 'x'.repeat(200) }), { 'accept-language': 'de-DE, xx;q=0.5' });
     expect(big.status).toBe(413);
     expect(JSON.parse(big.text)).toEqual({ error: PSEUDO('srv:http.bodyTooLarge') });
     // русский — те же байты, что до правки

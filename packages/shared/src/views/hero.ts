@@ -34,7 +34,7 @@ import { abilityRankMult, meleeGeometry } from '../formulas/combat.js';
 import { elementDebuffs, shapeSkillPacket, weaponDebuffs, type SkillDamageShape } from '../formulas/resolveWeapon.js';
 import { armorPoise } from '../formulas/resolveArmor.js';
 import { PERCENT_STATS, STAT_LABEL } from '../formulas/itemDescribe.js';
-import { STATUS_CHANCE_CAP, debuffIcon, debuffLabel, isDotKind, statusChance, type DebuffApply, type DebuffKind } from '../world/debuffs.js';
+import { DEBUFF_ICON, STATUS_CHANCE_CAP, debuffIcon, debuffLabel, isDotKind, statusChance, type DebuffApply, type DebuffKind } from '../world/debuffs.js';
 import { waypointHint } from '../dungeon/run/labels.js';
 import { dmgName, elementOf } from './heroText.js';
 import { cfgRowText, tr } from '../i18n/tr.js';
@@ -155,6 +155,29 @@ export function hudInfo(cfg: ConfigRegistry, save: SaveState, floor: HeroFloor):
     loc = tr('srv:hero.hudFloor', 'этаж {depth} · {difficulty} · монстры ур.{cl} · {waypoint}', { depth: floor.depth, difficulty: cfgRowText(cfg, 'difficulties', diff), cl, waypoint: waypointHint(floor.depth, access.portalsAt, access.contentCycle) });
   }
   return tr('srv:hero.hudInfo', 'Ур. {level}  ·  {loc}  ·  Золото {gold}  ·  Очки: атр {attr} / скилл {skill}', { level: save.level, loc, gold: save.gold, attr: save.unspentAttributePoints, skill: save.unspentSkillPoints });
+}
+
+/**
+ * ⭐ i18n (07.11, этап 1): СТРОКА АУР HUD — «◈ имя   ◈ имя» включённых аур и стоек в порядке тоглов (узла нет или он не активка — мимо;
+ * без тоглов — пусто). Та же строка, что Unity собирал сам по конфигу (`DmTown.AuraLine`, веб hud3d `auraLine`), но имя — на языке игрока
+ * (`activeToggleInfos` → `cfgRowText`): на другом языке своя сборка Unity осталась бы русской. Русский — побайтово эталон панелей Unity
+ * (`townPanels.test.ts`, раздел `auras` замороженного `unity_panels.json`).
+ */
+export function hudAuraLine(cfg: ConfigRegistry, toggles: readonly string[]): string {
+  const names = activeToggleInfos(cfg, toggles).map((t) => t.name);
+  return names.length > 0 ? `◈ ${names.join('   ◈ ')}` : '';
+}
+
+/**
+ * ⭐ i18n (07.11, этап 1): ИМЕНА СТАТУСОВ ДЛЯ HUD — вид → имя на языке игрока (`debuffLabel`: строка таблицы `debuffs`, нет — константа
+ * `DEBUFF_LABEL`), все виды в порядке `DebuffKind`. Unity брал имя сам из конфига (`DmTown.DebuffLabel`, подсказка бейджа «имя ×стаки»), а
+ * набор статусов и стаки идут кадром мира на каждом тике — ему нужна только подпись вида, и меняется она только с языком.
+ */
+export function hudDebuffLabels(cfg: ConfigRegistry): Record<DebuffKind, string> {
+  const table = cfg.get('debuffs');
+  const out = {} as Record<DebuffKind, string>;
+  for (const k of Object.keys(DEBUFF_ICON) as DebuffKind[]) out[k] = debuffLabel(table, k);
+  return out;
 }
 
 /** ⭐ Замена `DmSheet.Hud`: полосы от полного максимума, зоны резерва аур/стоек, «(−N)» у маны, опыт, инфо-строка. */

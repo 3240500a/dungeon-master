@@ -95,7 +95,25 @@
   "melee": {
    "range": 52,
    "halfArc": 1.2800000000000002
+  },
+  "auraLine": "",
+  "debuffLabels": {
+   "wound": "Рана",
+   "bleed": "Кровотечение",
+   "sunder": "Увечье",
+   "daze": "Ошеломление",
+   "burn": "Поджиг",
+   "poison": "Отравление",
+   "shock": "Шок",
+   "freeze": "Заморозка"
   }
+ },
+ "heroAura": {
+  "toggles": [
+   "b-aura-a1",
+   "b-aura-a2"
+  ],
+  "auraLine": "◈ Аура гнева   ◈ Стихийная аура"
  },
  "sheet": {
   "blocks": [

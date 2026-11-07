@@ -1,6 +1,6 @@
 {
  "note": "Фразы кода сервера (srv:). Генерит `npm run i18n` (tools/i18n/extract.ts) из вызовов tr()/trn() в packages/shared/src и packages/server/src. Руками не править: сторож srvCorpus.test.ts сверяет файл с кодом.",
- "count": 959,
+ "count": 961,
  "strings": {
   "srv:account.authRequired": "Требуется вход",
   "srv:account.badCharId": "Неверный id персонажа",
@@ -501,6 +501,8 @@
   "srv:lobby.runParkedJoin": "У вас незавершённый забег — продолжите или завершите его",
   "srv:lobby.savingError": "Сохраняем прогресс героя — повторите вход через несколько секунд",
   "srv:lobby.wrongNode": "Персонаж в игре на другом узле — войдите заново",
+  "srv:loot.picked": "Поднято: {list}",
+  "srv:loot.pickedPart": "{name} ×{n}",
   "srv:mastery.levelReq": "\n<color=#d89b7c>требуется уровень {levelReq}</color>",
   "srv:mastery.maxRank": " · макс. ранг",
   "srv:mastery.nextRank": " · след. ранг: {cost} зол. + 1 очко",

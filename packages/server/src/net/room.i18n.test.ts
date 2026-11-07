@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { GameConn } from './conn.js';
 import {
   ConfigRegistry, cfgKey, itemFromBaseId, newCharacterSave, sheetView, tr, SRV_CORPUS, pseudoForms, type ServerFrame, type SaveState, type Interactable,
+  type AccountStash, type Item, type SessionEvent,
 } from '@dm/shared';
 import { limits } from './rateLimit.js';
 import { inTextLang, langFromAcceptLanguage, requestLang, scopeCodeOf } from './textScope.js';
@@ -258,7 +259,9 @@ describe('i18n Ф1: область языка сервера (`textScope`)', () 
     expect(langFromAcceptLanguage('de,fr;q=0.8', ['ru', 'xx'])).toBeUndefined();
     expect(requestLang({ headers: { 'accept-language': 'xx' } }, locales)).toBe('xx');
     expect(requestLang({ headers: { 'accept-language': 'xx' }, body: { lang: 'ru' } }, locales), 'явное поле — сверху').toBe('ru');
-    expect(requestLang({ headers: { 'accept-language': 'en' } }, locales), 'en не включён').toBeUndefined();
+    // ⭐ i18n (07.11, этап 1): английский включён — `en-GB` берётся основой; испанский (без строк) — выключен: источник
+    expect(requestLang({ headers: { 'accept-language': 'en-GB,en;q=0.9' } }, locales), 'en включён').toBe('en');
+    expect(requestLang({ headers: { 'accept-language': 'es' } }, locales), 'es не включён').toBeUndefined();
     expect(requestLang({ headers: {}, query: { lang: 'zz' } }, locales)).toBeUndefined();
   });
 });
@@ -397,6 +400,199 @@ describe('⭐ i18n (07.11, хвосты Ф1): смена языка на лет�
     expect(JSON.stringify(ws.last('hero')!.view)).toContain(XX('town'));
     limits.viewReq.reset(h.userId);
     ws.close();
+    await settle();
+  });
+});
+
+describe('⭐ i18n (07.11, этап 1): смена языка — кадры с готовыми именами заново; HUD и «Поднято» — текстом сервера', () => {
+  type Cl = { stashSeen?: AccountStash; lang?: string };
+  type RoomY = RoomIn & {
+    clients: Map<string, Cl>; area: string; step(emit?: boolean): void; setLang(pid: string, lang: string | undefined, announce?: boolean): string;
+    pushHero(pid: string): void; descend(pid: string): void; castVote(pid: string, yes: boolean): void; broadcastEvents(e: SessionEvent[]): void;
+  };
+  const cyr = /[Ѐ-ӿ]/;
+  const NAMED = ['hero', 'saveUpdate', 'stash', 'shop', 'questBoard', 'langChanged', 'interactables'];
+  const order = (fs: readonly ServerFrame[]): string[] => fs.map((f) => f.t).filter((t) => NAMED.includes(t));
+  const names = (items: readonly (Item | null | undefined)[]): string[] => items.filter((i): i is Item => !!i).map((i) => i.name);
+  const saveNames = (s: SaveState): string[] => names([...s.inventory, ...Object.values(s.equipment), ...(s.belt ?? [])]);
+  const bucket = (userId: string, tokens: number): void => {
+    (limits.viewReq as unknown as { buckets: Map<string, { tokens: number; at: number }> }).buckets.set(userId, { tokens, at: performance.now() });
+  };
+  /** Вход в город с увиденным слепком сундука (вещь в нём — как после `stashOpen`). */
+  async function town(prefix: string): Promise<{ h: ReturnType<typeof seedChar>; ws: FakeConn; pid: string; room: RoomY; stashItem: Item }> {
+    const h = seedChar(prefix);
+    const ws = await joined(h, { fresh: true });
+    await until(() => !!ws.last('stash'));
+    await settle();
+    const pid = ws.last('joined')!.playerId;
+    const room = roomOf(pid) as unknown as RoomY;
+    const base = cfg.get('items.base').find((b) => 'slot' in b && b.slot === 'weapon' && b.enabled !== false)!;
+    const stashItem = itemFromBaseId(cfg.get('items.base'), base.id, undefined, 'shop')!;
+    room.clients.get(pid)!.stashSeen = { version: 1, tabs: [[stashItem]], materials: {} } as AccountStash;
+    return { h, ws, pid, room, stashItem };
+  }
+
+  it('⭐⭐ `lang` en: лист, сейв, сундук, прилавок, доска — ДО `langChanged`, затем подписи; имена — английские; обратно на ru — испечённые', async () => {
+    const { ws, pid, room, stashItem } = await town('i18n-named-en');
+    const ruShop = JSON.stringify(ws.last('shop')), ruBoard = JSON.stringify(ws.last('questBoard'));
+    expect((JSON.parse(ruShop) as { items: Item[] }).items.length, 'на прилавке есть вещи').toBeGreaterThan(0);
+    let from = ws.frames.length;
+    ws.push({ t: 'lang', lang: 'en' });
+    await until(() => ws.frames.slice(from).some((f) => f.t === 'interactables'));
+    expect(order(ws.frames.slice(from)), 'порядок: к подтверждению языка сумка, сундук и прилавок уже на новом').toEqual(NAMED);
+    const save = ws.last('saveUpdate')!.save;
+    expect(saveNames(save).length).toBeGreaterThan(3);
+    expect(saveNames(save).join(' | ')).not.toMatch(cyr);
+    expect(names(ws.last('stash')!.tabs.flat()).join(' | ')).not.toMatch(cyr);
+    expect(names(ws.last('stash')!.tabs.flat())).not.toEqual([stashItem.name]);
+    expect(names(ws.last('shop')!.items).join(' | ')).not.toMatch(cyr);
+    const board = ws.last('questBoard')!.quests;
+    expect(board.length, 'доска не пуста').toBeGreaterThan(0);
+    expect(board.map((q) => q.name).join(' | ')).not.toMatch(cyr);
+    // обратно на источник — испечённые имена, а прилавок и доска — те же байты, что ушли со входом
+    from = ws.frames.length;
+    ws.push({ t: 'lang', lang: 'ru' });
+    await until(() => ws.frames.slice(from).some((f) => f.t === 'interactables'));
+    expect(order(ws.frames.slice(from))).toEqual(NAMED);
+    const live = room.session.world.players[pid]!.save;
+    expect(saveNames(ws.last('saveUpdate')!.save), 'русскому — испечённые').toEqual(saveNames(live));
+    expect(names(ws.last('stash')!.tabs.flat())).toEqual([stashItem.name]);
+    expect(JSON.stringify(ws.last('shop')), 'прилавок — байт в байт как со входом').toBe(ruShop);
+    expect(JSON.stringify(ws.last('questBoard')), 'доска — байт в байт как со входом').toBe(ruBoard);
+    ws.close();
+    await settle();
+  });
+
+  it('⭐ цена смены языка — по тому, что уходит: в городе со сундуком 2 + 4 токена; над ценой — `langChanged` сразу, остальное тиком тем же порядком', async () => {
+    const { h, ws, pid, room } = await town('i18n-named-cost');
+    bucket(h.userId, 5.5);   // лист + подписи (2) + сейв, сундук, прилавок, доска (4) = 6 — на полтокена меньше
+    let from = ws.frames.length;
+    room.setLang(pid, 'xx', true);
+    expect(order(ws.frames.slice(from)), 'над ценой — только подтверждение').toEqual(['langChanged']);
+    bucket(h.userId, 5.5);
+    room.step(false);
+    expect(order(ws.frames.slice(from)), 'тик над ценой — ничего').toEqual(['langChanged']);
+    bucket(h.userId, 6);
+    from = ws.frames.length;
+    room.step(false);
+    expect(order(ws.frames.slice(from)), 'лимит пустил — тем же порядком, без второго подтверждения')
+      .toEqual(['hero', 'saveUpdate', 'stash', 'shop', 'questBoard', 'interactables']);
+    expect(JSON.stringify(ws.last('hero')!.view)).toContain(XX('town'));
+    limits.viewReq.reset(h.userId);
+    ws.close();
+    await settle();
+  });
+
+  // ⭐ ревью этапов (07.11): + 1 за определения знакомых монстров этажа (`monsterInfo`, тест ниже) — монстры у входа в вид пати сразу
+  it('⭐ подземелье: прилавка нет (его шлют вход и возврат в город) — сейв, сундук и доска заново; цена 2 + 3 (+ 1 — монстры)', async () => {
+    const { h, ws, pid, room } = await town('i18n-named-dun');
+    room.descend(pid);
+    if (room.area !== 'dungeon') room.castVote(pid, true);
+    await until(() => ws.last('areaChanged')?.floor.area === 'dungeon');
+    await settle();
+    room.step();   // кадр мира: знакомые монстры — наверняка
+    expect(ws.all('monsterInfo').length, 'монстры у входа — в виду пати').toBeGreaterThan(0);
+    bucket(h.userId, 6);
+    const from = ws.frames.length;
+    room.setLang(pid, 'en', true);
+    expect(order(ws.frames.slice(from))).toEqual(['hero', 'saveUpdate', 'stash', 'questBoard', 'langChanged', 'interactables']);
+    expect(saveNames(ws.last('saveUpdate')!.save).join(' | ')).not.toMatch(cyr);
+    limits.viewReq.reset(h.userId);
+    ws.close();
+    await settle();
+  });
+
+  /**
+   * ⭐ i18n (07.11, ревью этапов): ТАБЛИЧКИ МОНСТРОВ. Имя над монстром Unity берёт из его определения (`monsterInfo`), а сервер шлёт его один
+   * раз — когда монстр входит в вид пати. Без повтора на смене языка таблички этажа оставались на прежнем до следующего этажа.
+   */
+  it('⭐ подземелье со знакомыми монстрами: их определения (`monsterInfo`) — заново до `langChanged`, по-английски; обратно — те же байты; цена 2 + 3 + 1', async () => {
+    const { h, ws, pid, room } = await town('i18n-named-mon');
+    room.descend(pid);
+    if (room.area !== 'dungeon') room.castVote(pid, true);
+    await until(() => ws.last('areaChanged')?.floor.area === 'dungeon');
+    await settle();
+    for (let i = 0; i < 3; i++) room.step();
+    type Info = Extract<ServerFrame, { t: 'monsterInfo' }>['monsters'];
+    const seen = new Map<number, string>();   // id → определение, как оно ушло первым кадром (русское)
+    for (const f of ws.all('monsterInfo')) for (const m of f.monsters) seen.set(m.id, JSON.stringify(m.def));
+    expect(seen.size, 'монстры этажа в виду пати — определения пришли').toBeGreaterThan(0);
+    const MON = [...NAMED.slice(0, 5), 'monsterInfo', ...NAMED.slice(5)];
+    const orderM = (fs: readonly ServerFrame[]): string[] => fs.map((f) => f.t).filter((t) => MON.includes(t));
+    bucket(h.userId, 5.5);   // сейв, сундук, доска (3) + монстры (1) + лист и подписи (2) = 6 — на полтокена меньше
+    let from = ws.frames.length;
+    room.setLang(pid, 'en', true);
+    expect(orderM(ws.frames.slice(from)), 'над ценой — только подтверждение').toEqual(['langChanged']);
+    room.setLang(pid, undefined, true);   // назад к источнику — тоже над ценой
+    limits.viewReq.reset(h.userId);
+    from = ws.frames.length;
+    room.setLang(pid, 'en', true);
+    expect(orderM(ws.frames.slice(from))).toEqual(['hero', 'saveUpdate', 'stash', 'questBoard', 'monsterInfo', 'langChanged', 'interactables']);
+    const en: Info = ws.last('monsterInfo')!.monsters;
+    const onFloor = (room.session.world as unknown as { monsters: { id: number }[] }).monsters;
+    expect(new Set(en.map((m) => m.id)), 'ровно те, кого клиент уже знает').toEqual(new Set([...seen.keys()].filter((id) => onFloor.some((m) => m.id === id))));
+    expect(en.map((m) => m.def.name).join(' | ')).not.toMatch(cyr);
+    const ruName = (id: number): string => (JSON.parse(seen.get(id)!) as { name: string }).name;
+    expect(en.map((m) => m.def.name), 'имена — новые, не русские прежние').not.toEqual(en.map((m) => ruName(m.id)));
+    expect(en.map((m) => ruName(m.id)).join(' | '), 'прежние были русскими').toMatch(cyr);
+    from = ws.frames.length;
+    room.setLang(pid, 'ru', true);
+    expect(orderM(ws.frames.slice(from))).toEqual(['hero', 'saveUpdate', 'stash', 'questBoard', 'monsterInfo', 'langChanged', 'interactables']);
+    for (const m of ws.last('monsterInfo')!.monsters) expect(JSON.stringify(m.def), `источнику — определение ${m.id} байт в байт как первым кадром`).toBe(seen.get(m.id));
+    limits.viewReq.reset(h.userId);
+    ws.close();
+    await settle();
+  });
+
+  it('⭐ HUD в кадре `hero`: строка аур и имена статусов — на языке игрока; у русского — то, что Unity собирал по конфигу', async () => {
+    const a = seedChar('i18n-hud-en'), b = seedChar('i18n-hud-ru');
+    const wa = await joined(a, { fresh: true, lang: 'en' });
+    const wb = await joined(b, { roomCode: wa.last('joined')!.roomCode });
+    await settle();
+    const room = roomOf(wa.last('joined')!.playerId) as unknown as RoomY;
+    const aura = cfg.get('skill-tree').nodes.find((n) => n.effect.active?.category === 'aura')!;
+    for (const ws of [wa, wb]) {
+      const pid = ws.last('joined')!.playerId;
+      room.session.world.players[pid]!.toggles = [aura.id];
+      room.pushHero(pid);
+    }
+    type HeroV = { auraLine: string; debuffLabels: Record<string, string>; toggles: string[] };
+    const va = wa.last('hero')!.view as HeroV, vb = wb.last('hero')!.view as HeroV;
+    expect(vb.auraLine, 'русский — «◈ имя» из конфига, как `DmTown.AuraLine`').toBe(`◈ ${aura.name}`);
+    expect(va.auraLine.startsWith('◈ ') && va.auraLine !== vb.auraLine).toBe(true);
+    expect(va.auraLine).not.toMatch(cyr);
+    const conf = Object.fromEntries(cfg.get('debuffs').map((d) => [d.id, d.name]));
+    expect(vb.debuffLabels, 'русский — имена таблицы `debuffs`, как `DmTown.DebuffLabel`').toEqual(conf);
+    expect(Object.keys(va.debuffLabels).sort()).toEqual(Object.keys(conf).sort());
+    expect(Object.values(va.debuffLabels).join(' | ')).not.toMatch(cyr);
+    wa.close(); wb.close();
+    await settle();
+  });
+
+  it('⭐ событие сырья — с готовой строкой «Поднято: …» (`text`) на языке получателя; русскому — байты сборки Unity по конфигу', async () => {
+    const a = seedChar('i18n-mat-en'), b = seedChar('i18n-mat-ru');
+    const wa = await joined(a, { fresh: true, lang: 'en' });
+    const wb = await joined(b, { roomCode: wa.last('joined')!.roomCode });
+    await settle();
+    const pa = wa.last('joined')!.playerId, pb = wb.last('joined')!.playerId;
+    const room = roomOf(pa) as unknown as RoomY;
+    const mats = cfg.get('craft-materials').filter((m) => m.enabled !== false).slice(0, 2);
+    const gains = { [mats[0]!.id]: 3, [mats[1]!.id]: 12, 'no-such-mat': 1 };
+    const evOf = (ws: FakeConn): Extract<SessionEvent, { type: 'materials' }> | undefined =>
+      ws.all('events').flatMap((f) => f.events).find((e): e is Extract<SessionEvent, { type: 'materials' }> => e.type === 'materials');
+    room.broadcastEvents([
+      { type: 'materials', playerId: pa, gains, x: 1, y: 1 },
+      { type: 'materials', playerId: pb, gains, x: 1, y: 1 },
+    ]);
+    const ea = evOf(wa)!, eb = evOf(wb)!;
+    expect(ea.playerId, 'своё — только своё').toBe(pa);
+    expect(eb.playerId).toBe(pb);
+    expect(eb.gains, 'прежние поля — как были').toEqual(gains);
+    // `DmClient.MaterialsText`: имя из `craft-materials` (нет — id), « ×» + число, через «, », шаблон «Поднято: {list}»
+    expect(eb.text).toBe(`Поднято: ${mats[0]!.name} ×3, ${mats[1]!.name} ×12, no-such-mat ×1`);
+    expect(ea.text).toMatch(/^Picked up: .+ ×3, .+ ×12, no-such-mat ×1$/);
+    expect(ea.text).not.toMatch(cyr);
+    wa.close(); wb.close();
     await settle();
   });
 });

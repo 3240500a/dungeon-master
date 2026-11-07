@@ -17,7 +17,7 @@
   },
   "en": {
     "name": "English",
-    "enabled": false,
+    "enabled": true,
     "grammar": {
       "join": " ",
       "agrees": false,
@@ -4422,6 +4422,8 @@
       "srv:lobby.runParkedJoin": "You have an unfinished run — continue or finish it",
       "srv:lobby.savingError": "Saving your hero's progress — log in again in a few seconds",
       "srv:lobby.wrongNode": "The character is in play on another node — log in again",
+      "srv:loot.picked": "Picked up: {list}",
+      "srv:loot.pickedPart": "{name} ×{n}",
       "srv:mastery.levelReq": "\n<color=#d89b7c>requires level {levelReq}</color>",
       "srv:mastery.maxRank": " · max rank",
       "srv:mastery.nextRank": " · next rank: {cost} g + 1 point",

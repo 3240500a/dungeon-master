@@ -1,6 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { newCharacterSave, isWireText, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, type ConfigRegistry, type Locales, tr } from '@dm/shared';
+import { newCharacterSave, isWireText, WIRE_TOKEN_RE, WIRE_CHAR_ID_RE, cfgRowText, type ConfigRegistry, type Locales, tr } from '@dm/shared';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, countRecentRegistrations,
@@ -107,6 +107,22 @@ export function bearer(req: Request): string | null {
  */
 export async function requireAuth(req: Request, res: Response): Promise<string | null> {
   return sessionUser(req, res, bearer(req));
+}
+
+/**
+ * ⭐ i18n (07.11, этап 1): ИМЯ КЛАССА ДЛЯ РОСТЕРА — на языке области запроса (`cfgRowText`; ручки ростера — в `withRequestLang`): строка
+ * таблицы `classes`, нет её или имени — id. Unity рисовал его сам по конфигу (`DmLoginScreen.ClassName`, экран создания — `ShowCreate`), и на
+ * другом языке оно оставалось русским. Русский — имя из конфига как есть (то, что Unity и показывал).
+ */
+export function classNameOf(config: ConfigRegistry, classId: string): string {
+  const name = cfgRowText(config, 'classes', config.get('classes').find((c) => c.id === classId));
+  return typeof name === 'string' ? name : classId;
+}
+/** ⭐ i18n (07.11, этап 1): имена ВСЕХ классов конфига (id → имя на языке запроса) — экрану создания героя; выключенные отсеивает он сам. */
+export function classNamesOf(config: ConfigRegistry): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of config.get('classes')) out[c.id] = classNameOf(config, c.id);
+  return out;
 }
 
 export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }): void {
@@ -286,7 +302,9 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
   // ── Персонажи (принадлежат пользователю) ───────────────────────────────────────
   app.get('/api/characters', inLang(ah(async (req, res) => {
     const userId = await requireAuth(req, res); if (!userId) return;
-    res.json({ characters: await listCharacters(userId) });
+    // ⭐ i18n (07.11, этап 1): + `className` у героя и `classNames` (экран создания) — на языке запроса; прежние поля — как были
+    const characters = (await listCharacters(userId)).map((c) => ({ ...c, className: classNameOf(config, c.classId) }));
+    res.json({ characters, classNames: classNamesOf(config) });
   })));
 
   app.post('/api/characters', accountJson, inLang(ah(async (req, res) => {
@@ -309,7 +327,7 @@ export function installAccountRoutes(app: Express, o: { config: ConfigRegistry }
     const save = newCharacterSave(config, classId, name, charId); // авторитетный стартовый сейв
     // R4-30: подсчёт выше — быстрый отказ; потолок держит сама запись (параллельные запросы подсчёт проходят все).
     if (await createCharacter(charId, userId, save, MAX_CHARS) === null) return full();
-    res.json({ character: { charId, name: save.name, classId: save.classId, level: save.level } });
+    res.json({ character: { charId, name: save.name, classId: save.classId, level: save.level, className: classNameOf(config, save.classId) } });   // ⭐ i18n (07.11): + `className`
   })));
 
   app.delete('/api/characters/:charId', inLang(ah<{ charId: string }>(async (req, res) => {

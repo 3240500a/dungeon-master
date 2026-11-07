@@ -1,4 +1,4 @@
-import { EventBus, ConfigRegistry, CONFIG_REV_HEADER, debuffLabel, DEFAULT_HP_MANA_SCALING, PRICE_CHANGED, toggleBuffMods, reservedFrac, shopBuyPrice, withConfigRev, type TownCommand, type Item, type QuestDef, type RunPlan, type CraftJournal, type ServerFrame, type HeroCooldowns } from '@dm/shared';
+import { EventBus, ConfigRegistry, CONFIG_FULL_URL, CONFIG_REV_HEADER, debuffLabel, DEFAULT_HP_MANA_SCALING, PRICE_CHANGED, toggleBuffMods, reservedFrac, shopBuyPrice, withConfigRev, type TownCommand, type Item, type QuestDef, type RunPlan, type CraftJournal, type ServerFrame, type HeroCooldowns } from '@dm/shared';
 import type { GameState } from './gameState.js';
 import { passiveModifiers } from '../modules/skills-passive/passiveStats.js';
 import { activeModifiers } from '../modules/skills-active/activeStats.js';
@@ -343,7 +343,8 @@ export class App {
     let snapshot: Parameters<ConfigRegistry['reload']>[0];
     try {
       const inm = this.configStale ?? this.configEtag;   // R7-14: негодный уже разобран — тот же вернётся 304-м
-      res = await fetch('/api/config', { cache: 'no-cache', ...(inm ? { headers: { 'if-none-match': inm } } : {}) });
+      // ⭐ i18n (07.11, шаг 9): тело с полной таблицей языков — как у рабочей копии редактора (`main.ts` `readLiveConfig`); ETag — этого варианта
+      res = await fetch(CONFIG_FULL_URL, { cache: 'no-cache', ...(inm ? { headers: { 'if-none-match': inm } } : {}) });
       if (seq !== this.configSeq) return 'overtaken';   // обогнал следующий запрос — применит он
       if (!res.ok) return res.status === 304 ? 'same' : 'failed';
       snapshot = (await res.json()) as Parameters<ConfigRegistry['reload']>[0];

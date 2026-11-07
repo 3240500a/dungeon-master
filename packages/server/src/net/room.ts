@@ -17,7 +17,7 @@ import {
   type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type RunWindow, type RunNodeState, type AccountStash, type Rng, type CraftJournal,
   type PlayerEntity, type DebuffKind, type TownStockRef, type DropEntity, type HeroBody, type CmdLimits, type ViewKind,
-  monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, heroMelee, masterBlock, hudInfo, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
+  monsterDefView, localeLangs, type Locales, floorInteractables, heroNumbers, heroMelee, masterBlock, hudInfo, hudAuraLine, hudDebuffLabels, sheetView, skillTreeView, xpProgress, ATTRIBUTES,
   type LastTarget, type PendingAttrs, type HeroFloor, type Interactable, townStationAt, townPortalAt, TOWN_STATIONS, STATION_USE_R, maskFloor, revealOf, chunksNear,
   respecView, questsView, socketsView, socketNodes, bindView, masteryTreeView, itemMenuView, itemTipsView, paperdollEquipView, materialsView, forgeBenchView, shopView,
   exchangeView, runPortalView, runSegmentView, runReforgeView, runReforgeHead, runReforgeTake, runMapPanelView, runMapLegendNote,
@@ -25,7 +25,7 @@ import {
   craftWindowView, initialCraftState, availableMaterials, CRAFT_SLOT_LIST, type CraftWindowState,
   tr, textLang, SOURCE_LANG,   // ⭐ i18n Ф1 (06.11): шов текста сервера
   // ⭐ i18n Ф2 (06.11): запечённые имена кадров (вещи, монстры, задания) — на языке получателя
-  NAMED_FRAMES, localizeFrame, localizeDeep, localizeDelta, monsterDisplayName, questDisplay, type MonsterNameSrc, type WorldDelta,
+  NAMED_FRAMES, localizeFrame, localizeDeep, localizeDelta, monsterDisplayName, questDisplay, materialsPickedText, type MonsterNameSrc, type WorldDelta,
 } from '@dm/shared';
 import { putCharacter, putCharacterOwned, putCharacterWithStash, getCharacter, mergeRunLedger, getRunLedger, landedVersion, type RowOwner } from '../db/db.js';
 import { LedgerViolation, CommitUnknown, isDataException, isTxRetryable } from '../db/errors.js';
@@ -714,8 +714,14 @@ const VIEW_BYTES_PER_TOKEN = 11_000;
 /**
  * ⭐ i18n (07.11, хвосты Ф1): ЦЕНА СМЕНЫ ЯЗЫКА кадром `lang` в токенах лимита видов — лист героя (как вид `hero/sheet`, 1) и подписи [E]
  * области (1); ответ длиннее — доплата по байтам (`VIEW_BYTES_PER_TOKEN`), как у вида.
+ * ⭐ i18n (07.11, этап 1): + `LANG_NAMED_COST` за каждый кадр с готовыми именами, который уходит заново (`Room.langCost`).
  */
 const LANG_PUSH_COST = 2;
+/**
+ * ⭐ i18n (07.11, этап 1): цена одного кадра с готовыми именами вещей и заданий (сейв, сундук, прилавок, доска), посланного заново на смене
+ * языка, — как вид окна (1); по байтам — доплата общим счётом с листом и подписями.
+ */
+const LANG_NAMED_COST = 1;
 /** ⭐ С4: потолок подсказок за один запрос (сумка + сундук + прилавок окна — с запасом). */
 const VIEW_TIPS_MAX = 400;
 /** ⭐ С4: клетки пупсика, о которых окно вправе спросить. */
@@ -826,6 +832,7 @@ interface Client {
   /**
    * ⭐ i18n (07.11, хвосты Ф1): язык сменён кадром `lang`, а лист героя и подписи [E] на новом языке ещё не ушли — лимит видов аккаунта
    * исчерпан (`setLang`). Тик повторяет их, как только лимит пустит (`langRepush`); любой `pushHero` до того — полный (`heroSent` снят).
+   * ⭐ i18n (07.11, этап 1): и кадры с готовыми именами (сейв, сундук, прилавок, доска — `langNamed`).
    */
   langDue?: boolean;
   /**
@@ -4949,10 +4956,10 @@ export class Room implements Tickable {
     }
     // ⭐ С2: ауры и стойки сменились (тогл в тике) — лист героя заново (тем же текстом не уйдёт: `pushHero` сверяет).
     for (const [id, c] of this.clients) { const t = this.session.world.players[id]?.toggles.join('|'); if (t !== undefined && t !== c.heroToggles) { c.heroToggles = t; this.pushHero(id); } }
-    // ⭐ i18n (07.11): смена языка, отложенная лимитом видов (`setLang`), — лист и подписи [E], как только лимит пустит
+    // ⭐ i18n (07.11): смена языка, отложенная лимитом видов (`setLang`), — лист, кадры с именами и подписи [E], как только лимит пустит
     if (this.langDueAny) {
       this.langDueAny = false;
-      for (const c of this.clients.values()) if (c.langDue) { this.langRepush(c.pid, c); if (c.langDue) this.langDueAny = true; }
+      for (const c of this.clients.values()) if (c.langDue) { this.langRepush(c); if (c.langDue) this.langDueAny = true; }
     }
     counters.ticks++;
     if (this.lingering.size && !halted) this.tickLingers();   // R13-03: тела ушедших посреди боя — погибли, отбились, срок вышел
@@ -5012,55 +5019,152 @@ export class Room implements Tickable {
    * `announce`) — как был: кадры входа уже собраны на языке соединения, лимит — у входа.
    * ⭐ И подписи [E] уже отправленной области: кадр `interactables` (после `langChanged` и листа) — полная замена списка этой области,
    * каким его знает клиент, на новом языке (`knownInteractables`); раньше они оставались на прежнем до следующего `areaChanged`.
+   * ⭐ i18n (07.11, этап 1): И КАДРЫ С ГОТОВЫМИ ИМЕНАМИ — сейв, сундук, прилавок, доска заданий (`langNamed`): имена вещей в сумке и сундуке,
+   * на прилавке и задания доски раньше оставались на прежнем языке до следующего такого кадра (подсказки — вид, их окно перезапрашивает).
+   * Порядок: `hero` → `saveUpdate` → `stash` → `shop` → `questBoard` → `monsterInfo` → `langChanged` → `interactables` — к подтверждению
+   * языка (по нему окна перезапрашивают виды) сумка, сундук и прилавок у клиента уже на новом. Над лимитом — `langChanged` сразу, остальное —
+   * тиком тем же порядком. Цена — по тому, что уходит (`langCost`), доплата — по байтам всего (`langPush`).
+   * ⭐ i18n (07.11, ревью этапов): и определения знакомых монстров (`monsterInfo`, `langMonsters`) — имена табличек над монстрами этажа.
    */
   setLang(pid: string, lang: string | undefined, announce = false): string {
     const c = this.clients.get(pid);
     if (!c) return SOURCE_LANG;
     const before = c.lang;
     const ok = typeof lang === 'string' && localeLangs(this.cfg.get('locales') as Locales | undefined, { enabledOnly: true }).includes(lang);
-    if (ok) c.lang = lang; else delete c.lang;
+    // ⭐ i18n (07.11, ревью этапов): источник — БЕЗ поля, как у входа (`addPlayer`): Unity шлёт `join.lang` всегда, и у русского игрока `ru`
+    // ложился полем — `foreignHere` видел «иноязычного» в каждой комнате Unity, и русская комната шла путём раз-на-язык (карта языков и
+    // замыкание на тик) вместо общей строки. Байты те же (источнику `namedFor` отдаёт кадр как есть), лишняя работа — нет.
+    if (ok && lang !== SOURCE_LANG) c.lang = lang; else delete c.lang;
     const now = c.lang ?? SOURCE_LANG;
     const changed = (before ?? SOURCE_LANG) !== now;
     if (changed) delete c.heroSent;
     if (!announce) { if (changed) this.pushHero(pid); return now; }
     if (!changed) { this.send(c.ws, { t: 'langChanged', lang: now }); return now; }
-    if (!limits.viewReq.takeCost(c.userId, LANG_PUSH_COST)) {
-      c.langDue = true; this.langDueAny = true;   // лист и подписи — тиком, когда лимит пустит (`langRepush`)
+    const cost = this.langCost(c);
+    if (!limits.viewReq.takeCost(c.userId, cost)) {
+      c.langDue = true; this.langDueAny = true;   // лист, кадры с именами и подписи — тиком, когда лимит пустит (`langRepush`)
       this.send(c.ws, { t: 'langChanged', lang: now });
       return now;
     }
     delete c.langDue;
-    this.pushHero(pid);
-    this.send(c.ws, { t: 'langChanged', lang: now });
-    this.langLabels(c);
+    this.langPush(c, cost, now);
     return now;
   }
 
   /**
-   * ⭐ i18n (07.11): отложенная смена языка (`langDue`) — лист героя и подписи [E], как только лимит видов пустит (зовёт тик). `pushHero`
-   * тем же текстом второй раз не шлёт: лист, ушедший полным в промежутке (сейв, ауры), не повторится.
+   * ⭐ i18n (07.11): отложенная смена языка (`langDue`) — лист героя, кадры с готовыми именами и подписи [E], как только лимит видов пустит
+   * (зовёт тик). `pushHero` тем же текстом второй раз не шлёт: лист, ушедший полным в промежутке (сейв, ауры), не повторится.
    */
-  private langRepush(pid: string, c: Client): void {
-    if (!limits.viewReq.takeCost(c.userId, LANG_PUSH_COST)) return;
+  private langRepush(c: Client): void {
+    const cost = this.langCost(c);
+    if (!limits.viewReq.takeCost(c.userId, cost)) return;
     delete c.langDue;
-    this.pushHero(pid);
-    this.langLabels(c);
+    this.langPush(c, cost);
   }
 
   /**
-   * ⭐ i18n (07.11): кадр `interactables` клиенту `c` на ЕГО языке (подписи [E] области, которую он уже видит) + доплата по байтам листа и
-   * кадра сверх цены смены языка (`LANG_PUSH_COST` × `VIEW_BYTES_PER_TOKEN`), как у вида. Области ещё нет у клиента — кадра нет.
+   * ⭐ i18n (07.11, этап 1): ЦЕНА СМЕНЫ ЯЗЫКА — ПО ТОМУ, ЧТО УЙДЁТ ЗАНОВО: лист и подписи (`LANG_PUSH_COST`) + по `LANG_NAMED_COST` на кадр с
+   * готовыми именами (`langNamedCount`: сейв, сундук — если клиент его уже видел, прилавок — в городе, доска; ⭐ ревью этапов: определения
+   * знакомых монстров — если они есть).
    */
-  private langLabels(c: Client): void {
-    if (!c.ws.open) return;
+  private langCost(c: Client): number {
+    return LANG_PUSH_COST + LANG_NAMED_COST * this.langNamedCount(c);
+  }
+
+  /**
+   * ⭐ i18n (07.11, этап 1): смена языка, которую лимит пустил: лист героя, кадры с готовыми именами, `langChanged` (только на кадре `lang` —
+   * отложенную смену он уже подтвердил), подписи [E], и доплата по байтам ВСЕГО ушедшего сверх `cost` × `VIEW_BYTES_PER_TOKEN`, как у вида.
+   */
+  private langPush(c: Client, cost: number, announced?: string): void {
+    this.pushHero(c.pid);
+    let bytes = Buffer.byteLength(c.heroSent ?? '', 'utf8');
+    bytes += this.langNamed(c);
+    if (announced !== undefined) this.send(c.ws, { t: 'langChanged', lang: announced });
+    bytes += this.langLabels(c);
+    const extra = Math.ceil(bytes / VIEW_BYTES_PER_TOKEN) - cost;
+    if (extra > 0) limits.viewReq.charge(c.userId, extra);
+  }
+
+  /** ⭐ i18n (07.11, этап 1): сколько кадров с готовыми именами уйдёт заново (`langNamed`, тем же выбором) — их цена в `langCost`. */
+  private langNamedCount(c: Client): number {
+    return (this.session.world.players[c.pid] ? 1 : 0) + (c.stashSeen ? 1 : 0) + (this.area === 'town' ? 1 : 0) + 1
+      + (this.langMonsterIds(c).length ? 1 : 0);
+  }
+
+  /**
+   * ⭐ i18n (07.11, ревью этапов): МОНСТРЫ, ЧЬИ ОПРЕДЕЛЕНИЯ КЛИЕНТ УЖЕ ДЕРЖИТ — те, что есть на этаже и уже ушли ему кадром `monsterInfo`:
+   * знакомые комнаты (`known` — общий кадр мира, `emitShared`; тот же набор получает вошедший на живой этаж), при области интереса — его
+   * видимые (`c.visible`, `AOI_RADIUS`). Город и свежий этаж — пусто.
+   */
+  private langMonsterIds(c: Client): number[] {
+    const ids = AOI_RADIUS > 0 ? c.visible : this.known;
+    if (!ids.size) return [];
+    const out: number[] = [];
+    for (const m of this.session.world.monsters) if (ids.has(m.id)) out.push(m.id);
+    return out;
+  }
+
+  /**
+   * ⭐ i18n (07.11, ревью этапов): ОПРЕДЕЛЕНИЯ ЗНАКОМЫХ МОНСТРОВ ЗАНОВО (`monsterInfo`) — имя таблички над монстром Unity берёт из определения
+   * (`DmClient._monsterDefs` → `plateName`), а сервер шлёт его один раз, когда монстр входит в вид пати: после смены языка таблички этажа
+   * оставались на прежнем до следующего этажа, а источник удара по герою (`hit.by` — уже на новом языке) не находил монстра по имени.
+   * Определение — тем же видом, что у первого кадра (`monsterDefView`); Unity лишь заменяет его в словаре (модель не перезагружается:
+   * `modelKicked`). Нет знакомых — кадра нет.
+   */
+  private langMonsters(c: Client): Extract<ServerFrame, { t: 'monsterInfo' }> | null {
+    const ids = new Set(this.langMonsterIds(c));
+    if (!ids.size) return null;
+    const monsters = this.session.world.monsters.filter((m) => ids.has(m.id))
+      .map((m) => ({ id: m.id, def: monsterDefView(m.def, MONSTER_DEF_DEBUG), x: m.pos.x, y: m.pos.y }));   // ⭐ С-аудит F4: вид определения
+    return { t: 'monsterInfo', monsters };
+  }
+
+  /**
+   * ⭐ i18n (07.11, этап 1): КАДРЫ С ГОТОВЫМИ ИМЕНАМИ ЗАНОВО — ровно то, что клиент уже держит, на его новом языке (`namedFor`; источнику — те
+   * же байты, что ушли бы обычным путём). Сейв (`saveUpdate`) — всегда. Сундук — последний слепок, который ЭТОТ клиент видел (`stashSeen`:
+   * вход, `stashOpen`, транзакции аккаунта), без похода в базу; не видел (база не ответила на входе) — нет и кадра. Прилавок — только в
+   * городе (его шлют вход и возврат в город; в подземелье окна лавки нет — прилавок придёт с возвратом, уже на новом языке). Доска заданий —
+   * всегда (её шлёт вход в любой области). ⭐ Ревью этапов: определения знакомых монстров — если они есть (`langMonsters`). Выбор — тот же,
+   * что у `langNamedCount`. Возвращает байты ушедшего.
+   */
+  private langNamed(c: Client): number {
+    return this.inLang(c, () => {
+      let bytes = 0;
+      const p = this.session.world.players[c.pid];
+      if (p) bytes += this.sendNamed(c, { t: 'saveUpdate', save: clientSave(p.save) });   // R14-10: без сида забега
+      if (c.stashSeen) bytes += this.sendNamed(c, this.stashFrame(c.stashSeen));
+      if (this.area === 'town') bytes += this.sendNamed(c, this.shopFrame());
+      bytes += this.sendNamed(c, { t: 'questBoard', quests: this.questBoard });
+      const mons = this.langMonsters(c);
+      if (mons) bytes += this.sendNamed(c, mons);
+      return bytes;
+    });
+  }
+
+  /**
+   * ⭐ i18n (07.11, этап 1): кадр с готовыми именами одному клиенту — то же, что `send` (`namedFor`: иноязычному — показ имён, источнику —
+   * кадр как есть), но с числом ушедших байт (доплата смены языка). Соединение закрыто — ноль.
+   */
+  private sendNamed(c: Client, frame: ServerFrame): number {
+    if (!c.ws.open) return 0;
+    const msg = JSON.stringify(this.namedFor(c, frame));
+    c.ws.send(msg);
+    return Buffer.byteLength(msg, 'utf8');
+  }
+
+  /**
+   * ⭐ i18n (07.11): кадр `interactables` клиенту `c` на ЕГО языке (подписи [E] области, которую он уже видит). Области ещё нет у клиента —
+   * кадра нет. Возвращает байты кадра (доплату считает `langPush`).
+   */
+  private langLabels(c: Client): number {
+    if (!c.ws.open) return 0;
     const msg = this.inLang(c, () => {
       const list = this.knownInteractables();
       return list ? JSON.stringify({ t: 'interactables', interactables: list } satisfies ServerFrame) : null;
     });
-    if (msg !== null) c.ws.send(msg);
-    const bytes = Buffer.byteLength(c.heroSent ?? '', 'utf8') + (msg !== null ? Buffer.byteLength(msg, 'utf8') : 0);
-    const extra = Math.ceil(bytes / VIEW_BYTES_PER_TOKEN) - LANG_PUSH_COST;
-    if (extra > 0) limits.viewReq.charge(c.userId, extra);
+    if (msg === null) return 0;
+    c.ws.send(msg);
+    return Buffer.byteLength(msg, 'utf8');
   }
 
   /**
@@ -6557,6 +6661,9 @@ export class Room implements Tickable {
       toggles: [...p.toggles],
       // ⭐ С-аудит (29.10): конус взмаха — той же формулой, что бьёт (`heroMelee` → `meleeGeometry`): дебаг-слою клиента считать нечего
       melee: heroMelee(this.cfg, save),
+      // ⭐ i18n (07.11, этап 1): строка аур HUD и имена статусов (подсказка бейджа) — на языке игрока; Unity собирал их сам из конфига
+      auraLine: hudAuraLine(this.cfg, p.toggles),
+      debuffLabels: hudDebuffLabels(this.cfg),
     };
     const text = JSON.stringify(view);
     if (text === c.heroSent) return;
@@ -6638,11 +6745,15 @@ export class Room implements Tickable {
    */
   private sendStashOf(c: Client, stash: AccountStash): void {
     c.stashSeen = stash;   // ⭐ С4/С6: виды считаются по тому, что видит игрок
+    this.send(c.ws, this.stashFrame(stash));
+  }
+  /** Кадр сундука по слепку (`sendStashOf`; ⭐ i18n 07.11 — и заново на смене языка, `langNamed`). */
+  private stashFrame(stash: AccountStash): Extract<ServerFrame, { t: 'stash' }> {
     const d = stashDims(this.cfg);
-    this.send(c.ws, {
+    return {
       t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg), materials: stash.materials ?? {},
       forgeJournal: this.journalView(stash),
-    });
+    };
   }
   /**
    * Журнал для окна — ТОТ, которым сервер гейтит ковку. С флагом разработчика ворота открыты (базы и детали; ворот ступени у ковки нет
@@ -6779,7 +6890,7 @@ export class Room implements Tickable {
         if (!own.length) { if (pubMsg) c.ws.send(pubMsg); continue; }
         // Порядок событий тика сохраняем: своё — на своих местах, чужое личное выпало.
         const out = events.filter((e) => !('playerId' in e) || e.playerId === pid || !PRIVATE_EVENTS.has(e.type))
-          .map((e) => (e.type === 'swing' && e.playerId !== pid ? { ...e, cooldownMs: 0 } : e));
+          .map((e) => (e.type === 'swing' && e.playerId !== pid ? { ...e, cooldownMs: 0 } : e.type === 'materials' ? this.withPickText(c, e) : e));
         c.ws.send(JSON.stringify({ t: 'events', events: out } satisfies ServerFrame));
       }
       return;
@@ -6798,9 +6909,19 @@ export class Room implements Tickable {
       if (!own.length) { const pubMsg = pubMsgOf(c); if (pubMsg) c.ws.send(pubMsg); continue; }
       // Порядок событий тика сохраняем: своё — на своих местах, чужое личное выпало.
       const out = events.filter((e) => !('playerId' in e) || e.playerId === pid || !PRIVATE_EVENTS.has(e.type))
-        .map((e) => (e.type === 'swing' && e.playerId !== pid ? { ...e, cooldownMs: 0 } : e));
+        .map((e) => (e.type === 'swing' && e.playerId !== pid ? { ...e, cooldownMs: 0 } : e.type === 'materials' ? this.withPickText(c, e) : e));
       c.ws.send(JSON.stringify(this.namedFor(c, { t: 'events', events: out } satisfies ServerFrame)));   // ⭐ i18n Ф2: на его языке
     }
+  }
+  /**
+   * ⭐ i18n (07.11, этап 1): СВОЁ СОБЫТИЕ СЫРЬЯ — с готовой строкой журнала «Поднято: …» на языке получателя (`materialsPickedText`, поле
+   * `text`): Unity собирал её сам по конфигу, и на другом языке имена сырья оставались русскими. Событие личное (`PRIVATE_EVENTS`) — строка
+   * одна на получателя, у любого языка (у русского — те же байты, что собирал Unity). Чужое или пустое — как есть.
+   */
+  private withPickText(c: Client, e: Extract<SessionEvent, { type: 'materials' }>): SessionEvent {
+    if (e.playerId !== c.pid) return e;
+    const text = this.inLang(c, () => materialsPickedText(this.cfg, e.gains));
+    return text === undefined ? e : { ...e, text };
   }
   private broadcastExcept(pid: string, frame: ServerFrame): void {
     if (NAMED_FRAMES.has(frame.t) && this.foreignHere()) { this.broadcastNamed(frame, pid); return; }   // ⭐ i18n Ф2: раз на язык

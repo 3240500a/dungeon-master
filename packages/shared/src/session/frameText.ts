@@ -16,7 +16,7 @@ import type { QuestDef } from '../types/quest.js';
 import { HIT_BY_BLAST, HIT_BY_ENEMY, type SessionEvent } from './session.js';
 import type { ServerFrame } from './netTypes.js';
 import type { WorldDelta } from './delta.js';
-import { Localizer, SOURCE_LANG, cfgRowTextWith, textLocalizer, tr } from '../i18n/index.js';
+import { Localizer, SOURCE_LANG, cfgRowText, cfgRowTextWith, textLocalizer, tr } from '../i18n/index.js';
 import { isItemLike, localizeItem } from '../formulas/itemDisplay.js';
 import { boardQuestText } from '../economy/questLogic.js';
 
@@ -211,6 +211,23 @@ export function localizeDelta(reg: ConfigRegistry, delta: WorldDelta): WorldDelt
     if (it !== d.item) { du ??= delta.du!.slice(); du[i] = { ...d, item: it }; }
   });
   return du ? { ...delta, du } : delta;
+}
+
+/**
+ * ⭐ i18n (07.11, этап 1): СТРОКА ЖУРНАЛА СОБЫТИЯ СЫРЬЯ (`materials`) на языке области: «Поднято: Железная руда ×2, Уголь ×1» — в порядке
+ * `gains`, имя — строка `craft-materials` (`cfgRowText`; нет строки или имени — id), число — `String(n)`, части — через «, ». Это ровно то,
+ * что собирал Unity сам по конфигу (`DmClient.MaterialsText`: `name + " ×" + JsNum(n)`, шаблон `ui:client.picked`), — на другом языке его
+ * имена сырья оставались бы русскими; русский — те же байты (сторож `room.i18n.test.ts`). Пусто — `undefined` (Unity строки не писал).
+ */
+export function materialsPickedText(reg: ConfigRegistry, gains: Readonly<Record<string, number>>): string | undefined {
+  const ids = Object.keys(gains);
+  if (!ids.length) return undefined;
+  const mats = reg.get('craft-materials');
+  const parts = ids.map((id) => {
+    const name = cfgRowText(reg, 'craft-materials', mats.find((m) => m.id === id));
+    return tr('srv:loot.pickedPart', '{name} ×{n}', { name: typeof name === 'string' ? name : id, n: gains[id]! });
+  });
+  return tr('srv:loot.picked', 'Поднято: {list}', { list: parts.join(', ') });
 }
 
 /** Кадры, в которых лежат запечённые имена (вещи, задания, монстры) — им нужен проход `localizeFrame` на иноязычного получателя. */

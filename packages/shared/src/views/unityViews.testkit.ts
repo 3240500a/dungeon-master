@@ -15,7 +15,7 @@ import { acceptQuest, ensureMainQuest, generateBoard } from '../economy/questLog
 import type { Item } from '../types/items.js';
 import { addToInventory } from '../inventory/grid.js';
 import type { AccountStash } from '../types/stash.js';
-import { heroNumbers, heroMelee, masterBlock, hudInfo, sheetView, skillTreeView } from './hero.js';
+import { heroNumbers, heroMelee, masterBlock, hudInfo, hudAuraLine, hudDebuffLabels, sheetView, skillTreeView } from './hero.js';
 import { craftWindowView, initialCraftState } from './craft.js';
 import { craftWeapon, fullJournal } from '../formulas/craft.js';
 import {
@@ -86,6 +86,10 @@ export function unityViewsSample(cfg: ConfigRegistry) {
   const death1 = runDeathFrame(null, { goldLost: 120, itemsLost: 3, toTown: false });
   const death2 = runDeathFrame(death1.state, { goldLost: 0, itemsLost: 0, toTown: false, status: true, canLeave: true });
 
+  // ⭐ i18n (07.11, этап 1): две первые ауры/стойки древа — образец непустой строки аур HUD (`heroAura`)
+  const auraToggles = cfg.get('skill-tree').nodes
+    .filter((n) => n.effect.active?.category === 'aura' || n.effect.active?.category === 'stance').slice(0, 2).map((n) => n.id);
+
   const out = {
     note: 'Образцы моделей окон, которые шлёт сервер (виды `packages/shared/src/views`). Генерит packages/shared/src/views/unityViews.gen.test.ts; сторож Unity — Assets/DM/UI/Tests/ViewsCheck.cs.',
     hero: {
@@ -93,7 +97,12 @@ export function unityViewsSample(cfg: ConfigRegistry) {
       xp: xpProgress(save.level, save.xp, cfg.get('balance').xpTable), toggles: [],
       // ⭐ С-аудит (29.10): конус взмаха сервера (дебаг-слой F3)
       melee: heroMelee(cfg, save),
+      // ⭐ i18n (07.11, этап 1): строка аур HUD (без тоглов — пусто) и имена статусов — текст сервера вместо сборки Unity по конфигу
+      auraLine: hudAuraLine(cfg, []),
+      debuffLabels: hudDebuffLabels(cfg),
     },
+    // ⭐ i18n (07.11, этап 1): та же строка аур кадра `hero` с включёнными аурами/стойками (у образца героя тоглов нет — строка пуста)
+    heroAura: { toggles: auraToggles, auraLine: hudAuraLine(cfg, auraToggles) },
     sheet: { blocks: sheetView(cfg, save, [], live, { lastTarget: { name: 'Зомби', accuracy: 40, evade: 20 } }) },
     sheetPending: { blocks: sheetView(cfg, save, [], live, { pending: { strength: 2, vitality: 1 } }) },
     tree: skillTreeView(cfg, save),

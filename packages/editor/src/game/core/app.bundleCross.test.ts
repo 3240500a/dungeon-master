@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONFIG_REV_HEADER, ConfigRegistry, configCrossIssues, defaultConfigData } from '@dm/shared';
+import { CONFIG_FULL_URL, CONFIG_REV_HEADER, ConfigRegistry, configCrossIssues, defaultConfigData } from '@dm/shared';
 import { App } from './app.js';
 
 /**
@@ -60,7 +60,7 @@ describe('⭐ R22-01: встроенные файлы вместе наруша�
     served = null;
     FakeBc.all = [];
     G.fetch = async (url: string): Promise<unknown> => {
-      if (url !== '/api/config') throw new Error(`не ждали ${url}`);
+      if (url !== CONFIG_FULL_URL) throw new Error(`не ждали ${url}`);   // ⭐ i18n (07.11): вкладка редактора — тело с полной таблицей языков
       if (!served) throw new Error('сервер перезапускается');
       const s = served;
       const headers = { get: (h: string): string | null => (h.toLowerCase() === 'etag' ? `W/"${s.rev}"` : h.toLowerCase() === CONFIG_REV_HEADER ? s.rev : null) };

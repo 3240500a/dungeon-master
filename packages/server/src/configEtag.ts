@@ -1,4 +1,4 @@
-import type { ConfigRegistry } from '@dm/shared';
+import { playerLocales, type ConfigRegistry, type Locales } from '@dm/shared';
 
 /**
  * ETag конфига — СЛАБЫЙ, НО ПО ВСЕМУ ТЕЛУ.
@@ -23,15 +23,32 @@ export function configEtagOf(body: string): string {
 }
 
 /** Готовый ответ `/api/config`: тело, его ETag и ревизия сервера (`CONFIG_REV_HEADER`). */
-export interface ConfigReply { body: string; etag: string; rev: string; /** ⭐ 08.10 (Д1): игровая ревизия (`CONFIG_GAME_REV_HEADER`). */ gameRev: string }
+export interface ConfigReply {
+  body: string; etag: string; rev: string; /** ⭐ 08.10 (Д1): игровая ревизия (`CONFIG_GAME_REV_HEADER`). */ gameRev: string;
+  /**
+   * ⭐ i18n (07.11, шаг 9): тело с ПОЛНОЙ таблицей языков и его ETag — редактору (`/api/config?locales=full`). Ревизии те же (`rev`,
+   * `gameRev`): таблица языков вне ревизий конфига.
+   */
+  full: { body: string; etag: string };
+}
 
 /**
  * ⭐ R16 C-07: ОТВЕТ `/api/config` — С ОДНОГО СНИМКА РЕЕСТРА: тело (JSON снимка), его ETag и РЕВИЗИЯ СЕРВЕРА (`ConfigRegistry.revision`,
  * заголовок `CONFIG_REV_HEADER`). Ревизию вкладка кладёт в согласие команд кузницы, лавки и разбора (`cfgRev`), а нода сверяет её со своей.
  * Раньше вкладка клала свою — посчитанную по телу, разобранному СВОЕЙ схемой: у вкладки, пережившей деплой со сменой формы таблицы (L2 /
  * R3-25), она расходилась с серверной навсегда, и каждая продажа и ковка получали «Цена изменилась».
+ *
+ * ⭐ i18n (07.11, шаг 9): ДВА ТЕЛА С ОДНОГО СНИМКА. Игроку (Unity, конфиг релиза контента) — таблица языков без строк, которые ему не нужны
+ * (`playerLocales`: мета пакетов + `ui:`): текст конфига и фраз кода сервер с Ф1 собирает сам, а английский пакет один — ≈ 330 КБ поверх
+ * тела, которые качал бы каждый клиент на каждую правку конфига. Редактору — полное тело (`full`): вкладка «🌐 Языки» правит таблицу целиком,
+ * и база записи (`__baseRev`) — ревизия ПОЛНОЙ таблицы, как у сервера; тонкая таблица дала бы 409 (а не стёртые переводы) — сверка видит
+ * разницу. Ревизии — общие: `locales` вне `revision`/`gameRevision`, вынос строк их не сдвигает.
  */
 export function configReplyOf(reg: ConfigRegistry): ConfigReply {
-  const body = JSON.stringify(reg.snapshot());
-  return { body, etag: configEtagOf(body), rev: reg.revision(), gameRev: reg.gameRevision() };
+  const snap = reg.snapshot() as unknown as Record<string, unknown>;
+  const full = JSON.stringify(snap);
+  // ключ остаётся на своём месте (порядок полей тела — прежний), меняется только значение
+  if (snap.locales && typeof snap.locales === 'object') snap.locales = playerLocales(snap.locales as Locales);
+  const body = JSON.stringify(snap);
+  return { body, etag: configEtagOf(body), rev: reg.revision(), gameRev: reg.gameRevision(), full: { body: full, etag: configEtagOf(full) } };
 }

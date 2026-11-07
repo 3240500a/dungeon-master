@@ -77,7 +77,8 @@ describe('локализация: таблица языков', () => {
   it('таблица проходит схему и держит заявленные языки', () => {
     expect(localesSchema.safeParse(locales).success).toBe(true);
     expect(localeLangs(table)).toEqual(['ru', 'en', 'es', 'zh']);
-    expect(localeLangs(table, { enabledOnly: true }), 'игроку пока предлагаем только источник').toEqual(['ru']);
+    // ⭐ i18n (07.11, этап 1): английский включён (100 % строк, решение владельца) — игроку предлагаются источник и он; es/zh — без строк, выключены
+    expect(localeLangs(table, { enabledOnly: true }), 'игроку — источник и английский').toEqual(['ru', 'en']);
   });
 
   it('⚠ в пакете языка-источника НЕТ строк: русский живёт в самих данных конфига', () => {
