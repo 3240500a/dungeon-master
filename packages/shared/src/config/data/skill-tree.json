@@ -13457,13 +13457,13 @@
       "notable": false,
       "kind": "passive",
       "name": "Мастерство: Меткость",
-      "description": "+0.01 к меткости за ранг.",
+      "description": "+1% к меткости за ранг.",
       "maxRank": 20,
       "effect": {
         "modifiers": [
           {
             "stat": "accuracy",
-            "kind": "flat",
+            "kind": "increased",
             "value": 0.01
           }
         ]
@@ -13663,13 +13663,13 @@
       "notable": false,
       "kind": "passive",
       "name": "Мастерство: Меткость",
-      "description": "+0.01 к меткости за ранг.",
+      "description": "+1% к меткости за ранг.",
       "maxRank": 20,
       "effect": {
         "modifiers": [
           {
             "stat": "accuracy",
-            "kind": "flat",
+            "kind": "increased",
             "value": 0.01
           }
         ]
@@ -13788,7 +13788,7 @@
       "notable": false,
       "kind": "active",
       "name": "Сокрушающий взмах",
-      "description": "Удар оружием ×1.4 к урону, скорость ×0.9, дуга ×1.1. Отбрасывает на 0.35. Цена: 5 выносливости.",
+      "description": "Удар оружием ×1.4 к урону, скорость ×0.9, дуга ×1.1. Отбрасывает на 100. Цена: 5 выносливости.",
       "maxRank": 8,
       "effect": {
         "active": {
@@ -13801,7 +13801,7 @@
           "arcMult": 1.1,
           "rangeMult": 1,
           "windupSec": 0,
-          "knockback": 0.35,
+          "knockback": 100,
           "shoveChance": 1,
           "stunSec": 0,
           "count": 1,
@@ -13851,7 +13851,7 @@
       "notable": false,
       "kind": "active",
       "name": "Натиск",
-      "description": "Рывок сквозь врагов ×1.6 к урону, рывок на 130. Отбрасывает на 0.5. Цена: 7 выносливости, каст 0.25 с.",
+      "description": "Рывок сквозь врагов ×1.6 к урону, рывок на 130. Отбрасывает на 150. Цена: 7 выносливости, каст 0.25 с.",
       "maxRank": 6,
       "effect": {
         "active": {
@@ -13864,7 +13864,7 @@
           "convertPct": 0.5,
           "damageMult": 1.6,
           "radius": 0,
-          "knockback": 0.5,
+          "knockback": 150,
           "shoveChance": 1,
           "stunSec": 0,
           "dashDist": 130,
@@ -14548,13 +14548,13 @@
       "notable": false,
       "kind": "passive",
       "name": "Мастерство: Меткость",
-      "description": "+0.01 к меткости за ранг.",
+      "description": "+1% к меткости за ранг.",
       "maxRank": 20,
       "effect": {
         "modifiers": [
           {
             "stat": "accuracy",
-            "kind": "flat",
+            "kind": "increased",
             "value": 0.01
           }
         ]
@@ -14748,13 +14748,13 @@
       "notable": false,
       "kind": "passive",
       "name": "Мастерство: Меткость",
-      "description": "+0.01 к меткости за ранг.",
+      "description": "+1% к меткости за ранг.",
       "maxRank": 20,
       "effect": {
         "modifiers": [
           {
             "stat": "accuracy",
-            "kind": "flat",
+            "kind": "increased",
             "value": 0.01
           }
         ]

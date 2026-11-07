@@ -1994,7 +1994,7 @@
           "modifiers": [
             {
               "stat": "accuracy",
-              "kind": "flat",
+              "kind": "increased",
               "value": 0.01
             }
           ]
@@ -2131,7 +2131,7 @@
           "modifiers": [
             {
               "stat": "accuracy",
-              "kind": "flat",
+              "kind": "increased",
               "value": 0.01
             }
           ]
@@ -2583,7 +2583,7 @@
           "modifiers": [
             {
               "stat": "accuracy",
-              "kind": "flat",
+              "kind": "increased",
               "value": 0.01
             }
           ]
@@ -2735,7 +2735,7 @@
           "modifiers": [
             {
               "stat": "accuracy",
-              "kind": "flat",
+              "kind": "increased",
               "value": 0.01
             }
           ]
@@ -3827,7 +3827,7 @@
           "modifiers": [
             {
               "stat": "accuracy",
-              "kind": "flat",
+              "kind": "increased",
               "value": 0.01
             }
           ]
@@ -3973,7 +3973,7 @@
           "modifiers": [
             {
               "stat": "accuracy",
-              "kind": "flat",
+              "kind": "increased",
               "value": 0.01
             }
           ]
@@ -5556,7 +5556,7 @@
             "arcMult": 1.1,
             "rangeMult": 1,
             "windupSec": 0,
-            "knockback": 0.35,
+            "knockback": 100,
             "shoveChance": 1,
             "stunSec": 0,
             "count": 1,
@@ -5597,7 +5597,7 @@
             "convertPct": 0.5,
             "damageMult": 1.6,
             "radius": 0,
-            "knockback": 0.5,
+            "knockback": 150,
             "shoveChance": 1,
             "stunSec": 0,
             "dashDist": 130,

@@ -67,7 +67,7 @@ const CLASSES = {
       atk('multishot', 'Мультивыстрел', 8, 0.9, { attackTypes: ['ranged'], damageMult: 0.7, count: 3, spread: 0.35 }),
       atk('piercing-shot', 'Пронзающая стрела', 10, 1.2, { attackTypes: ['ranged'], damageMult: 1.6, pierce: true }),
       cst('rain-of-arrows', 'Ливень стрел', 18, 6, 'ground', { damageMult: 1.4, radius: 150 }),
-    ], m: [m('critChance', 'flat', 0.008, 'Крит'), m('attackSpeed', 'increased', 0.015, 'Скор. атаки'), m('accuracy', 'flat', 0.01, 'Меткость'), m('dexterity', 'flat', 2, 'Ловкость')] },
+    ], m: [m('critChance', 'flat', 0.008, 'Крит'), m('attackSpeed', 'increased', 0.015, 'Скор. атаки'), m('accuracy', 'increased', 0.01, 'Меткость'), m('dexterity', 'flat', 2, 'Ловкость')] },
     nets: { name: 'Сети', ab: [
       crs('net', 'Сеть', 10, 7, { radius: 180, ailment: ail('freeze', 0.9, 0.1, 2500, 5, 0.3) }),
       cst('fire-trap', 'Огненная ловушка', 12, 8, 'ground', { element: 'fire', convertPct: 0.7, damageMult: 1.3, radius: 120, ailment: ail('burn', 0.8, 6, 3000, 5) }),
@@ -77,7 +77,7 @@ const CLASSES = {
       atk('elemental-shot', 'Стихийный выстрел', 8, 0.8, { attackTypes: ['ranged'], damageMult: 1.1, element: 'cold', ailment: ail('freeze', 0.4, 0.15, 2500, 4, 0.05) }),
       cst('natures-wrath', 'Гнев природы', 16, 5, 'nova', { element: 'poison', convertPct: 0.7, damageMult: 1.3, radius: 150, ailment: ail('poison', 0.6, 4, 4000, 5) }),
       buf('forest-blessing', 'Благословение леса', 12, 14, 10, [{ stat: 'resFire', kind: 'flat', value: 0.15 }, { stat: 'resCold', kind: 'flat', value: 0.15 }, { stat: 'accuracy', kind: 'increased', value: 0.2 }]),
-    ], m: [m('firePct', 'flat', 0.02, 'Урон огнём'), m('coldPct', 'flat', 0.02, 'Урон холодом'), m('accuracy', 'flat', 0.01, 'Меткость'), m('intelligence', 'flat', 2, 'Интеллект')] },
+    ], m: [m('firePct', 'flat', 0.02, 'Урон огнём'), m('coldPct', 'flat', 0.02, 'Урон холодом'), m('accuracy', 'increased', 0.01, 'Меткость'), m('intelligence', 'flat', 2, 'Интеллект')] },
   },
   // ── Вьюга — меч+щит / 2H топор, Сила+Ловк ──
   vyuga: {
@@ -103,7 +103,7 @@ const CLASSES = {
       atk('heavy-bolt', 'Тяжёлый болт', 7, 1.1, { attackTypes: ['ranged'], damageMult: 1.8, pierce: true }),
       buf('take-aim', 'Прицельный выстрел', 8, 10, 6, [{ stat: 'critChance', kind: 'increased', value: 0.5 }, { stat: 'accuracy', kind: 'increased', value: 0.3 }]),
       cst('explosive-bolt', 'Разрывной болт', 14, 5, 'meteor', { element: 'fire', convertPct: 0.5, damageMult: 1.6, radius: 130, ailment: ail('burn', 0.6, 6, 3000, 5) }),
-    ], m: [m('critChance', 'flat', 0.008, 'Крит'), m('critMultiplier', 'flat', 0.03, 'Множ. крита'), m('accuracy', 'flat', 0.01, 'Меткость'), m('dexterity', 'flat', 2, 'Ловкость')] },
+    ], m: [m('critChance', 'flat', 0.008, 'Крит'), m('critMultiplier', 'flat', 0.03, 'Множ. крита'), m('accuracy', 'increased', 0.01, 'Меткость'), m('dexterity', 'flat', 2, 'Ловкость')] },
     merc: { name: 'Наёмник', ab: [
       atk('spread-shot', 'Веерный выстрел', 9, 0.9, { attackTypes: ['ranged'], damageMult: 0.6, count: 5, spread: 0.5 }),
       cst('volley', 'Залп', 16, 6, 'ground', { damageMult: 1.3, radius: 160 }),

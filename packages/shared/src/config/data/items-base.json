@@ -614,9 +614,9 @@
   {
     "kind": "weapon",
     "id": "maul",
-    "name": "Молот-гроза",
+    "name": "Кувалда",
     "enabled": true,
-    "gender": "m",
+    "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
     "baseStats": [
@@ -1765,7 +1765,7 @@
   {
     "kind": "weapon",
     "id": "venom-wand",
-    "name": "Жезл яда",
+    "name": "Жезл отравы",
     "enabled": true,
     "gender": "m",
     "minTier": "t0",

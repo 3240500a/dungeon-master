@@ -9062,7 +9062,7 @@
    "ids": [
     "cfg:weapon-anatomy/axe/bind/tags/lugs/values/none/name"
    ],
-   "ru": "без щекавиц",
+   "ru": "нет",
    "en": "none",
    "alts": [],
    "note": "[name]",
@@ -10324,7 +10324,7 @@
    "ids": [
     "cfg:weapon-anatomy/spear/grip/tags/hold/values/heel/name"
    ],
-   "ru": "хват у пяты",
+   "ru": "у пяты",
    "en": "at the heel",
    "alts": [],
    "note": "[name]",
@@ -10336,7 +10336,7 @@
    "ids": [
     "cfg:weapon-anatomy/spear/grip/tags/hold/values/middle/name"
    ],
-   "ru": "хват посередине",
+   "ru": "посередине",
    "en": "at the middle",
    "alts": [],
    "note": "[name]",

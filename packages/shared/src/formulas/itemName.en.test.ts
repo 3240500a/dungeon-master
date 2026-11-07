@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { Localizer, SOURCE_LANG, cfgRowKey, cfgRowTextWith, localizerFor } from '../i18n/index.js';
-import { composeItemName, type NameFragment } from './itemName.js';
-import { affixPool, affixTargetOfBase, generateItem } from './itemgen.js';
-import { itemDisplayName } from './itemDisplay.js';
-import { createRng } from './rng.js';
+import { Localizer, SOURCE_LANG, cfgRowTextWith, localizerFor } from '../i18n/index.js';
+import { composeItemName } from './itemName.js';
+import { nameSweeps } from './itemName.testkit.js';
 
 /**
  * ⭐ i18n Ф3, этап 3 (07.11): АНГЛИЙСКИЕ ИМЕНА ВЕЩЕЙ БЕЗ ПОВТОРА КОРНЯ. Русский бросок имени переводился слово в слово, и английский
@@ -12,7 +10,8 @@ import { createRng } from './rng.js';
  * Staff», «Tower Shield of Shielding»; в формуле ковки — «lugs no lugs», «poll long poll», «hold held at the heel». Лечится данными языка
  * (слова `en` и шаблон `item.rare` — «{epithet} {noun} {base}», как у Diablo II: «Blood Fang Dagger»), код сборки не тронут.
  * Сторож обходит ВСЕ сочетания на живых данных: база × основа × эпитет, база × слово аффикса, база × ступень, ярлык × значение формулы.
- * ⚠ Только английский: у русского свои совпадения («Ядовитый жезл яда», «щекавицы без щекавиц») — их решает владелец, не перевод.
+ * ⚠ Только английский; у русского источника свой сторож — `itemName.ru.test.ts` (решение владельца 07.11), обход у обоих общий —
+ * `itemName.testkit.ts`.
  */
 const reg = new ConfigRegistry();
 reg.loadAll();
@@ -41,11 +40,8 @@ function rootClash(name: string): string | undefined {
   for (let i = 0; i < w.length; i++) for (let j = i + 1; j < w.length; j++) if (sameRoot(w[i]!, w[j]!)) return `${w[i]}~${w[j]}`;
   return undefined;
 }
-const frag = (table: Parameters<typeof cfgRowKey>[1], row: object, field: string): NameFragment =>
-  ({ key: cfgRowKey(reg, table, row, field) ?? '', source: String((row as Record<string, unknown>)[field] ?? '') });
-
-const gear = reg.get('items.base').filter((b) => b.kind !== 'consumable' && b.enabled !== false);
-const pool = reg.get('rare-names');
+const S = nameSweeps(reg, EN, rootClash);
+const { frag, gear, pool } = S;
 
 describe('⭐ i18n Ф3, этап 3: английские имена вещей без повтора корня', () => {
   it('сторож корня ловит прежние беды (иначе он ничего не доказывает)', () => {
@@ -58,16 +54,9 @@ describe('⭐ i18n Ф3, этап 3: английские имена вещей �
   });
 
   it('⭐ рар: каждая база × каждая основа × каждый эпитет — ни одно слово не повторяет корень другого', () => {
-    const clashes: string[] = [];
-    let n = 0;
-    for (const b of gear) for (const no of pool.nouns) for (const ep of pool.epithets) {
-      const name = composeItemName(EN, { shape: 'rare', base: frag('items.base', b, 'name'), agreement: b.gender ?? undefined, noun: frag('rare-names', no, 't'), epithet: frag('rare-names', ep, 't') });
-      n++;
-      const c = rootClash(name);
-      if (c) clashes.push(`${c}: ${name}`);
-    }
-    expect(n).toBeGreaterThan(100_000);
-    expect(clashes.slice(0, 5)).toEqual([]);
+    const r = S.rare();
+    expect(r.n).toBeGreaterThan(100_000);
+    expect(r.clashes.slice(0, 5)).toEqual([]);
   });
 
   it('⭐ рар: основы и эпитеты различны между собой (было два «Fury»: Ярость и Гнев), эпитет — впереди основы', () => {
@@ -86,69 +75,24 @@ describe('⭐ i18n Ф3, этап 3: английские имена вещей �
   });
 
   it('⭐ магия и ступень: каждое слово аффикса × каждая база, которой он выпадает; каждая ступень × каждая база', () => {
-    const clashes: string[] = [];
-    let n = 0;
-    for (const a of reg.get('affixes')) {
-      if (!a.word || a.enabled === false) continue;
-      for (const b of gear) {
-        const fits = (['magic', 'rare'] as const).some((r) => affixPool([a], affixTargetOfBase(b), r, 99).length > 0);
-        if (!fits) continue;
-        const name = composeItemName(EN, { shape: 'magic', base: frag('items.base', b, 'name'), agreement: b.gender ?? undefined, [a.kind]: frag('affixes', a, 'word') });
-        n++;
-        const c = rootClash(name);
-        if (c) clashes.push(`${c}: ${name}`);
-      }
-    }
-    for (const b of reg.get('items.base')) for (const t of reg.get('item-tiers')) {
-      if (!t.name) continue;
-      const name = composeItemName(EN, { shape: 'tiered', base: frag('items.base', b, 'name'), agreement: b.gender ?? undefined, tier: frag('item-tiers', t, 'name') });
-      n++;
-      const c = rootClash(name);
-      if (c) clashes.push(`${c}: ${name}`);
-    }
-    expect(n).toBeGreaterThan(2_000);
-    expect(clashes).toEqual([]);
+    const r = S.affixAndTier();
+    expect(r.n).toBeGreaterThan(2_000);
+    expect(r.clashes).toEqual([]);
   });
 
   it('⭐ настоящий шов: дроп рара и магии → `itemDisplayName` на английском — пересобран, без повтора корня', () => {
-    const IB = reg.get('items.base');
-    const common = { tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), rareNames: pool };
-    const bad: string[] = [];
-    let n = 0;
-    for (const rarity of ['rare', 'magic'] as const) {
-      for (let s = 1; s <= 300; s++) {
-        const base = gear[(s * 7) % gear.length]!;
-        const lvl = 1 + ((s * 13) % 80);
-        const it = generateItem(IB, reg.get('affixes'), reg.get('uniques'), { ...common, dropBias: 1, itemLevel: lvl, tierLevel: lvl, baseId: base.id, forceRarity: rarity }, createRng(s * 31 + 5));
-        const en = itemDisplayName(reg, it, EN);
-        n++;
-        if (en === it.name || rootClash(en)) bad.push(`${it.name} → ${en}`);
-      }
-    }
-    expect(n).toBe(600);
+    const d = S.drops();
+    expect(d.length).toBe(600);
+    const bad = d.filter((x) => x.shown === x.item.name || rootClash(x.shown)).map((x) => `${x.item.name} → ${x.shown}`);
     expect(bad.slice(0, 5)).toEqual([]);
   });
 
-  it('⭐ формула ковки: ярлык и значение не повторяют друг друга («lugs none», не «lugs no lugs»)', () => {
-    const clashes: string[] = [];
-    let n = 0;
-    for (const anat of reg.get('weapon-anatomy')) {
-      const row = reg.get('weapon-types').find((t) => t.id === anat.id);
-      for (const ref of row?.formula.refs ?? []) {
-        const [slot, key] = ref.split('.') as ['strike' | 'grip' | 'bind' | 'head', string];
-        const def = anat[slot]?.tags.find((t) => t.key === key);
-        if (!def) continue;
-        const label = def.label ? cfgRowTextWith(EN, reg, 'weapon-anatomy', def, 'label') : cfgRowTextWith(EN, reg, 'weapon-anatomy', def, 'name').toLowerCase();
-        for (const v of def.values) {
-          // как у `typeFormula`: латинский `code` — как есть, иначе имя значения
-          const val = v.code && !/\p{Script=Cyrillic}/u.test(v.code) ? v.code : (v.name ? cfgRowTextWith(EN, reg, 'weapon-anatomy', v, 'name') : v.id);
-          n++;
-          const c = rootClash(`${label} ${val}`);
-          if (c) clashes.push(`${anat.id} ${ref} ${v.id}: ${label} ${val}`);
-        }
-      }
-    }
-    expect(n).toBeGreaterThan(200);
-    expect(clashes).toEqual([]);
+  it('⭐ формула ковки: ярлык и значение не повторяют друг друга («lugs none», не «lugs no lugs») — все значения и каждая деталь', () => {
+    const v = S.formulaValues();
+    expect(v.n).toBeGreaterThan(200);
+    expect(v.clashes).toEqual([]);
+    const p = S.formulaParts();
+    expect(p.n).toBeGreaterThan(500);
+    expect(p.clashes).toEqual([]);
   });
 });
