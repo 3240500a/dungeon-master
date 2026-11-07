@@ -48,6 +48,8 @@ export const I18N_INTERNAL_FIELDS: readonly string[] = ['ref', 'source', 'note',
  */
 export const I18N_SKIP_TABLES: ReadonlySet<string> = new Set([
   'art', 'textures', 'models', 'objects', 'room-prefabs', 'environment',
+  /** ⭐ i18n Ф3 (07.11): библиотека материалов рендера — `name` у неё ИМЯ АССЕТА (`crypt_wall_base_01`), игрок его не видит. */
+  'materials',
   /**
    * ⚠⚠ САМА ТАБЛИЦА ПЕРЕВОДОВ — тоже мимо. Иначе обходчик извлекает САМОНАЗВАНИЯ ЯЗЫКОВ («Русский»,
    * «English», «Español», «简体中文») как строки под перевод, а самоназвание на то и самоназвание, что в

@@ -38,6 +38,8 @@
     "items:orphans": "tsx packages/server/src/db/itemsCli.ts orphans",
     "i18n": "tsx tools/i18n/extract.ts",
     "i18n:stub": "tsx tools/i18n/extract.ts --stub",
+    "i18n:todo": "tsx tools/i18n/todo.ts",
+    "i18n:merge": "tsx tools/i18n/merge.ts",
     "anim-ai": "tsx tools/anim-ai/server.ts",
     "anim-ai:stub": "tsx tools/anim-ai/server.ts --stub",
     "create-admin": "tsx packages/server/src/db/createAdminCli.ts",
