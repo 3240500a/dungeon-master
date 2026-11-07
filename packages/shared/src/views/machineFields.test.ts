@@ -6,6 +6,8 @@ import { unityViewsSample } from './unityViews.testkit.js';
 import { compareTable, compareView } from './heroCard.js';
 import { questsView } from './townHero.js';
 import { runReforgeHead, runReforgeView } from './runReforge.js';
+import { craftView, initialCraftState } from './craft.js';
+import { fullJournal } from '../formulas/craft.js';
 import type { SheetBlock, SheetRow } from './hero.js';
 import type { QuestProgress } from '../types/quest.js';
 
@@ -122,6 +124,17 @@ describe('⭐ i18n (07.11): машинные поля видов ≡ прежн�
     const notes = rows.filter((r) => r.note);
     expect(notes.length).toBe(1);
     for (const r of rows) expect(r.note === true, r.cells.join('|')).toBe(r.cells.length === 1 && r.cells[0]!.startsWith('⚠'));
+  });
+
+  it('⭐ i18n Ф3: итог ковки (`left.message.bad`) — флагом того, кто пишет итог (`messageBad`), а не по «Не» в начале текста', () => {
+    const msg = (message: string, messageBad: boolean) => craftView(cfg, {
+      st: { ...initialCraftState(cfg, 'sword'), message, messageBad }, journal: fullJournal(cfg), wallet: {}, gold: 0, bag: null, sketch: false,
+    }).left.message;
+    expect(msg('', true), 'итога нет — поля нет (так у сервера всегда)').toBeNull();
+    expect(msg('Не вышло: нет места', true)).toEqual({ text: 'Не вышло: нет места', bad: true });
+    expect(msg('Forge failed: no room', true), 'прежнее правило по тексту дало бы «удачу»').toEqual({ text: 'Forge failed: no room', bad: true });
+    expect(msg('Надето', false)).toEqual({ text: 'Надето', bad: false });
+    expect(ru.out.craft.plain.left.message, 'эталон окон: итога нет').toBeNull();
   });
 
   it('⭐⭐ поля НЕ ЗАВИСЯТ ОТ ЯЗЫКА: на псевдоязыке — те же значения, а текст уже без кириллицы (текстовое правило соврало бы)', () => {

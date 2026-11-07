@@ -42,6 +42,12 @@ export interface CraftWindowState {
   /** Доводка — индекс в `balance.craft.finish`. */
   finish?: number;
   message: string;
+  /**
+   * ⭐ i18n Ф3 (07.11): итог — отказ (красным). Флаг ставит тот, кто пишет `message`: прежде цвет угадывался по русскому тексту
+   * (`startsWith('Не')`), и на ином языке отказ кузницы вышел бы «удачей». Сервер итога не знает (`message` пуст → `left.message` null),
+   * Unity держит свой флаг (`CraftPanel._messageBad`).
+   */
+  messageBad?: boolean;
   busy?: 'craft' | 'enchant' | 'equip' | 'sketch';
   sketchPick?: string;
 }
@@ -157,7 +163,7 @@ function partEffect(reg: ConfigRegistry, slot: CraftSlot, part: WeaponPart, st: 
   const axis = part.axis;
   if (slot === 'grip') {
     const r = k.gripK ** axis, a = k.gripK ** (-2 * axis);
-    return ['bow', 'crossbow', 'wand', 'staff'].includes(weaponClass) ? tr('srv:craft.effLookOnly', 'только вид (§5.2)') : tr('srv:craft.effReachArc', 'дальность ×{reach} · дуга ×{arc}', { reach: fx(r, 2), arc: fx(a, 2) });
+    return ['bow', 'crossbow', 'wand', 'staff'].includes(weaponClass) ? tr('srv:craft.effLookOnly', 'только для вида') : tr('srv:craft.effReachArc', 'дальность ×{reach} · дуга ×{arc}', { reach: fx(r, 2), arc: fx(a, 2) });
   }
   if (slot === 'bind') return axis > 0 ? tr('srv:craft.effPrefixes', 'больше префиксов') : axis < 0 ? tr('srv:craft.effSuffixes', 'больше суффиксов') : tr('srv:craft.effEven', 'поровну');
   const strike = partById(reg, st.parts.strike.id);
@@ -404,7 +410,7 @@ export function craftView(reg: ConfigRegistry, v: CraftViewIn) {
     left.equip = craftedInBag ? { label: st.busy === 'equip' ? tr('srv:craft.equipping', '⏳ надеваю…') : tr('srv:craft.equip', 'Надеть'), disabled: busy } : null;
     left.fresh = { disabled: busy };
   }
-  left.message = st.message ? { text: st.message, bad: st.message.startsWith('Не') } : null;
+  left.message = st.message ? { text: st.message, bad: st.messageBad === true } : null;
   return { classes, family, head, sketch, all, slots, left, sketchPick: st.sketchPick ?? null };
 }
 

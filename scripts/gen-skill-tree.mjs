@@ -1,11 +1,14 @@
 // Генератор ЕДИНОГО ДРЕВА СКИЛОВ (skill-tree): 25 веток с УНИКАЛЬНЫМ контентом (активки со способностью v3
 // + пассивы со %-статом ветки). Связи по смежности. Гейт оружия и resource штампуются на способность.
-// Значения черновые — тюнятся в редакторе. Пишет skill-tree.json. Запуск: node scripts/gen-skill-tree.mjs
+// Значения черновые — тюнятся в редакторе. Пишет skill-tree.json. Запуск: node scripts/gen-skill-tree.mjs [--out <файл>]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { describeAbility, describePassive, describeInsertNode as describeInsertText } from './skillText.mjs';
 
-const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'packages/shared/src/config/data/skill-tree.json');
+// `--out <файл>` — сухой прогон: свериться с данными (в JSON бывают ручные правки редактора), не перезаписывая их.
+const outArg = process.argv.indexOf('--out');
+const out = outArg > 0 ? resolve(process.argv[outArg + 1]) : join(dirname(fileURLToPath(import.meta.url)), '..', 'packages/shared/src/config/data/skill-tree.json');
 
 // ── Билдеры способностей (минимальные; дефолты схемы дополнят) ──
 const ail = (kind, chance, mag, durationMs, maxStacks = 4, mag2) =>
@@ -29,121 +32,20 @@ const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'packages/sh
 const INSERTS = JSON.parse(readFileSync(join(dataDir, 'skill-inserts.json'), 'utf8'));
 const INS_TYPES = JSON.parse(readFileSync(join(dataDir, 'skill-insert-types.json'), 'utf8'));
 const insById = new Map(INSERTS.map((i) => [i.id, i]));
-const typeName = (id) => (INS_TYPES.find((t) => t.id === id) || {}).name || id;
+/** Имя типа вставки; нет — падение, а не сырой id в описании. */
+const typeName = (id) => {
+  const t = INS_TYPES.find((x) => x.id === id);
+  if (!t || !t.name) throw new Error(`Тип вставки «${id}» не найден в skill-insert-types.json`);
+  return t.name;
+};
 
 // ── ОПИСАНИЯ. Раньше здесь стояло буквально `Активный скилл: <имя>` — отсюда и «половина скилов
 // непонятно что делают». Текст собирается ИЗ ЧИСЕЛ способности: что не задано, то и не упоминается,
 // поэтому описание не врёт и не устаревает при правке значений.
-const AIL_RU = {
-  wound: 'рану', bleed: 'кровотечение', sunder: 'увечье', daze: 'ошеломление',
-  burn: 'поджиг', poison: 'отравление', shock: 'шок', freeze: 'обморожение',
-};
-const EL_RU = { physical: 'физическим', fire: 'огнём', cold: 'холодом', lightning: 'молнией', poison: 'ядом' };
-const RES_RU = { stamina: 'выносливости', mana: 'маны' };
-const SHAPE_RU = { nova: 'взрыв вокруг себя', ground: 'зона на земле', meteor: 'удар с неба',
-  dash: 'рывок сквозь врагов', leap: 'прыжок', boomerang: 'снаряд' };
-const pct = (x) => `${Math.round(x * 100)}%`;
-/** Заглавная первая буква: фразы собираются из кусков, и начало предложения не должно быть строчным. */
-const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
-const num = (x) => String(Math.round(x * 100) / 100);
+// ⭐ i18n Ф3, этап 2 (07.11): сами фразы — в `scripts/skillText.mjs` (род стата, подписи, числа); незнакомый стат роняет генератор.
+const describeInsertNode = (ins) => describeInsertText(ins, typeName(ins.type));
 
-/** Кусок про накладываемый статус — общий для атак, кастов и проклятий. */
-function ailPhrase(al) {
-  if (!al || !al.kind) return null;
-  const dur = al.durationMs ? ` на ${num(al.durationMs / 1000)} с` : '';
-  const st = al.maxStacks > 1 ? `, до ${al.maxStacks} стаков` : '';
-  return `${pct(al.chance)} наложить ${AIL_RU[al.kind] || al.kind}${dur}${st}`;
-}
-
-/** Описание способности из её полей. Порядок фраз — от главного к деталям. */
-function describeAbility(a) {
-  const out = [];
-  if (a.category === 'attack') {
-    const parts = [`Удар оружием ×${num(a.damageMult ?? 1)} к урону`];
-    if (a.hits > 1) parts.push(`${a.hits} удара подряд`);
-    if (a.count > 1) parts.push(`${a.count} снаряда веером`);
-    if (a.speed && a.speed !== 1) parts.push(`скорость ×${num(a.speed)}`);
-    if (a.arcMult && a.arcMult !== 1) parts.push(`дуга ×${num(a.arcMult)}`);
-    if (a.rangeMult && a.rangeMult !== 1) parts.push(`дальность ×${num(a.rangeMult)}`);
-    if (a.pierce) parts.push('пробивает насквозь');
-    out.push(parts.join(', ') + '.');
-  } else if (a.category === 'cast') {
-    const parts = [`${SHAPE_RU[a.shape] || a.shape} ×${num(a.damageMult ?? 1)} к урону`];
-    if (a.radius) parts.push(`радиус ${Math.round(a.radius)}`);
-    if (a.dashDist) parts.push(`рывок на ${Math.round(a.dashDist)}`);
-    out.push(cap(parts.join(', ')) + '.');
-  } else if (a.category === 'curse') {
-    out.push(`Проклятие по площади${a.radius ? `, радиус ${Math.round(a.radius)}` : ''}.`);
-  } else if (a.category === 'aura' || a.category === 'stance') {
-    out.push(`${a.category === 'aura' ? 'Аура' : 'Стойка'}: резервирует ${pct(a.reservePct ?? 0)} пула.`);
-  } else if (a.category === 'buff') {
-    out.push(`Усиление на ${num(a.durationSec ?? 0)} с.`);
-  }
-  // Состав урона: стихия появляется только там, где реально меняет пакет.
-  if (a.element && a.element !== 'physical') {
-    if (a.convertPct) out.push(`${pct(a.convertPct)} урона переводится в урон ${EL_RU[a.element] || a.element}.`);
-    else if (a.addElementPct) out.push(`Сверху ${pct(a.addElementPct)} урона ${EL_RU[a.element] || a.element}.`);
-    else out.push(`Бьёт ${EL_RU[a.element] || a.element}.`);
-  }
-  const ail = ailPhrase(a.ailment);
-  if (ail) out.push(cap(ail) + '.');
-  const ctl = [];
-  if (a.knockback) ctl.push(`отбрасывает на ${Math.round(a.knockback)}`);
-  if (a.stunSec) ctl.push(`оглушает на ${num(a.stunSec)} с`);
-  if (a.knockdownChance) ctl.push(`${pct(a.knockdownChance)} сбить с ног`);
-  if (ctl.length) out.push(cap(ctl.join(', ')) + '.');
-  // Модификаторы аур/стоек/баффов — иначе про них не сказано вообще ничего.
-  for (const m of a.buffMods || []) {
-    const sign = m.value >= 0 ? '+' : '−';
-    out.push(`${sign}${pct(Math.abs(m.value))} ${SL[m.stat] || m.stat}.`);
-  }
-  const cost = [];
-  if (a.manaCost) cost.push(`${num(a.manaCost)} ${RES_RU[a.resource] || a.resource || ''}`.trim());
-  if (a.cooldown) cost.push(`откат ${num(a.cooldown)} с`);
-  if (a.castTimeSec) cost.push(`каст ${num(a.castTimeSec)} с`);
-  if (cost.length) out.push(`Цена: ${cost.join(', ')}.`);
-  return out.join(' ');
-}
-
-/**
- * Описание пассива из его модификаторов. Классовые узлы приезжают из легаси-файла, где описания
- * либо пустые, либо бессодержательные, — собираем сами по тем же правилам, что и для веток.
- */
-function describePassive(mods, fallback) {
-  const parts = (mods || []).map((m) => {
-    const sign = m.value >= 0 ? '+' : '−';
-    return `${sign}${pct(Math.abs(m.value))} ${SL[m.stat] || m.stat}`;
-  });
-  if (!parts.length) return fallback || '';
-  return `${parts.join(', ')} за ранг.`;
-}
-
-/** Описание узла-вставки: что открывает, что вставка делает и чем за это платят. */
-function describeInsertNode(ins) {
-  const cost = [];
-  if (ins.costMult !== 1) cost.push(`стоимость ×${num(ins.costMult)}`);
-  if (ins.cooldownMult !== 1) cost.push(`откат ×${num(ins.cooldownMult)}`);
-  // Про конверсию говорим ОТДЕЛЬНО: она гасит физический статус оружия (packet.physical → 0),
-  // и без этой строчки игрок считает пропавшее кровотечение багом.
-  const conv = ins.tune && ins.tune.convertPct >= 1
-    ? ' Полная конверсия убирает физические статусы оружия (кровотечение, увечье и прочие).' : '';
-  return `Открывает вставку «${ins.name}» (${typeName(ins.type)}). ${ins.description}` +
-    (cost.length ? ` Носитель платит: ${cost.join(', ')}.` : '') + conv +
-    ' Ранг узла усиливает вставку.';
-}
-
-// Подпись стата для описания пассива (fallback, если не задана явно).
-const SL = {
-  critChance: 'к шансу крита', critMultiplier: 'к множителю крита', ailmentPct: 'к наложению статусов',
-  attackSpeed: 'к скорости атаки', castSpeed: 'к скорости каста', armorPen: 'к пробою брони цели',
-  physPct: 'к физ. урону', damagePct: 'ко всему урону', firePct: 'к урону огнём', coldPct: 'к урону холодом',
-  lightningPct: 'к урону молнией', poisonPct: 'к урону ядом', moveSpeed: 'к скорости движения',
-  accuracy: 'к меткости', evade: 'к уклонению', armor: 'к броне', blockChance: 'к блоку',
-  interruptResist: 'к стойкости к прерыванию', maxHp: 'к здоровью', maxMana: 'к мане', maxStamina: 'к выносливости',
-  hpRegen: 'к регену HP', manaRegen: 'к регену маны', staminaRegen: 'к регену выносливости',
-  resFire: 'к сопр. огню', resCold: 'к сопр. холоду', resLightning: 'к сопр. молнии', resPoison: 'к сопр. яду',
-};
-// Пассив: [stat, kind, value, name] — statLabel берётся из SL.
+// Пассив: [stat, kind, value, name] — подпись стата берётся из `STAT_TEXT` (`scripts/skillText.mjs`).
 const p = (stat, kind, value, name) => [stat, kind, value, name];
 
 // ── Контент по веткам (act: 5 способностей, pas: 10 пассивов) ──
@@ -564,9 +466,8 @@ B.forEach((br) => {
       const ins = inserts.shift();
       node = { ...common, kind: 'passive', name: ins.name, description: describeInsertNode(ins), maxRank: 10, effect: { grantsInsert: ins.id } };
     } else if (pas.length) {
-      const [stat, mkind, value, label, statLabel] = pas.shift();
-      const pct = Math.round(value * 1000) / 10;
-      node = { ...common, kind: 'passive', name: label, description: `+${pct}% ${statLabel ?? SL[stat] ?? label} за ранг.`, maxRank: 4, effect: { modifiers: [{ stat, kind: mkind, value }] } };
+      const [stat, mkind, value, label] = pas.shift();
+      node = { ...common, kind: 'passive', name: label, description: describePassive([{ stat, kind: mkind, value }]), maxRank: 4, effect: { modifiers: [{ stat, kind: mkind, value }] } };
     } else {
       continue;
     }

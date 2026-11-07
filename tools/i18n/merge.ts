@@ -67,7 +67,8 @@ if (existsSync(GLOSSARY_FILE)) {
     const list = index.get(`${c.group}\u0000${c.source.trim()}`);
     if (!list) continue;
     const segs = c.key.slice(4).split('/');
-    const hit = list.find((x) => segs.some((s) => x.ids.has(s)));
+    // id записи — id строки (`b-sword1h`) или ПОЛНЫЙ ключ (`cfg:weapon-anatomy/…/name` — так записана анатомия): оба вида держат сторож
+    const hit = list.find((x) => x.ids.has(c.key) || segs.some((s) => x.ids.has(s)));
     if (hit) expected.set(c.key, hit.en);
   }
 }

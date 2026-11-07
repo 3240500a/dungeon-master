@@ -849,10 +849,11 @@
     "b-dual-p5"
    ],
    "ru": "Ярость",
-   "en": "Fury",
+   "en": "Rage",
    "alts": [],
    "note": "[passive]; как rare-noun «Ярость» → Fury",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11: Fury → Rage — Fury у «Гнева» (политика «Гнев» → Fury, Aura of Fury), «Ярость» → Rage, как у имён раров"
   },
   {
    "group": "skill",
@@ -8105,10 +8106,11 @@
     "cfg:weapon-anatomy/sword/bind/tags/guard/values/claymore/name"
    ],
    "ru": "клейморная гарда",
-   "en": "claymore guard",
+   "en": "claymore",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): claymore guard → claymore"
   },
   {
    "group": "anatomy",
@@ -8127,12 +8129,13 @@
     "cfg:weapon-anatomy/sword/bind/tags/guard/values/shield/name"
    ],
    "ru": "щиток",
-   "en": "guard plate",
+   "en": "plate",
    "alts": [
     "shell"
    ],
    "note": "[name]; щиток гладиуса",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): guard plate → plate"
   },
   {
    "group": "anatomy",
@@ -8219,11 +8222,12 @@
     "cfg:weapon-anatomy/sword/head/tags/pommel/values/brazil-nut/name"
    ],
    "ru": "«бразильский орех»",
-   "en": "“Brazil nut”",
+   "en": "\"Brazil nut\"",
    "alts": [],
    "note": "[name]; навершие типа A Окшотта — «brazil nut»",
    "owner": false,
-   "changed": "у Окшотта — Brazil-nut pommel, Brazil с заглавной (имя собственное)"
+   "changed": "у Окшотта — Brazil-nut pommel, Brazil с заглавной (имя собственное)",
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): “Brazil nut” → \"Brazil nut\""
   },
   {
    "group": "anatomy",
@@ -8522,12 +8526,13 @@
     "cfg:weapon-anatomy/dagger/bind/tags/guard/values/kidney/name"
    ],
    "ru": "«почки»",
-   "en": "“kidneys”",
+   "en": "\"kidneys\"",
    "alts": [
     "kidney lobes"
    ],
    "note": "[name]; ballock/kidney dagger",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): “kidneys” → \"kidneys\""
   },
   {
    "group": "anatomy",
@@ -8654,10 +8659,11 @@
     "cfg:weapon-anatomy/dagger/head/tags/pommel/values/ears/name"
    ],
    "ru": "«уши»",
-   "en": "“ears”",
+   "en": "\"ears\"",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): “ears” → \"ears\""
   },
   {
    "group": "anatomy",
@@ -9057,10 +9063,11 @@
     "cfg:weapon-anatomy/axe/bind/tags/lugs/values/none/name"
    ],
    "ru": "без щекавиц",
-   "en": "no lugs",
+   "en": "none",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): no lugs → none"
   },
   {
    "group": "anatomy",
@@ -9249,12 +9256,13 @@
     "cfg:weapon-anatomy/axe/head/tags/butt/values/long/name"
    ],
    "ru": "длинный затыльник",
-   "en": "long poll",
+   "en": "long",
    "alts": [
     "extended back"
    ],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): long poll → long"
   },
   {
    "group": "anatomy",
@@ -10317,10 +10325,11 @@
     "cfg:weapon-anatomy/spear/grip/tags/hold/values/heel/name"
    ],
    "ru": "хват у пяты",
-   "en": "held at the heel",
+   "en": "at the heel",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): held at the heel → at the heel"
   },
   {
    "group": "anatomy",
@@ -10328,10 +10337,11 @@
     "cfg:weapon-anatomy/spear/grip/tags/hold/values/middle/name"
    ],
    "ru": "хват посередине",
-   "en": "held at the middle",
+   "en": "at the middle",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): held at the middle → at the middle"
   },
   {
    "group": "anatomy",
@@ -10601,10 +10611,11 @@
     "cfg:weapon-anatomy/halberd/strike/tags/form/values/bard1/name"
    ],
    "ru": "бердыш, тип 1",
-   "en": "bardiche, type 1",
+   "en": "bardiche, Type 1",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): bardiche, type 1 → bardiche, Type 1"
   },
   {
    "group": "anatomy",
@@ -10612,10 +10623,11 @@
     "cfg:weapon-anatomy/halberd/strike/tags/form/values/bard2/name"
    ],
    "ru": "бердыш, тип 2",
-   "en": "bardiche, type 2",
+   "en": "bardiche, Type 2",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): bardiche, type 2 → bardiche, Type 2"
   },
   {
    "group": "anatomy",
@@ -10623,10 +10635,11 @@
     "cfg:weapon-anatomy/halberd/strike/tags/form/values/bard3/name"
    ],
    "ru": "бердыш, тип 3",
-   "en": "bardiche, type 3",
+   "en": "bardiche, Type 3",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): bardiche, type 3 → bardiche, Type 3"
   },
   {
    "group": "anatomy",
@@ -11045,13 +11058,14 @@
     "cfg:weapon-anatomy/bow/head/tags/plates/values/four/name"
    ],
    "ru": "4 концевые",
-   "en": "4 ear laths",
+   "en": "4 at the ears",
    "alts": [
     "4 end laths"
    ],
    "note": "[name]",
    "owner": false,
-   "changed": "у гуннского лука устоявшийся термин — ear laths (накладки сиях) и grip laths; end laths — калька"
+   "changed": "у гуннского лука устоявшийся термин — ear laths (накладки сиях) и grip laths; end laths — калька",
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): 4 ear laths → 4 at the ears"
   },
   {
    "group": "anatomy",
@@ -11153,10 +11167,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/lady-stonebow/name"
    ],
    "ru": "малое пулевое, дамское",
-   "en": "small pellet stock, lady's",
+   "en": "small pellet-shooting, lady's",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): small pellet stock, lady's → small pellet-shooting, lady's"
   },
   {
    "group": "anatomy",
@@ -11186,10 +11201,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/stonebow-bent/name"
    ],
    "ru": "выгнутое пулевое",
-   "en": "bent pellet stock",
+   "en": "bent, pellet-shooting",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): bent pellet stock → bent, pellet-shooting"
   },
   {
    "group": "anatomy",
@@ -11197,10 +11213,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/schnepper/name"
    ],
    "ru": "шнепперное с прикладом",
-   "en": "schnepper with buttstock",
+   "en": "schnepper, with a butt",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): schnepper with buttstock → schnepper, with a butt"
   },
   {
    "group": "anatomy",
@@ -11252,10 +11269,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/cheek-butt/name"
    ],
    "ru": "с прикладом под щёку",
-   "en": "cheek stock",
+   "en": "with a cheek butt",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): cheek stock → with a cheek butt"
   },
   {
    "group": "anatomy",
@@ -11297,10 +11315,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/ganze-ruestung/name"
    ],
    "ru": "массивное с прикладом",
-   "en": "massive with buttstock",
+   "en": "massive, with a butt",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): massive with buttstock → massive, with a butt"
   },
   {
    "group": "anatomy",
@@ -11308,10 +11327,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/target-rest/name"
    ],
    "ru": "мишенное с выступом снизу",
-   "en": "target stock with hand rest",
+   "en": "target, with a hand rest",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): target stock with hand rest → target, with a hand rest"
   },
   {
    "group": "anatomy",
@@ -11319,10 +11339,11 @@
     "cfg:weapon-anatomy/crossbow/grip/tags/stock/values/horse-stirrup/name"
    ],
    "ru": "с железным «конским» стременем",
-   "en": "iron “horse” stirrup",
+   "en": "iron \"horse\" stirrup",
    "alts": [],
    "note": "[name]",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): iron “horse” stirrup → iron \"horse\" stirrup"
   },
   {
    "group": "anatomy",
@@ -11772,12 +11793,13 @@
     "cfg:weapon-anatomy/staff/grip/tags/wood/values/pitch/name"
    ],
    "ru": "осмол",
-   "en": "pitchwood",
+   "en": "pitch pine",
    "alts": [
     "fatwood"
    ],
    "note": "[name]; осмол = смолистая сосна",
-   "owner": false
+   "owner": false,
+   "policyAligned": "07.11 сверка (строка формулы без тавтологии / прямые кавычки / P5): pitchwood → pitch pine"
   },
   {
    "group": "anatomy",

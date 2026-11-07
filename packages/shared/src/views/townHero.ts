@@ -12,7 +12,8 @@
  */
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
-import type { QuestDef, QuestProgress, SaveState, SkillNode } from '../types/index.js';
+import type { QuestDef, QuestProgress, SaveState, SkillNode, StatModifier } from '../types/index.js';
+import { PERCENT_STATS, STAT_LABEL } from '../formulas/itemDescribe.js';
 import {
   attrRespecRefund, passiveAllocCheck, passiveRespecFee, respecPassives, respecRefusal, respecSkills, skillRespecFee,
 } from '../economy/townActions.js';
@@ -320,6 +321,17 @@ export interface MasteryNode {
 export interface MasteryEdge { a: string; b: string; both: boolean }
 export interface MasteryTreeView { nodes: MasteryNode[]; edges: MasteryEdge[] }
 
+/**
+ * ⭐ i18n Ф3, этап 2 (07.11): строка модов в подсказке узла мастерства — подписью стата на языке игрока и числом по роду стата (доля и
+ * `increased` — проценты с десятой, абсолют — число), как в описании узла. Было — сырой id и сырое число: «+3% armor», «+0.02 physPct»
+ * (плоская доля числом), «+0.044000000000000004 physPct», «+-15% armor» у кейстона, «+3%» при 2.5 %; так читал и русский игрок.
+ */
+export function masteryModText(m: StatModifier): string {
+  const abs = Math.abs(m.value);
+  const amount = m.kind === 'increased' || PERCENT_STATS.has(m.stat) ? `${Math.round(abs * 1000) / 10}%` : `${Math.round(abs * 100) / 100}`;
+  return `${m.value < 0 ? '−' : '+'}${amount} ${STAT_LABEL[m.stat] ?? m.stat}`;
+}
+
 export function masteryTreeView(reg: ConfigRegistry, save: SaveState): MasteryTreeView {
   const tree = reg.get('mastery-tree');
   const entries = new Set(tree.entryNodes);
@@ -336,7 +348,7 @@ export function masteryTreeView(reg: ConfigRegistry, save: SaveState): MasteryTr
     const costLine = n.cost.type !== 'gold' ? '' : rank >= n.maxRank ? tr('srv:mastery.maxRank', ' · макс. ранг') : cost !== null ? tr('srv:mastery.nextRank', ' · след. ранг: {cost} зол. + 1 очко', { cost }) : '';
     let tip = tr('srv:mastery.tip', '<b>{name}</b>\n{description}\nранг {rank}/{maxRank}{costLine}', { name: cfgRowText(reg, 'mastery-tree', n), description: cfgRowText(reg, 'mastery-tree', n, 'description'), rank, maxRank: n.maxRank, costLine });
     if (save.level < n.levelReq) tip += tr('srv:mastery.levelReq', '\n<color=#d89b7c>требуется уровень {levelReq}</color>', { levelReq: n.levelReq });
-    const eff = (n.effect.modifiers ?? []).map((m) => `${m.kind === 'increased' ? `+${Math.round(m.value * 100)}%` : `+${m.value}`} ${m.stat}`).join(', ');
+    const eff = (n.effect.modifiers ?? []).map(masteryModText).join(', ');
     if (eff) tip += `
 <color=#88ffdd>${eff}</color>`;
     return {

@@ -114,12 +114,24 @@ export function matchWhen(anat: WeaponAnatomy, when: Record<string, string[]>, h
  */
 export const agree = ruAgree;
 
+/**
+ * ⚠ ЗАГЛАВНАЯ — ТОЛЬКО У БУКВЫ В НАЧАЛЕ (Ф3, 07.11, поймал английский перевод). Прежде искалась ПЕРВАЯ латинская/кириллическая буква
+ * где угодно: «16th c.» → «16Th c.», «諸葛弩: короб…» → «諸葛弩: Короб…», а «à moulinet» → «à Moulinet» (à в диапазон не входила).
+ * Теперь пропускаются только пробелы, кавычки и скобки («kidney dagger» → «Kidney dagger», как было); первая значимая — не буква
+ * (цифра, тире, значок) — регистр не трогаем. Буква — любая `\p{L}`: à поднимается в À, у иероглифа регистра нет — остаётся.
+ */
+const LEAD_SKIP = /^[\s"'«»„“”‘’‹›()[\]{}<>]*/u;
 const upFirst = (s: string): string => {
-  const i = s.search(/[A-Za-zА-Яа-яЁё]/);
-  return i < 0 ? s : s.slice(0, i) + s[i]!.toUpperCase() + s.slice(i + 1);
+  const i = LEAD_SKIP.exec(s)![0].length;
+  const cp = s.codePointAt(i);
+  if (cp === undefined) return s;
+  const ch = String.fromCodePoint(cp);
+  return /\p{L}/u.test(ch) ? s.slice(0, i) + ch.toUpperCase() + s.slice(i + ch.length) : s;
 };
 const lowFirst = (s: string): string => (s ? s[0]!.toLowerCase() + s.slice(1) : s);
 const tidy = (s: string): string => s.replace(/\s+/g, ' ').replace(/\s+,/g, ',').trim();
+/** Кириллица в строке — `code` значения не язык-нейтральный (см. `typeFormula`). */
+const CYRILLIC = /\p{Script=Cyrillic}/u;
 
 /**
  * ⭐ i18n Ф2 (06.11): ЯЗЫК ТЕКСТА ТИПА — разрешитель и реестр (ключ фрагмента берётся по самой строке таблицы, `cfgRowKey`). Нет —
@@ -134,11 +146,16 @@ export interface TypeLang { loc: Localizer; reg: ConfigRegistry }
  * роду имени; эпоха (`epoch`) — оборот в родительном («ранней эпохи») и не склоняется.
  * ⭐ i18n Ф2: `L` — язык фрагментов (шаблон и `extra` зовущий переводит сам); прилагательное — формой перевода под род, запас арифметикой
  * — только на языке-источнике (как у `composeItemName`).
+ * ⚠ Ф3 (07.11): строчная у `{base}` — ПРАВИЛО РУССКОГО (база внутри фразы: «Ранний меч», «Узкий ручной топор»), а не сборки: английская
+ * база держит свой регистр («Bearded War Axe», не «Bearded war Axe»), иначе переводчику приходилось ставить `{base}` в начало шаблона.
+ * Правило — у ТЕКСТА базы (`extra.baseLow`, решает `typeTexts`): база без перевода — русский запас и строчная на любом языке (es/zh без
+ * строк — «Узкий ручной топор», а не «Узкий Ручной топор»).
  */
-function fill(tpl: string, anat: WeaponAnatomy, parts: PartSet, gender: Gender, extra: { noun?: string; base?: string }, L?: TypeLang): string {
+function fill(tpl: string, anat: WeaponAnatomy, parts: PartSet, gender: Gender, extra: { noun?: string; base?: string; baseLow: boolean }, L?: TypeLang): string {
+  const src = !L || L.loc.lang === SOURCE_LANG;
   const out = tpl.replace(/\{([^}]+)\}/g, (_, ref: string) => {
     if (ref === 'noun') return extra.noun ?? '';
-    if (ref === 'base') return lowFirst(extra.base ?? '');
+    if (ref === 'base') return extra.baseLow ? lowFirst(extra.base ?? '') : extra.base ?? '';
     const [slot, key, field = 'name'] = ref.split('.') as [CraftSlot, string, string];
     const p = parts[slot];
     if (!p || !anat[slot]) return '';
@@ -146,7 +163,7 @@ function fill(tpl: string, anat: WeaponAnatomy, parts: PartSet, gender: Gender, 
     const v = tagEntry(anat, slot, key, id);
     if (!v) return '';
     const raw = String((v as Record<string, unknown>)[field] ?? '');
-    if (!L || L.loc.lang === SOURCE_LANG) return field === 'adj' ? agree(raw, gender) : raw || (field === 'name' ? v.id : '');
+    if (src) return field === 'adj' ? agree(raw, gender) : raw || (field === 'name' ? v.id : '');
     const k = raw ? cfgRowKey(L.reg, 'weapon-anatomy', v, field) : undefined;
     if (field === 'adj') return k && L.loc.forms(k) !== undefined ? L.loc.form(k, normalizeAgreement(gender), raw) : (k ? L.loc.text(k, raw) : raw);
     return (k ? L.loc.text(k, raw) : raw) || (field === 'name' ? v.id : '');
@@ -175,10 +192,18 @@ export interface TypeInfo {
 
 const EMPTY: TypeInfo = { ok: false, name: '', gender: 'm', subtitle: '', source: '', fantasy: false, formula: '', fallback: true };
 
-/** Строка-формула по ссылкам классификатора. ⭐ i18n Ф2: `L` — язык подписей (заголовок свода, подпись тега, имя значения; код — как есть). */
+/**
+ * Строка-формула по ссылкам классификатора. ⭐ i18n Ф2: `L` — язык подписей (заголовок свода, подпись тега, имя значения; код — как есть).
+ * ⚠ Ф3 (07.11): `code` — внутреннее поле (`I18N_INTERNAL_FIELDS`), то есть каталожная метка вне языка («XI», «G», «3»). Кириллический код
+ * (13 значений: «Падающий», «фальшион» у мечей — копия имени; «Ирзи», «Кум-Дарья» у накладок лука) на ином языке — уже не метка, а русское
+ * слово: там встаёт переведённое имя значения. Русская формула прежняя; переводить `code` целиком — 49 кодов в корпус ради 13.
+ * Замена — только когда у имени значения ЕСТЬ перевод: язык без строк (es/zh сегодня) читает формулу русским запасом, и код в ней —
+ * прежний («накладки Ирзи», а не «накладки 4 концевые»).
+ */
 export function typeFormula(anat: WeaponAnatomy, row: WeaponTypes, parts: PartSet, L?: TypeLang): string {
   const txt = (table: 'weapon-anatomy' | 'weapon-types', r: object, field: string, raw: string): string =>
     (L && raw ? cfgRowTextWith(L.loc, L.reg, table, r, field) : raw);
+  const src = !L || L.loc.lang === SOURCE_LANG;
   const bits = row.formula.refs.map((ref) => {
     const [slot, key] = ref.split('.') as [CraftSlot, string];
     const def = anat[slot]?.tags.find((t) => t.key === key);
@@ -186,7 +211,9 @@ export function typeFormula(anat: WeaponAnatomy, row: WeaponTypes, parts: PartSe
     if (!def || !p) return '';
     const v = def.values.find((x) => x.id === tagValue(anat, slot, p, key));
     const label = def.label ? txt('weapon-anatomy', def, 'label', def.label) : txt('weapon-anatomy', def, 'name', def.name).toLowerCase();
-    return v ? `${label} ${v.code || (v.name ? txt('weapon-anatomy', v, 'name', v.name) : '') || v.id}` : '';
+    const nameKey = L && !src && v?.name ? cfgRowKey(L.reg, 'weapon-anatomy', v, 'name') : undefined;
+    const code = v?.code && (src || !CYRILLIC.test(v.code) || !nameKey || !L?.loc.has(nameKey)) ? v.code : '';
+    return v ? `${label} ${code || (v.name ? txt('weapon-anatomy', v, 'name', v.name) : '') || v.id}` : '';
   }).filter(Boolean);
   return (row.formula.title ? `${txt('weapon-types', row.formula, 'title', row.formula.title)}: ` : '') + bits.join(' · ');
 }
@@ -226,19 +253,22 @@ function typeTexts(
 ): Pick<TypeInfo, 'typeId' | 'gender' | 'fallback' | 'name' | 'subtitle' | 'source' | 'fantasy'> {
   const txt = (r: object, field: string, raw: string): string => (L && raw ? cfgRowTextWith(L.loc, L.reg, 'weapon-types', r, field) : raw);
   const baseName = L ? cfgRowTextWith(L.loc, L.reg, 'items.base', base) : base.name;
+  // ⚠ Ф3 (07.11, ревью): строчная — у русского ТЕКСТА базы: язык-источник или база без перевода на языке игрока (запас — русское имя)
+  const baseKey = L && L.loc.lang !== SOURCE_LANG ? cfgRowKey(L.reg, 'items.base', base) : undefined;
+  const baseLow = !baseKey || !L?.loc.has(baseKey);
   const rule = row.names.find((r) => r.enabled !== false && matchWhen(anat, r.when, hands, parts));
   if (rule) {
     const g = rule.gender as Gender;
     return {
       typeId: rule.id, gender: g, fallback: false,
-      name: fill(txt(rule, 'name', rule.name), anat, parts, g, { base: baseName }, L),
-      subtitle: rule.subtitle ? fill(txt(rule, 'subtitle', rule.subtitle), anat, parts, g, { base: baseName }, L) : '',
+      name: fill(txt(rule, 'name', rule.name), anat, parts, g, { base: baseName, baseLow }, L),
+      subtitle: rule.subtitle ? fill(txt(rule, 'subtitle', rule.subtitle), anat, parts, g, { base: baseName, baseLow }, L) : '',
       source: rule.source, fantasy: rule.fantasy,
     };
   }
   const noun = row.fallback.noun.find((n) => matchWhen(anat, n.when, hands, parts));
   const g = (noun?.gender ?? base.gender ?? 'm') as Gender;
-  const extra = { noun: noun?.text !== undefined ? txt(noun, 'text', noun.text) : undefined, base: baseName };
+  const extra = { noun: noun?.text !== undefined ? txt(noun, 'text', noun.text) : undefined, base: baseName, baseLow };
   return {
     gender: g, fallback: true, source: '', fantasy: false,
     name: fill(txt(row.fallback, 'template', row.fallback.template), anat, parts, g, extra, L) || baseName,

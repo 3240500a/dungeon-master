@@ -5,12 +5,15 @@
 // кейстоном. Внутри веера соседние артерии сшиты ПЕРЕМЫЧКАМИ (выбор маршрута под билд), а
 // соседние веера — ПЕРЕХОДАМИ в диагональных зазорах (по 3 на стык, для гибридов). Бонусы —
 // только проценты (без плоских атрибутов), малые, множатся на ранг. Все входы доступны всем
-// классам (класс-гейт снят в Ф6). Пишет mastery-tree.json. Запуск: node scripts/gen-passive.mjs
+// классам (класс-гейт снят в Ф6). Пишет mastery-tree.json. Запуск: node scripts/gen-passive.mjs [--out <файл>]
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { modAmount } from './skillText.mjs';
 
-const out = join(dirname(fileURLToPath(import.meta.url)), '..',
+// `--out <файл>` — сухой прогон: свериться с данными (в JSON бывают ручные правки редактора), не перезаписывая их.
+const outArg = process.argv.indexOf('--out');
+const out = outArg > 0 ? resolve(process.argv[outArg + 1]) : join(dirname(fileURLToPath(import.meta.url)), '..',
   'packages/shared/src/config/data/mastery-tree.json');
 
 const R0 = 60;      // радиус входа от центра
@@ -72,7 +75,10 @@ const entryNodes = [];
 
 const rad = (d) => (d * Math.PI) / 180;
 const pol = (deg, r) => [Math.round(Math.cos(rad(deg)) * r), Math.round(Math.sin(rad(deg)) * r)];
-const pct = (v) => `${Math.round(v * 1000) / 10}%`;
+// ⭐ i18n Ф3, этап 2 (07.11): величина — от рода стата (`scripts/skillText.mjs`): доля и `increased` — проценты с десятой,
+// плоский абсолют — число. Раньше «всегда %»: плоские +10 маны вышли бы «1000%» (в древе скилов так и вышло).
+const amt = (stat, kind, value) => modAmount(stat, kind, value);
+const signed = (m) => `${m.value < 0 ? '−' : '+'}${amt(m.stat, m.kind, m.value)}`;
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const entPos = (e) => pol(ENT[e], R0);
 const fromE = (eP, ang, r, off = 0) => [Math.round(eP[0] + Math.cos(rad(ang)) * r + Math.cos(rad(ang + 90)) * off), Math.round(eP[1] + Math.sin(rad(ang)) * r + Math.sin(rad(ang + 90)) * off)];
@@ -80,8 +86,8 @@ const mod = (stat, kind, value) => ({ stat, kind, value });
 
 function smallNode(id, el, level, pos) {
   nodes.push({
-    id, kind: 'passive', notable: false, name: `${cap(el[3])} ${pct(el[2])}`,
-    description: `Малый узел: ${pct(el[2])} к «${el[3]}» за ранг.`,
+    id, kind: 'passive', notable: false, name: `${cap(el[3])} ${amt(el[0], el[1], el[2])}`,
+    description: `Малый узел: ${amt(el[0], el[1], el[2])} к «${el[3]}» за ранг.`,
     cost: { type: 'gold', amount: 100 + level * 10 }, requires: [], maxRank: level < 5 ? 4 : 3, levelReq: 1,
     effect: { modifiers: [mod(el[0], el[1], el[2])] }, x: pos[0], y: pos[1],
   });
@@ -92,7 +98,7 @@ function noteNode(id, theme, name, pos) {
   const mods = [mod(a[0], a[1], a[2] * 2.2), mod(b[0], b[1], b[2] * 2.2)];
   nodes.push({
     id, kind: 'passive', notable: true, name,
-    description: mods.map((m) => `+${pct(m.value)} к «${labelOf(m.stat)}»`).join(', ') + '.',
+    description: mods.map((m) => `${signed(m)} к «${labelOf(m.stat)}»`).join(', ') + '.',
     cost: { type: 'gold', amount: 600 }, requires: [], maxRank: 1, levelReq: 1,
     effect: { modifiers: mods }, x: pos[0], y: pos[1],
   });
@@ -101,13 +107,17 @@ function keyNode(id, ks, pos) {
   const mods = ks.mods.map(([s, k, v]) => mod(s, k, v));
   nodes.push({
     id, kind: 'passive', notable: true, name: `★ ${ks.name}`,
-    description: `Кейстон: ${mods.map((m) => `${m.value < 0 ? '−' : '+'}${pct(Math.abs(m.value))} к «${labelOf(m.stat)}»`).join(', ')}.`,
+    description: `Кейстон: ${mods.map((m) => `${signed(m)} к «${labelOf(m.stat)}»`).join(', ')}.`,
     cost: { type: 'gold', amount: 1500 }, requires: [], maxRank: 1, levelReq: 1,
     effect: { modifiers: mods }, x: pos[0], y: pos[1],
   });
 }
 const LABELS = { physPct: 'физ. урон', firePct: 'урон огнём', coldPct: 'урон холодом', lightningPct: 'урон молнией', poisonPct: 'урон ядом', damagePct: 'урон', ailmentPct: 'наложение статусов', attackSpeed: 'скор. атаки', castSpeed: 'скор. каста', critChance: 'шанс крита', critMultiplier: 'множ. крита', moveSpeed: 'скор. движения', accuracy: 'меткость', armor: 'броня', evade: 'уклонение', blockChance: 'блок', interruptResist: 'стойкость к прерыв.', maxHp: 'здоровье', maxMana: 'мана', hpRegen: 'реген HP', manaRegen: 'реген маны', resFire: 'сопр. огню', resCold: 'сопр. холоду', resLightning: 'сопр. молнии', resPoison: 'сопр. яду' };
-const labelOf = (s) => LABELS[s] ?? s;
+/** Подпись стата в «…»; незнакомый id — падение генератора, а не сырой id в русском тексте. */
+const labelOf = (s) => {
+  if (!LABELS[s]) throw new Error(`Мастерство: у стата «${s}» нет подписи — добавь в LABELS (scripts/gen-passive.mjs)`);
+  return LABELS[s];
+};
 
 // Растит одну артерию веером от входа. Возвращает id merge-узлов ромбов (для перемычек/переходов).
 function growArtery(art) {
@@ -152,7 +162,8 @@ for (const e of Object.keys(ENT)) {
   entryNodes.push(`p-${e}`);
   nodes.push({
     id: `p-${e}`, kind: 'passive', notable: false, name: `${ENT_NAME[e]} (вход)`,
-    description: `Начало веера ветвей атрибута «${ENT_NAME[e]}».`,
+    // ⭐ Вход тоже даёт стат (первый стат темы) — раньше описание о нём молчало, и вход читался пустым.
+    description: `Начало веера ветвей атрибута «${ENT_NAME[e]}». Даёт ${signed(mod(first[0], first[1], first[2]))} к «${labelOf(first[0])}».`,
     cost: { type: 'gold', amount: 160 }, requires: [], maxRank: 1, levelReq: 1,
     effect: { modifiers: [mod(first[0], first[1], first[2])] }, x: p[0], y: p[1],
   });

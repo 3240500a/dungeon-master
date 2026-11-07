@@ -461,7 +461,7 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
     reachMult = r4((base.reachMult ?? 1) * k.gripK ** a2);
     arcMult = r4((base.arcMult ?? 1) * k.gripK ** (-2 * a2));
   } else if (a2 !== 0) {
-    notes.push(tr('srv:forge.noteGripRanged', 'Держак у стрелкового и магического пока только вид: дальность снаряда — константа, честной оси нет (§5.2).'));
+    notes.push(tr('srv:forge.noteGripRanged', 'Держак у стрелкового и магического оружия пока только для вида: на дальность снаряда он не влияет.'));
   }
 
   // 4 · Оголовье — укус ↔ упор. Упор: блок (у лука — стойкость к прерыванию). Укус: статус грани.
@@ -476,13 +476,13 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
     push('blockChance', 'flat', k.headBlock * a4);
     const own = baseFlat(base, 'blockChance');
     if (a4 < 0 && own + k.headBlock * a4 < 0) {
-      notes.push(tr('srv:forge.noteBlockFloor', 'Блока у базы {own} % — минус упирается в ноль, и укус достаётся бесплатно (долг §7.2).', { own: Math.round(own * 100) }));
+      notes.push(tr('srv:forge.noteBlockFloor', 'Блока у базы {own} % — минус упирается в ноль, и укус достаётся бесплатно.', { own: Math.round(own * 100) }));
     }
   }
   const statusKind = statusKindOf(reg, base);
   const bite = statusKind ? k.bite[statusKind] : undefined;
   if (bite) push(bite.stat, 'flat', -bite.value * a4);
-  else if (a4 !== 0) notes.push(tr('srv:forge.noteNoEdge', 'У базы нет грани — рычагу статуса нечем торговать (§7.1).'));
+  else if (a4 !== 0) notes.push(tr('srv:forge.noteNoEdge', 'У базы нет грани — рычагу статуса нечем торговать.'));
 
   // 3 · Обвязка — форма ёмкости. Число слотов даёт ступень.
   const affixCap = formOf(capacityOf(reg, t), parts.bind.axis);
