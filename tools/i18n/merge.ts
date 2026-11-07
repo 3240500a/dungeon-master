@@ -109,8 +109,9 @@ for (const file of files) {
     if (!raw.trim() || raw.startsWith('#')) return;
     const cols = raw.split('\t');
     const key = (cols[kCol] ?? '').trim();
-    const v = uncell(cols[vCol] ?? '').trim();
-    if (!v) return;
+    // ⚠ НЕ обрезать: краевой пробел и ведущий перевод строки — часть фразы (« за {price} золота» клеится к числу); сверка — ниже
+    const v = uncell(cols[vCol] ?? '');
+    if (!v.trim()) return;
     const at = `${file}:${i + 2} ${key}`;
     const bad = (msg: string): void => { errors.push(`${at}: ${msg}`); badKeys.add(key); };
     const e: CorpusEntry | undefined = byKey.get(key);
@@ -126,15 +127,19 @@ for (const file of files) {
     const src = e.source;
     const srcMain = typeof src === 'string' ? src : (src.other ?? Object.values(src)[0] ?? '');
     const forms = typeof value === 'string' ? [value] : Object.values(value);
+    const edge = (s: string): string => `${/^\s*/.exec(s)![0]}|${/\s*$/.exec(s)![0]}`;
     for (const f of forms) {
+      // орфография и политики — по ТЕКСТУ: без подстановок (`{armor}` — имя слота кода) и без разметки TMP (`<color=#…>` — тег, не слово)
+      const prose = f.replace(/\{[a-zA-Z0-9_.-]+\}/g, ' ').replace(/<\/?[a-zA-Z][^<>]*>/g, ' ');
       if (CYR.test(f)) bad(`кириллица в переводе: «${f}»`);
+      if (edge(f) !== edge(srcMain)) bad(`краевые пробелы ${JSON.stringify(edge(f))} ≠ исходника ${JSON.stringify(edge(srcMain))}`);
       if (uniq(placeholders(f)) !== uniq(placeholders(srcMain))) bad(`подстановки {${uniq(placeholders(f))}} ≠ исходника {${uniq(placeholders(srcMain))}}`);
       if ((leadingMarker(srcMain) ?? '') !== (leadingMarker(f) ?? '')) bad(`ведущий знак «${leadingMarker(f) ?? ''}» ≠ исходника «${leadingMarker(srcMain) ?? ''}»`);
       else if (leadGlyph(srcMain).trim() !== leadGlyph(f).trim()) warnings.push(`${at}: ведущий значок «${leadGlyph(f)}» ≠ исходника «${leadGlyph(srcMain)}»`);
-      for (const [re, uk] of US_SPELLING) if (re.test(f)) bad(`американская орфография (${re.source}) — британская: ${uk}`);
-      if (IZE.test(f) && !IZE_OK.test(f)) warnings.push(`${at}: -ize/-yze — по британской норме -ise/-yse? «${f}»`);
-      if (/здоров/i.test(srcMain) && /\blife\b/i.test(f)) bad('«здоровье» — Health, не Life (политика глоссария)');
-      if (/гнев/i.test(srcMain) && /\bwrath\b/i.test(f)) warnings.push(`${at}: «гнев» → Fury: Wrath занят «Карой небес»`);
+      for (const [re, uk] of US_SPELLING) if (re.test(prose)) bad(`американская орфография (${re.source}) — британская: ${uk}`);
+      if (IZE.test(prose) && !IZE_OK.test(prose)) warnings.push(`${at}: -ize/-yze — по британской норме -ise/-yse? «${f}»`);
+      if (/здоров/i.test(srcMain) && /\blife\b/i.test(prose)) bad('«здоровье» — Health, не Life (политика глоссария)');
+      if (/гнев/i.test(srcMain) && /\bwrath\b/i.test(prose)) warnings.push(`${at}: «гнев» → Fury: Wrath занят «Карой небес»`);
     }
     const want = expected.get(key);
     if (want !== undefined && typeof value === 'string' && value !== want) bad(`глоссарий: «${srcMain}» → «${want}», а здесь «${value}»`);

@@ -435,6 +435,66 @@ DmText.With(DmLang.LocFor("en"), key, source);                                 /
 Перед заливкой Ф3 уже залитые 629 строк приведены к политикам (22 правки: Armor → Armour, Vigor → Vigour, Fiber → Fibre, Jewelry →
 Jewellery, «здоровье» → health, «Гнев» → Fury). Таблица `materials` снята с перевода (`I18N_SKIP_TABLES`): её `name` — имя ассета рендера.
 
+### ⭐ Итог Ф3 (07.11): три полосы + ревью, залито 4 630 строк, `en` — 99.2 %
+
+Перевели три полосы (TSV в `scratchpad/f3/lane*/out`), ревью свело их в один голос и залило `npm run i18n:merge` (ни одной строки руками).
+`en.enabled` по-прежнему `false` — включение это Ф4.
+
+| Полоса | Корпус | Выгружено | Залито | Не легло (почему) |
+|---|---|---:|---:|---|
+| A | `cfg:skill-tree`, `cfg:mastery-tree` | 1 606 | 1 563 | 43 — глоссарий против своих же политик (Armor ×22, Defense, Life ×10, «Реген HP» → Life Regeneration ×12) |
+| B | `cfg:weapon-parts`, `-anatomy`, `-types` | 1 658 | 1 657 | 1 — `wd-sceptre`: глоссарий требует Scepter, сторож орфографии его не пускает |
+| C | `srv:` + `ui:` | 1 398 (+8 новых ключей Unity) | 1 406 (+4 правки `cfg:floors`) | 0 — 39 строк ждали правки `merge.ts` (пришла 07.11 во время ревью): 32 значения с краевым пробелом / `\n` (`.trim()` склеил бы « за {price} золота» с числом) и 7, где сторож орфографии бил по коду (`{armor}`, `<color=…>`) |
+
+`npm run i18n` после заливки: **en — покрытие 99.2 %, ключей 5 255, сирот 0** (корпус 5 299: cfg 3 898 + srv 959 + ui 447). Остаток 44 ключа
+(34 `cfg:mastery-tree`, 9 `cfg:skill-tree`, 1 `cfg:weapon-types`) лежит готовым переводом в `laneA/conflicts`, `laneB/conflict` и ложится
+одной командой `i18n:merge`, как только поправят глоссарий. `locales.json` — 404 056 байт, пакет `en` — 392 552 (без отступов — 360 929).
+
+⚠ Корпус `ui:` вырос во время ревью (+8 ключей и новый текст «Вертикальная синхронизация» — незакоммиченная правка ⚙ Unity из соседней
+сессии): `npm run i18n` обновил `corpus.ui.json` и `__golden__/unity_ui.json`; их коммитить вместе с той правкой Unity (и `golden_sync.py`).
+
+**Как проверено.** Сторож заливки — 0 ошибок. Согласованность — скриптом: все короткие строки (≤ 4 слов) трёх полос + 629 прежних + глоссарий,
+RU с разным EN — 80, все разобраны (почти все — законно разные смыслы: атрибут «Сила» против узла Power, «Выносливость» стат против узла
+Endurance, «Сопр. огню» имя узла против подписи стата). Чтение: все 447 `ui:`, все имена/шаблоны/подзаголовки `weapon-types`, `rendered.txt`
+полосы B, по 11–16 % каждой полосы случайно. Сборка имён — настоящими швами (`generateItem` → `itemDisplayName`, `craftWeapon` → `typeDisplay`,
+`buildSeal`) под английским разрешителем с полосами поверх `locales` в памяти: 564 «база × ступень», 160 магических, 160 рарных, уники, 24 печати,
+27 вещей монстров, 31 сырьё, 89 скованных с формулой и подсказкой «чего не хватает»; кириллицы, висящих связок, двойных слов и пробелов — 0
+(кроме кириллического `code` в формуле — см. Ф4, п. 3).
+
+**Тесты:** `tsc --noEmit` shared/server/editor — 0 ошибок; vitest i18n + editor + formulas + views + config + room.i18n/leak + httpLang —
+122 файла, 1 303 теста зелёные; весь набор без `*.gen.test.ts` — 544 файла, 6 095 тестов зелёные; `unity_views.json` без изменений.
+Unity `unity_check.py`: сборка и 53/53 эталонов — PASS; «ЕСТЬ ПРОВАЛЫ» только из-за той же незакоммиченной правки ⚙ (корпус кода 447 ключей против
+копии эталона 439) — лечит `golden_sync.py` в Unity вместе с той правкой.
+
+**Решения ревью между полосами** (`collisions.md` §14):
+
+| RU | Было | Стало | Где |
+|---|---|---|---|
+| держит удар (крепче) | braces blows better (C) / steadier under blows (B) | **steadier under blows** | `srv:blade.balanceHand`, подписи деталей |
+| удар крупнее / мельче | bigger/smaller blows (C) / hits (B) | **bigger / smaller hits** | `srv:blade.len*Effect`, `srv:bladeForm.*`, подписи деталей |
+| грань (подтип урона) | edge (C) / damage type (B) | **damage type** | `srv:craft.noEdge`, `srv:forge.noteNoEdge`, `srv:craft.balanceTitle` |
+| эталон (ноль оси) | reference (C) / baseline (B) | **baseline** | `srv:craft.bladeWidthRef`, подписи деталей |
+| общий сундук | shared chest (прежние `cfg:floors/*-rest`) / Shared Stash (C) | **shared stash** | 4 строки `cfg:floors` (правило: городской сундук → stash) |
+| Логин / Ник (одно поле) | Login / Nickname | **Username** | `ui:login.user`, `badLogin`, `userLen` |
+| честной оси нет | honest axis, looks only (C) / true axis, cosmetic (B) | **cosmetic for now… no true axis** | `srv:forge.noteGripRanged` |
+| мелочи | isn't, norm. | is not, normal | `ui:entry.soloAsk`, `srv:room.soloHint`, `ui:gfx.dustNormal` |
+
+Оставлено сознательно (вопрос владельцу): процентные подписи статов — «+5% **to** Fire Damage» (`srv:stat.*Pct`, отличие от плоского «+5 Fire
+Damage»), а в описаниях узлов — «+5% Fire Damage per rank» (как в источнике); имена малых узлов мастерства из глоссария (Critical Chance 3%,
+Movement Speed, Interrupt Resistance 2.5%, Mana Regeneration) против слов листа героя и описаний (Crit Chance, Move Speed, Poise, Mana Regen).
+
+**⏸ Осталось на Ф4** (до `en.enabled = true`):
+1. Глоссарий (`tools/i18n/en/glossary.json`): Armor → Armour, Defense → Defence, Scepter → Sceptre, Life → Health (и Life Regeneration →
+   Health Regeneration); транслиты в именах типов, которые сторож держит, хотя политика их запрещает (Shestopyor, Oslop, Sulitsa, Chekan,
+   Crossbar Rogatina); «Interrupt Resistance 2.5%» против «Poise 3%» у того же стата. Затем — `i18n:merge` двух папок остатка.
+2. ~~`merge.ts`: не резать значение; сторож орфографии — мимо `{слотов}` и `<тегов>`~~ ✅ 07.11 (заодно сторож краевых пробелов).
+3. Код: `typeFormula` печатает кириллический `code` значения анатомии (13 значений мечей и пластин лука, `I18N_INTERNAL_FIELDS`);
+   `fill()` → `lowFirst({base})` ломает английский порядок слов (обойдено шаблонами топора/копья с `{base}` впереди); `upFirst` поднимает
+   букву после цифры/иероглифа; `views/craft.ts` красит отказ кузницы по `startsWith('Не')`; генератор описаний узлов печатает плоские +2
+   атрибута как «+200%», +4 огня — как «+400% addFire», отбрасывание 0.35/0.5 — как «0»/«1».
+4. Имена раров по шаблону `{noun} {epithet} {base}` читаются «Storm Secrets Storm Staff», магия «Обшитый» + «Латный шлем» — «Plated Plate
+   Helm» (прежние строки `en`, не трогал) — решить владельцу.
+
 ## Ключи
 
 * **Текст конфига:** `cfg:<таблица>/<путь по id>/<поле>` — `cfg:items.base/quilted-cap/name` (таблица — ключ реестра, с точкой).
